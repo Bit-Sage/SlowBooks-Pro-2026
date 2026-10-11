@@ -62,6 +62,7 @@ All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engi
 | `POST /api/pto/requests/{request_id}/decision` | `pto.decide_request` | Canonical approve/reject endpoint |
 | `POST /api/pto/requests/{request_id}/approve` | `pto.approve_request` | Alias for `decision(status=approved)` |
 | `POST /api/pto/requests/{request_id}/reject` | `pto.reject_request` | Alias for `decision(status=denied)` |
+| `POST /api/pto/requests/{request_id}/cancel` | `pto.cancel_request` | Cancel a pending or approved request; an approved one puts the hours it drew back into the bank and reverses its relief journal |
 
 ### Frontend
 
@@ -175,6 +176,7 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `POST /portal/{token}/bank` | 10/min | Add bank account (Fernet-encrypted at rest) |
 | `GET /portal/{token}/pto` | 30/min | Balances + request form |
 | `POST /portal/{token}/pto` | 10/min | Submit a PTO request |
+| `POST /portal/pto/{request_id}/withdraw` | 10/min | Withdraw the employee's own request while it is still pending |
 
 ### Token lifecycle
 
