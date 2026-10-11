@@ -67,7 +67,7 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 - **Bank and credit-card accounts** — chart accounts flagged `bank` / `credit_card`; every paid-from, deposit-to and pay-from picker lists exactly those
 - **Register** — every posting on the account with a running balance (a card shows the amount owed), payee, source link, cleared/reconciled marks; a register entry posts (DR category / CR account for money out, the reverse for money in)
 - **Transfers** — DR to / CR from between bank and card accounts; paying a card is a transfer. Voidable
-- **Make Deposits** — Move funds from Undeposited Funds to a bank account. Select pending payments (each named with its receipt or check number), choose target account, create deposit. A deposit records the payments it took; Recent deposits lists them with View and Void
+- **Make Deposits** — Move funds from Undeposited Funds to a bank account. A deposit has a **slip** to print or save as a PDF (v2.22.2, #260): the account, the date, each check or payment it took (who, number, method, amount), the checks and cash subtotalled, and the total; a void deposit's says VOID. Select pending payments (each named with its receipt or check number), choose target account, create deposit. A deposit records the payments it took; Recent deposits lists them with View and Void
 - **Credit Card Charges** — DR Expense, CR the card you pick (default 2100). Voidable
 - **Check Printing** — Generate check PDFs in standard 3-per-page format (stub/stub/check) with payee, amount in words, memo, and signature line
 - **Bank feeds and file imports (SimpleFIN, OFX/QFX, any CSV with a date, a description and an amount)** — a review queue: each statement line is auto-matched to the posting the ledger already has (same amount and side within five days, check number narrows, ambiguity waits), or added with a category, or excluded. A category picked on screen is kept on the line. A CSV the import can't read asks which column is which. Bank rules suggest categories and never post. Adding a feed compares the statement balance with the books and never counts it twice. **Fetch older history** reaches a SimpleFIN feed back 3, 6 or 12 months, as far as the provider keeps (the Bridge about 90 days, BankSync a year), in slices the Bridge accepts
@@ -568,6 +568,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/deposits/pending` | GET | Pending deposits in Undeposited Funds |
 | `/api/deposits` | GET, POST | List and create deposits (move funds to bank; `line_ids` are the payments taken) |
 | `/api/deposits/{id}` | GET | One deposit with its payments |
+| `/api/deposits/{id}/pdf · /print-preview` | GET | The deposit slip (v2.22.2): the account, the date, each payment taken and the total; VOID when void |
 | `/api/deposits/{id}/void` | POST | Void a deposit (its payments wait to be deposited again) |
 | `/api/cc-charges` | GET, POST | Credit card charge entry (`card_account_id`, `…/{id}/void`) |
 | `/api/checks/print` | GET | Generate check PDF (3-per-page format) for a bill payment (`bill_payment_id`) |
