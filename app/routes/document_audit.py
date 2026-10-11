@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document_audit import DocumentAudit
+from app.services.document_check import describe, recheck
 
 router = APIRouter(prefix="/api/document-audits", tags=["document-audit"])
 
@@ -28,7 +29,19 @@ class DocumentAuditResponse(BaseModel):
     doc_key: str
     content_hash: str
     created_at: Optional[datetime]
+    # who generated it (NULL on rows from before 2.22.2), and what it is
+    # in words: form "W-2", subject "Jonah Pike, 2026" (#263)
+    username: Optional[str] = None
+    form: str = ""
+    subject: str = ""
     model_config = {"from_attributes": True}
+
+
+def _row(db: Session, audit: DocumentAudit) -> DocumentAuditResponse:
+    form, subject = describe(db, audit)
+    r = DocumentAuditResponse.model_validate(audit)
+    r.form, r.subject = form, subject
+    return r
 
 
 @router.get("", response_model=list[DocumentAuditResponse])
@@ -45,7 +58,7 @@ def list_audits(
         q = q.filter(DocumentAudit.doc_type == doc_type)
     if doc_key:
         q = q.filter(DocumentAudit.doc_key == doc_key)
-    return q.order_by(DocumentAudit.id.desc()).limit(limit).all()
+    return [_row(db, a) for a in q.order_by(DocumentAudit.id.desc()).limit(limit)]
 
 
 @router.get("/{audit_id}", response_model=DocumentAuditResponse)
@@ -54,7 +67,7 @@ def get_audit(audit_id: int, db: Session = Depends(get_db)):
     row = db.query(DocumentAudit).filter(DocumentAudit.id == audit_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Audit row not found")
-    return row
+    return _row(db, row)
 
 
 @router.get("/verify/{content_hash}", response_model=list[DocumentAuditResponse])
@@ -66,9 +79,21 @@ def verify_hash(content_hash: str, db: Session = Depends(get_db)):
         c in "0123456789abcdef" for c in content_hash
     ):
         raise HTTPException(status_code=400, detail="content_hash must be 64 hex chars")
-    return (
-        db.query(DocumentAudit)
+    return [
+        _row(db, a)
+        for a in db.query(DocumentAudit)
         .filter(DocumentAudit.content_hash == content_hash)
         .order_by(DocumentAudit.id.desc())
-        .all()
-    )
+    ]
+
+
+@router.get("/{audit_id}/check")
+def check_audit(audit_id: int, db: Session = Depends(get_db)):
+    """Re-figure the form from today's books and say, in a sentence,
+    whether it still matches what was generated (#263). The verify route
+    answers whether a hash is known; this answers whether the books behind
+    a known form are as they were."""
+    row = db.query(DocumentAudit).filter(DocumentAudit.id == audit_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Audit row not found")
+    return recheck(db, row)

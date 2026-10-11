@@ -326,9 +326,9 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/pto/accruals/year-end-carryover"),
     # DocumentAudit hash-chain viewer/verifier — endpoints ready, the
     # admin UI ("Compliance" tab) is future work (docs/todo.md).
-    ("GET", "/api/document-audits"),
+    # one row by its footer ID: the Form history page lists and checks
+    # rows and finds one by its hash; the ID lookup stays for scripts
     ("GET", "/api/document-audits/{audit_id}"),
-    ("GET", "/api/document-audits/verify/{content_hash}"),
 }
 
 

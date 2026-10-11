@@ -134,6 +134,7 @@ the header and a tamper-evident audit hash in the footer. The SPA's
 | `GET /api/document-audits` | List audit rows (newest first), filterable by `doc_type` + `doc_key` |
 | `GET /api/document-audits/{id}` | One audit row — for verifying a PDF by its footer ID |
 | `GET /api/document-audits/verify/{content_hash}` | Find rows by full SHA-256 hash |
+| `GET /api/document-audits/{id}/check` | Re-figure the form from today's books; `matches`, both hashes, `voided_runs` and a sentence (`message`) |
 
 ### Frontend
 
@@ -197,7 +198,7 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `#/hr/pto` | Policies + pending requests | `pto.js` |
 | `#/hr/benefits` | Benefit codes, groups, enrollments, remittance | `benefits.js` |
 | `#/hr/deductions` | Garnishments | `deductions.js` |
-| `#/hr/tax-forms` | W-2/W-3/940/941 generation | `tax_forms.js` |
+| `#/hr/tax-forms` | W-2/W-3/940/941 generation + Form history (who, when, hash, Check) | `tax_forms.js` |
 | `#/employees/{id}` | Details modal with portal/YTD/bank/docs tabs | `employees.js` |
 
 ---
