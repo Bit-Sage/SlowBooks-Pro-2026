@@ -230,8 +230,8 @@ const CreditMemosPage = {
         if (!(await ClassWarn.ok(form))) return;
         try {
             // $0.00 asks "Save it anyway?" first (SalesLines.sendAllowingZero)
-            const saved = await SalesLines.sendAllowingZero(allow =>
-                API.post('/credit-memos', allow ? { ...data, allow_zero_total: true } : data));
+            const saved = await SalesLines.sendAllowingZero(flags =>
+                API.post('/credit-memos', { ...data, ...flags }));
             if (!saved) return;
             toast('Credit memo created');
             closeModal();

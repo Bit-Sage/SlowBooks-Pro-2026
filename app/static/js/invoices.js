@@ -141,13 +141,22 @@ const SalesLines = {
     // server's question ("This invoice adds up to $0.00. Save it anyway?")
     // and on yes send it once more with allow_zero_total. `send(allow)`
     // makes the request; resolves to its answer, or null for no.
-    async sendAllowingZero(send) {
+    // A refused save that needs only the user's say-so is asked and sent
+    // again with the flag the server named: a $0.00 document (409
+    // "zero_total") and, since 2.22.2, a customer past their credit limit
+    // (409 "credit_limit", #256). `send(flags)` makes the request; flags is
+    // {} first, then what the server asked for, so both can be granted in
+    // one save. Returns null when the user said no.
+    async sendAllowingZero(send, flags = {}) {
         try {
-            return await send(false);
+            return await send(flags);
         } catch (err) {
-            if (!(err && err.status === 409 && err.detail && err.detail.code === 'zero_total')) throw err;
+            const code = err && err.status === 409 && err.detail && err.detail.code;
+            const flag = code === 'zero_total' ? 'allow_zero_total'
+                : code === 'credit_limit' ? 'allow_over_credit_limit' : null;
+            if (!flag || flags[flag]) throw err;
             if (!confirm(err.detail.question || err.message)) return null;
-            return send(true);
+            return SalesLines.sendAllowingZero(send, { ...flags, [flag]: true });
         }
     },
 };
@@ -465,8 +474,8 @@ const InvoicesPage = {
 
     async duplicate(id) {
         try {
-            const inv = await SalesLines.sendAllowingZero(allow =>
-                API.post(`/invoices/${id}/duplicate`, allow ? { allow_zero_total: true } : undefined));
+            const inv = await SalesLines.sendAllowingZero(flags =>
+                API.post(`/invoices/${id}/duplicate`, Object.keys(flags).length ? flags : undefined));
             if (!inv) return;
             toast(`Duplicated as ${T('Invoice')} #${inv.invoice_number}`);
             // another customer's job stored on the original was left off
@@ -878,10 +887,10 @@ const InvoicesPage = {
         }
 
         try {
-            const saved = await SalesLines.sendAllowingZero(allow => {
-                const body = allow ? { ...data, allow_zero_total: true } : data;
+            const saved = await SalesLines.sendAllowingZero(flags => {
+                const body = { ...data, ...flags };
                 return id ? API.put(`/invoices/${id}`, body) : API.post('/invoices', body);
-            });
+            }, InvoicesPage._overLimitOk ? { allow_over_credit_limit: true } : {});
             if (!saved) return; // $0.00 and the user said no: the form stays open
             toast(Terms.text(id ? 'Invoice updated' : 'Invoice created'));
             App.refresh();
@@ -895,6 +904,10 @@ const InvoicesPage = {
     // invoice being edited left out (its new amount is `owed`). Returns true
     // to go ahead; a failure to look is not a reason to stop.
     async creditLimitOk(customer, owed, editingId = null) {
+        // set when the user said "save anyway", so the save carries
+        // allow_over_credit_limit and the server (which asks too, #256)
+        // doesn't ask twice
+        InvoicesPage._overLimitOk = false;
         const limit = parseFloat(customer && customer.credit_limit);
         if (!customer || !(limit > 0)) return true;
         let open = 0;
@@ -907,8 +920,9 @@ const InvoicesPage = {
         } catch (e) { return true; }
         const after = SalesLines.cents(open + (Number(owed) || 0));
         if (after <= limit) return true;
-        return confirm(`${customer.name}'s credit limit is ${formatCurrency(limit)}. `
+        InvoicesPage._overLimitOk = confirm(`${customer.name}'s credit limit is ${formatCurrency(limit)}. `
             + `With this ${T('invoice')} they would owe ${formatCurrency(after)}. Save it anyway?`);
+        return InvoicesPage._overLimitOk;
     },
 
     async loadAttachments(entityType, entityId) {

@@ -99,6 +99,9 @@ class InvoiceCreate(StrictModel):
     # An invoice that adds up to $0.00 (no-charge warranty work) is saved
     # only when this says so; otherwise it is refused with 409 "zero_total".
     allow_zero_total: bool = False
+    # An invoice that takes the customer past their credit limit is saved
+    # only with this; otherwise 409 "credit_limit" (#256).
+    allow_over_credit_limit: bool = False
 
     @field_validator("lines")
     @classmethod
@@ -127,13 +130,17 @@ class InvoiceUpdate(StrictModel):
     lines: Optional[list[InvoiceLineCreate]] = None
     # As on create: an edit that leaves the invoice at $0.00 needs this.
     allow_zero_total: bool = False
+    allow_over_credit_limit: bool = False
 
 
 class ZeroTotalConfirmation(StrictModel):
     """The optional body of Duplicate and of an estimate's Convert: a copy
-    that adds up to $0.00 is made only with ``allow_zero_total: true``."""
+    that adds up to $0.00 is made only with ``allow_zero_total: true``, and
+    one that takes the customer past their credit limit only with
+    ``allow_over_credit_limit: true`` (#256)."""
 
     allow_zero_total: bool = False
+    allow_over_credit_limit: bool = False
 
 
 class InvoiceResponse(BaseModel):

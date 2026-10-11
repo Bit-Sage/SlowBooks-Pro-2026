@@ -18,7 +18,9 @@ from app.services.numbering import next_invoice_number
 from app.services.closing_date import check_closing_date
 
 from app.routes.invoices._router import router
+from app.services.contact_balances import home_amount
 from app.routes.invoices.helpers import (
+    confirm_credit_limit,
     confirm_zero_total,
     opening_status,
     refuse_due_before_date,
@@ -161,6 +163,12 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     from app.services.currency import resolve_rate
 
     doc_currency, doc_rate = resolve_rate(db, data.currency, data.exchange_rate)
+    # Past the customer's credit limit? Ask, on the API as in the form
+    # (#256). A sales receipt, paid as it is made, comes through here with
+    # the flag set by its own route: it owes nothing.
+    confirm_credit_limit(
+        db, customer, home_amount(total, doc_rate), data.allow_over_credit_limit, noun
+    )
 
     for _ in range(10):
         invoice_number = next_invoice_number(db)
@@ -361,6 +369,24 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             raise HTTPException(
                 status_code=400,
                 detail="Invoice total cannot be less than the amount already paid",
+            )
+        # An edit that raises what this invoice leaves owing, or moves it to
+        # another customer, asks about the credit limit as a new invoice
+        # does (#256); one that lowers it never does, even over the limit.
+        new_rate = update_data.get("exchange_rate", invoice.exchange_rate)
+        new_owed = home_amount(_q(total - invoice.amount_paid), new_rate)
+        now_owed = home_amount(invoice.balance_due, invoice.exchange_rate)
+        new_customer_id = update_data.get("customer_id", invoice.customer_id)
+        if new_owed > now_owed or new_customer_id != invoice.customer_id:
+            confirm_credit_limit(
+                db,
+                db.get(Customer, new_customer_id),
+                new_owed,
+                data.allow_over_credit_limit,
+                document_label(invoice, words).lower(),
+                exclude_invoice_id=(
+                    invoice.id if new_customer_id == invoice.customer_id else None
+                ),
             )
 
     # An invoice or sales receipt the QuickBooks Online import created

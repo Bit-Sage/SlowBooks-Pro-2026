@@ -16,6 +16,7 @@ from app.database import get_db
 from app.routes.invoices.helpers import (
     _due_date_from_terms,
     _post_invoice_journal,
+    confirm_credit_limit,
     confirm_zero_total,
     opening_status,
     resolve_line_taxable,
@@ -331,6 +332,16 @@ def convert_to_invoice(
         "estimate",
         "converting it",
         question="This estimate adds up to $0.00. Convert it to an invoice anyway?",
+    )
+    from app.services.contact_balances import home_amount
+
+    confirm_credit_limit(
+        db,
+        estimate.customer,
+        home_amount(total, getattr(estimate, "exchange_rate", None)),
+        bool(data and data.allow_over_credit_limit),
+        "invoice",
+        question=None,
     )
 
     invoice_number = next_invoice_number(db)

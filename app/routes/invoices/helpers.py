@@ -21,6 +21,7 @@ from app.services.accounting import (
 from app.services.terminology import document_reference
 
 ZERO_TOTAL_CODE = "zero_total"
+CREDIT_LIMIT_CODE = "credit_limit"
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +73,60 @@ def confirm_zero_total(
             "code": ZERO_TOTAL_CODE,
             "message": _zero_total_sentence(noun, action),
             "question": question or f"This {noun} adds up to $0.00. Save it anyway?",
+        },
+    )
+
+
+def confirm_credit_limit(
+    db,
+    customer,
+    owed,
+    allowed: bool,
+    noun: str = "invoice",
+    exclude_invoice_id=None,
+    question: str | None = None,
+) -> None:
+    """A customer's credit limit, told to every way of saving an invoice
+    (#256, 2.22.2). The form asked before it saved and nothing else did:
+    `POST /api/invoices` from an agent saved an over-limit invoice without
+    a word, though the limit is stored and imported from QuickBooks. Now a
+    document that would take what the customer owes past their limit is
+    refused with 409 and ``detail = {"code": "credit_limit", "message",
+    "question", "limit", "would_owe"}`` unless the request carries
+    ``allow_over_credit_limit: true``; the page asks the question and sends
+    the request again with the flag. What they owe is their open balance in
+    home dollars, net of the credits and unapplied payments they hold (as
+    A/R Aging and the customer page count it), less the invoice being
+    edited (whose new amount is `owed`). Nothing is written by the refused
+    request. A customer with no limit is never asked."""
+    from app.models.invoices import Invoice
+    from app.services.contact_balances import customer_balance, home_amount
+
+    if allowed or customer is None:
+        return
+    limit = Decimal(str(getattr(customer, "credit_limit", None) or 0))
+    if limit <= 0:
+        return
+    open_balance = customer_balance(db, customer.id)
+    if exclude_invoice_id is not None:
+        current = db.get(Invoice, exclude_invoice_id)
+        if current is not None and current.status != InvoiceStatus.VOID:
+            open_balance -= home_amount(current.balance_due, current.exchange_rate)
+    after = _q(open_balance + Decimal(str(owed or 0)))
+    if after <= limit:
+        return
+    sentence = (
+        f"{customer.name}'s credit limit is ${limit:,.2f}. "
+        f"With this {noun} they would owe ${after:,.2f}."
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": CREDIT_LIMIT_CODE,
+            "message": sentence,
+            "question": question or f"{sentence} Save it anyway?",
+            "limit": str(_q(limit)),
+            "would_owe": str(after),
         },
     )
 
