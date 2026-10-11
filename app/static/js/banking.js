@@ -530,6 +530,8 @@ const BankingPage = {
     },
 
     _reviewPanel(review, feedId, accountId, kind) {
+        // the lines by id, for "Rule…" (the payee and the category chosen)
+        BankingPage._reviewLines = Object.fromEntries(review.map(t => [t.id, t]));
         const rows = review.map(t => `
             <tr>
                 <td>${formatDate(t.date)}</td>
@@ -540,6 +542,7 @@ const BankingPage = {
                     <button class="btn btn-sm btn-primary" onclick="BankingPage.addLine(${t.id}, ${accountId})">Add</button>
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.showMatch(${t.id}, ${accountId})">Match</button>
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.excludeLine(${t.id}, ${accountId})">Exclude</button>
+                    <button class="btn btn-sm btn-secondary" onclick="BankingPage.ruleFromLine(${t.id}, ${accountId})" title="A bank rule from this payee and the category chosen">Rule…</button>
                 </td>
             </tr>`).join('');
         setTimeout(() => BankingPage._fillCategorySelects(kind), 0);
@@ -608,6 +611,29 @@ const BankingPage = {
     // posted just the rule-categorised lines, and reloading lost the rest
     // (exploratory 2.17.3, W-M12).
     _pendingCategories: new Set(),
+
+    // A bank rule from a statement line (#259): the rule form opens with
+    // the payee as the pattern and the category chosen here filled in, so
+    // the two screens that know the same payee hand it across. Saved, the
+    // rules run over the queue, and the register comes back.
+    async ruleFromLine(lineId, accountId) {
+        const line = (BankingPage._reviewLines || {})[lineId] || {};
+        const sel = document.getElementById(`cat-${lineId}`);
+        await Promise.allSettled([...BankingPage._pendingCategories]);
+        const accountChosen = sel && (sel.value || sel.dataset.current);
+        const payee = (line.payee || line.description || '').trim();
+        if (!payee) { toast('This line has no payee to make a rule from.', 'error'); return; }
+        BankRulesPage.showForm(null, {
+            name: payee,
+            pattern: payee,
+            account_id: accountChosen ? parseInt(accountChosen, 10) : '',
+            from: 'a statement line',
+            afterSave: async () => {
+                try { await API.post('/bank-rules/apply'); } catch (e) { /* the rule is saved; the queue catches it on the next import */ }
+                App.refresh();
+            },
+        });
+    },
 
     setCategory(lineId, sel) {
         const value = sel.value ? parseInt(sel.value, 10) : null;
