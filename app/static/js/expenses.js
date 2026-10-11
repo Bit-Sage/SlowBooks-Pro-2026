@@ -15,7 +15,7 @@ const ExpensesPage = {
         let html = `
             <div class="page-header">
                 <h2>Expenses</h2>
-                <button class="btn btn-primary" onclick="ExpensesPage.showForm()">+ Enter Expense</button>
+                <button class="btn btn-primary" ${App.shortcutAttrs('E', 'Enter Expense')} onclick="ExpensesPage.showForm()">+ Enter Expense</button>
             </div>`;
 
         if (expenses.length === 0) {

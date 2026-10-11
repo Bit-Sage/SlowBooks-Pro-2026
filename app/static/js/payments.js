@@ -14,7 +14,7 @@ const PaymentsPage = {
         let html = `
             <div class="page-header">
                 <h2>Payments</h2>
-                <button class="btn btn-primary" onclick="PaymentsPage.showForm()">+ Record Payment</button>
+                <button class="btn btn-primary" ${App.shortcutAttrs('P', 'Record Payment')} onclick="PaymentsPage.showForm()">+ Record Payment</button>
             </div>` + capNote;
 
         if (payments.length === 0) {

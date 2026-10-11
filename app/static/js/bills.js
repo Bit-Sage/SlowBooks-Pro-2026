@@ -17,7 +17,7 @@ const BillsPage = {
         return renderListPage({
             title: 'Bills (Accounts Payable)',
             headerHtml: `<div class="btn-group">
-                    <button class="btn btn-primary" onclick="BillsPage.showForm()">+ Enter Bill</button>
+                    <button class="btn btn-primary" ${App.shortcutAttrs('B', 'Enter Bill')} onclick="BillsPage.showForm()">+ Enter Bill</button>
                     <button class="btn btn-secondary" onclick="BillsPage.showPayForm()">Pay Bills</button>
                 </div>` + (all ? '' : listCapNote(rows, 500, 'BillsPage.showAll()', 'bills')),
             filter: {

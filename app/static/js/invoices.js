@@ -174,7 +174,7 @@ const InvoicesPage = {
         const invoices = all ? rows : rows.slice(0, 500);
         return renderListPage({
             title: T('Invoices'),
-            headerHtml: `<button class="btn btn-primary" onclick="InvoicesPage.showForm()">+ ${T('New Invoice')}</button>`
+            headerHtml: `<button class="btn btn-primary" ${App.shortcutAttrs('N', T('New Invoice'))} onclick="InvoicesPage.showForm()">+ ${T('New Invoice')}</button>`
                 + (all ? '' : listCapNote(rows, 500, 'InvoicesPage.showAll()', Terms.text('invoices'))),
             filter: {
                 id: 'inv-status-filter',
