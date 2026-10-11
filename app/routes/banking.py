@@ -5,6 +5,7 @@
 
 import re
 from datetime import date
+from typing import Optional
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,7 @@ from app.models.banking import (
     Reconciliation,
     ReconciliationStatus,
 )
+from app.schemas.common import StrictModel
 from app.schemas.banking import (
     BankAccountCreate,
     BankAccountUpdate,
@@ -599,6 +601,27 @@ def toggle_cleared(recon_id: int, line_id: int, db: Session = Depends(get_db)):
     line = rc.toggle(db, _recon(db, recon_id), line_id)
     db.commit()
     return {"id": line.id, "reconciled": bool(line.cleared)}
+
+
+class ReconcileMarkAll(StrictModel):
+    cleared: bool = True
+    through: Optional[date] = None
+
+
+@router.post("/reconciliations/{recon_id}/mark-all")
+def mark_all_cleared(
+    recon_id: int, data: ReconcileMarkAll, db: Session = Depends(get_db)
+):
+    """Tick (or, with `cleared: false`, untick) every line the session
+    shows, or those up to `through` (#258). Answers with how many changed
+    and the session's figures, so the page shows the new difference at
+    once."""
+    from app.services import reconciliation as rc
+
+    recon = _recon(db, recon_id)
+    changed = rc.mark_all(db, recon, data.cleared, data.through)
+    db.commit()
+    return {"changed": changed, **rc.session(db, recon)}
 
 
 @router.post("/reconciliations/{recon_id}/complete")
