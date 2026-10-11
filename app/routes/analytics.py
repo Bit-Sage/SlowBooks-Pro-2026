@@ -481,6 +481,20 @@ def _key_provider(db: Session, settings: dict, api_key: str) -> str:
     return _KEY_OWNER_UNKNOWN
 
 
+def _require_model(cfg: dict) -> None:
+    """A model chosen, or a 400 that says so. There is no built-in default
+    any more (#254): the page lists the provider's models and the company
+    picks one."""
+    if not (cfg.get("model") or "").strip():
+        provider = cfg.get("provider") or ""
+        label = getattr(AI_PROVIDERS.get(provider), "label", provider)
+        raise HTTPException(
+            status_code=400,
+            detail=f"No model chosen for {label}. Pick one in Settings → "
+            "AI Insights (the list comes from the provider), then Test.",
+        )
+
+
 def _require_key(cfg: dict) -> None:
     """A provider chosen and its own key saved, or a 400 that says which
     is missing (gate round 2, W-2: a provider with no key of its own was
@@ -713,6 +727,36 @@ def put_ai_config(
     return get_ai_config(db)
 
 
+@router.get("/ai-models")
+def get_ai_models(request: Request, db: Session = Depends(get_db)):
+    """The models the configured provider offers, from the provider itself
+    (#254): what the Settings page's model picker lists. Uses the saved key,
+    which is sent only to its own provider; the administrator's, like the
+    key. Returns `{provider, provider_label, models: [{id, label}]}`."""
+    require_admin(request)
+    cfg = _read_ai_config(db)
+    provider = cfg.get("provider") or ""
+    _require_key(cfg)
+    _require_provider_extras(provider, cfg)
+    from app.services.ai_service import list_models
+
+    try:
+        models = list_models(
+            provider,
+            cfg.get("api_key") or "",
+            account_id=cfg.get("cloudflare_account_id") or None,
+            worker_url=cfg.get("worker_url") or None,
+            endpoint_url=cfg.get("endpoint_url") or None,
+        )
+    except AIProviderError as e:
+        raise HTTPException(status_code=502, detail=_ai_error_detail(e))
+    return {
+        "provider": provider,
+        "provider_label": AI_PROVIDERS[provider].label,
+        "models": models,
+    }
+
+
 @router.post("/ai-config/test")
 @limiter.limit("20/minute")
 def test_ai_config(request: Request, db: Session = Depends(get_db)):
@@ -731,7 +775,8 @@ def test_ai_config(request: Request, db: Session = Depends(get_db)):
     _require_provider_extras(provider, cfg)
 
     spec = AI_PROVIDERS[provider]
-    model = cfg.get("model") or spec.default_model
+    _require_model(cfg)
+    model = cfg["model"]
 
     try:
         # Smallest possible round-trip: ask for a one-word reply.
@@ -784,8 +829,8 @@ def ai_insights(
     _require_key(cfg)
     _require_provider_extras(provider, cfg)
 
-    spec = AI_PROVIDERS[provider]
-    model = cfg.get("model") or spec.default_model
+    _require_model(cfg)
+    model = cfg["model"]
 
     s, e, label = _resolve_period(period, start_date, end_date)
 
@@ -890,8 +935,8 @@ def run_ai_action(
     _require_key(cfg)
     _require_provider_extras(provider, cfg)
 
-    spec = AI_PROVIDERS[provider]
-    model = cfg.get("model") or spec.default_model
+    _require_model(cfg)
+    model = cfg["model"]
 
     # Period is only meaningful for actions that declared uses_period=True;
     # actions that don't use it just ignore the dates. Always resolve so
@@ -948,8 +993,8 @@ def ai_query(
     _require_key(cfg)
     _require_provider_extras(provider, cfg)
 
-    spec = AI_PROVIDERS[provider]
-    model = cfg.get("model") or spec.default_model
+    _require_model(cfg)
+    model = cfg["model"]
 
     # Build tool executor that captures DB session
     def tool_exec(tool_name: str, **params):
