@@ -119,7 +119,7 @@ const VendorsPage = {
                     <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
                         ${vendor.is_active === false ? '<span style="color:var(--text-danger)">Inactive</span>' : '<span style="color:var(--text-success)">Active</span>'}
                         &nbsp;·&nbsp; Terms: ${escapeHtml(vendor.terms || 'Net 30')}
-                        ${vendor.is_1099_vendor ? ` · <strong>1099${vendor.vendor_1099_type ? ' ' + escapeHtml(vendor.vendor_1099_type) : ''}</strong>` : ''}
+                        ${vendor.is_1099_vendor ? ` · <strong>1099${vendor.vendor_1099_type ? ' ' + escapeHtml(vendor.vendor_1099_type) : ''}</strong> · W-9 ${vendor.w9_on_file ? 'on file' : '<span style="color:var(--text-danger)">not on file</span>'}` : ''}
                         ${vendor.tax_id ? ` · Tax ID: <code>${escapeHtml(vendor.tax_id)}</code>` : ''}
                         ${vendor.account_number ? ` · Account #: <code>${escapeHtml(vendor.account_number)}</code>` : ''}
                     </div>
@@ -270,7 +270,7 @@ const VendorsPage = {
         let v = { name:'', company:'', email:'', phone:'', fax:'', website:'',
             address1:'', address2:'', city:'', state:'', zip:'', country:'US',
             terms:'Net 30', tax_id:'', account_number:'', default_expense_account_id:'',
-            is_1099_vendor:false, vendor_1099_type:'', notes:'' };
+            is_1099_vendor:false, vendor_1099_type:'', w9_on_file:false, notes:'' };
         if (id) v = await API.get(`/vendors/${id}`);
 
         // Cost of goods too: a flour mill or a panel supplier is bought
@@ -340,6 +340,11 @@ const VendorsPage = {
                             <option value="INT" ${v.vendor_1099_type==='INT' ? 'selected' : ''}>INT (Interest)</option>
                             <option value="DIV" ${v.vendor_1099_type==='DIV' ? 'selected' : ''}>DIV (Dividends)</option>
                         </select></div>
+                    <div class="form-group"><label>W-9 on file</label>
+                        <select name="w9_on_file" title="The 1099-NEC prints this; the 1099 Summary names a reportable vendor without one">
+                            <option value="false" ${!v.w9_on_file ? 'selected' : ''}>No</option>
+                            <option value="true" ${v.w9_on_file ? 'selected' : ''}>Yes</option>
+                        </select></div>
                     <div class="form-group full-width"><label>Notes</label>
                         <textarea name="notes">${escapeHtml(v.notes || '')}</textarea></div>
                 </div>
@@ -367,6 +372,7 @@ const VendorsPage = {
         data.default_expense_account_id = data.default_expense_account_id ? parseInt(data.default_expense_account_id) : null;
         data.is_1099_vendor = data.is_1099_vendor === 'true';
         data.vendor_1099_type = data.vendor_1099_type || null;
+        if ('w9_on_file' in data) data.w9_on_file = data.w9_on_file === 'true';
         if ('is_active' in data) data.is_active = data.is_active === 'true';
         try {
             if (id) {
