@@ -148,7 +148,9 @@ jobs:
           # Playwright: its books fixture lives in conftest), +1
           # tests/test_browser_keyboard.py, +1 tests/test_browser_job_picker.py,
           # +1 a PDF test of the round-2 exports (WeasyPrint's native stack).
-          MAX_SKIPS: "115"
+          # 2.22.2: +1 the deposit slip's real-PDF test (#260), which the
+          # WeasyPrint hook skips here as it does the other PDF tests.
+          MAX_SKIPS: "116"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
