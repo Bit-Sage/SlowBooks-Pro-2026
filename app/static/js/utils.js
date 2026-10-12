@@ -269,6 +269,28 @@ function focusFor(el, keyboard) {
     try { el.focus(keyboard ? { focusVisible: true } : undefined); return true; } catch (e) { return false; }
 }
 
+// A skip link inside a long form or page (#266): hidden until the keyboard
+// reaches it, then shown where it sits, so Tab from the top of an invoice
+// offers "Skip to the line items" before the forty stops of the address
+// block. The landing is the first control inside the target (a line's
+// first box, the chart's filter), with the keyboard's ring on it.
+function skipLinkHtml(target, text) {
+    return `<a href="#" class="skip-link skip-link--inline" onclick="return skipTo(event, '${escapeHtml(target)}')">${escapeHtml(text)}</a>`;
+}
+
+function skipTo(e, target) {
+    if (e && e.preventDefault) e.preventDefault();
+    const root = document.querySelector(target);
+    if (!root) return false;
+    const into = root.matches(_TAB_SEL) && root.tabIndex >= 0 ? root : _tabStops(root, null)[0];
+    if (into) { focusFor(into, true); return false; }
+    // nothing to land on inside: the place itself, as the main skip link does
+    root.setAttribute('tabindex', '-1');
+    root.addEventListener('blur', () => root.removeAttribute('tabindex'), { once: true });
+    focusFor(root, true);
+    return false;
+}
+
 // Whether the last input was the keyboard (App.keyboardFocus), for focus
 // the app moves after either.
 function _byKeyboard() {
@@ -317,8 +339,11 @@ function openModal(title, html, opts) {
     // focus itself then, as one with no control does, and a screen reader
     // says its title (macOS gate NEW-32: the journal entry, job cost and
     // deposit views opened on Void).
+    // A form's own skip link (skipLinkHtml) is the first stop for Tab and
+    // a screen reader, not where a dialog opens: the first field is.
     setTimeout(() => {
-        const first = _tabStops($('#modal-body'), null)[0];
+        const stops = _tabStops($('#modal-body'), null);
+        const first = stops.find(el => !el.matches('.skip-link')) || stops[0];
         const target = first && !first.matches('[data-destructive]') ? first : modal;
         focusFor(target, _byKeyboard());
     }, 0);

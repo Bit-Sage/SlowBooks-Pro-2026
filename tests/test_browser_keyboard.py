@@ -4388,3 +4388,64 @@ def test_the_search_shortcut_does_nothing_over_a_dialog(browser, company, books)
         assert page.evaluate("() => document.activeElement.id") == "global-search"
     finally:
         page.close()
+
+
+# ── #266: skip links inside the long forms and on the chart ───────────────
+
+SKIP_IN_MODAL = "() => document.querySelector('#modal-body a.skip-link--inline')"
+ACTIVE = """() => { const a = document.activeElement;
+    return { tag: a.tagName.toLowerCase(), id: a.id, cls: a.className, inLines: !!a.closest('#inv-lines, #bill-lines, #je-lines'),
+             ring: a.matches(':focus-visible') }; }"""
+
+
+def test_the_long_forms_skip_to_their_lines_and_the_chart_to_its_filter(
+    browser, company, books
+):
+    page, handled = _open(browser, company)
+    try:
+        for route, call, ready in (
+            ("#/invoices", "InvoicesPage.showForm()", "#inv-lines tr"),
+            ("#/bills", "BillsPage.showForm()", "#bill-lines tr"),
+            ("#/journal", "JournalPage.showForm()", "#je-lines tr"),
+        ):
+            _visit(page, handled, route)
+            _open_dialog(page, handled, call, ready)
+            # the form is a landmark named by the dialog's title
+            assert (
+                page.evaluate(
+                    "() => document.querySelector('#modal-body form').getAttribute('aria-labelledby')"
+                )
+                == "modal-title"
+            )
+            # it opens on its first field, not on the skip link
+            was = page.evaluate(ACTIVE)
+            assert "skip-link" not in was["cls"] and was["tag"] != "body", was
+            # Shift+Tab from there reaches the skip link, shown in place
+            page.keyboard.press("Shift+Tab")
+            now = page.evaluate(ACTIVE)
+            assert "skip-link--inline" in now["cls"], now
+            assert page.evaluate(
+                "() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return r.width > 20 && r.height > 10; }"
+            )
+            # Enter lands on the first line's first box, with the ring
+            page.keyboard.press("Enter")
+            landed = page.evaluate(ACTIVE)
+            assert landed["inLines"] and landed["tag"] in ("input", "select"), landed
+            assert landed["ring"], landed
+            page.evaluate("() => closeModal()")
+            page.wait_for_function(f"() => !({MODAL_SHOWN})()")
+
+        # the chart: a navigation landmark, and its skip link lands on the filter
+        _visit(page, handled, "#/accounts")
+        assert page.evaluate(
+            "() => document.querySelector('#page-content nav[aria-labelledby=\"accounts-heading\"] table') !== null"
+        )
+        page.evaluate(
+            "() => document.querySelector('#page-content a.skip-link--inline').focus()"
+        )
+        assert "skip-link--inline" in page.evaluate(ACTIVE)["cls"]
+        page.keyboard.press("Enter")
+        landed = page.evaluate(ACTIVE)
+        assert landed["id"] == "accounts-filter" and landed["ring"], landed
+    finally:
+        page.close()

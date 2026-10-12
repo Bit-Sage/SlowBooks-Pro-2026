@@ -621,7 +621,8 @@ const InvoicesPage = {
         const custOpts = customers.map(c => `<option value="${c.id}" ${inv.customer_id==c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
 
         openModal(Terms.text(id ? 'Edit Invoice' : 'New Invoice'), `
-            <form id="invoice-form" onsubmit="InvoicesPage.save(event, ${id})">
+            <form id="invoice-form" aria-labelledby="modal-title" onsubmit="InvoicesPage.save(event, ${id})">
+                ${skipLinkHtml('#inv-lines', 'Skip to the line items')}
                 ${InvoicesPage.logoOptionHtml(settings)}
                 <div class="form-grid">
                     <div class="form-group"><label>${T('Customer')} *</label>
