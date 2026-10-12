@@ -74,8 +74,9 @@ const EstimatesPage = {
         } catch (err) { /* the server still decides the conversion */ }
         try {
             // an estimate for $0.00 asks before it becomes a $0.00 invoice
-            const inv = await SalesLines.sendAllowingZero(allow =>
-                API.post(`/estimates/${id}/convert`, allow ? { allow_zero_total: true } : undefined));
+            const inv = await SalesLines.sendAllowingZero(flags =>
+                API.post(`/estimates/${id}/convert`, Object.keys(flags).length ? flags : undefined),
+                InvoicesPage._overLimitOk ? { allow_over_credit_limit: true } : {});
             if (!inv) return;
             toast(`Created ${T('Invoice')} #${inv.invoice_number}`);
             // another customer's job stored on the estimate was left off
