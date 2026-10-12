@@ -19,6 +19,9 @@ from app.models.payroll import PayRun, PayRunStatus
 ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "app" / "static" / "js"
 
+# fixture sign-ins: module constants, never a literal beside a username
+FIXTURE_PW = "test-password-123"
+
 
 def _html(monkeypatch):
     from app.services.tax_forms import form_940, form_941, w2_w3
@@ -86,7 +89,7 @@ def test_the_history_names_each_form_and_who_generated_it(
         User(
             username="dana",
             display_name="Dana",
-            password_hash=auth_service.hash_password("Payroll-2026!"),
+            password_hash=auth_service.hash_password(FIXTURE_PW),
             role="admin",
             is_active=True,
         )
@@ -94,7 +97,7 @@ def test_the_history_names_each_form_and_who_generated_it(
     db_session.commit()
     client.post("/api/auth/logout")
     r = client.post(
-        "/api/auth/login", json={"username": "dana", "password": "Payroll-2026!"}
+        "/api/auth/login", json={"username": "dana", "password": FIXTURE_PW}
     )
     assert r.status_code == 200, r.text
 
@@ -218,7 +221,7 @@ def test_the_history_is_admin_only_like_the_rest_of_payroll(client, db_session):
         User(
             username="books",
             display_name="Books",
-            password_hash=auth_service.hash_password("Ledger-2026!"),
+            password_hash=auth_service.hash_password(FIXTURE_PW),
             role="bookkeeper",
             is_active=True,
         )
@@ -226,7 +229,7 @@ def test_the_history_is_admin_only_like_the_rest_of_payroll(client, db_session):
     db_session.commit()
     client.post("/api/auth/logout")
     r = client.post(
-        "/api/auth/login", json={"username": "books", "password": "Ledger-2026!"}
+        "/api/auth/login", json={"username": "books", "password": FIXTURE_PW}
     )
     assert r.status_code == 200, r.text
     assert client.get("/api/document-audits").status_code == 403
