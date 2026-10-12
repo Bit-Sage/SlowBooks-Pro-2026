@@ -150,8 +150,8 @@ Real-time business intelligence layer that sits on top of the accounting engine.
 
 **Metrics computed:**
 - **Revenue by Customer** — Paid revenue per customer for the selected period, ranked high-to-low
-- **12-Month Revenue Trend** — Monthly paid-revenue history with proper calendar-month bucketing
-- **Expenses by Category** — Paid-bill expenses grouped by expense account number
+- **12-Month Revenue Trend** — Monthly income from the ledger (what was credited to income accounts, by posting date), bucketed by calendar month (v2.22.3; it was paid invoices by invoice date)
+- **Expenses by Category** — Everything posted to expense and cost-of-goods accounts in the period, grouped by account number: bills when dated (paid or not), expenses, register entries, card charges, payroll and journal entries, as the Profit & Loss counts them (v2.22.3, #281; it was paid bills only, so a bank-fed, journal-entry company saw nothing). Voided postings net to zero. The screen and the PDF say the basis
 - **A/R Aging** — Open invoice balances bucketed Current / 30 / 60 / 90+ days old, using `invoices.balance_due` so partial payments don't double-count. Table is sorted worst-offender first and includes a TOTAL row.
 - **A/P Aging** — Open bill balances bucketed Current / 30 / 60 / 90+ days old (same treatment as A/R)
 - **DSO (Days Sales Outstanding)** — `(open A/R balance ÷ last-30-day paid revenue) × 30`
@@ -265,7 +265,7 @@ Beyond the headline insights brief, the analytics page exposes a **curated dropd
 | **Customers & Sales** | Top customers by revenue | `get_sales_by_customer` |
 | | Unpaid invoices summary | `search_invoices` |
 | | A/R aging | `get_aging_report` |
-| **Vendors & Bills** | Expenses by category | `get_expenses_by_category` |
+| **Vendors & Bills** | Expenses by category (the ledger, v2.22.3) | `get_expenses_by_category` |
 | | Unpaid bills summary | `search_bills` |
 | | A/P aging | `get_aging_report` |
 | **Banking & Cash** | Cash position by account | `list_accounts` + `get_account_balance` |
@@ -353,7 +353,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 - **Backup/Restore** — Create, download and restore backups from Settings. Backups are named for their company and listed per company; a restore takes a safety copy first, asks twice for another company's backup, and refuses a newer version's
 - **Multi-Company** — Support for multiple company databases, switchable from UI
 - **Global Search** — Unified server-side search across customers, vendors, items, invoices, estimates, and payments
-- **Attachments** — Upload files (PDF, images) to invoices, bills, and other entities with MIME type and extension validation
+- **Attachments** — Upload files (PDF, images) to invoices, bills, expenses, estimates, purchase orders, vendor credits, vendors, customers and (v2.22.3, #281) journal entries — the receipt behind a manual entry, such as an owner paying a business expense personally — with MIME type and extension validation
 - **Bank Rules** — Auto-categorize imported bank transactions with pattern-matching rules
 - **Budgets** — Create and track budgets by account and period with actual-vs-budget comparison
 - **Email Templates** — Customizable email templates for invoices, estimates, and statements

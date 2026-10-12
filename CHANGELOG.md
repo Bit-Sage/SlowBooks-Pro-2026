@@ -7,6 +7,34 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### v2.22.3 — The ledger behind the dashboard
+
+Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
+(#281, @sgwyther-gif).
+
+**Analytics and the AI brief read the ledger.** Expenses by category
+summed bill lines on paid bills, and the revenue trend paid invoices, so a
+company that reconciles through a bank feed and records the rest as
+journal entries saw an empty doughnut and an AI Insights brief with nothing
+in it — silently wrong, not merely incomplete. Both now read the ledger:
+everything posted to expense and cost-of-goods accounts, and to income
+accounts, in the period — bills when dated (paid or not), expenses,
+register entries, card charges, payroll and journal entries — as the Profit
+& Loss counts them; a voided posting and its reversal net to zero. The AI
+tool behind "expenses by category" questions uses the same query. Revenue
+by customer stays what it was, invoices and sales receipts dated in the
+period and paid in full, because ledger lines carry no customer; the
+screen, the PDF and the KPI labels say which basis is which.
+
+**A receipt attaches to a journal entry.** `/api/attachments` whitelisted
+eight record types and not `journal_entry`, though a journal entry is
+sometimes the only right record of a real transaction — an owner paying a
+business expense personally, credited to equity, which an Expense cannot be
+(it is paid from an asset or liability). The journal entry's view carries
+the same Attachments block as an expense's.
+
+No schema change. 565 API operations.
+
 ### v2.22.2 — Thirteen quick wins
 
 Thirteen enhancements from Grok's feature exploration of 2.22.1 on

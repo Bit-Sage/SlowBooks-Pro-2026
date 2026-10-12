@@ -81,6 +81,10 @@ deposit slip; an Items filter of what to reorder; cancel a time-off request
 (the hours and the relief journal come back); a form history under Tax
 Forms with a hash check; Alt+B and Alt+E; the figure on every bar, slice
 and point; and landmarks with skip links on the long forms and the chart.
+2.22.3 (#281): Analytics' expenses by category and revenue trend, and the
+AI brief with them, read the ledger rather than paid bills and paid
+invoices, so a bank-fed, journal-entry company sees its figures; and a
+receipt attaches to a journal entry.
 
 **v2.21 — Three things you'd reach for.** Click a vendor for its own
 page, with its bills, payments, credits and what's owed (#223). Edit a
