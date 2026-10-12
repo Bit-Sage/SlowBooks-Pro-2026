@@ -68,10 +68,64 @@ const JournalPage = {
                 <div class="total-row"><span class="label">Total Debit</span><span class="value">${formatCurrency(entry.total_debit)}</span></div>
                 <div class="total-row"><span class="label">Total Credit</span><span class="value">${formatCurrency(entry.total_credit)}</span></div>
             </div>
+            <div style="margin-top:12px; border-top:1px solid var(--gray-300); padding-top:8px;">
+                <div style="font-weight:700; font-size:12px; margin-bottom:4px;">Attachments</div>
+                <div id="journal-attachments-list" style="margin-bottom:8px; font-size:11px;">Loading...</div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="file" id="journal-attach-file" aria-label="File to attach" style="font-size:11px;">
+                    <button class="btn btn-sm btn-secondary" onclick="JournalPage.uploadAttachment(${entry.id})">Attach</button>
+                </div>
+            </div>
             <div class="form-actions">
                 ${JournalPage.canVoid(entry) ? `<button data-destructive class="btn btn-danger" onclick="JournalPage.void(${entry.id})">Void</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        JournalPage.loadAttachments(entry.id);
+    },
+
+    // The receipt behind a manual entry (#281): the same files, the same
+    // routes, as an expense's or a bill's.
+    async loadAttachments(id) {
+        const el = $('#journal-attachments-list');
+        if (!el) return;
+        try {
+            const attachments = await API.get(`/attachments/journal_entry/${id}`);
+            if (attachments.length === 0) {
+                el.innerHTML = '<span style="color:var(--text-muted);">No attachments</span>';
+            } else {
+                el.innerHTML = attachments.map(a =>
+                    `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; padding:2px 0;">
+                        ${a.missing ? `<span>${escapeHtml(a.filename)}</span>` : `<a href="/api/attachments/download/${a.id}" target="_blank">${escapeHtml(a.filename)}</a>`}
+                        ${a.file_size == null ? '' : `<span style="color:var(--gray-400);">(${formatFileSize(a.file_size)})</span>`}
+                        <button data-destructive aria-label="Delete attachment" class="btn btn-sm btn-danger" onclick="JournalPage.deleteAttachment(${a.id},${id})" style="padding:0 4px; font-size:10px;">X</button>
+                        ${storedFileNote(a)}
+                    </div>`
+                ).join('');
+            }
+        } catch (e) { el.innerHTML = ''; }
+    },
+
+    async uploadAttachment(id) {
+        const fileInput = $('#journal-attach-file');
+        if (!fileInput?.files[0]) { toast('Select a file first', 'error'); return; }
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        try {
+            const resp = await fetch(`/api/attachments/journal_entry/${id}`, { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Upload failed'));
+            toast('Attachment uploaded');
+            fileInput.value = '';
+            JournalPage.loadAttachments(id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async deleteAttachment(attachmentId, id) {
+        if (!confirm('Delete this attachment?')) return;
+        try {
+            await API.del(`/attachments/${attachmentId}`);
+            toast('Attachment deleted');
+            JournalPage.loadAttachments(id);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     _lineCount: 0,
