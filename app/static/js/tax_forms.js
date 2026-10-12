@@ -145,7 +145,7 @@ const TaxFormsPage = {
             <td>${escapeHtml(TaxFormsPage._when(a.created_at))}</td>
             <td>${escapeHtml(a.username || '—')}</td>
             <td><code title="${escapeHtml(a.content_hash)}" style="font-size:11px">${escapeHtml(String(a.content_hash || '').slice(0, 16))}…</code></td>
-            <td id="audit-status-${a.id}" role="status" style="font-size:12px;max-width:420px">Not checked</td>
+            <td id="audit-status-${a.id}" role="status" aria-atomic="true" style="font-size:12px;max-width:420px">Not checked</td>
             <td class="actions"><button class="btn btn-sm btn-secondary" onclick="TaxFormsPage.checkForm(${a.id})" aria-label="Check the ${escapeHtml(a.form || a.doc_type)} for ${escapeHtml(a.subject || a.doc_key)}">Check</button></td>
         </tr>`).join('');
     },

@@ -260,7 +260,9 @@ def test_the_page_lists_checks_and_finds():
         and "API.get(`/document-audits/${byId[1]}`)" in js
     )
     # the answer lands in a live region, as a sentence
-    assert 'id="audit-status-${a.id}" role="status"' in js
+    # the whole answer is read on every Check, not only the part that changed
+    # (gate round 4, NEW-72: a second Check was announced as the time alone)
+    assert 'id="audit-status-${a.id}" role="status" aria-atomic="true"' in js
     assert "${escapeHtml(r.message)}" in js  # the sentence, with its mark (NEW-67)
     assert 'id="taxforms-h-form-history">Form history</h3>' in js
     # Find clears the last highlight before any answer (NEW-64)
