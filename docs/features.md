@@ -134,8 +134,8 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 
 ## Dashboard
 - Company Snapshot with Total Receivables, Overdue Invoices, Active Customers, Total Payables
-- **AR Aging Bar Chart** — Color-coded stacked bar (Current/30/60/90+ days)
-- **Monthly Revenue Trend** — Bar chart showing last 12 months of invoiced revenue
+- **AR Aging Bar Chart** — Color-coded stacked bar (Current/30/60/90+ days); each segment wide enough to hold it carries its figure (v2.22.2)
+- **Monthly Revenue Trend** — Bar chart showing last 12 months of invoiced revenue, the figure above each bar (v2.22.2)
 - Recent invoices and payments tables
 - Bank balances at a glance
 
@@ -159,7 +159,7 @@ Real-time business intelligence layer that sits on top of the accounting engine.
 
 **Dashboard UI (`#/analytics`, inline SPA page):**
 - **4 KPI cards** — Revenue, Expenses, DSO, Margin%
-- **Chart.js visualizations** (self-hosted 206 KB UMD bundle at `/static/js/chart.umd.js` — no CDN, LAN-deployable):
+- **Chart.js visualizations** (self-hosted 206 KB UMD bundle at `/static/js/chart.umd.js` — no CDN, LAN-deployable). Every bar, slice and point carries its figure as text on or beside the mark (v2.22.2, `chartFigures()` in utils.js); labels that would collide or fall outside the chart are left off, and the detail table stays:
   - Revenue trend — 12-month line chart with filled area + hover tooltips
   - Expenses by category — doughnut chart with legend
   - A/R aging — horizontal stacked bar chart (one bar per customer, stacks = current/30/60/90)

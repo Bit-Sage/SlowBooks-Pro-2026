@@ -11,6 +11,8 @@ const ctx = {
   escapeHtml: (s) => String(s), T: (s) => s, Terms: { text: (s) => s },
   // utils.js's own formatCurrency
   formatCurrency: (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0),
+  // utils.js's compactMoney: the figure a segment carries (#265)
+  compactMoney: (n) => '$' + Math.round(n),
 };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('app/static/js/dashboard.js', 'utf8') + '\nthis.D = DashboardPage;', ctx);

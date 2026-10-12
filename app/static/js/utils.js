@@ -168,6 +168,125 @@ function chartColor(name) {
     return value || CHART_FALLBACK[name] || name;
 }
 
+// Money the size a chart label can hold: $1.2k, $12k, $3.4M, -$850, $45.50.
+function compactMoney(v) {
+    const n = Number(v) || 0;
+    const a = Math.abs(n);
+    let body;
+    if (a >= 1e6) body = (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    else if (a >= 1e3) body = (a / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'k';
+    else if (a >= 100 || a === Math.round(a)) body = String(Math.round(a));
+    else body = a.toFixed(2);
+    return `${n < 0 ? '-' : ''}$${body}`;
+}
+
+// Dark or light text on a colour (a bar's, a slice's), by its luminance. A
+// translucent colour is what it looks like over the page: blended with the
+// theme's ground first (a pale green at 35% is pale, whatever its RGB).
+function _textOn(color, dark) {
+    const hex = /^#?([0-9a-f]{6})$/i.exec(String(color || '').trim());
+    const rgb = /^rgba?\(([^)]+)\)/i.exec(String(color || ''));
+    let r, g, b, a = 1;
+    if (hex) { const n = parseInt(hex[1], 16); r = n >> 16; g = (n >> 8) & 255; b = n & 255; }
+    else if (rgb) { [r, g, b, a] = rgb[1].split(',').map(x => parseFloat(x)); if (Number.isNaN(a)) a = 1; }
+    else return dark ? '#e6e6f0' : '#1a1a28';
+    const ground = dark ? [30, 34, 48] : [255, 255, 255];
+    [r, g, b] = [r, g, b].map((c, i) => a * c + (1 - a) * ground[i]);
+    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return lum > 0.6 ? '#1a1a28' : '#ffffff';
+}
+
+// A Chart.js plugin: every bar, slice and point gets its figure as text on
+// or beside the mark (#265), so the colour is not the only way from a mark
+// to its amount — the legend and the table under the chart stay. A bar's
+// figure sits past its end, inside the bar when the chart area has no room
+// there; a stacked segment's sits in the segment when it fits; a slice's
+// sits in the slice (one under 4% is too thin to hold text); a point's
+// sits above it (below, for every other line). A label that would land on
+// one already drawn, or outside the chart area, is left off: a crowded
+// line shows what fits, and the table has the rest. Colours follow the
+// theme at draw time, so a theme change needs only a redraw.
+function chartFigures(opts = {}) {
+    const fmt = opts.format || compactMoney;
+    const size = opts.size || 10;
+    return {
+        id: 'sbFigures',
+        afterDatasetsDraw(chart) {
+            const ctx = chart.ctx, area = chart.chartArea;
+            if (!ctx || !area || !chart.data || !chart.data.datasets) return;
+            const dark = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark';
+            const ink = opts.color || (dark ? '#e6e6f0' : '#1a1a28');
+            const placed = [];
+            const inside = (b) => b.x >= area.left && b.x + b.w <= area.right && b.y >= area.top && b.y + b.h <= area.bottom;
+            const free = (b) => !placed.some(p => !(b.x + b.w < p.x || p.x + p.w < b.x || b.y + b.h < p.y || p.y + p.h < b.y));
+            // 'drawn', or why not: 'outside' the chart area, or 'taken' by a label already there
+            const draw = (text, cx, cy, fill) => {
+                const w = ctx.measureText(text).width + 4, h = size + 2;
+                const box = { x: cx - w / 2, y: cy - h / 2, w, h };
+                if (!inside(box)) return 'outside';
+                if (!free(box)) return 'taken';
+                ctx.fillStyle = fill;
+                ctx.fillText(text, cx, cy);
+                placed.push(box);
+                return 'drawn';
+            };
+            const on = (color) => _textOn(color, dark);
+            ctx.save();
+            ctx.font = `${size}px ${opts.family || 'system-ui, sans-serif'}`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            chart.data.datasets.forEach((ds, di) => {
+                const meta = chart.getDatasetMeta(di);
+                if (!meta || meta.hidden || !meta.data) return;
+                const total = (meta.type === 'doughnut' || meta.type === 'pie')
+                    ? ds.data.reduce((a, b) => a + Math.abs(Number(b) || 0), 0) : 0;
+                meta.data.forEach((el, i) => {
+                    const v = ds.data[i];
+                    const n = Number(v);
+                    if (v == null || Number.isNaN(n) || n === 0) return;
+                    const text = fmt(n, ds, i);
+                    const w = ctx.measureText(text).width + 4, h = size + 2;
+                    const own = el.options && el.options.backgroundColor;
+                    if (meta.type === 'doughnut' || meta.type === 'pie') {
+                        if (total && Math.abs(n) / total < 0.04) return;
+                        const p = el.tooltipPosition ? el.tooltipPosition() : el.getCenterPoint();
+                        draw(text, p.x, p.y, on(own));
+                    } else if (meta.type === 'bar') {
+                        const base = el.base == null ? el.y : el.base;
+                        const stacked = ds.stack != null;
+                        if (el.horizontal) {
+                            const left = Math.min(el.x, base), right = Math.max(el.x, base);
+                            if (stacked) {
+                                if (right - left >= w + 2) draw(text, (left + right) / 2, el.y, on(own));
+                                return;
+                            }
+                            const past = n >= 0 ? el.x + w / 2 + 2 : el.x - w / 2 - 2;
+                            if (draw(text, past, el.y, ink) !== 'drawn') draw(text, n >= 0 ? el.x - w / 2 - 2 : el.x + w / 2 + 2, el.y, on(own));
+                        } else {
+                            const top = Math.min(el.y, base), bottom = Math.max(el.y, base);
+                            if (stacked) {
+                                if (bottom - top >= h + 2) draw(text, el.x, (top + bottom) / 2, on(own));
+                                return;
+                            }
+                            const past = n >= 0 ? el.y - h / 2 - 2 : el.y + h / 2 + 2;
+                            if (draw(text, el.x, past, ink) !== 'drawn') draw(text, el.x, n >= 0 ? el.y + h / 2 + 2 : el.y - h / 2 - 2, on(own));
+                        }
+                    } else {
+                        // a point: above it, below for every other line — its
+                        // own side, so a label never reads as the other
+                        // line's; the other side only when its own is off the
+                        // chart (a line along the axis); one whose place is
+                        // taken is left off
+                        const dy = di % 2 ? h / 2 + 5 : -(h / 2 + 5);
+                        if (draw(text, el.x, el.y + dy, ink) === 'outside') draw(text, el.x, el.y - dy, ink);
+                    }
+                });
+            });
+            ctx.restore();
+        },
+    };
+}
+
 // A toast that carries one action (e.g. "Saved to … [Show in folder]").
 // Stays longer than a plain toast because the user has to read a path.
 function toastAction(message, actionLabel, onClick, ms = 8000) {

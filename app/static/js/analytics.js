@@ -442,6 +442,7 @@ const AnalyticsPage = {
 
     this.state.charts.revenue = new Chart(ctx, {
       type: "line",
+      plugins: [chartFigures()],
       data: {
         labels,
         datasets: [
@@ -504,6 +505,7 @@ const AnalyticsPage = {
 
     this.state.charts.expenses = new Chart(ctx, {
       type: "doughnut",
+      plugins: [chartFigures()],
       data: {
         labels: entries.map((e) => e[0]),
         datasets: [
@@ -563,6 +565,7 @@ const AnalyticsPage = {
 
     this.state.charts[canvasId] = new Chart(ctx, {
       type: "bar",
+      plugins: [chartFigures()],
       data: { labels: names, datasets },
       options: {
         indexAxis: "y",
@@ -610,6 +613,7 @@ const AnalyticsPage = {
     const net = forecast.map((r) => Number(r.net) || 0);
 
     this.state.charts.cash = new Chart(ctx, {
+      plugins: [chartFigures()],
       data: {
         labels,
         datasets: [

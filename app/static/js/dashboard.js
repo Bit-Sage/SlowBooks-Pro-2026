@@ -199,7 +199,9 @@ const DashboardPage = {
             // + 61+ − credits = Total, as on the report page.
             const owed = d.current + d.d30 + d.d60 + d.d90;
             if (!owed && !d.credits) return '<div style="color:var(--gray-500);font-size:12px">No open receivables.</div>';
-            const seg = (v, color, label) => v > 0 ? `<div style="width:${(v / owed * 100).toFixed(1)}%;background:${color}" title="${label}: ${formatCurrency(v)}"></div>` : '';
+            // each segment carries its figure when it is wide enough to hold
+            // one (#265); the legend under the bar has every figure
+            const seg = (v, color, label) => v > 0 ? `<div style="width:${(v / owed * 100).toFixed(1)}%;background:${color};overflow:hidden;white-space:nowrap;text-align:center;font-size:10px;line-height:28px;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.7)" title="${label}: ${formatCurrency(v)}">${v / owed >= 0.14 ? compactMoney(v) : ''}</div>` : '';
             return `<div style="display:flex;height:28px;border-radius:4px;overflow:hidden">${seg(d.current, 'var(--aging-current)', 'Current')}${seg(d.d30, 'var(--aging-30)', '1-30')}${seg(d.d60, 'var(--aging-60)', '31-60')}${seg(d.d90, 'var(--aging-90)', '61+')}</div>
                 <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;flex-wrap:wrap">
                     <span><span style="color:var(--aging-current)">■</span> Current ${formatCurrency(d.current)}</span>
@@ -214,8 +216,10 @@ const DashboardPage = {
         },
         monthly_revenue(d) {
             const max = Math.max(...d.months.map(m => m.amount), 1);
-            return `<div style="display:flex;align-items:flex-end;gap:4px;height:120px">${d.months.map(m => `<div style="flex:1;text-align:center;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${m.month} ${m.year}: ${formatCurrency(m.amount)}">
-                <div style="width:80%;margin:0 auto;background:var(--qb-blue);height:${Math.max(2, m.amount / max * 100)}%;border-radius:2px 2px 0 0"></div>
+            // the figure above each bar (#265); the bar keeps 80% of the height
+            return `<div style="display:flex;align-items:flex-end;gap:4px;height:132px">${d.months.map(m => `<div style="flex:1;text-align:center;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${m.month} ${m.year}: ${formatCurrency(m.amount)}">
+                <div style="font-size:9px;color:var(--gray-500);line-height:12px">${m.amount ? compactMoney(m.amount) : ''}</div>
+                <div style="width:80%;margin:0 auto;background:var(--qb-blue);height:${Math.max(2, m.amount / max * 80)}%;border-radius:2px 2px 0 0"></div>
                 <div style="font-size:9px;color:var(--gray-500);margin-top:2px">${m.month}</div></div>`).join('')}</div>`;
         },
         recent_invoices(d) {
@@ -289,7 +293,7 @@ const DashboardPage = {
                     <span>${chip('var(--chart-red)')} Liabilities ${formatCurrency(last.liabilities)}</span>
                     <span>${chip('var(--chart-green)')} ${T('Equity')} ${formatCurrency(last.equity)}</span>
                 </div>
-                <div style="position:relative;height:150px"><canvas id="chart-bs-trend"></canvas></div>
+                <div style="position:relative;height:200px"><canvas id="chart-bs-trend"></canvas></div>
                 <div style="font-size:10px;color:var(--gray-500);margin-top:2px">Month-end balances, last 12 months (this month to date) · <a href="${DashboardPage._reportLink('bs')}">Full ${T('Balance Sheet')}</a></div>`;
         },
     },
@@ -328,6 +332,7 @@ const DashboardPage = {
         const labels = d.months.map(m => `${m.month} ${String(m.year).slice(2)}`);
         DashboardPage._bsChart = new Chart(canvas, {
             type: 'line',
+            plugins: [chartFigures()],
             data: {
                 labels,
                 datasets: [
