@@ -230,6 +230,14 @@ const App = {
         if (typeof n === 'number' && n < App._nShown) history.forward(); else history.back();
     },
     isMac() { return typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform || ''); },
+    // What a toolbar button says about its shortcut: the hover reads
+    // "Enter Bill (Alt+B)" — "(⌥B)" on a Mac, where Alt is Option — and a
+    // screen reader hears the ARIA token, which stays Alt+B everywhere
+    // (the way Back announces ⌘[ / Alt+←).
+    shortcutAttrs(letter, name) {
+        const shown = (App.isMac() ? '⌥' : 'Alt+') + letter;
+        return `title="${escapeHtml(name)} (${shown})" aria-keyshortcuts="Alt+${letter}"`;
+    },
     // What moved focus last: the keyboard (any key but a modifier held on
     // its own: a click then the Mac's ⌘[ Back is the keyboard's) or a
     // pointer (App.init keeps it). A text box matches :focus-visible on a
@@ -1478,13 +1486,13 @@ const App = {
         // the plain letter through for Windows and Linux meant Alt+N over
         // a half-typed bill opened New Invoice in its place and the bill
         // was gone (Windows gate W-6). Ctrl+K (⌘K) finds from anywhere,
-        // the search box included. Alt+N, P, Q and H leave what is open:
-        // over a form being filled in (App.editingDialog, as Back is) they
-        // do nothing from any of its controls either — one Tab away from
-        // the field, on Save or the ×, they opened another form in its
-        // place and the typed one was gone (W-6 review); over an addressed
-        // dialog (a report, a document, a page) and from the page they
-        // fire. Alt+D, the theme, fires anywhere but a field.
+        // the search box included. Alt+N, P, Q, B, E and H leave what is
+        // open: over a form being filled in (App.editingDialog, as Back
+        // is) they do nothing from any of its controls either — one Tab
+        // away from the field, on Save or the ×, they opened another form
+        // in its place and the typed one was gone (W-6 review); over an
+        // addressed dialog (a report, a document, a page) and from the
+        // page they fire. Alt+D, the theme, fires anywhere but a field.
         document.addEventListener('keydown', (e) => {
             const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
             const editing = !!(e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'));
@@ -1504,9 +1512,10 @@ const App = {
                 const modalForm = document.querySelector('#modal-body form');
                 if (modalForm) { modalForm.requestSubmit(); e.preventDefault(); }
             }
-            // Alt+N / Alt+P / Alt+Q start new entries: a read-only sign-in is
-            // told why nothing opens, rather than handed a blank locked form
-            const entry = leaves('KeyN') || leaves('KeyP') || leaves('KeyQ');
+            // Alt+N / Alt+P / Alt+Q / Alt+B / Alt+E start new entries: a
+            // read-only sign-in is told why nothing opens, rather than
+            // handed a blank locked form
+            const entry = leaves('KeyN') || leaves('KeyP') || leaves('KeyQ') || leaves('KeyB') || leaves('KeyE');
             if (entry && App.isReadOnly()) {
                 toast(App.READ_ONLY_MESSAGE, 'info'); e.preventDefault(); return;
             }
@@ -1516,6 +1525,11 @@ const App = {
             if (leaves('KeyP')) { PaymentsPage.showForm(); e.preventDefault(); }
             // Alt+Q: quick entry
             if (leaves('KeyQ')) { App.navigate('#/quick-entry'); e.preventDefault(); }
+            // Alt+B: enter a bill; Alt+E: enter an expense (#264). By the
+            // key's place, as the others: Option-B types "∫" and Option-E
+            // is a dead key on a Mac, and e.code is KeyB / KeyE either way
+            if (leaves('KeyB')) { BillsPage.showForm(); e.preventDefault(); }
+            if (leaves('KeyE')) { ExpensesPage.showForm(); e.preventDefault(); }
             // Alt+H: home/dashboard
             if (leaves('KeyH')) { App.navigate('#/'); e.preventDefault(); }
             // Alt+D: toggle dark mode (Feature 12)

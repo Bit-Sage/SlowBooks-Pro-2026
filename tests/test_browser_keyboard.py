@@ -396,6 +396,26 @@ def test_the_alt_shortcuts_go_by_the_keys_position_and_cmd_k_finds(
         page.wait_for_function(MODAL_SHOWN)
         assert page.evaluate(TITLE).startswith("New Invoice")
         page.evaluate("() => closeModal()")
+        page.wait_for_function(f"() => !({MODAL_SHOWN})()")
+        # Option-B ("∫") enters a bill, Option-E (a dead key) an expense (#264)
+        page.evaluate(KEY, ["∫", "KeyB", {"altKey": True}])
+        page.wait_for_function(MODAL_SHOWN)
+        assert page.evaluate(TITLE) == "Enter Bill"
+        page.evaluate("() => closeModal()")
+        page.wait_for_function(f"() => !({MODAL_SHOWN})()")
+        page.evaluate(KEY, ["Dead", "KeyE", {"altKey": True}])
+        page.wait_for_function(MODAL_SHOWN)
+        assert page.evaluate(TITLE) == "Enter Expense"
+        page.evaluate("() => closeModal()")
+        page.wait_for_function(f"() => !({MODAL_SHOWN})()")
+        # the toolbar button says so: a screen reader hears Alt+B on Enter Bill
+        _visit(page, handled, "#/bills")
+        said = page.evaluate(
+            """() => { const b = [...document.querySelectorAll('#page-content button')]
+                .find(b => b.textContent.trim() === '+ Enter Bill');
+                return b && { keys: b.getAttribute('aria-keyshortcuts'), title: b.title }; }"""
+        )
+        assert said == {"keys": "Alt+B", "title": "Enter Bill (Alt+B)"}, said
         # ⌘K finds, as Ctrl+K does
         page.evaluate("() => document.body.focus()")
         page.evaluate(KEY, ["k", "KeyK", {"metaKey": True}])
