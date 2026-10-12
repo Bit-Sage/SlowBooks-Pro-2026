@@ -124,7 +124,7 @@ const TaxFormsPage = {
                 <div class="table-container" style="margin-top:8px">
                     <table>
                         <thead><tr>
-                            <th scope="col">Form</th><th scope="col">For</th><th scope="col">Generated</th><th scope="col">By</th><th scope="col">Hash</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Check</span></th>
+                            <th scope="col">Form</th><th scope="col">For</th><th scope="col">Generated</th><th scope="col">By</th><th scope="col">Hash</th><th scope="col">Status</th><th scope="col" style="position:relative"><span class="visually-hidden">Check</span></th>
                         </tr></thead>
                         <tbody id="audit-rows">${TaxFormsPage._historyRows(history)}</tbody>
                     </table>
@@ -166,7 +166,9 @@ const TaxFormsPage = {
     async checkForm(id) {
         const cell = document.getElementById(`audit-status-${id}`);
         if (cell) { cell.className = ''; cell.textContent = 'Checking…'; }
-        const at = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        // with seconds: two Checks within a minute read differently, so the
+        // second is seen and announced (gate round 3, W-8 / NEW-71)
+        const at = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
         try {
             const r = await API.get(`/document-audits/${id}/check`);
             if (!cell) return;

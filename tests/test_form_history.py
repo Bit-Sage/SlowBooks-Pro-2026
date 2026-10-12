@@ -272,6 +272,26 @@ def test_the_page_lists_checks_and_finds():
     check = js[js.index("async checkForm(id)") : js.index("async findByHash()")]
     assert "cell.className = `audit-status audit-status--${kind}`;" in check
     assert "(checked at ${escapeHtml(at)})" in check
+    # with seconds, so two Checks within a minute read differently (W-8 / NEW-71)
+    assert "{ hour: 'numeric', minute: '2-digit', second: '2-digit' }" in check
+    # the dark theme's cell rule is outranked by the cell's own class (NEW-69 / NEW-70)
+    dark = (ROOT / "app/static/css/dark.css").read_text(encoding="utf-8")
+    assert (
+        '[data-theme="dark"] tbody td.audit-status--ok { color: var(--text-success); }'
+        in dark
+    )
+    assert (
+        '[data-theme="dark"] tbody td.audit-status--changed { color: #ff8a8a; }' in dark
+    )
+    assert (
+        '[data-theme="dark"] tbody td.audit-status .audit-checked-at { color: var(--text-secondary); }'
+        in dark
+    )
+    # the hidden Check header sits inside its cell
+    assert (
+        '<th scope="col" style="position:relative"><span class="visually-hidden">Check</span></th>'
+        in js
+    )
     css = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
     assert ".audit-status--ok { color: var(--text-success); }" in css
     assert (
