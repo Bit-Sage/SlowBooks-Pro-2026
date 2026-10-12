@@ -46,8 +46,13 @@ def test_the_dialogs_tab_is_walked_in_script_in_the_browsers_order():
         r"const _TAB_SEL = 'a\[href\], area\[href\], button, input, select, textarea, summary, iframe, \[tabindex\]",
         utils,
     )
-    # the dialog's first control is found the same way
-    assert "_tabStops($('#modal-body'), null)[0]" in utils
+    # the dialog's first control is found the same way — passing a form's
+    # own skip link by (#266), which stays the first stop for Tab
+    assert "const stops = _tabStops($('#modal-body'), null);" in utils
+    assert (
+        "const first = stops.find(el => !el.matches('.skip-link')) || stops[0];"
+        in utils
+    )
     # a text box's words are selected on the way in, a textarea's are not
     tab_to = utils[utils.index("function _tabTo(el)") :]
     tab_to = tab_to[: tab_to.index("\n}\n")]
