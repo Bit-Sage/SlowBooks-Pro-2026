@@ -1340,6 +1340,11 @@ const ReportsPage = {
                         <option value="90">90-Day Letter</option>
                     </select>
                     <button class="btn btn-sm btn-secondary" onclick="ReportsPage.sendCollectionLetters()">Send Collection Letters</button>
+                    <span style="display:inline-flex; align-items:center; gap:4px; margin-left:auto;">
+                        <label for="write-off-under" style="font-size:11px;">Write off balances under</label>
+                        <input id="write-off-under" type="number" step="0.01" min="0.01" value="5.00" style="width:76px; font-size:11px; padding:2px 6px;">
+                        <button class="btn btn-sm btn-secondary" onclick="ReportsPage.writeOffSmall('${params.as_of_date}')">List them…</button>
+                    </span>
                 </div>
                 <div class="table-container"><table>
                     <thead><tr>
@@ -1518,6 +1523,55 @@ const ReportsPage = {
             const restored = ReportsPage._refocusRow(content);
             ReportsPage._spotlight(content, { vendor_id: vendorId }, first && !restored);
         } catch (err) { content.innerHTML = `<div style="color:var(--danger);">${escapeHtml(err.message)}</div>`; }
+    },
+
+    // Small balances written off from A/R Aging (#255): the open invoices
+    // under the figure typed, listed first with a tick each, then one
+    // write-off credit memo per invoice to Bad Debt Expense, posted together.
+    async writeOffSmall(asOf) {
+        const under = parseFloat(document.getElementById('write-off-under').value);
+        if (!(under > 0)) { toast('Enter the figure: balances under it are listed.', 'error'); return; }
+        let rows;
+        try {
+            rows = await API.get(`/invoices/write-offs/candidates?under=${under}&as_of_date=${asOf}`);
+        } catch (err) { toast(err.message, 'error'); return; }
+        if (!rows.length) { toast(`No open balance under ${formatCurrency(under)} as of ${formatDate(asOf)}.`); return; }
+        const list = rows.map(r => `<tr>
+                <td><input type="checkbox" class="write-off-pick" value="${r.id}" checked aria-label="Write off ${escapeHtml(T('invoice'))} ${escapeHtml(r.invoice_number)}, ${escapeHtml(r.customer_name)}"></td>
+                <td>${escapeHtml(r.customer_name)}</td><td>${escapeHtml(r.invoice_number)}</td>
+                <td>${formatDate(r.date)}</td><td class="amount">${r.days_overdue || 0}</td>
+                <td class="amount">${formatCurrency(r.balance_due)}</td></tr>`).join('');
+        openModal(`Write Off Balances Under ${formatCurrency(under)}`, `
+            <form onsubmit="ReportsPage.saveWriteOffSmall(event, ${under})">
+                <div class="table-container"><table>
+                    <thead><tr><th scope="col">Write off</th><th scope="col">${T('Customer')}</th><th scope="col">#</th><th scope="col">Date</th><th scope="col" class="amount">Days over</th><th scope="col" class="amount">Balance</th></tr></thead>
+                    <tbody>${list}</tbody>
+                </table></div>
+                <div class="form-grid" style="margin-top:8px;">
+                    <div class="form-group"><label>Date *</label><input name="date" type="date" required value="${todayISO()}"></div>
+                    <div class="form-group"><label>Memo</label><input name="memo" placeholder="e.g. too small to collect"></div>
+                </div>
+                <div style="font-size:11px;color:var(--gray-500);margin-top:6px">Posts one credit memo per ${T('invoice')} to Bad Debt Expense, applied at once; a balance that changed since this list was made is left alone. Void a credit memo to undo it.</div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="App.refresh()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Write Off</button>
+                </div>
+            </form>`);
+    },
+
+    async saveWriteOffSmall(e, under) {
+        e.preventDefault();
+        const form = e.target;
+        const ids = [...form.querySelectorAll('.write-off-pick:checked')].map(c => Number(c.value));
+        if (!ids.length) { toast('Tick at least one.', 'error'); return; }
+        try {
+            const res = await API.post('/invoices/write-offs', { date: form.date.value, under, invoice_ids: ids, memo: form.memo.value || null });
+            const n = res.written_off.length;
+            let msg = `Wrote off ${n} balance${n === 1 ? '' : 's'} as credit memo${n === 1 ? '' : 's'}.`;
+            if (res.skipped.length) msg += ` Left alone: ${res.skipped.map(s => `#${s.invoice_number || s.invoice_id} (${s.reason})`).join('; ')}.`;
+            toast(msg, res.skipped.length ? 'warning' : 'success');
+            App.refresh();  // the aging report again, at its address, without these balances
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async applyLateFees() {

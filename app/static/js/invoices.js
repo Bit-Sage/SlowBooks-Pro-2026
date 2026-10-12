@@ -198,21 +198,23 @@ const InvoicesPage = {
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.view(${inv.id})">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="InvoicesPage.showForm(${inv.id})">Edit</button>
                         ${inv.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="InvoicesPage.markSent(${inv.id})">Mark Sent</button>` : ''}
-                        ${Terms.isNonprofit() && inv.status !== 'void' && parseFloat(inv.balance_due) > 0 ? `<button class="btn btn-sm btn-secondary" onclick="InvoicesPage.showWriteOff(${inv.id}, ${parseFloat(inv.balance_due)})">Write Off</button>` : ''}
+                        ${inv.status !== 'void' && parseFloat(inv.balance_due) > 0 ? `<button class="btn btn-sm btn-secondary" onclick="InvoicesPage.showWriteOff(${inv.id}, ${parseFloat(inv.balance_due)})">Write Off</button>` : ''}
                     </td>
                 </tr>`,
         });
     },
 
-    // Nonprofit: forgive an open balance (a pledge that will never be paid)
-    // — a write-off credit memo to Bad Debt Expense, applied at once.
+    // Forgive an open balance (a pledge that will never be paid, a balance
+    // too small to collect): a write-off credit memo to Bad Debt Expense,
+    // applied at once. Any company, since 2.22.2 (#255); it was drawn for
+    // a nonprofit only, though the route never minded.
     showWriteOff(id, balance) {
         openModal('Write Off Balance', `
             <form onsubmit="InvoicesPage.saveWriteOff(event, ${id})">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label><input name="date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Amount *</label><input name="amount" type="number" step="0.01" min="0.01" max="${balance}" required value="${balance.toFixed(2)}"></div>
-                    <div class="form-group full-width"><label>Memo</label><input name="memo" placeholder="e.g. pledge withdrawn"></div>
+                    <div class="form-group full-width"><label>Memo</label><input name="memo" placeholder="${Terms.isNonprofit() ? 'e.g. pledge withdrawn' : 'e.g. too small to collect'}"></div>
                 </div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:6px">Posts a credit memo to Bad Debt Expense and applies it to this ${T('invoice')}. Void the credit memo to undo.</div>
                 <div class="form-actions">
