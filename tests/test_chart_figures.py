@@ -67,6 +67,12 @@ def test_a_stacked_segment_is_labelled_only_when_it_can_hold_the_text():
 
 
 @needs_node
+def test_a_bar_thinner_than_the_text_carries_no_figure():
+    got = _probe()
+    assert got["thin"] == [] and got["cramped"] == []
+
+
+@needs_node
 def test_slices_carry_their_figure_except_one_too_thin_to_hold_it():
     slices = _probe()["slices"]
     assert [(s["text"], s["fill"]) for s in slices] == [
@@ -110,6 +116,21 @@ def test_every_chart_draws_its_figures():
     assert "${m.amount ? compactMoney(m.amount) : ''}" in dash
     # the trend's card grew to hold its labels
     assert 'height:200px"><canvas id="chart-bs-trend">' in dash
+    # a theme toggle repaints the cards, so the aging figures pick their ink again (NEW-60)
+    listener = dash[dash.index("document.addEventListener('slowbooks:themechange'") :]
+    assert (
+        "DashboardPage._repaint();" in listener
+        and "DashboardPage._renderBsTrendChart();" in listener
+    )
+    # the legend's swatches are squares, not "■" text (NEW-62)
+    assert (
+        '<span aria-hidden="true" class="aging-swatch" style="background:var(--aging-current)"></span>'
+        in dash
+    )
+    assert "■" not in dash
+    # the aging charts name every customer and vendor, and grow to do it (W-6)
+    assert "ticks: { color: theme.muted, autoSkip: false }" in ana
+    assert "wrap.style.height = `${Math.max(220, names.length * 24 + 80)}px`;" in ana
 
 
 def test_the_open_item_is_closed_in_the_statement():

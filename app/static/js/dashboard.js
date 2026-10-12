@@ -211,10 +211,10 @@ const DashboardPage = {
             };
             return `<div style="display:flex;height:28px;border-radius:4px;overflow:hidden">${seg(d.current, 'current', 'Current')}${seg(d.d30, '30', '1-30')}${seg(d.d60, '60', '31-60')}${seg(d.d90, '90', '61+')}</div>
                 <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;flex-wrap:wrap">
-                    <span><span style="color:var(--aging-current)">■</span> Current ${formatCurrency(d.current)}</span>
-                    <span><span style="color:var(--aging-30)">■</span> 1-30 ${formatCurrency(d.d30)}</span>
-                    <span><span style="color:var(--aging-60)">■</span> 31-60 ${formatCurrency(d.d60)}</span>
-                    <span><span style="color:var(--aging-90)">■</span> 61+ ${formatCurrency(d.d90)}</span>
+                    <span><span aria-hidden="true" class="aging-swatch" style="background:var(--aging-current)"></span> Current ${formatCurrency(d.current)}</span>
+                    <span><span aria-hidden="true" class="aging-swatch" style="background:var(--aging-30)"></span> 1-30 ${formatCurrency(d.d30)}</span>
+                    <span><span aria-hidden="true" class="aging-swatch" style="background:var(--aging-60)"></span> 31-60 ${formatCurrency(d.d60)}</span>
+                    <span><span aria-hidden="true" class="aging-swatch" style="background:var(--aging-90)"></span> 61+ ${formatCurrency(d.d90)}</span>
                 </div>
                 <table class="data-table" style="font-size:12px;margin-top:6px"><tbody>
                     ${d.credits ? `<tr><td>Credits not yet applied</td><td class="amount">${formatCurrency(-d.credits)}</td></tr>` : ''}
@@ -363,4 +363,12 @@ const DashboardPage = {
 window.DashboardPage = DashboardPage;
 // A theme toggle with the overview on screen: redraw the trend so its axis
 // text, grid and the Assets line pick up the new theme's colours.
-document.addEventListener('slowbooks:themechange', () => DashboardPage._renderBsTrendChart());
+// A theme toggle with the overview on screen: repaint the cards (the aging
+// bar's figures pick ink or white for the theme they are drawn in — gate
+// round 1, NEW-60) and redraw the trend into the new canvas.
+document.addEventListener('slowbooks:themechange', () => {
+    let cards = false;
+    try { cards = !!document.querySelector('[data-widget]'); } catch (e) { /* no DOM (a probe) */ }
+    if (cards) DashboardPage._repaint();
+    DashboardPage._renderBsTrendChart();
+});

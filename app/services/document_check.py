@@ -137,19 +137,17 @@ def recheck(db: Session, audit: DocumentAudit) -> dict:
     out.update(
         current_hash=current, matches=current == audit.content_hash, voided_runs=voided
     )
-    when = ""
-    if audit.created_at:
-        when = f" on {audit.created_at.strftime('%Y-%m-%d')}"
+    # the row says when, in the reader's own time; the sentence says who
     by = f" by {audit.username}" if audit.username else ""
     if out["matches"]:
         out["message"] = (
             f"Matches the books: re-figured today, the {form} for {subject} comes "
-            f"out the same as when it was generated{when}{by}."
+            f"out the same as when it was generated{by}."
         )
     else:
         out["message"] = (
             f"No longer matches: re-figured today, the {form} for {subject} comes "
-            f"out differently from when it was generated{when}{by} — the pay runs "
+            f"out differently from when it was generated{by} — the pay runs "
             "behind it changed after that."
         )
     if voided:

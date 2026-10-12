@@ -1527,7 +1527,7 @@ const SettingsPage = {
         ).join('');
         // Nothing chosen yet: a placeholder, not a guess. Save and Test ask
         // for a choice; the server does too.
-        const placeholder = `<option value="" disabled${currentModel ? '' : ' selected'}>${models.length ? 'Choose a model…' : 'Enter a key to list models'}</option>`;
+        const placeholder = `<option value="" disabled${currentModel ? '' : ' selected'}>${models.length ? 'Choose a model…' : (SettingsPage._modelsEmptyText || 'Enter a key to list models')}</option>`;
         return placeholder + opts +
             `<option value="__custom__"${isCustom ? ' selected' : ''}>Custom…</option>`;
     },
@@ -1536,6 +1536,21 @@ const SettingsPage = {
     // the saved key) and fill the picker, keeping whatever is chosen. A
     // provider that can't list (a gateway without /models, a bad key) leaves
     // the typed model and says why.
+    // What the model list is asked with: the provider picked and the key
+    // typed, saved or not (gate round 1, NEW-56 / W-4: a first key could
+    // not reach the list while Save asked for a model and the list for a
+    // saved key). Nothing in it is stored by the list.
+    _modelsRequest(provider) {
+        const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+        const body = { provider };
+        const key = val('ai-settings-key');
+        if (key) body.api_key = key;
+        for (const [field, id] of [['cloudflare_account_id', 'ai-settings-cf-account'], ['worker_url', 'ai-settings-worker-url'], ['endpoint_url', 'ai-settings-endpoint-url']]) {
+            if (val(id)) body[field] = val(id);
+        }
+        return body;
+    },
+
     async _loadAiModels(provider, keepModel) {
         const sel = document.getElementById('ai-settings-model-select');
         const custom = document.getElementById('ai-settings-model-custom');
@@ -1544,18 +1559,20 @@ const SettingsPage = {
         sel.innerHTML = '<option value="" selected disabled>Loading models…</option>';
         note.textContent = '';
         try {
-            const res = await API.get('/analytics/ai-models');
+            const res = await API.post('/analytics/ai-models', SettingsPage._modelsRequest(provider));
             if (res.provider !== provider) return; // the provider changed under the request
             SettingsPage._aiModels[provider] = res.models || [];
+            SettingsPage._modelsEmptyText = res.models.length ? '' : 'No models listed — type a model ID';
             sel.innerHTML = SettingsPage._modelOptionsHtml(res.models, keepModel);
             custom.style.display = sel.value === '__custom__' ? '' : 'none';
             note.textContent = `${res.models.length} models listed by ${res.provider_label}.`;
         } catch (err) {
             SettingsPage._aiModels[provider] = [];
+            SettingsPage._modelsEmptyText = 'No models listed — type a model ID';
             sel.innerHTML = SettingsPage._modelOptionsHtml([], keepModel);
             if (!keepModel) sel.value = '__custom__';
             custom.style.display = '';
-            note.textContent = `Couldn't list models: ${err.message || err}. Type a model ID.`;
+            note.textContent = `Couldn't list models: ${String(err.message || err).replace(/\.$/, '')}. Type a model ID.`;
         }
     },
 
@@ -1598,7 +1615,7 @@ const SettingsPage = {
         // The model the picker holds now: the chosen one, or the typed one.
         const chosenModel = () =>
             modelSel.value === '__custom__' ? modelCustom.value.trim() : (modelSel.value || '');
-        // The provider's models, once a key is saved for it (#254).
+        // The provider's models, with the key typed or saved for it (#254).
         const loadModels = () => SettingsPage._loadAiModels(providerSel.value, chosenModel());
         if (SettingsPage._aiKeyOwner(cfg) === providerSel.value && !SettingsPage._aiModels[providerSel.value]) {
             loadModels();
@@ -1668,11 +1685,25 @@ const SettingsPage = {
             });
         }
 
+        // Save takes a key with no model chosen yet: the key is stored, the
+        // provider's models listed, and a choice asked for (gate round 1,
+        // NEW-56 / W-4: Save refused the first key, and only Test got past).
+        // The analyses still need a model; the server says so.
         saveBtn.addEventListener('click', async () => {
-            if (!modelChosen()) return;
+            const needsModel = !resolveModel();
+            const typedKey = !!keyPayload().api_key;
+            if (needsModel && !typedKey && SettingsPage._aiKeyOwner(cfg) !== providerSel.value) { modelChosen(); return; }
             try {
                 const updated = await API.put('/analytics/ai-config', { ...collectPayload(), ...keyPayload() });
                 SettingsPage.aiConfigState = updated;
+                if (needsModel) {
+                    Object.assign(cfg, updated);
+                    document.getElementById('ai-settings-key').value = '';
+                    syncKeyMark();
+                    await loadModels();
+                    toast('Key saved. Choose a model from the list, then Save.', 'success');
+                    return;
+                }
                 toast('AI settings saved', 'success');
                 // Re-render to reflect "(saved ✓)" state and clear the key input
                 SettingsPage.loadAiConfig();

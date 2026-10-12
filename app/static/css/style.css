@@ -1039,6 +1039,9 @@ input:is([type="checkbox"], [type="radio"], [type="file"]):focus-visible {
 .badge-approved{ background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
 .badge-denied  { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
 .badge-cancelled{background: #e8ecf0; color: #4a5568; border: 1px solid #c8ccd4; }
+/* The dashboard aging legend's swatches: a coloured square, not a "■"
+   character (text at 3.1:1, read aloud as "black square" — NEW-62) */
+.aging-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; }
 /* Form history: the row a footer hash was found on */
 #audit-rows tr[data-found] td { background: #fef3c7; }
 .badge-converted{background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }

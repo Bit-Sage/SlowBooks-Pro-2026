@@ -202,7 +202,7 @@ An optional LLM layer sits on top of the analytics snapshot and produces a compa
 | **Google Gemini** | `generateContent` | listed from `GET /v1beta/models` (`generateContent` models) | Free Flash tier via AI Studio |
 | **Custom (OpenAI-compatible)** | `/v1/chat/completions` | listed from the endpoint's `/models` if it has one, else typed | Any vendor or gateway that speaks the OpenAI wire format, on the public internet — HTTPS only, private/LAN addresses refused (v2.9, contributed by @jarvis4openclaw) |
 
-**The model picker lists what your provider offers** (v2.22.2, #254). Once a key is saved, **Settings → AI Insights** asks the provider's own models endpoint (`GET /api/analytics/ai-models`) and lists the text models it returns, newest first where the provider says; you choose one, and **Refresh models** asks again. There is no built-in list and no built-in default, so a vendor renaming or retiring a model is never a code change here. **Custom…** still takes a typed model ID, which is also what a gateway without a `/models` endpoint falls back to. A saved model the provider no longer lists is kept and shown as Custom. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
+**The model picker lists what your provider offers** (v2.22.2, #254). With a key typed or saved, **Settings → AI Insights** asks the provider's own models endpoint (`POST /api/analytics/ai-models` with what the page holds; `GET` for the saved settings) — Save keeps a first key with no model chosen and asks for one from the list — and lists the text models it returns, newest first where the provider says; you choose one, and **Refresh models** asks again. There is no built-in list and no built-in default, so a vendor renaming or retiring a model is never a code change here. **Custom…** still takes a typed model ID, which is also what a gateway without a `/models` endpoint falls back to. A saved model the provider no longer lists is kept and shown as Custom. Cloudflare gets an extra field for your account ID since its endpoint is account-scoped. The dedicated **Cloudflare Worker Gateway** provider adds a second field for your Worker URL — see the self-hosted gateway section below.
 
 ![AI Insights provider configuration](../screenshots/ai-insights-settings.png)
 
@@ -223,6 +223,7 @@ An optional LLM layer sits on top of the analytics snapshot and produces a compa
 - `GET  /api/analytics/ai-config` — read display config (no secrets)
 - `PUT  /api/analytics/ai-config` — update provider/model/key/account_id (key is encrypted on save)
 - `GET  /api/analytics/ai-models` — the configured provider's models, from the provider (`{provider, provider_label, models: [{id, label}]}`); administrator only; the saved key is sent to its own provider only
+- `POST /api/analytics/ai-models` — the same for what the Settings page holds: `{provider?, api_key?, cloudflare_account_id?, worker_url?, endpoint_url?}` override the saved values and nothing is stored; a typed key lists before it is saved
 - `POST /api/analytics/ai-config/test` — one-word smoke test against the configured provider
 - `POST /api/analytics/ai-insights?period=month|quarter|year[&force=true]` — run the full dashboard analysis; results are cached in-process for 10 minutes per `(provider, model, period)`, unless `force=true`
 
@@ -707,7 +708,7 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
 | `/api/analytics/export.pdf` | GET | Print-ready PDF via WeasyPrint — honors period params |
 | `/api/analytics/ai-config` | GET, PUT | Display config (no raw key) / update provider/model/key/worker_url (key Fernet-encrypted at rest; worker_url validated against SSRF/MITM) |
 | `/api/analytics/ai-config/test` | POST | Smoke-test the configured provider with a one-word prompt |
-| `/api/analytics/ai-models` | GET | The configured provider's models, listed by the provider (v2.22.2); what the Settings picker shows |
+| `/api/analytics/ai-models` | GET, POST | The provider's models, listed by the provider (v2.22.2): GET for the saved settings, POST for what the Settings page holds (a key typed and not yet saved); what the picker shows |
 | `/api/analytics/ai-insights` | POST | Run the dashboard through the configured LLM; `?force=true` bypasses 10-min cache |
 | `/api/analytics/ai-query` | POST | Tool-calling Q&A — LLM autonomously calls 16 read-only tools to answer `?question=...` |
 | `/analytics` | GET | Backwards-compat 307 redirect to the SPA hash route `/#/analytics` |

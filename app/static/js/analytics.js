@@ -540,6 +540,10 @@ const AnalyticsPage = {
       new Set(buckets.flatMap((b) => Object.keys(aging[b] || {}))),
     );
     if (names.length === 0) return;
+    // one row per name, every name on the axis (gate round 1, W-6: a 220px
+    // chart skipped half of them), and bars thick enough for their figures
+    const wrap = ctx.parentElement;
+    if (wrap) wrap.style.height = `${Math.max(220, names.length * 24 + 80)}px`;
 
     const theme = this._chartDefaults();
     const bucketColors = {
@@ -592,7 +596,7 @@ const AnalyticsPage = {
           },
           y: {
             stacked: true,
-            ticks: { color: theme.muted },
+            ticks: { color: theme.muted, autoSkip: false },
             grid: { color: theme.grid },
           },
         },

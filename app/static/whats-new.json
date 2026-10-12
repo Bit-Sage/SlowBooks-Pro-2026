@@ -3,8 +3,8 @@
     "title": "Thirteen quick wins",
     "items": [
       "AI Insights lists each provider's models from the provider itself, so a new model is a Refresh away, not a new build; a chosen model is kept with its key (#254)",
-      "Write off small balances: a report of invoices under an amount and one click to write them all off, each to its own journal; Write Off on any open invoice (#255)",
-      "A customer's credit limit holds through the API as it does on screen: an invoice, an estimate converted or a sales receipt that would pass it is refused with the limit and what would be owed, and can be sent again allowing it (#256)",
+      "Write off small balances: on the A/R Aging report, list the invoices under an amount and write them all off at one click, each to its own credit memo; Write Off on any open invoice, in its row and its view (#255)",
+      "A customer's credit limit holds through the API as it does on screen: an invoice, or an estimate converted to one, that would pass it is refused with the limit and what would be owed, and can be sent again allowing it; a sales receipt, paid on the spot, never is (#256)",
       "W-9 on file on the vendor, shown on the vendor's page and in the 1099 report, which names the vendors still missing one (#257)",
       "Reconcile with Mark all, Mark through a date and Clear all (#258); make a bank rule from a statement line in To review, with the payee and category filled in (#259)",
       "A deposit slip: Save PDF and Print on a deposit, listing each payment and the total (#260); an Items filter of what is at or under its reorder point, with how short (#261)",

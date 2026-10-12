@@ -49,6 +49,13 @@ const stacked = { type: 'bar', data: [
 ] };
 out.stacked = run([{ stack: 'aging', data: [2800, 180] }], [stacked]);
 
+// a stacked segment long enough but thinner than the text (a ~7px bar) carries nothing (NEW-61 / W-5)
+const thin = { type: 'bar', data: [{ x: 300, y: 50, base: 20, height: 6, horizontal: true, options: { backgroundColor: '#fef3c7' } }] };
+out.thin = run([{ stack: 'aging', data: [2800] }], [thin]);
+// a plain horizontal bar with no room past its end and too thin to hold the text inside: nothing
+const cramped = { type: 'bar', data: [{ x: 395, y: 50, base: 20, height: 6, horizontal: true, options: { backgroundColor: '#1a3a5a' } }] };
+out.cramped = run([{ data: [9000] }], [cramped]);
+
 // a plain horizontal bar: past its end
 const hbar = { type: 'bar', data: [{ x: 120, y: 80, base: 20, horizontal: true, options: { backgroundColor: '#00c48f' } }] };
 out.hbar = run([{ data: [640] }], [hbar]);

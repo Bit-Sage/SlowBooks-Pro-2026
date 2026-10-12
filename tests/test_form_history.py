@@ -115,6 +115,10 @@ def test_the_history_names_each_form_and_who_generated_it(
     ]
     assert all(r["username"] == "dana" for r in rows), rows
     assert all(len(r["content_hash"]) == 64 and r["created_at"] for r in rows)
+    # stored in UTC and said so, so a page shows the reader's own time (NEW-58)
+    assert all(r["created_at"].endswith(("+00:00", "Z")) for r in rows), rows[0][
+        "created_at"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +213,13 @@ def test_a_footer_hash_finds_its_form(client, db_session, seed_accounts, monkeyp
     assert [(f["id"], f["form"], f["subject"]) for f in found] == [
         (row["id"], "W-3", "2026")
     ]
+    # the 16 characters a form's footer prints find it too (W-3)
+    short = client.get(f"/api/document-audits/verify/{row['content_hash'][:16]}").json()
+    assert [f["id"] for f in short] == [row["id"]]
     assert client.get(f"/api/document-audits/verify/{'0' * 64}").json() == []
-    assert client.get("/api/document-audits/verify/abc").status_code == 400
+    assert client.get(f"/api/document-audits/verify/{'0' * 16}").json() == []
+    for bad in ("abc", row["content_hash"][:15], "g" * 16):
+        assert client.get(f"/api/document-audits/verify/{bad}").status_code == 400, bad
 
 
 def test_the_history_is_admin_only_like_the_rest_of_payroll(client, db_session):
@@ -245,6 +254,11 @@ def test_the_page_lists_checks_and_finds():
     assert "API.get('/document-audits?limit=100')" in js
     assert "API.get(`/document-audits/${id}/check`)" in js
     assert "API.get(`/document-audits/verify/${hash}`)" in js
+    # the footer's 16 characters, or the audit ID, are enough to find a form (W-3)
+    assert (
+        "/^[0-9a-f]{16,64}$/.test(hash)" in js
+        and "API.get(`/document-audits/${byId[1]}`)" in js
+    )
     # the answer lands in a live region, as a sentence
     assert 'id="audit-status-${a.id}" role="status"' in js
     assert "cell.textContent = r.message;" in js

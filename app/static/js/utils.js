@@ -281,22 +281,26 @@ function chartFigures(opts = {}) {
                     } else if (meta.type === 'bar') {
                         const base = el.base == null ? el.y : el.base;
                         const stacked = ds.stack != null;
+                        // text inside a bar needs the bar's thickness as well as
+                        // its length (gate round 1, NEW-61 / W-5: ~7px bars)
                         if (el.horizontal) {
                             const left = Math.min(el.x, base), right = Math.max(el.x, base);
+                            const thick = el.height == null || el.height >= h;
                             if (stacked) {
-                                if (right - left >= w + 2) draw(text, (left + right) / 2, el.y, on(own));
+                                if (thick && right - left >= w + 2) draw(text, (left + right) / 2, el.y, on(own));
                                 return;
                             }
                             const past = n >= 0 ? el.x + w / 2 + 2 : el.x - w / 2 - 2;
-                            if (draw(text, past, el.y, ink) !== 'drawn') draw(text, n >= 0 ? el.x - w / 2 - 2 : el.x + w / 2 + 2, el.y, on(own));
+                            if (draw(text, past, el.y, ink) !== 'drawn' && thick) draw(text, n >= 0 ? el.x - w / 2 - 2 : el.x + w / 2 + 2, el.y, on(own));
                         } else {
                             const top = Math.min(el.y, base), bottom = Math.max(el.y, base);
+                            const thick = el.width == null || el.width >= w;
                             if (stacked) {
-                                if (bottom - top >= h + 2) draw(text, el.x, (top + bottom) / 2, on(own));
+                                if (thick && bottom - top >= h + 2) draw(text, el.x, (top + bottom) / 2, on(own));
                                 return;
                             }
                             const past = n >= 0 ? el.y - h / 2 - 2 : el.y + h / 2 + 2;
-                            if (draw(text, el.x, past, ink) !== 'drawn') draw(text, el.x, n >= 0 ? el.y + h / 2 + 2 : el.y - h / 2 - 2, on(own));
+                            if (draw(text, el.x, past, ink) !== 'drawn' && thick) draw(text, el.x, n >= 0 ? el.y + h / 2 + 2 : el.y - h / 2 - 2, on(own));
                         }
                     } else {
                         // a point: above it, below for every other line — its

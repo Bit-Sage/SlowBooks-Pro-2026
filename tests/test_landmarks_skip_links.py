@@ -93,6 +93,11 @@ def test_the_chart_of_accounts_is_a_navigation_landmark_with_a_skip_to_its_filte
     assert "</tbody></table></div></nav>`;" in page
 
 
+def test_the_sidebars_navigation_landmark_has_a_name():
+    html = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert '<nav id="sidebar" aria-label="Main menu">' in html  # NEW-59
+
+
 def test_the_inline_skip_link_is_hidden_until_focused_then_shown_in_place():
     css = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
     hidden = css[css.index(".skip-link--inline {") :]

@@ -210,3 +210,18 @@ def test_the_aging_report_lists_them_before_anything_posts():
     assert "API.get(`/invoices/write-offs/candidates?under=" in src
     assert "API.post('/invoices/write-offs'" in src
     assert "write-off-pick" in src and "App.refresh();" in src
+
+
+def test_write_off_is_on_the_invoices_view_as_well_as_its_row():
+    """Gate round 1, W-2: the row had Write Off, the view did not."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "app/static/js/invoices.js").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        src.count(
+            'onclick="InvoicesPage.showWriteOff(${inv.id}, ${parseFloat(inv.balance_due)})">Write Off</button>'
+        )
+        == 2
+    )

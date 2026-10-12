@@ -21,7 +21,7 @@ vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('app/static/js/dashboard.js', 'utf8') + '\nthis.D = DashboardPage;', ctx);
 const html = ctx.D.renderers.ar_aging(JSON.parse(process.argv[2]));
 const lines = [];
-for (const m of html.matchAll(/<span><span[^>]*>■<\/span>([^<]*)<\/span>/g)) lines.push(m[1].trim());
+for (const m of html.matchAll(/<span><span aria-hidden="true"[^>]*><\/span>([^<]*)<\/span>/g)) lines.push(m[1].trim());
 for (const m of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
   const cells = [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => stripTags(c[1]).trim());
   lines.push(cells.join(' | '));

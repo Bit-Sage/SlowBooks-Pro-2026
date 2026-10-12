@@ -22,19 +22,20 @@ answers, chat models only; Refresh models asks again, and a model is
 kept with the key it was chosen for. A request with no model chosen says
 so rather than guessing one.
 
-**Write off small balances** (#255). Reports → Write Off Small Balances
-lists the open invoices whose balance is under an amount as of a date;
-one click writes them all off, each to its own journal, and says which
-were skipped and why (void, already paid, the balance changed since it
-was listed). Write Off on an invoice no longer needs a setting.
+**Write off small balances** (#255). On the A/R Aging report, "Write off
+balances under…" lists the open invoices whose balance is under an amount
+as of the report's date; one click writes them all off, each to its own
+credit memo, and says which were skipped and why (void, already paid, the
+balance changed since it was listed). Write Off on an invoice — in its
+row and its view — no longer needs a setting.
 
-**The credit limit holds through the API** (#256). An invoice, an estimate
-converted to one or a sales receipt that would take a customer past the
-limit is refused with a 409 naming the limit and what would be owed, as
-the screen already did; the same request sent again with
-`allow_over_credit_limit` goes through, and the forms do that after
-asking. An edit is checked only when it raises what is owed or changes
-the customer.
+**The credit limit holds through the API** (#256). An invoice, or an
+estimate converted to one, that would take a customer past the limit is
+refused with a 409 naming the limit and what would be owed, as the screen
+already did; the same request sent again with `allow_over_credit_limit`
+goes through, and the forms do that after asking. A sales receipt is paid
+on the spot and never refused. An edit is checked only when it raises
+what is owed or changes the customer.
 
 **W-9 on file** (#257). A vendor says whether its W-9 is on file; the
 vendor's page shows it, the 1099 report carries a column and names the

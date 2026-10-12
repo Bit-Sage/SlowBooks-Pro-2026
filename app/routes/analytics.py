@@ -727,23 +727,53 @@ def put_ai_config(
     return get_ai_config(db)
 
 
-@router.get("/ai-models")
-def get_ai_models(request: Request, db: Session = Depends(get_db)):
-    """The models the configured provider offers, from the provider itself
-    (#254): what the Settings page's model picker lists. Uses the saved key,
-    which is sent only to its own provider; the administrator's, like the
-    key. Returns `{provider, provider_label, models: [{id, label}]}`."""
-    require_admin(request)
-    cfg = _read_ai_config(db)
+class AIModelsRequest(StrictModel):
+    """What the Settings page has in its boxes right now, saved or not: the
+    provider picked, a key typed and not yet saved, the provider's extras.
+    Each overrides the saved value; nothing here is stored."""
+
+    provider: Optional[str] = None
+    api_key: Optional[str] = None
+    cloudflare_account_id: Optional[str] = None
+    worker_url: Optional[str] = None
+    endpoint_url: Optional[str] = None
+
+
+def _list_models_for(db: Session, overrides: dict) -> dict:
+    cfg = _read_ai_config(db)  # its api_key is the saved provider's own (NEW-46)
+    saved_provider = cfg.get("provider") or ""
+    for k, v in overrides.items():
+        if isinstance(v, str) and v.strip():
+            cfg[k] = v.strip()
     provider = cfg.get("provider") or ""
-    _require_key(cfg)
+    if not provider:
+        raise HTTPException(
+            status_code=400,
+            detail="Pick a provider first, then list its models.",
+        )
+    if provider not in AI_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown AI provider: {provider}")
+    # a typed key is the form's; the saved one counts only for the provider
+    # it was saved with (a provider picked in the form but not saved yet has
+    # no key of its own)
+    typed = (overrides.get("api_key") or "").strip()
+    saved = cfg.get("api_key") if provider == saved_provider else ""
+    key = typed or saved or ""
+    if not key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No API key saved for {AI_PROVIDERS[provider].label}. Enter its "
+                "key, then Refresh models"
+            ),
+        )
     _require_provider_extras(provider, cfg)
     from app.services.ai_service import list_models
 
     try:
         models = list_models(
             provider,
-            cfg.get("api_key") or "",
+            key,
             account_id=cfg.get("cloudflare_account_id") or None,
             worker_url=cfg.get("worker_url") or None,
             endpoint_url=cfg.get("endpoint_url") or None,
@@ -755,6 +785,28 @@ def get_ai_models(request: Request, db: Session = Depends(get_db)):
         "provider_label": AI_PROVIDERS[provider].label,
         "models": models,
     }
+
+
+@router.get("/ai-models")
+def get_ai_models(request: Request, db: Session = Depends(get_db)):
+    """The models the configured provider offers, from the provider itself
+    (#254): what the Settings page's model picker lists. Uses the saved key,
+    which is sent only to its own provider; the administrator's, like the
+    key. Returns `{provider, provider_label, models: [{id, label}]}`."""
+    require_admin(request)
+    return _list_models_for(db, {})
+
+
+@router.post("/ai-models")
+def post_ai_models(
+    payload: AIModelsRequest, request: Request, db: Session = Depends(get_db)
+):
+    """The same list for what the Settings page holds now — the provider
+    picked and a key typed but not yet saved (gate round 1, NEW-56 / W-4: a
+    first key could not reach the list, since Save asked for a model and the
+    list asked for a saved key). Nothing in the body is stored."""
+    require_admin(request)
+    return _list_models_for(db, payload.model_dump())
 
 
 @router.post("/ai-config/test")

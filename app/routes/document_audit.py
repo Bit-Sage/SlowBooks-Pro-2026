@@ -9,7 +9,7 @@
 #      or version drift.
 # ============================================================================
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,6 +41,10 @@ def _row(db: Session, audit: DocumentAudit) -> DocumentAuditResponse:
     form, subject = describe(db, audit)
     r = DocumentAuditResponse.model_validate(audit)
     r.form, r.subject = form, subject
+    # stored in UTC; SQLite hands it back naive, and a page would read a
+    # bare timestamp as local time (gate round 1, NEW-58)
+    if r.created_at is not None and r.created_at.tzinfo is None:
+        r.created_at = r.created_at.replace(tzinfo=timezone.utc)
     return r
 
 
@@ -72,19 +76,24 @@ def get_audit(audit_id: int, db: Session = Depends(get_db)):
 
 @router.get("/verify/{content_hash}", response_model=list[DocumentAuditResponse])
 def verify_hash(content_hash: str, db: Session = Depends(get_db)):
-    """Find every audit row matching this full SHA-256 hash. Used when an
-    auditor has the PDF's hash but not the ID — e.g. they recomputed it
-    independently and want to confirm it's known to the system."""
-    if len(content_hash) != 64 or not all(
-        c in "0123456789abcdef" for c in content_hash
-    ):
-        raise HTTPException(status_code=400, detail="content_hash must be 64 hex chars")
-    return [
-        _row(db, a)
-        for a in db.query(DocumentAudit)
-        .filter(DocumentAudit.content_hash == content_hash)
-        .order_by(DocumentAudit.id.desc())
-    ]
+    """Find every audit row matching this SHA-256 hash: the full 64, or the
+    16 a form's footer prints (gate round 1, W-3 — a printed form could not
+    be looked up by its footer), as a prefix. Used when an auditor has the
+    PDF but not the ID, or recomputed the hash and wants to confirm it is
+    known to the system."""
+    h = content_hash.strip().lower()
+    if not (16 <= len(h) <= 64) or not all(c in "0123456789abcdef" for c in h):
+        raise HTTPException(
+            status_code=400,
+            detail="content_hash must be 16 to 64 hex characters (the footer's 16, or the full hash)",
+        )
+    q = db.query(DocumentAudit)
+    q = (
+        q.filter(DocumentAudit.content_hash == h)
+        if len(h) == 64
+        else q.filter(DocumentAudit.content_hash.like(h + "%"))
+    )
+    return [_row(db, a) for a in q.order_by(DocumentAudit.id.desc())]
 
 
 @router.get("/{audit_id}/check")

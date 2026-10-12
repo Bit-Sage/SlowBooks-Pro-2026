@@ -4,9 +4,11 @@ Every provider shipped with a built-in model list, and the lists went
 stale: xAI retired every model the Grok picker offered (2026-05-15), and
 the Claude picker offered a legacy Haiku in a release named "Claude's
 current models". Now there is no built-in list and no built-in default.
-Once a key is saved, `GET /api/analytics/ai-models` asks the provider's own
-models endpoint and the page fills the picker from that; a company chooses,
-and every AI call needs a chosen model.
+`GET /api/analytics/ai-models` asks the provider's own models endpoint with
+the saved key; `POST` asks with what the Settings page holds (a provider
+picked, a key typed and not yet saved — gate round 1, NEW-56 / W-4), storing
+nothing. The page fills the picker from that; a company chooses, and every
+AI call needs a chosen model.
 """
 
 import json
@@ -369,7 +371,17 @@ def test_every_ai_call_needs_a_chosen_model(client, monkeypatch):
 def test_the_settings_page_lists_models_from_the_provider():
     src = open("app/static/js/settings.js", encoding="utf-8").read()
     assert "model_choices" not in src and "default_model" not in src
-    assert "API.get('/analytics/ai-models')" in src
+    # the page asks with what it holds — the provider picked and a key typed
+    # but not yet saved (gate round 1, NEW-56 / W-4) — and nothing is stored
+    assert (
+        "API.post('/analytics/ai-models', SettingsPage._modelsRequest(provider))" in src
+    )
+    assert "API.get('/analytics/ai-models')" not in src
+    # Save keeps a first key with no model chosen, lists, and asks for one
+    assert (
+        "toast('Key saved. Choose a model from the list, then Save.', 'success');"
+        in src
+    )
     assert 'id="ai-settings-models-refresh"' in src
     assert "Choose a model…" in src and "Enter a key to list models" in src
     # the picker fills once the saved key is this provider's, and again on a provider change
@@ -381,5 +393,76 @@ def test_the_settings_page_lists_models_from_the_provider():
         "if (SettingsPage._aiKeyOwner(cfg) === providerSel.value) loadModels();" in src
     )
     # Save and Test ask for a model
-    assert "if (!modelChosen()) return;" in src
+    assert (
+        "if (needsModel && !typedKey && SettingsPage._aiKeyOwner(cfg) !== providerSel.value) { modelChosen(); return; }"
+        in src
+    )
     assert "Key saved. Choose a model, then Test." in src
+
+
+# ── the list for what the page holds (round 2: NEW-56 / W-4) ───────────────
+
+
+def test_a_key_typed_and_not_yet_saved_lists_and_is_not_stored(client, monkeypatch):
+    sent = {}
+
+    def fake_list(provider, api_key, **kw):
+        sent.update(provider=provider, api_key=api_key, **kw)
+        return [{"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5"}]
+
+    monkeypatch.setattr(ai_service, "list_models", fake_list)
+    r = client.post(
+        "/api/analytics/ai-models", json={"provider": "anthropic", "api_key": ANT_KEY}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["models"][0]["id"] == "claude-sonnet-5-5"
+    assert sent["provider"] == "anthropic" and sent["api_key"] == ANT_KEY
+    cfg = client.get("/api/analytics/ai-config").json()
+    assert cfg["has_api_key"] is False  # the list stored nothing
+
+
+def test_the_typed_key_wins_over_the_saved_one_and_a_saved_key_counts_only_for_its_provider(
+    client, monkeypatch
+):
+    sent = []
+    monkeypatch.setattr(
+        ai_service, "list_models", lambda p, k, **kw: sent.append((p, k)) or []
+    )
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={"provider": "anthropic", "model": "", "api_key": ANT_KEY},
+    )
+    assert r.status_code == 200, r.text
+    # nothing typed: the saved key, for its own provider
+    assert (
+        client.post(
+            "/api/analytics/ai-models", json={"provider": "anthropic"}
+        ).status_code
+        == 200
+    )
+    # typed: the typed one
+    assert (
+        client.post(
+            "/api/analytics/ai-models",
+            json={"provider": "anthropic", "api_key": "sk-ant-typed-1111"},
+        ).status_code
+        == 200
+    )
+    # another provider is not sent Anthropic's key
+    r = client.post("/api/analytics/ai-models", json={"provider": "openai"})
+    assert (
+        r.status_code == 400
+        and "No API key saved for OpenAI. Enter its key, then Refresh models" in r.text
+    )
+    assert sent == [("anthropic", ANT_KEY), ("anthropic", "sk-ant-typed-1111")]
+
+
+def test_a_first_key_saves_with_no_model_and_the_analyses_still_ask_for_one(client):
+    r = client.put(
+        "/api/analytics/ai-config",
+        json={"provider": "anthropic", "model": "", "api_key": ANT_KEY},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["has_api_key"] is True and (r.json().get("model") or "") == ""
+    r = client.post("/api/analytics/ai-config/test", json={})
+    assert r.status_code == 400 and "No model chosen for Anthropic Claude" in r.text

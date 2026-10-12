@@ -113,8 +113,8 @@ const TaxFormsPage = {
                 <p style="font-size:12px;color:var(--gray-500);margin:0 0 8px;">Every W-2, W-3, 940 and 941 generated from these books, newest first. Check re-figures a form from today's books and says whether it still matches the one that was generated; the hash is the one printed in the form's footer.</p>
                 <div class="form-grid" role="group" aria-labelledby="taxforms-h-form-history">
                     <div class="form-group" style="grid-column:1 / -1">
-                        <label for="audit-hash">Find a form by the hash in its footer</label>
-                        <input id="audit-hash" placeholder="64 hex characters" spellcheck="false" style="font-family:var(--font-mono);width:100%;max-width:560px">
+                        <label for="audit-hash">Find a form by its footer: the hash's 16 characters (or the full 64), or the audit ID</label>
+                        <input id="audit-hash" placeholder="e.g. 054c0c8ea8389ab8, or #42" spellcheck="false" style="font-family:var(--font-mono);width:100%;max-width:560px">
                     </div>
                 </div>
                 <div class="form-actions" style="margin-top:8px">
@@ -175,16 +175,23 @@ const TaxFormsPage = {
     async findByHash() {
         const input = document.getElementById('audit-hash');
         const out = document.getElementById('audit-hash-result');
-        const hash = (input ? input.value : '').trim().toLowerCase();
-        if (!/^[0-9a-f]{64}$/.test(hash)) {
-            if (out) out.textContent = 'A hash is 64 hex characters — the full SHA-256 from the footer, not the 16 shown.';
+        const typed = (input ? input.value : '').trim().toLowerCase().replace(/^hash\s+/, '');
+        const byId = /^#?(\d{1,9})$/.exec(typed);
+        const hash = typed.replace(/^#/, '');
+        if (!byId && !/^[0-9a-f]{16,64}$/.test(hash)) {
+            if (out) out.textContent = 'Type the 16 characters after "Hash" in the footer (or the full 64), or the audit ID after "Audit ID".';
             return;
         }
         try {
-            const rows = await API.get(`/document-audits/verify/${hash}`);
+            let rows;
+            if (byId) {
+                try { rows = [await API.get(`/document-audits/${byId[1]}`)]; } catch (e) { rows = []; }
+            } else {
+                rows = await API.get(`/document-audits/verify/${hash}`);
+            }
             document.querySelectorAll('#audit-rows tr[data-found]').forEach(tr => tr.removeAttribute('data-found'));
             if (!rows.length) {
-                if (out) out.textContent = 'Not known to these books: no generated form carries that hash.';
+                if (out) out.textContent = byId ? `Not known to these books: no generated form has audit ID ${byId[1]}.` : 'Not known to these books: no generated form carries that hash.';
                 return;
             }
             const said = rows.map(a => `${a.form || a.doc_type} for ${a.subject || a.doc_key}, generated ${TaxFormsPage._when(a.created_at)}${a.username ? ` by ${a.username}` : ''} (audit #${a.id})`);
