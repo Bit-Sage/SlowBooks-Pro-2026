@@ -58,9 +58,9 @@ def test_revenue_is_paid_invoices_dated_in_the_period(
 def test_the_screen_labels_the_basis():
     js = JS.read_text(encoding="utf-8")
     assert "Terms.text('Revenue (paid invoices)')" in js
-    assert ">Expenses (paid bills)<" in js
+    assert ">Expenses (ledger)<" in js
     assert "${escapeHtml(Terms.text(this.BASIS_NOTE))}" in js
-    assert "Profit & Loss report counts every invoice and bill when it is dated" in js
+    assert "count every posting in the ledger dated in the period (accrual)" in js
 
 
 def test_the_pdf_labels_the_basis():
@@ -84,5 +84,5 @@ def test_the_pdf_labels_the_basis():
         company_logo_data_uri="",
     )
     assert "Revenue (paid invoices)" in html
-    assert "Expenses (paid bills)" in html
-    assert "a paid basis" in html
+    assert "Expenses (ledger)" in html
+    assert "a paid basis" in html and "every posting in the ledger" in html

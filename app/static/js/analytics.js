@@ -28,9 +28,10 @@ const AnalyticsPage = {
   // nothing to say why (2.17.3 exploratory test, W-L12). Say it on screen.
   REVENUE_BASIS:
     "Invoices and sales receipts dated in this period and paid in full. The Profit & Loss counts every invoice when it is issued, paid or not.",
-  EXPENSE_BASIS: "Bills dated in this period and paid in full.",
+  EXPENSE_BASIS:
+    "Everything posted to expense and cost-of-goods accounts in this period — bills when dated (paid or not), expenses, register entries, card charges, payroll and journal entries — as the Profit & Loss counts them.",
   BASIS_NOTE:
-    "Revenue and expenses here count paid invoices and paid bills dated in the period — a paid basis. The Profit & Loss report counts every invoice and bill when it is dated (accrual), so the two can differ.",
+    "Revenue by customer counts invoices and sales receipts dated in the period and paid in full — a paid basis. Expenses and the revenue trend count every posting in the ledger dated in the period (accrual), as the Profit & Loss report does, so the two can differ.",
 
   // Persistent state — survives route navigation so users return to their
   // last-selected period.
@@ -126,7 +127,7 @@ const AnalyticsPage = {
 
             <div class="analytics-kpi-grid">
                 <div class="analytics-kpi" title="${escapeHtml(Terms.text(this.REVENUE_BASIS))}"><div class="analytics-kpi-label">${Terms.text('Revenue (paid invoices)')}</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
-                <div class="analytics-kpi" title="${escapeHtml(this.EXPENSE_BASIS)}"><div class="analytics-kpi-label">Expenses (paid bills)</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(this.EXPENSE_BASIS)}"><div class="analytics-kpi-label">Expenses (ledger)</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
                 <div class="analytics-kpi" title="${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30."><div class="analytics-kpi-label">DSO (Days)</div><div class="analytics-kpi-value kpi-blue">${dso.toFixed(1)}</div></div>
                 <div class="analytics-kpi"><div class="analytics-kpi-label">Margin %</div><div class="analytics-kpi-value kpi-purple">${margin.toFixed(1)}%</div></div>
             </div>
@@ -200,7 +201,7 @@ const AnalyticsPage = {
       (a, b) => b[1] - a[1],
     );
     if (entries.length === 0) {
-      return '<div class="analytics-empty">No paid bills this period.</div>';
+      return '<div class="analytics-empty">No expenses posted this period.</div>';
     }
     const rows = entries
       .map(
@@ -447,7 +448,7 @@ const AnalyticsPage = {
         labels,
         datasets: [
           {
-            label: "Monthly Paid Revenue",
+            label: "Monthly Revenue (ledger)",
             data: values,
             borderColor: chartColor("green"),
             backgroundColor: "rgba(0,196,143,0.15)",

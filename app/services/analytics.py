@@ -6,9 +6,15 @@
 # canned reports stitched together; this is real-time SQL aggregates.
 #
 # Design notes:
-#   * Invoice/Bill-driven (not journal-driven). Faster, simpler, matches how
-#     the dashboard route already works. For GAAP-grade numbers, the P&L
-#     report in reports.py still reads TransactionLine.
+#   * Revenue by customer, aging, DSO and the cash forecast are document-
+#     driven (invoices and bills: they need a customer, a due date, a
+#     balance). Expenses by category and the revenue trend read the ledger
+#     (TransactionLine, v2.22.3, #281): a company that books through a bank
+#     feed and journal entries rather than Bills had an empty doughnut and an
+#     empty AI brief. The ledger is accrual, as the P&L is: a bill counts
+#     when it is dated, paid or not, beside expenses, register entries, card
+#     charges, payroll and journal entries; a voided posting and its reversal
+#     net to zero.
 #   * Uses the ORM enum members (InvoiceStatus.PAID, BillStatus.UNPAID, ...)
 #     to stay consistent with the rest of the codebase and to avoid the
 #     "unknown enum value" trap.
@@ -22,10 +28,11 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account
-from app.models.bills import Bill, BillLine, BillStatus
+from app.models.accounts import Account, AccountType
+from app.models.bills import Bill, BillStatus
 from app.models.contacts import Customer
 from app.models.invoices import Invoice, InvoiceStatus
+from app.models.transactions import Transaction, TransactionLine
 
 
 def _month_start(d: date) -> date:
@@ -80,12 +87,15 @@ class AnalyticsEngine:
         return {name: float(revenue or 0) for name, revenue in rows}
 
     def revenue_trend(self, months: int = 12):
-        """Monthly paid-revenue for the last N months (oldest → newest).
+        """Monthly income for the last N months (oldest → newest), from the
+        ledger: what was credited to income accounts, less what was debited
+        back, by the posting's date (v2.22.3, #281 — it was paid invoices by
+        invoice date, so a company that books income through deposits or
+        journal entries had a flat line).
 
-        Single query: fetches `(date, total)` pairs for paid invoices in the
-        window and aggregates by calendar month in Python. One query instead
-        of N (the old per-month loop was a classic N+1). Result is dense —
-        months with no revenue still appear with 0.0.
+        One grouped query over the window, aggregated by calendar month in
+        Python. Result is dense — months with no income still appear with
+        0.0.
         """
         today = date.today()
         end_cursor = _next_month_start(today)
@@ -94,9 +104,17 @@ class AnalyticsEngine:
             start_cursor = _prev_month_start(start_cursor)
 
         rows = (
-            self.db.query(Invoice.date, Invoice.total)
-            .filter(Invoice.date >= start_cursor, Invoice.date < end_cursor)
-            .filter(Invoice.status == InvoiceStatus.PAID)
+            self.db.query(
+                Transaction.date,
+                func.coalesce(
+                    func.sum(TransactionLine.credit - TransactionLine.debit), 0
+                ),
+            )
+            .join(TransactionLine, TransactionLine.transaction_id == Transaction.id)
+            .join(Account, TransactionLine.account_id == Account.id)
+            .filter(Account.account_type == AccountType.INCOME)
+            .filter(Transaction.date >= start_cursor, Transaction.date < end_cursor)
+            .group_by(Transaction.date)
             .all()
         )
 
@@ -106,44 +124,69 @@ class AnalyticsEngine:
             result[cursor.strftime("%Y-%m")] = 0.0
             cursor = _next_month_start(cursor)
 
-        for inv_date, total in rows:
-            key = inv_date.strftime("%Y-%m")
+        for when, total in rows:
+            key = when.strftime("%Y-%m")
             if key in result:
                 result[key] += float(total or 0)
 
-        return result
+        return {k: round(v, 2) for k, v in result.items()}
 
     # ------------------------------------------------------------------
     # Expenses
     # ------------------------------------------------------------------
 
     def expenses_by_category(self, start_date: date = None, end_date: date = None):
-        """Paid-bill expenses grouped by expense account number.
+        """Expenses grouped by account number, from the ledger: everything
+        posted to an expense or cost-of-goods account in the period — bills
+        when dated (paid or not), expenses, register entries, card charges,
+        payroll and journal entries — as the Profit & Loss counts them
+        (v2.22.3, #281: it was paid bills only, so a company that books
+        through a bank feed and journal entries saw nothing here, and the AI
+        brief saw nothing either). A voided posting and its reversal net to
+        zero and drop out.
 
-        Defaults to month-to-date. Includes a human-readable label per row.
+        Defaults to month-to-date. Keyed by account number (name when there
+        is none).
         """
         if start_date is None:
             start_date = _month_start(date.today())
         if end_date is None:
             end_date = date.today()
+        return {
+            (account_number or name or "Uncategorized"): amount
+            for account_number, name, amount in self.expenses_by_account(
+                start_date, end_date
+            )
+        }
 
-        rows = (
+    def expenses_by_account(self, start_date: date = None, end_date: date = None):
+        """The ledger's expense postings summed per account: `(number, name,
+        amount)` rows for every expense or cost-of-goods account with a
+        non-zero net in the window (either bound may be None: no bound).
+        Shared by the Analytics page and the AI tool, so the two agree."""
+        q = (
             self.db.query(
                 Account.account_number,
                 Account.name,
-                func.coalesce(func.sum(BillLine.amount), 0).label("amount"),
+                func.coalesce(
+                    func.sum(TransactionLine.debit - TransactionLine.credit), 0
+                ).label("amount"),
             )
-            .join(BillLine, BillLine.account_id == Account.id)
-            .join(Bill, BillLine.bill_id == Bill.id)
-            .filter(Bill.date >= start_date, Bill.date <= end_date)
-            .filter(Bill.status == BillStatus.PAID)
-            .group_by(Account.id, Account.account_number, Account.name)
-            .all()
+            .join(TransactionLine, TransactionLine.account_id == Account.id)
+            .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+            .filter(Account.account_type.in_([AccountType.EXPENSE, AccountType.COGS]))
         )
-        return {
-            (account_number or name or "Uncategorized"): float(amount or 0)
-            for account_number, name, amount in rows
-        }
+        if start_date is not None:
+            q = q.filter(Transaction.date >= start_date)
+        if end_date is not None:
+            q = q.filter(Transaction.date <= end_date)
+        rows = q.group_by(Account.id, Account.account_number, Account.name).all()
+        out = []
+        for number, name, amount in rows:
+            amount = round(float(amount or 0), 2)
+            if amount != 0:
+                out.append((number, name, amount))
+        return out
 
     # ------------------------------------------------------------------
     # Aging

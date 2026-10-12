@@ -218,7 +218,7 @@
             <div class="kpi-value kpi-green">{{ total_revenue | currency }}</div>
         </div>
         <div class="kpi">
-            <div class="kpi-label">Expenses (paid bills)</div>
+            <div class="kpi-label">Expenses (ledger)</div>
             <div class="kpi-value kpi-red">{{ total_expenses | currency }}</div>
         </div>
         <div class="kpi">
@@ -233,7 +233,7 @@
 
     {# The basis, as the screen says it (W-L12): these are paid documents,
        not the Profit & Loss's accrual figures. #}
-    <p style="font-size:7.5pt; color:#7a7a9a; margin:4pt 0 0;">{{ terms.text("Revenue and expenses here count paid invoices and paid bills dated in the period — a paid basis. The Profit & Loss report counts every invoice and bill when it is dated (accrual), so the two can differ.") }}</p>
+    <p style="font-size:7.5pt; color:#7a7a9a; margin:4pt 0 0;">{{ terms.text("Revenue by customer counts invoices and sales receipts dated in the period and paid in full — a paid basis. Expenses and the revenue trend count every posting in the ledger dated in the period (accrual), as the Profit & Loss report does, so the two can differ.") }}</p>
 
     <h2 class="section">Revenue Trend — Last 12 Months</h2>
     <table class="data">
@@ -269,7 +269,7 @@
                 {% for cat, amount in dashboard.expenses_by_category.items()|sort(attribute=1, reverse=true) %}
                     <tr><td>{{ cat }}</td><td class="num red">{{ amount | currency }}</td></tr>
                 {% else %}
-                    <tr><td colspan="2" class="empty">No paid bills this period.</td></tr>
+                    <tr><td colspan="2" class="empty">No expenses posted this period.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
