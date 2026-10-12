@@ -1416,11 +1416,11 @@ const SettingsPage = {
                 ${currentSpec.docs_url ? ` &middot; <a href="${escapeHtml(currentSpec.docs_url)}" target="_blank" rel="noopener">Get a key</a>` : ''}
             </div>
             <label class="form-field">
-                <span>Model <button type="button" class="btn btn-sm" id="ai-settings-models-refresh" data-admin title="List the provider's models again">Refresh models</button></span>
-                <select id="ai-settings-model-select" data-admin>
+                <span><span id="ai-settings-model-label">Model</span> <button type="button" class="btn btn-sm" id="ai-settings-models-refresh" data-admin title="List the provider's models again">Refresh models</button></span>
+                <select id="ai-settings-model-select" data-admin aria-labelledby="ai-settings-model-label">
                     ${SettingsPage._modelOptionsHtml(SettingsPage._aiModels[currentProvider] || [], currentModel)}
                 </select>
-                <input type="text" id="ai-settings-model-custom" data-admin
+                <input type="text" id="ai-settings-model-custom" data-admin aria-label="Model ID"
                        value="${escapeHtml(currentModel || '')}"
                        placeholder="Type a model ID"
                        style="margin-top:6px; ${SettingsPage._isCustomModel(SettingsPage._aiModels[currentProvider] || [], currentModel) ? '' : 'display:none;'}">
