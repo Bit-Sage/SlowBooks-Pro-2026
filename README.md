@@ -73,6 +73,14 @@ API, with no temperature, which Claude Sonnet 5.5 refuses, and room for its
 thinking, tested against a live key on Anthropic's current models; a bill's
 class, job or tax rate can be changed through the API without resending its
 lines; and a saved AI key goes only to the provider it was entered for.
+2.22.2 is thirteen quick wins from Grok's exploration of 2.22.1 (#254–#266):
+AI Insights lists each provider's models from the provider; small balances
+write off from a report; the credit limit holds through the API; W-9 on
+file; Mark all when reconciling and a bank rule from a statement line; a
+deposit slip; an Items filter of what to reorder; cancel a time-off request
+(the hours and the relief journal come back); a form history under Tax
+Forms with a hash check; Alt+B and Alt+E; the figure on every bar, slice
+and point; and landmarks with skip links on the long forms and the chart.
 
 **v2.21 — Three things you'd reach for.** Click a vendor for its own
 page, with its bills, payments, credits and what's owed (#223). Edit a
@@ -164,7 +172,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (555 operations in v2.22) — built for Claude
+self-documenting local REST API (564 operations in v2.22) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 

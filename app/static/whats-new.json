@@ -1,4 +1,19 @@
 {
+  "2.22.2": {
+    "title": "Thirteen quick wins",
+    "items": [
+      "AI Insights lists each provider's models from the provider itself, so a new model is a Refresh away, not a new build; a chosen model is kept with its key (#254)",
+      "Write off small balances: a report of invoices under an amount and one click to write them all off, each to its own journal; Write Off on any open invoice (#255)",
+      "A customer's credit limit holds through the API as it does on screen: an invoice, an estimate converted or a sales receipt that would pass it is refused with the limit and what would be owed, and can be sent again allowing it (#256)",
+      "W-9 on file on the vendor, shown on the vendor's page and in the 1099 report, which names the vendors still missing one (#257)",
+      "Reconcile with Mark all, Mark through a date and Clear all (#258); make a bank rule from a statement line in To review, with the payee and category filled in (#259)",
+      "A deposit slip: Save PDF and Print on a deposit, listing each payment and the total (#260); an Items filter of what is at or under its reorder point, with how short (#261)",
+      "Cancel a pending or approved time-off request from the HR page — an approved one puts the hours it drew back into the bank and reverses its relief journal — and an employee withdraws a pending one from the portal (#262)",
+      "Form history under Tax Forms: every W-2, W-3, 940 and 941 generated, when and by whom, with Check re-figuring one from today's books and saying whether it still matches; a footer hash can be looked up (#263)",
+      "Alt+B enters a bill and Alt+E an expense (⌥B / ⌥E on a Mac), and the toolbar buttons say their shortcut to a screen reader (#264)",
+      "Every bar, slice and point on the dashboard's and Analytics' charts carries its figure as text (#265); the invoice, bill and journal forms and the chart of accounts are landmarks with a skip link to their lines or filter (#266)"
+    ]
+  },
   "2.22.1": {
     "title": "Claude's current models",
     "items": [

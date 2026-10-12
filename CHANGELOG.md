@@ -7,6 +7,101 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### v2.22.2 — Thirteen quick wins
+
+Thirteen enhancements from Grok's feature exploration of 2.22.1 on
+2026-10-11 — read-only, against the code and a sandbox company — filed
+as #254–#266 and built one branch and PR each. A patch, not a minor: each
+is a small turn on something already there.
+
+**AI Insights lists each provider's models from the provider** (#254). The
+app no longer carries a list of models to keep current: with a key
+entered, the picker asks the provider (Anthropic, OpenAI, Groq, Gemini,
+xAI, Cloudflare, a worker or a custom endpoint) and offers what it
+answers, chat models only; Refresh models asks again, and a model is
+kept with the key it was chosen for. A request with no model chosen says
+so rather than guessing one.
+
+**Write off small balances** (#255). Reports → Write Off Small Balances
+lists the open invoices whose balance is under an amount as of a date;
+one click writes them all off, each to its own journal, and says which
+were skipped and why (void, already paid, the balance changed since it
+was listed). Write Off on an invoice no longer needs a setting.
+
+**The credit limit holds through the API** (#256). An invoice, an estimate
+converted to one or a sales receipt that would take a customer past the
+limit is refused with a 409 naming the limit and what would be owed, as
+the screen already did; the same request sent again with
+`allow_over_credit_limit` goes through, and the forms do that after
+asking. An edit is checked only when it raises what is owed or changes
+the customer.
+
+**W-9 on file** (#257). A vendor says whether its W-9 is on file; the
+vendor's page shows it, the 1099 report carries a column and names the
+vendors still missing one.
+
+**Reconcile faster** (#258). Mark all, Mark through a date and Clear all
+tick or untick every line of a reconciliation at once, lines after the
+statement date never among them. **A rule from a statement line**
+(#259): on a line in To review, Rule… opens the bank-rule form with the
+payee as the pattern and the chosen category filled in; saved, the rules
+run over the queue.
+
+**A deposit slip** (#260). Save PDF and Print on a deposit: the account,
+the date, each payment with who it was from and its check number, and
+the total; a void deposit's slip says VOID, and a void deposit's view no
+longer offers one. **Items to reorder** (#261): a filter on the Items page
+showing what is at or under its reorder point, with the reorder point
+and how short.
+
+**Cancel a time-off request** (#262). A pending or approved request can
+be cancelled from the HR page; an approved one puts back exactly what the
+approval took — the hours that were in the bank (an approval can overdraw
+it to zero) and the relief's dollars, through a reversing journal — and
+stays on the list as cancelled. A request whose dates have passed asks
+first. The approval now records what it drew (`hours_drawn`,
+`dollars_relieved`); a request approved by an earlier build has neither,
+and its cancel assumes the request's own hours. On the portal an employee
+withdraws their own request while it is still pending; an approved one is
+the employer's to cancel, and the page says so.
+
+**Form history** (#263). Tax Forms gains a history of every W-2, W-3, 940
+and 941 generated — what, when, by whom, its hash. Check re-figures the
+form from today's books through the same hash the form wrote and answers
+in a sentence: still matches, or no longer matches because the pay runs
+behind it changed; a voided pay run in its period is said. A W-2 whose
+employee is gone stays listed and says so. The hash printed in a form's
+footer can be looked up. `document_audits` records who generated a form
+from here on; `/api/document-audits` is admin-only, like the rest of
+payroll.
+
+**Alt+B for a bill, Alt+E for an expense** (#264), under the rules the
+other shortcuts follow — by the key's place, so Option-B works on a Mac
+though it types "∫"; never while typing in a field or over a form being
+filled in. The toolbar button each entry shortcut stands for announces
+it: "Enter Bill (Alt+B)" on hover, "(⌥B)" on a Mac, and
+`aria-keyshortcuts` for a screen reader.
+
+**The figure on the bar** (#265). Every bar, slice and point on the
+dashboard's and Analytics' charts carries its figure as text on or beside
+the mark — past a bar's end, in a slice, above a line's point — so the
+colour is not the only way from a mark to its amount; a label that would
+land on another is left off, and the table under each chart has every
+figure. The dashboard's own aging bar and monthly revenue bars say theirs
+too.
+
+**Landmarks and skip links** (#266). The invoice, bill and journal-entry
+forms are form landmarks named by the dialog's title, each opening with
+"Skip to the line items" as its first stop, which lands the keyboard on
+the first line with the focus ring showing; a dialog still opens on its
+first field, never on Void or Delete. The chart of accounts is a
+navigation landmark with "Skip to the account filter" first. The
+accessibility statement's open list is down to one item.
+
+Two schema migrations: `b4d6f8a0c2e4` (the PTO request's `cancelled`
+status and the draw columns) and `c5e7a9b1d3f5` (`document_audits.username`).
+The Windows CI skip budget counts the deposit slip's real-PDF test (116).
+
 ### v2.22.1 — Claude's current models
 
 **Claude's request follows Anthropic's current API** (#251). The request
