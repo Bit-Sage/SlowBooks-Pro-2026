@@ -73,6 +73,7 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 - **Credit Card Charges** — DR Expense, CR the card you pick (default 2100). Voidable
 - **Check Printing** — Generate check PDFs in standard 3-per-page format (stub/stub/check) with payee, amount in words, memo, and signature line
 - **Bank feeds and file imports (SimpleFIN, OFX/QFX, any CSV with a date, a description and an amount)** — a review queue: each statement line is auto-matched to the posting the ledger already has (same amount and side within five days, check number narrows, ambiguity waits), or added with a category, or excluded. A category picked on screen is kept on the line. A CSV the import can't read asks which column is which. Bank rules suggest categories and never post. Adding a feed compares the statement balance with the books and never counts it twice. **Fetch older history** reaches a SimpleFIN feed back 3, 6 or 12 months, as far as the provider keeps (the Bridge about 90 days, BankSync a year), in slices the Bridge accepts
+- **A rule from a statement line** (v2.22.2, #259) — on a line in To review, after the category is chosen, **Rule…** opens the bank-rule form with the payee as the pattern and that category filled in (Contains, any case; shorten the pattern to catch other spellings). Saved, the rules run over the queue and the register comes back
 - **Bank Reconciliation** — over the ledger's lines: beginning balance from the prior statement, tick cleared lines (matched statement lines arrive cleared), difference must be $0 (Finish says by how much when it isn't); **Mark all**, **Mark through** a date and **Clear all** tick or untick every line at once (v2.22.2, #258), lines after the statement date never among them; completing locks the lines; statements go forward only; each completed reconciliation has a report and PDF
 - **Register links** — every register line opens its document: invoice, payment, bill, bill payment, deposit, expense, card charge, transfer, or its journal entry
 
@@ -660,7 +661,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/uploads/logo` | GET, POST, DELETE | Company logo: describe, upload, remove (upload and remove: administrator) |
 | `/api/uploads/logo/{id}` | GET | The logo image, from the company's database |
 | `/api/attachments/{type}/{id}` | GET, POST, DELETE | File attachments CRUD |
-| `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules |
+| `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules (`…/apply` runs them over the review queue) |
 | `/api/budgets` | GET, POST, PUT, DELETE | Budget management |
 | `/api/email-templates` | GET, POST, PUT, DELETE | Custom email template management |
 | `/health` | GET | Liveness probe (no auth required) |
