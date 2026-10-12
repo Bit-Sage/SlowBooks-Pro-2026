@@ -27,12 +27,24 @@ def test_the_long_forms_are_landmarks_that_open_with_a_skip_to_their_lines():
     ):
         src = _src(file)
         start = src.index(form)
-        head = src[start : start + 400]
-        # the form landmark takes the dialog's title as its name
-        assert 'aria-labelledby="modal-title"' in head, file
-        # and the skip link is the first thing in it
-        assert f"${{skipLinkHtml('{target}', '{text}')}}" in head, file
-        assert head.index("skipLinkHtml") < head.index('<div class="form-grid">'), file
+        tag = src[start : src.index(">", start) + 1]
+        # the form landmark takes the dialog's title as its name, and says
+        # where its lines are; openModal places the skip link (the page
+        # scripts call nothing new, so every probe that renders them holds)
+        assert 'aria-labelledby="modal-title"' in tag, file
+        assert f'data-skip-to="{target}" data-skip-text="{text}"' in tag, file
+        assert "skipLinkHtml" not in src, file
+    utils = _src("utils.js")
+    opening = utils[utils.index("function openModal(") :]
+    opening = opening[: opening.index("function closeModal(")]
+    assert (
+        "for (const form of $('#modal-body').querySelectorAll('form[data-skip-to]'))"
+        in opening
+    )
+    assert (
+        "form.insertAdjacentHTML('afterbegin', skipLinkHtml(form.dataset.skipTo, form.dataset.skipText || 'Skip to the lines'));"
+        in opening
+    )
 
 
 def test_the_skip_link_lands_on_the_first_control_inside_with_the_ring():

@@ -200,9 +200,16 @@ const DashboardPage = {
             const owed = d.current + d.d30 + d.d60 + d.d90;
             if (!owed && !d.credits) return '<div style="color:var(--gray-500);font-size:12px">No open receivables.</div>';
             // each segment carries its figure when it is wide enough to hold
-            // one (#265); the legend under the bar has every figure
-            const seg = (v, color, label) => v > 0 ? `<div style="width:${(v / owed * 100).toFixed(1)}%;background:${color};overflow:hidden;white-space:nowrap;text-align:center;font-size:10px;line-height:28px;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.7)" title="${label}: ${formatCurrency(v)}">${v / owed >= 0.14 ? compactMoney(v) : ''}</div>` : '';
-            return `<div style="display:flex;height:28px;border-radius:4px;overflow:hidden">${seg(d.current, 'var(--aging-current)', 'Current')}${seg(d.d30, 'var(--aging-30)', '1-30')}${seg(d.d60, 'var(--aging-60)', '31-60')}${seg(d.d90, 'var(--aging-90)', '61+')}</div>
+            // one (#265), in the ink or white that reads on it — none where
+            // neither reaches AA; the legend under the bar has every figure
+            const dark = (document.documentElement.getAttribute('data-theme') || 'light') === 'dark';
+            const seg = (v, key, label) => {
+                if (!(v > 0)) return '';
+                const text = figureTextOn(cssVar(`--aging-${key}`), dark);
+                const figure = v / owed >= 0.14 && text.ratio >= 4.5 ? compactMoney(v) : '';
+                return `<div style="width:${(v / owed * 100).toFixed(1)}%;background:var(--aging-${key});overflow:hidden;white-space:nowrap;text-align:center;font-size:10px;line-height:28px;color:${text.fill}" title="${label}: ${formatCurrency(v)}">${figure}</div>`;
+            };
+            return `<div style="display:flex;height:28px;border-radius:4px;overflow:hidden">${seg(d.current, 'current', 'Current')}${seg(d.d30, '30', '1-30')}${seg(d.d60, '60', '31-60')}${seg(d.d90, '90', '61+')}</div>
                 <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;flex-wrap:wrap">
                     <span><span style="color:var(--aging-current)">■</span> Current ${formatCurrency(d.current)}</span>
                     <span><span style="color:var(--aging-30)">■</span> 1-30 ${formatCurrency(d.d30)}</span>

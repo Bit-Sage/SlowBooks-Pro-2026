@@ -102,7 +102,11 @@ def test_every_chart_draws_its_figures():
         assert charts == src.count("plugins: [chartFigures()]"), name
     assert dash.count("new Chart(") == 1 and ana.count("new Chart(") == 4
     # the CSS-drawn dashboard bars too: the aging segments and monthly revenue
-    assert "${v / owed >= 0.14 ? compactMoney(v) : ''}" in dash
+    assert (
+        "const figure = v / owed >= 0.14 && text.ratio >= 4.5 ? compactMoney(v) : '';"
+        in dash
+    )
+    assert "figureTextOn(cssVar(`--aging-${key}`), dark)" in dash
     assert "${m.amount ? compactMoney(m.amount) : ''}" in dash
     # the trend's card grew to hold its labels
     assert 'height:200px"><canvas id="chart-bs-trend">' in dash

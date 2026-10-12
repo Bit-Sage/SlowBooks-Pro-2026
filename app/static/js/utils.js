@@ -180,20 +180,47 @@ function compactMoney(v) {
     return `${n < 0 ? '-' : ''}$${body}`;
 }
 
-// Dark or light text on a colour (a bar's, a slice's), by its luminance. A
-// translucent colour is what it looks like over the page: blended with the
-// theme's ground first (a pale green at 35% is pale, whatever its RGB).
-function _textOn(color, dark) {
+// A colour as the three channels it shows over the page: a translucent one
+// blended with the theme's ground first (a pale green at 35% is pale,
+// whatever its RGB). null for a colour that cannot be read.
+function _channels(color, dark) {
     const hex = /^#?([0-9a-f]{6})$/i.exec(String(color || '').trim());
     const rgb = /^rgba?\(([^)]+)\)/i.exec(String(color || ''));
     let r, g, b, a = 1;
     if (hex) { const n = parseInt(hex[1], 16); r = n >> 16; g = (n >> 8) & 255; b = n & 255; }
     else if (rgb) { [r, g, b, a] = rgb[1].split(',').map(x => parseFloat(x)); if (Number.isNaN(a)) a = 1; }
-    else return dark ? '#e6e6f0' : '#1a1a28';
+    else return null;
     const ground = dark ? [30, 34, 48] : [255, 255, 255];
-    [r, g, b] = [r, g, b].map((c, i) => a * c + (1 - a) * ground[i]);
-    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    return lum > 0.6 ? '#1a1a28' : '#ffffff';
+    return [r, g, b].map((c, i) => a * c + (1 - a) * ground[i]);
+}
+
+// WCAG relative luminance and contrast, as the accessibility sweep measures
+function _luminance([r, g, b]) {
+    const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function _contrast(l1, l2) { return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); }
+const _INK = '#1a1a28', _INK_LUM = _luminance([26, 26, 40]);
+
+// The text that reads best on a colour (a bar's, a slice's, a segment's):
+// the app's ink or white, whichever contrasts more, with the ratio it
+// gets. A caller that must meet AA (text in the page) leaves the figure
+// off under 4.5; a chart label takes the better of the two.
+function figureTextOn(color, dark) {
+    const ch = _channels(color, dark);
+    if (!ch) return { fill: dark ? '#e6e6f0' : _INK, ratio: 0 };
+    const l = _luminance(ch);
+    const onInk = _contrast(l, _INK_LUM), onWhite = _contrast(l, 1);
+    return onInk >= onWhite ? { fill: _INK, ratio: onInk } : { fill: '#ffffff', ratio: onWhite };
+}
+
+function _textOn(color, dark) {
+    return figureTextOn(color, dark).fill;
+}
+
+// A theme variable's value ('' in a probe with no stylesheet)
+function cssVar(name) {
+    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
 }
 
 // A Chart.js plugin: every bar, slice and point gets its figure as text on
@@ -434,6 +461,15 @@ function openModal(title, html, opts) {
     const wasOpen = !$('#modal-overlay').classList.contains('hidden');
     $('#modal-title').textContent = title;
     $('#modal-body').innerHTML = html;
+    // A long form names where its lines are (data-skip-to, with the link's
+    // words in data-skip-text) and gets a skip link as its first child
+    // (#266) — placed here, so the page scripts call nothing new and the
+    // link is the dialog's first stop wherever the form came from.
+    for (const form of $('#modal-body').querySelectorAll('form[data-skip-to]')) {
+        if (!form.querySelector(':scope > a.skip-link--inline')) {
+            form.insertAdjacentHTML('afterbegin', skipLinkHtml(form.dataset.skipTo, form.dataset.skipText || 'Skip to the lines'));
+        }
+    }
     // A read-only sign-in sees the form locked, not a 403 after filling it
     // in (app.js App.lockForms).
     if (window.App && typeof window.App.lockForms === 'function') window.App.lockForms($('#modal-body'));

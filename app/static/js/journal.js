@@ -91,8 +91,7 @@ const JournalPage = {
         ).join('');
 
         openModal('New Journal Entry', `
-            <form aria-labelledby="modal-title" onsubmit="JournalPage.save(event)">
-                ${skipLinkHtml('#je-lines', 'Skip to the lines')}
+            <form aria-labelledby="modal-title" data-skip-to="#je-lines" data-skip-text="Skip to the lines" onsubmit="JournalPage.save(event)">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
