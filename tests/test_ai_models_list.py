@@ -393,10 +393,7 @@ def test_the_settings_page_lists_models_from_the_provider():
         "if (SettingsPage._aiKeyOwner(cfg) === providerSel.value) loadModels();" in src
     )
     # Save and Test ask for a model
-    assert (
-        "if (needsModel && !typedKey && SettingsPage._aiKeyOwner(cfg) !== providerSel.value) { modelChosen(); return; }"
-        in src
-    )
+    assert "if (needsModel && !typedKey) { modelChosen(); return; }" in src
     assert "Key saved. Choose a model, then Test." in src
 
 
@@ -466,3 +463,33 @@ def test_a_first_key_saves_with_no_model_and_the_analyses_still_ask_for_one(clie
     assert r.json()["has_api_key"] is True and (r.json().get("model") or "") == ""
     r = client.post("/api/analytics/ai-config/test", json={})
     assert r.status_code == 400 and "No model chosen for Anthropic Claude" in r.text
+
+
+def test_a_switch_away_and_back_keeps_the_saved_model_and_save_never_blanks_it():
+    """Gate round 2, NEW-63: the provider change emptied the picker, and the
+    next Save (or Test) wrote an empty model over the saved one with a green
+    "Key saved…" though no key was typed."""
+    src = open("app/static/js/settings.js", encoding="utf-8").read()
+    assert (
+        "const back = providerSel.value === cfg.provider ? (cfg.model || '') : '';"
+        in src
+    )
+    assert (
+        "modelCustom.value = back && SettingsPage._isCustomModel(known, back) ? back : '';"
+        in src
+    )
+    # the key-only branch is for a typed key; otherwise a model is what is missing
+    assert "if (needsModel && !typedKey) { modelChosen(); return; }" in src
+    assert "if (needsModel && !keyPayload().api_key) { modelChosen(); return; }" in src
+    # an empty list's text is the provider's own, not the page's
+    assert "_modelsEmptyText: {}," in src
+    assert "SettingsPage._modelsEmptyText[provider] = res.models.length" in src
+    # macOS's auto-capitalisation stays out of the model and account boxes (NEW-68)
+    assert (
+        'id="ai-settings-model-custom" data-admin aria-label="Model ID" spellcheck="false" autocapitalize="off" autocorrect="off"'
+        in src
+    )
+    assert (
+        'id="ai-settings-cf-account" data-admin spellcheck="false" autocapitalize="off" autocorrect="off"'
+        in src
+    )

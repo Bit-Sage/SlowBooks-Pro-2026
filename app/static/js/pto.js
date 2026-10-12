@@ -289,10 +289,12 @@ const PTOPage = {
             // what the approval took is what goes back — a request approved
             // before the draw was recorded falls back to its own hours
             const back = r.hours_drawn == null ? r.hours : r.hours_drawn;
-            const passed = r.start_date && r.start_date < new Date().toISOString().slice(0, 10);
+            const hours = `${back} ${Number(back) === 1 ? 'hour goes' : 'hours go'}`;
+            // today in the reader's own calendar, not UTC's (NEW-65)
+            const passed = r.start_date && r.start_date < todayISO();
             question = passed
-                ? `These dates have already passed. Cancel anyway? ${back} hours go back into the bank and the relief journal is reversed.`
-                : `Cancel this approved request? ${back} hours go back into the bank.`;
+                ? `These dates have already passed. Cancel anyway? ${hours} back into the bank and the relief journal is reversed.`
+                : `Cancel this approved request? ${hours} back into the bank.`;
         }
         if (!confirm(question)) return;
         try {

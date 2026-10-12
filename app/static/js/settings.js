@@ -1418,9 +1418,9 @@ const SettingsPage = {
             <label class="form-field">
                 <span><span id="ai-settings-model-label">Model</span> <button type="button" class="btn btn-sm" id="ai-settings-models-refresh" data-admin title="List the provider's models again">Refresh models</button></span>
                 <select id="ai-settings-model-select" data-admin aria-labelledby="ai-settings-model-label">
-                    ${SettingsPage._modelOptionsHtml(SettingsPage._aiModels[currentProvider] || [], currentModel)}
+                    ${SettingsPage._modelOptionsHtml(SettingsPage._aiModels[currentProvider] || [], currentModel, SettingsPage._modelsEmptyText[currentProvider])}
                 </select>
-                <input type="text" id="ai-settings-model-custom" data-admin aria-label="Model ID"
+                <input type="text" id="ai-settings-model-custom" data-admin aria-label="Model ID" spellcheck="false" autocapitalize="off" autocorrect="off"
                        value="${escapeHtml(currentModel || '')}"
                        placeholder="Type a model ID"
                        style="margin-top:6px; ${SettingsPage._isCustomModel(SettingsPage._aiModels[currentProvider] || [], currentModel) ? '' : 'display:none;'}">
@@ -1428,7 +1428,7 @@ const SettingsPage = {
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
-                <input type="text" id="ai-settings-cf-account" data-admin
+                <input type="text" id="ai-settings-cf-account" data-admin spellcheck="false" autocapitalize="off" autocorrect="off"
                        value="${escapeHtml(cfg.cloudflare_account_id || '')}"
                        placeholder="32-char hex (from dash.cloudflare.com)">
             </label>
@@ -1519,7 +1519,11 @@ const SettingsPage = {
         return !(models || []).some(m => m.id === model);
     },
 
-    _modelOptionsHtml(models, currentModel) {
+    // What an empty list says, per provider (gate round 2, NEW-63: one
+    // text for the page showed OpenAI a failure that was Anthropic's)
+    _modelsEmptyText: {},
+
+    _modelOptionsHtml(models, currentModel, emptyText) {
         models = models || [];
         const isCustom = SettingsPage._isCustomModel(models, currentModel);
         const opts = models.map(m =>
@@ -1527,7 +1531,7 @@ const SettingsPage = {
         ).join('');
         // Nothing chosen yet: a placeholder, not a guess. Save and Test ask
         // for a choice; the server does too.
-        const placeholder = `<option value="" disabled${currentModel ? '' : ' selected'}>${models.length ? 'Choose a model…' : (SettingsPage._modelsEmptyText || 'Enter a key to list models')}</option>`;
+        const placeholder = `<option value="" disabled${currentModel ? '' : ' selected'}>${models.length ? 'Choose a model…' : (emptyText || 'Enter a key to list models')}</option>`;
         return placeholder + opts +
             `<option value="__custom__"${isCustom ? ' selected' : ''}>Custom…</option>`;
     },
@@ -1562,14 +1566,14 @@ const SettingsPage = {
             const res = await API.post('/analytics/ai-models', SettingsPage._modelsRequest(provider));
             if (res.provider !== provider) return; // the provider changed under the request
             SettingsPage._aiModels[provider] = res.models || [];
-            SettingsPage._modelsEmptyText = res.models.length ? '' : 'No models listed — type a model ID';
-            sel.innerHTML = SettingsPage._modelOptionsHtml(res.models, keepModel);
+            SettingsPage._modelsEmptyText[provider] = res.models.length ? '' : 'No models listed — type a model ID';
+            sel.innerHTML = SettingsPage._modelOptionsHtml(res.models, keepModel, SettingsPage._modelsEmptyText[provider]);
             custom.style.display = sel.value === '__custom__' ? '' : 'none';
             note.textContent = `${res.models.length} models listed by ${res.provider_label}.`;
         } catch (err) {
             SettingsPage._aiModels[provider] = [];
-            SettingsPage._modelsEmptyText = 'No models listed — type a model ID';
-            sel.innerHTML = SettingsPage._modelOptionsHtml([], keepModel);
+            SettingsPage._modelsEmptyText[provider] = 'No models listed — type a model ID';
+            sel.innerHTML = SettingsPage._modelOptionsHtml([], keepModel, SettingsPage._modelsEmptyText[provider]);
             if (!keepModel) sel.value = '__custom__';
             custom.style.display = '';
             note.textContent = `Couldn't list models: ${String(err.message || err).replace(/\.$/, '')}. Type a model ID.`;
@@ -1631,9 +1635,14 @@ const SettingsPage = {
                     : '');
             // The old provider's models aren't this one's: the picker
             // empties, and fills from the new provider once it has a key.
+            // Back on the saved provider, the saved model is in the picker
+            // again (gate round 2, NEW-63: a switch away and back lost it,
+            // and the next Save wrote an empty model over it).
+            const back = providerSel.value === cfg.provider ? (cfg.model || '') : '';
+            const known = SettingsPage._aiModels[providerSel.value] || [];
             modelSel.innerHTML =
-                SettingsPage._modelOptionsHtml(SettingsPage._aiModels[providerSel.value] || [], '');
-            modelCustom.value = '';
+                SettingsPage._modelOptionsHtml(known, back, SettingsPage._modelsEmptyText[providerSel.value]);
+            modelCustom.value = back && SettingsPage._isCustomModel(known, back) ? back : '';
             document.getElementById('ai-settings-models-note').textContent = '';
             syncCustomVisibility();
             cfWrap.style.display = spec.needs_account_id ? '' : 'none';
@@ -1692,7 +1701,9 @@ const SettingsPage = {
         saveBtn.addEventListener('click', async () => {
             const needsModel = !resolveModel();
             const typedKey = !!keyPayload().api_key;
-            if (needsModel && !typedKey && SettingsPage._aiKeyOwner(cfg) !== providerSel.value) { modelChosen(); return; }
+            // no model and no key typed: a model is what is missing (a save
+            // here wrote an empty model over the saved one — NEW-63)
+            if (needsModel && !typedKey) { modelChosen(); return; }
             try {
                 const updated = await API.put('/analytics/ai-config', { ...collectPayload(), ...keyPayload() });
                 SettingsPage.aiConfigState = updated;
@@ -1717,6 +1728,7 @@ const SettingsPage = {
             // A key just entered with no model chosen: save the key, list the
             // provider's models, and ask for a choice; Test again then tests.
             const needsModel = !resolveModel();
+            if (needsModel && !keyPayload().api_key) { modelChosen(); return; }
             testRes.textContent = 'Saving…';
             testRes.className = 'ai-settings-test-result';
             try {

@@ -261,8 +261,22 @@ def test_the_page_lists_checks_and_finds():
     )
     # the answer lands in a live region, as a sentence
     assert 'id="audit-status-${a.id}" role="status"' in js
-    assert "cell.textContent = r.message;" in js
+    assert "${escapeHtml(r.message)}" in js  # the sentence, with its mark (NEW-67)
     assert 'id="taxforms-h-form-history">Form history</h3>' in js
+    # Find clears the last highlight before any answer (NEW-64)
+    find = js[js.index("async findByHash()") :]
+    assert find.index("forEach(tr => tr.removeAttribute('data-found'))") < find.index(
+        "/^[0-9a-f]{16,64}$/.test(hash)"
+    )
+    # Check answers with a mark in the success / danger colour and the time (NEW-67)
+    check = js[js.index("async checkForm(id)") : js.index("async findByHash()")]
+    assert "cell.className = `audit-status audit-status--${kind}`;" in check
+    assert "(checked at ${escapeHtml(at)})" in check
+    css = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
+    assert ".audit-status--ok { color: var(--text-success); }" in css
+    assert (
+        ".visually-hidden { position: absolute;" in css
+    )  # the Check header stays out of sight
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

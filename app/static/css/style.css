@@ -1042,6 +1042,13 @@ input:is([type="checkbox"], [type="radio"], [type="file"]):focus-visible {
 /* The dashboard aging legend's swatches: a coloured square, not a "■"
    character (text at 3.1:1, read aloud as "black square" — NEW-62) */
 .aging-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; }
+/* Form history: Check's answer carries a mark and the time (NEW-67) */
+.audit-status--ok { color: var(--text-success); }
+.audit-status--changed { color: var(--text-danger); }
+.audit-status .audit-mark { font-weight: 700; }
+.audit-status .audit-checked-at { color: var(--text-muted); font-size: 11px; }
+/* a header kept for the accessibility tree only (the portal has its own copy) */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* Form history: the row a footer hash was found on */
 #audit-rows tr[data-found] td { background: #fef3c7; }
 .badge-converted{background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }

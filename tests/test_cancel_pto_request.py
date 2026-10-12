@@ -321,3 +321,14 @@ def test_the_migration_adds_the_draw_columns_and_keeps_one_head(tmp_path):
     command.downgrade(cfg, "e2b7c4d9a1f3")
     cols = {c["name"] for c in sa.inspect(engine).get_columns("pto_requests")}
     assert not ({"hours_drawn", "dollars_relieved"} & cols)
+
+
+def test_the_cancel_question_uses_the_readers_day_and_the_singular():
+    """Gate round 2, NEW-65: the date compared was UTC's, so at 11 pm a request
+    for today read as past; and "1 hours"."""
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/pto.js").read_text(
+        encoding="utf-8"
+    )
+    assert "const passed = r.start_date && r.start_date < todayISO();" in js
+    assert "toISOString()" not in js[js.index("async cancelRequest(id)") :]
+    assert "Number(back) === 1 ? 'hour goes' : 'hours go'" in js

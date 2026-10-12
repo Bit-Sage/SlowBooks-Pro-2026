@@ -159,14 +159,23 @@ const TaxFormsPage = {
 
     // Re-figure one form from today's books; the answer is a sentence in
     // the row's Status cell (a live region, so a screen reader hears it).
+    // Re-figure one form from today's books; the answer is a sentence in
+    // the row's Status cell (a live region, so a screen reader hears it),
+    // with a mark in the success or danger colour and the time it was
+    // checked, so a second Check is seen to have happened (NEW-67).
     async checkForm(id) {
         const cell = document.getElementById(`audit-status-${id}`);
-        if (cell) cell.textContent = 'Checking…';
+        if (cell) { cell.className = ''; cell.textContent = 'Checking…'; }
+        const at = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
         try {
             const r = await API.get(`/document-audits/${id}/check`);
-            if (cell) cell.textContent = r.message;
+            if (!cell) return;
+            const kind = r.matches === true ? 'ok' : r.matches === false ? 'changed' : 'unknown';
+            const mark = { ok: '✓', changed: '✗', unknown: '?' }[kind];
+            cell.className = `audit-status audit-status--${kind}`;
+            cell.innerHTML = `<span class="audit-mark" aria-hidden="true">${mark}</span> ${escapeHtml(r.message)} <span class="audit-checked-at">(checked at ${escapeHtml(at)})</span>`;
         } catch (err) {
-            if (cell) cell.textContent = `Could not check: ${err.message}`;
+            if (cell) { cell.className = 'audit-status audit-status--unknown'; cell.textContent = `Could not check: ${err.message}`; }
         }
     },
 
@@ -178,6 +187,8 @@ const TaxFormsPage = {
         const typed = (input ? input.value : '').trim().toLowerCase().replace(/^hash\s+/, '');
         const byId = /^#?(\d{1,9})$/.exec(typed);
         const hash = typed.replace(/^#/, '');
+        // the last match's highlight goes before any answer (NEW-64)
+        document.querySelectorAll('#audit-rows tr[data-found]').forEach(tr => tr.removeAttribute('data-found'));
         if (!byId && !/^[0-9a-f]{16,64}$/.test(hash)) {
             if (out) out.textContent = 'Type the 16 characters after "Hash" in the footer (or the full 64), or the audit ID after "Audit ID".';
             return;
@@ -189,7 +200,6 @@ const TaxFormsPage = {
             } else {
                 rows = await API.get(`/document-audits/verify/${hash}`);
             }
-            document.querySelectorAll('#audit-rows tr[data-found]').forEach(tr => tr.removeAttribute('data-found'));
             if (!rows.length) {
                 if (out) out.textContent = byId ? `Not known to these books: no generated form has audit ID ${byId[1]}.` : 'Not known to these books: no generated form carries that hash.';
                 return;
