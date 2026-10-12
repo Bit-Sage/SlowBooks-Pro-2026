@@ -461,6 +461,10 @@ function openModal(title, html, opts) {
     const wasOpen = !$('#modal-overlay').classList.contains('hidden');
     $('#modal-title').textContent = title;
     $('#modal-body').innerHTML = html;
+    // A read-only sign-in sees the form locked, not a 403 after filling it
+    // in (app.js App.lockForms).
+    if (window.App && typeof window.App.lockForms === 'function') window.App.lockForms($('#modal-body'));
+    if (window.App && typeof window.App.hideWriteControls === 'function') window.App.hideWriteControls($('#modal-body'));
     // A long form names where its lines are (data-skip-to, with the link's
     // words in data-skip-text) and gets a skip link as its first child
     // (#266) — placed here, so the page scripts call nothing new and the
@@ -470,10 +474,6 @@ function openModal(title, html, opts) {
             form.insertAdjacentHTML('afterbegin', skipLinkHtml(form.dataset.skipTo, form.dataset.skipText || 'Skip to the lines'));
         }
     }
-    // A read-only sign-in sees the form locked, not a 403 after filling it
-    // in (app.js App.lockForms).
-    if (window.App && typeof window.App.lockForms === 'function') window.App.lockForms($('#modal-body'));
-    if (window.App && typeof window.App.hideWriteControls === 'function') window.App.hideWriteControls($('#modal-body'));
     $('#modal-overlay').classList.remove('hidden');
     const modal = $('#modal');
     modal.classList.toggle('modal--wide', !!(opts && opts.wide));
