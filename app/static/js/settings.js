@@ -1416,14 +1416,15 @@ const SettingsPage = {
                 ${currentSpec.docs_url ? ` &middot; <a href="${escapeHtml(currentSpec.docs_url)}" target="_blank" rel="noopener">Get a key</a>` : ''}
             </div>
             <label class="form-field">
-                <span>Model</span>
+                <span>Model <button type="button" class="btn btn-sm" id="ai-settings-models-refresh" data-admin title="List the provider's models again">Refresh models</button></span>
                 <select id="ai-settings-model-select" data-admin>
-                    ${SettingsPage._modelOptionsHtml(currentSpec, currentModel)}
+                    ${SettingsPage._modelOptionsHtml(SettingsPage._aiModels[currentProvider] || [], currentModel)}
                 </select>
                 <input type="text" id="ai-settings-model-custom" data-admin
                        value="${escapeHtml(currentModel || '')}"
                        placeholder="Type a model ID"
-                       style="margin-top:6px; ${SettingsPage._isCustomModel(currentSpec, currentModel) ? '' : 'display:none;'}">
+                       style="margin-top:6px; ${SettingsPage._isCustomModel(SettingsPage._aiModels[currentProvider] || [], currentModel) ? '' : 'display:none;'}">
+                <div id="ai-settings-models-note" class="ai-settings-hint"></div>
             </label>
             <label class="form-field" id="ai-settings-cf-wrap" style="${needsAccount ? '' : 'display:none'}">
                 <span>Cloudflare Account ID</span>
@@ -1505,25 +1506,57 @@ const SettingsPage = {
         return cfg.api_key_provider || (cfg.has_api_key ? cfg.provider : '') || '';
     },
 
-    // True when the saved model isn't in the curated list — the dropdown
-    // should show "Custom…" pre-selected and reveal the text input.
-    _isCustomModel(spec, model) {
+    // The models each provider offers, as the provider listed them this
+    // session (#254): there is no built-in list and no built-in default.
+    // Keyed by provider; filled by _loadAiModels once a key is saved.
+    _aiModels: {},
+
+    // True when the chosen model isn't on the provider's list (a model the
+    // provider has since dropped, or one typed by hand): the dropdown shows
+    // "Custom…" and the text box holds it.
+    _isCustomModel(models, model) {
         if (!model) return false;
-        const choices = (spec && spec.model_choices) || [];
-        return choices.indexOf(model) === -1;
+        return !(models || []).some(m => m.id === model);
     },
 
-    _modelOptionsHtml(spec, currentModel) {
-        const choices = (spec && spec.model_choices) || [];
-        const isCustom = SettingsPage._isCustomModel(spec, currentModel);
-        // Default to default_model if no choice saved yet; otherwise echo
-        // the saved one (or pick Custom if it's not in the list).
-        const selected = currentModel || (spec && spec.default_model) || '';
-        const opts = choices.map(m =>
-            `<option value="${escapeHtml(m)}"${m === selected && !isCustom ? ' selected' : ''}>${escapeHtml(m)}</option>`
+    _modelOptionsHtml(models, currentModel) {
+        models = models || [];
+        const isCustom = SettingsPage._isCustomModel(models, currentModel);
+        const opts = models.map(m =>
+            `<option value="${escapeHtml(m.id)}"${m.id === currentModel ? ' selected' : ''}>${escapeHtml(m.label || m.id)}</option>`
         ).join('');
-        return opts +
+        // Nothing chosen yet: a placeholder, not a guess. Save and Test ask
+        // for a choice; the server does too.
+        const placeholder = `<option value="" disabled${currentModel ? '' : ' selected'}>${models.length ? 'Choose a model…' : 'Enter a key to list models'}</option>`;
+        return placeholder + opts +
             `<option value="__custom__"${isCustom ? ' selected' : ''}>Custom…</option>`;
+    },
+
+    // Ask the provider for its models (GET /api/analytics/ai-models, with
+    // the saved key) and fill the picker, keeping whatever is chosen. A
+    // provider that can't list (a gateway without /models, a bad key) leaves
+    // the typed model and says why.
+    async _loadAiModels(provider, keepModel) {
+        const sel = document.getElementById('ai-settings-model-select');
+        const custom = document.getElementById('ai-settings-model-custom');
+        const note = document.getElementById('ai-settings-models-note');
+        if (!sel) return;
+        sel.innerHTML = '<option value="" selected disabled>Loading models…</option>';
+        note.textContent = '';
+        try {
+            const res = await API.get('/analytics/ai-models');
+            if (res.provider !== provider) return; // the provider changed under the request
+            SettingsPage._aiModels[provider] = res.models || [];
+            sel.innerHTML = SettingsPage._modelOptionsHtml(res.models, keepModel);
+            custom.style.display = sel.value === '__custom__' ? '' : 'none';
+            note.textContent = `${res.models.length} models listed by ${res.provider_label}.`;
+        } catch (err) {
+            SettingsPage._aiModels[provider] = [];
+            sel.innerHTML = SettingsPage._modelOptionsHtml([], keepModel);
+            if (!keepModel) sel.value = '__custom__';
+            custom.style.display = '';
+            note.textContent = `Couldn't list models: ${err.message || err}. Type a model ID.`;
+        }
     },
 
     _wireAiConfig(cfg) {
@@ -1562,6 +1595,16 @@ const SettingsPage = {
         };
         modelSel.addEventListener('change', syncCustomVisibility);
 
+        // The model the picker holds now: the chosen one, or the typed one.
+        const chosenModel = () =>
+            modelSel.value === '__custom__' ? modelCustom.value.trim() : (modelSel.value || '');
+        // The provider's models, once a key is saved for it (#254).
+        const loadModels = () => SettingsPage._loadAiModels(providerSel.value, chosenModel());
+        if (SettingsPage._aiKeyOwner(cfg) === providerSel.value && !SettingsPage._aiModels[providerSel.value]) {
+            loadModels();
+        }
+        document.getElementById('ai-settings-models-refresh').addEventListener('click', loadModels);
+
         providerSel.addEventListener('change', () => {
             const spec = providers.find(p => p.key === providerSel.value) || {};
             hintEl.innerHTML =
@@ -1569,12 +1612,12 @@ const SettingsPage = {
                 (spec.docs_url
                     ? ` &middot; <a href="${escapeHtml(spec.docs_url)}" target="_blank" rel="noopener">Get a key</a>`
                     : '');
-            // Repopulate model dropdown for the new provider — the old
-            // provider's options aren't valid for this one. Reset custom
-            // input too so we don't carry a stale model ID over.
+            // The old provider's models aren't this one's: the picker
+            // empties, and fills from the new provider once it has a key.
             modelSel.innerHTML =
-                SettingsPage._modelOptionsHtml(spec, spec.default_model || '');
+                SettingsPage._modelOptionsHtml(SettingsPage._aiModels[providerSel.value] || [], '');
             modelCustom.value = '';
+            document.getElementById('ai-settings-models-note').textContent = '';
             syncCustomVisibility();
             cfWrap.style.display = spec.needs_account_id ? '' : 'none';
             workerWrap.style.display = spec.needs_worker_url ? '' : 'none';
@@ -1583,11 +1626,16 @@ const SettingsPage = {
             // key typed for the last provider is not carried to this one.
             document.getElementById('ai-settings-key').value = '';
             syncKeyMark();
+            if (SettingsPage._aiKeyOwner(cfg) === providerSel.value) loadModels();
         });
 
-        const resolveModel = () => {
-            if (modelSel.value === '__custom__') return modelCustom.value.trim();
-            return modelSel.value;
+        const resolveModel = () => chosenModel();
+        // Save and Test need a model (there is no built-in default, #254).
+        const modelChosen = () => {
+            if (resolveModel()) return true;
+            toast('Choose a model first: enter the key, pick one from the list the provider gives, or type a model ID.', 'error');
+            modelSel.focus();
+            return false;
         };
 
         const collectPayload = () => ({
@@ -1621,6 +1669,7 @@ const SettingsPage = {
         }
 
         saveBtn.addEventListener('click', async () => {
+            if (!modelChosen()) return;
             try {
                 const updated = await API.put('/analytics/ai-config', { ...collectPayload(), ...keyPayload() });
                 SettingsPage.aiConfigState = updated;
@@ -1634,6 +1683,9 @@ const SettingsPage = {
 
         testBtn.addEventListener('click', async () => {
             // Save first so the test uses any just-entered key, then call /test.
+            // A key just entered with no model chosen: save the key, list the
+            // provider's models, and ask for a choice; Test again then tests.
+            const needsModel = !resolveModel();
             testRes.textContent = 'Saving…';
             testRes.className = 'ai-settings-test-result';
             try {
@@ -1641,6 +1693,14 @@ const SettingsPage = {
                 Object.assign(cfg, updated);
                 SettingsPage.aiConfigState = updated;
                 syncKeyMark();
+                if (keyPayload().api_key || (needsModel && !SettingsPage._aiModels[providerSel.value])) {
+                    await loadModels();
+                }
+                if (needsModel) {
+                    testRes.textContent = 'Key saved. Choose a model, then Test.';
+                    modelSel.focus();
+                    return;
+                }
             } catch (err) {
                 testRes.textContent = 'Save failed: ' + (err.message || err);
                 testRes.classList.add('ai-test-fail');

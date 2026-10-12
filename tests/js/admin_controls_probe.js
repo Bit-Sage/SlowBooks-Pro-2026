@@ -227,8 +227,9 @@ const ANSWERS = {
   '/invoices?is_sales_receipt=false&limit=50': [{ id: 7, invoice_number: '1001', customer_name: 'Maple Street Cafe' }],
   '/analytics/ai-config': {
     provider: 'anthropic', model: 'claude-sonnet', has_api_key: true, api_key_provider: 'anthropic',
-    providers: [{ key: 'anthropic', label: 'Anthropic Claude', model_choices: ['claude-sonnet'], default_model: 'claude-sonnet' }],
+    providers: [{ key: 'anthropic', label: 'Anthropic Claude' }],
   },
+  '/analytics/ai-models': { provider: 'anthropic', provider_label: 'Anthropic Claude', models: [{ id: 'claude-sonnet', label: 'Claude Sonnet' }] },
   '/classes?include_archived=true': [{ id: 1, name: 'Retail', is_archived: false, is_system_default: false }],
   '/cost-codes?include_inactive=true': [{ id: 1, code: '03', name: 'Concrete', cost_type: 'material', is_active: true, depth: 0, label: '03 Concrete' }],
   '/cost-types?include_inactive=true': [{ id: 1, code: 'labor', name: 'Labor', is_labor: true, burden_pct: 10, burden_method: 'flat', is_active: true }],

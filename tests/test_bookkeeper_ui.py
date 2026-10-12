@@ -199,6 +199,7 @@ SETTINGS_TAKEN = {
         {"provider": "anthropic", "model": ""},
     ),
     "AI Insights › Test": ("POST", "/api/analytics/ai-config/test", {}),
+    "AI Insights › Refresh models": ("GET", "/api/analytics/ai-models", None),
     "AI Insights › Remove": (
         "PUT",
         "/api/analytics/ai-config",
