@@ -321,7 +321,8 @@ function newWindow(role, answers = {}) {
     copyToClipboard() {},
     API: {
       get: async (path) => reply(path),
-      post: async () => ({}), put: async () => ({}), del: async () => ({}),
+      // POST /analytics/ai-models answers like its GET (the page lists with what it holds, NEW-56)
+      post: async (path) => (path === '/analytics/ai-models' ? reply(path) : {}), put: async () => ({}), del: async () => ({}),
     },
     // initSystemInfo asks with fetch, before any page
     fetch: async (url) => ({
