@@ -229,6 +229,18 @@ def generate_invoice_pdf(invoice, company_settings: dict) -> bytes:
     return render_pdf(render_invoice_html(invoice, company_settings))
 
 
+def render_deposit_html(deposit: dict, company_settings: dict) -> str:
+    """A deposit slip (#260): the bank account, the date, each check or
+    payment the deposit took (who, number, amount) and the total, for the
+    envelope that walks to the bank. `deposit` is the deposit detail as
+    GET /api/deposits/{id} answers it."""
+    return _render("deposit_pdf.html", company_settings, deposit=deposit)
+
+
+def generate_deposit_pdf(deposit: dict, company_settings: dict) -> bytes:
+    return render_pdf(render_deposit_html(deposit, company_settings))
+
+
 def generate_credit_memo_pdf(credit_memo, company_settings: dict) -> bytes:
     """A credit memo, printed the way an invoice is (credit memos had no
     PDF at all, so one could not be sent: 2.17.3 exploratory W-L19)."""

@@ -15,6 +15,7 @@ entry.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -255,9 +256,14 @@ def test_the_views_the_links_open():
     void = got["deposit 32"]
     assert void["rows"] == [] and len(void["buttons"]) == 1
     assert "its payments went back on the Make Deposits list" in void["text"]
-    # reconciled: no Void, and why
+    # reconciled: no Void, and why; the slip is still there to print (#260)
     rec = got["deposit 33"]
-    assert len(rec["buttons"]) == 1
+    assert not any(">Void<" in b for b in rec["buttons"]), rec["buttons"]
+    assert [re.search(r">([^<]*)</button>", b).group(1) for b in rec["buttons"]] == [
+        "Save PDF",
+        "Print",
+        "Close",
+    ]
     assert "on a reconciled bank statement, so it can't be voided" in rec["text"]
 
     bp = got["bill payment 41"]
