@@ -789,6 +789,7 @@ _ADMIN_WRITE_PREFIXES = (
 _ADMIN_ONLY_PREFIXES = (
     "/api/payroll",
     "/api/tax-forms",
+    "/api/document-audits",  # the forms' history and hash checks (#263)
     "/api/benefits",
     "/api/deductions",
     "/api/onboarding",

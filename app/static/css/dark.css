@@ -420,6 +420,10 @@
 [data-theme="dark"] .badge-issued { background: #1a3a5a; color: #6bb3e8; border-color: #2a5a8a; }
 [data-theme="dark"] .badge-applied { background: #1a3a2a; color: #4caf7a; border-color: #2a6a4a; }
 [data-theme="dark"] .badge-overdue { background: #3a1a1a; color: #e46969; border-color: #5a2a2a; }
+[data-theme="dark"] .badge-approved { background: #1a3a2a; color: #4caf7a; border-color: #2a6a4a; }
+[data-theme="dark"] .badge-denied { background: #3a1a1a; color: #e46969; border-color: #5a2a2a; }
+[data-theme="dark"] .badge-cancelled { background: #2a2e38; color: #a0a8b8; border-color: #3a4050; }
+[data-theme="dark"] #audit-rows tr[data-found] td { background: #3a3010; }
 
 /* Amount columns */
 [data-theme="dark"] .amount { color: var(--text-primary); }
