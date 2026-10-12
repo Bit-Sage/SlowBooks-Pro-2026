@@ -887,10 +887,28 @@ const BankingPage = {
                     <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
                     <div style="font-size:11px; font-weight:600;" role="status">${balanced ? '✓ Balanced — ready to finish' : '⚠ Out of balance — finish when this is $0.00'}</div></div>
             </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;" data-write>
+                <button class="btn btn-sm btn-secondary" onclick="BankingPage.markAll(${reconId}, true)">Mark all</button>
+                <label for="recon-through" style="font-size:11px;">Mark through</label>
+                <input type="date" id="recon-through" value="${data.statement_date}" max="${data.statement_date}" style="font-size:11px; padding:2px 6px;">
+                <button class="btn btn-sm btn-secondary" onclick="BankingPage.markAll(${reconId}, true, document.getElementById('recon-through').value)">Mark through that date</button>
+                <button class="btn btn-sm btn-secondary" onclick="BankingPage.markAll(${reconId}, false)">Clear all</button>
+            </div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Date</th><th scope="col">Payee / Description</th><th scope="col">Ref #</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${rows || '<tr><td colspan="5" style="text-align:center;">No ledger lines up to this date</td></tr>'}</tbody>
             </table></div>`;
+    },
+
+    // Every line at once (#258): ticked, ticked through a date, or all
+    // unticked; the view re-renders with the new difference, as one tick
+    // does. Lines after the statement date are never on the session.
+    async markAll(reconId, cleared, through = null) {
+        try {
+            const res = await API.post(`/banking/reconciliations/${reconId}/mark-all`, { cleared, ...(through ? { through } : {}) });
+            toast(`${res.changed} line${res.changed === 1 ? '' : 's'} ${cleared ? 'marked' : 'cleared'}; difference ${formatCurrency(res.difference)}`);
+            BankingPage.showReconcileView(reconId);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async toggleCleared(reconId, lineId, checkbox) {
