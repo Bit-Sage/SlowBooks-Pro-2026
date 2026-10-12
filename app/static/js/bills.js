@@ -243,7 +243,8 @@ const BillsPage = {
         if (!termChoices.includes(terms)) termChoices.push(terms);
 
         openModal(bill ? `Edit Bill ${bill.bill_number}` : 'Enter Bill', `
-            <form id="bill-form" onsubmit="BillsPage.save(event, ${bill ? bill.id : 'null'})">
+            <form id="bill-form" aria-labelledby="modal-title" onsubmit="BillsPage.save(event, ${bill ? bill.id : 'null'})">
+                ${skipLinkHtml('#bill-lines', 'Skip to the line items')}
                 ${bill ? '' : ScanHelper.scanRowHtml()}
                 <div class="form-grid">
                     <div class="form-group"><label>Vendor *</label>

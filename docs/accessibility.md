@@ -94,6 +94,16 @@ or Alt+D.*
   carry accessible names.
 - **State is never conveyed by colour alone:** an invoice reads Paid, Draft or
   Sent; a reconciliation reads "Balanced" or "Out of balance".
+- **Landmarks and skip links where the forms are long** (v2.22.2): the
+  invoice, bill and journal-entry forms are form landmarks named by the
+  dialog's title, and each opens with "Skip to the line items" as its
+  first stop — a screen reader hears it first, Shift+Tab from the first
+  field reaches it, and it lands the keyboard on the first line's first
+  box with the ring showing — so the lines are one press away, not forty
+  tabs past the address block. The dialog still opens on its first
+  field, never on Void or Delete. The chart of accounts is a navigation
+  landmark (its names open the registers) with "Skip to the account
+  filter" as its first stop.
 - **Every bar, slice and point carries its figure** (v2.22.2): on the
   dashboard's and Analytics' charts the amount is written on or beside the
   mark — past a bar's end (inside it when the chart has no room), in a
@@ -139,8 +149,6 @@ a screen reader hears it (v2.22.2).
 
 ## What we know is still open
 
-- The chart-of-accounts tree and some long entry forms could use landmark
-  regions and skip links.
 - Keyboard-only drag ordering is not offered where a mouse drag exists
   (the dashboard uses arrow buttons instead).
 

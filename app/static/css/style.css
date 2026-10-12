@@ -31,6 +31,30 @@
     outline-offset: 2px;
     box-shadow: 0 0 0 8px var(--focus-halo);
 }
+/* A form's or page's own skip link (#266): out of the way until the
+   keyboard reaches it, then shown where it sits, above what it skips. */
+.skip-link--inline {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    top: auto;
+    left: auto;
+    font-size: 12px;
+}
+.skip-link--inline:focus {
+    position: static;
+    display: inline-block;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    margin: 0 0 8px;
+    padding: 6px 12px;
+    box-shadow: 0 0 0 4px var(--focus-halo);
+}
 
 /* Focus is visible on every control (WCAG 2.4.7). Links and buttons had
    no focus style of their own and relied on the browser's ring, which

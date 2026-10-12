@@ -854,8 +854,9 @@ const App = {
             income: T('Income'), cogs: 'Cost of Goods Sold', expense: 'Expenses' };
 
         let html = `
+            ${skipLinkHtml('#accounts-filter', 'Skip to the account filter')}
             <div class="page-header">
-                <h2>Chart of Accounts</h2>
+                <h2 id="accounts-heading">Chart of Accounts</h2>
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <input type="search" id="accounts-filter" aria-label="Filter accounts" placeholder="Filter by number or name" value="${escapeHtml(App._accountsFilter)}" style="width:200px;" oninput="App.filterAccounts(this.value)">
                     <span id="accounts-filter-note" role="status" style="font-size:11px; color:var(--gray-500);"></span>
@@ -865,7 +866,7 @@ const App = {
                 </div>
             </div>
             <p style="font-size:11px; color:var(--gray-500); margin:-4px 0 8px;">An account's name opens its register: the bank register for a bank or card account, this year's transactions for the rest.</p>
-            <div class="table-container"><table>
+            <nav aria-labelledby="accounts-heading"><div class="table-container"><table>
                 <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:100px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
                 <tbody>`;
 
@@ -891,7 +892,7 @@ const App = {
                 </tr>`;
             }
         }
-        html += `</tbody></table></div>`;
+        html += `</tbody></table></div></nav>`;
         // a filter typed before a re-render (Show inactive, a save) still applies
         if (App._accountsFilter) setTimeout(() => App.filterAccounts(App._accountsFilter), 0);
         return html;
