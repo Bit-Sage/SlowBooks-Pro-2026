@@ -1509,15 +1509,17 @@ const ReportsPage = {
                     <td>${escapeHtml(i.tax_id)}</td>
                     <td>${escapeHtml(i.vendor_1099_type)}</td>
                     <td class="amount">${formatCurrency(i.total_paid)}</td>
+                    <td>${i.w9_on_file ? 'On file' : (i.above_threshold ? '<span style="color:var(--danger); font-weight:700;">No W-9</span>' : 'No')}</td>
                     <td>${i.above_threshold ? '<span style="color:var(--danger); font-weight:700;">REPORT</span>' : ''}</td>
                 </tr>`
             ).join('');
             rows += `<tr style="font-weight:700; background:var(--gray-50);">
                 <td colspan="3">TOTAL</td><td class="amount">${formatCurrency(data.total)}</td>
+                <td>${data.vendors_missing_w9 ? `${data.vendors_missing_w9} with no W-9` : ''}</td>
                 <td>${data.vendors_above_threshold} vendor(s) above $${data.threshold}</td></tr>`;
             content.innerHTML = `
                 <div class="table-container"><table>
-                    <thead><tr><th scope="col">Vendor</th><th scope="col">Tax ID</th><th scope="col">Type</th><th scope="col" class="amount">Total Paid</th><th scope="col">Status</th></tr></thead>
+                    <thead><tr><th scope="col">Vendor</th><th scope="col">Tax ID</th><th scope="col">Type</th><th scope="col" class="amount">Total Paid</th><th scope="col">W-9</th><th scope="col">Status</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>`;
             const restored = ReportsPage._refocusRow(content);

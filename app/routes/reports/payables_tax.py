@@ -389,6 +389,7 @@ def report_1099_summary(
     items = []
     total = Decimal(0)
     above_threshold = 0
+    missing_w9 = 0  # reportable, and no W-9 on file (#257)
 
     for vendor in vendors_1099:
         vendor_total = Decimal(str(totals_by_vendor.get(vendor.id, 0) or 0))
@@ -396,6 +397,8 @@ def report_1099_summary(
         flagged = vendor_total >= 600
         if flagged:
             above_threshold += 1
+            if not vendor.w9_on_file:
+                missing_w9 += 1
 
         items.append(
             {
@@ -405,6 +408,7 @@ def report_1099_summary(
                 "vendor_1099_type": vendor.vendor_1099_type or "NEC",
                 "total_paid": float(vendor_total),
                 "above_threshold": flagged,
+                "w9_on_file": bool(vendor.w9_on_file),
             }
         )
 
@@ -415,5 +419,6 @@ def report_1099_summary(
         "items": items,
         "total": float(total),
         "vendors_above_threshold": above_threshold,
+        "vendors_missing_w9": missing_w9,
         "threshold": 600.0,
     }
