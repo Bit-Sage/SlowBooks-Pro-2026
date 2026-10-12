@@ -94,6 +94,13 @@ or Alt+D.*
   carry accessible names.
 - **State is never conveyed by colour alone:** an invoice reads Paid, Draft or
   Sent; a reconciliation reads "Balanced" or "Out of balance".
+- **Every bar, slice and point carries its figure** (v2.22.2): on the
+  dashboard's and Analytics' charts the amount is written on or beside the
+  mark — past a bar's end (inside it when the chart has no room), in a
+  slice (one under 4% is too thin to hold it), above a line's point — so
+  the colour is not the only way from a mark to its amount. A label that
+  would land on another is left off; the table under each chart has every
+  figure. The dashboard's aging bar and monthly revenue bars say theirs too.
 
 ![The New Invoice dialog with keyboard focus in the Date field](../screenshots/a11y-dialog.png)
 
@@ -130,8 +137,6 @@ box included.
 
 - The chart-of-accounts tree and some long entry forms could use landmark
   regions and skip links.
-- Colour-coding on the dashboard charts has text equivalents in the legend
-  but not on the bars themselves.
 - Keyboard-only drag ordering is not offered where a mouse drag exists
   (the dashboard uses arrow buttons instead).
 
