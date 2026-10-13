@@ -184,6 +184,12 @@ And the whole app is agent-operable: every install serves a
 self-documenting local REST API (565 operations in v2.22) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
+What stays on your machine is the company file and the API. A cloud-backed
+CLI's model does not: what the agent reads from your books goes to its
+provider under that provider's terms, and only a model you run locally, and
+have checked makes no outbound calls, keeps all of it home. AI Insights has
+the same shape — it sends the figures it is given to the provider you chose,
+over public HTTPS only.
 
 **One-click reseller-permit verification.** Per-state format validation
 (WA/CA/TX), one click opens the state's official lookup, and the

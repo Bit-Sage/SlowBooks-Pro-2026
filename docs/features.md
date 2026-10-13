@@ -189,6 +189,8 @@ Flat CSV with columns `(section, key, subkey, value)` covering 9 sections: perio
 ### AI Insights
 An optional LLM layer sits on top of the analytics snapshot and produces a compact **3 observations / 3 risks / 3 recommendations** executive brief. Nothing is sent until you click the **AI Insights** button — the feature is zero-cost by default.
 
+**What stays local, and what does not** (#294). The company file and the REST API never leave the machine. The brief does: when you click AI Insights, the figures in the prompt go to the provider you configured, over public HTTPS only (private and LAN addresses are refused, see the SSRF boundary below), under that provider's data terms. The same is true of an agent CLI operating the local API from the [AI setup guide](https://www.slowbookspro.com/ai/): the agent's connection to SlowBooks is local, but a cloud-backed CLI's model is not, and whatever the agent reads from the books goes to its provider. A "no accounting data leaves this machine" setup needs a model you run locally, pointed at by the agent, and checked to make no outbound calls; running the CLI process locally is not enough by itself. Local credential storage says nothing about where inference happens.
+
 **Eight providers supported out of the box**, Claude and Grok first:
 
 | Provider | Wire format | Models | Free tier |
