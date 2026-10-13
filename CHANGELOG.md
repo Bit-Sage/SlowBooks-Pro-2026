@@ -7,6 +7,16 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Fixed
+
+- Quitting the desktop app run from source (`python desktop_launcher.py`)
+  with Command-Q no longer leaves its server running. The fix for #52 gave
+  the installed apps' server a watch on the window that started it, so it
+  stops when the window's process goes; a source run started its server
+  another way, without that watch, and the next launch was refused as
+  "already running" until the leftover process was ended by hand. A source
+  run now starts its server the same way the installed apps do.
+
 ### v2.22.2 — Thirteen quick wins
 
 Thirteen enhancements from Grok's feature exploration of 2.22.1 on
