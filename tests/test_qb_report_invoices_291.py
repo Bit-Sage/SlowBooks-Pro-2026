@@ -204,3 +204,32 @@ def test_decimal_boundaries_hold(db_session, seed_accounts):
 
     inv = db_session.query(Invoice).filter_by(invoice_number="1032").one()
     assert inv.tax_rate == Decimal("0.075000") and inv.tax_amount == Decimal("37.50")
+
+
+def test_the_ledger_says_the_documents_face_and_the_messages_the_companys_word(
+    client, db_session, seed_accounts
+):
+    """What an imported invoice posts reads as one made here does ("Invoice
+    #1031", the document's own face); the import's messages say the
+    company's word for the report's document, so a nonprofit reads Pledge
+    (test_document_references' sweep)."""
+    from app.models.invoices import Invoice
+    from app.models.transactions import Transaction
+
+    assert import_invoice_report(db_session, PLAIN)["imported"] == 3
+    inv = db_session.query(Invoice).filter_by(invoice_number="1031").one()
+    txn = db_session.get(Transaction, inv.transaction_id)
+    assert txn.description == "QB report import — Invoice #1031"
+    # the receivable line names the document; the income lines keep the items' words
+    assert [ln.description for ln in txn.lines if ln.debit] == ["Invoice #1031"]
+
+    client.put("/api/settings", json={"company_type": "nonprofit"})
+    broken = PLAIN.replace('"1,350.00",,0.00,0.00', '"1,400.00",,0.00,0.00', 1)
+    result = import_invoice_report(db_session, broken)
+    assert (
+        result["imported"] == 0
+    )  # the three are here already: 1031 refused, two skipped
+    assert any(
+        e.startswith("Pledge 1031:") and "the pledge total" in e
+        for e in result["errors"]
+    ), result["errors"]
