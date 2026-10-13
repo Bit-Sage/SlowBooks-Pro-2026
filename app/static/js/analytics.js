@@ -109,7 +109,13 @@ const AnalyticsPage = {
     const totalRevenue = Number(totals.revenue) || 0;
     const totalExpenses = Number(totals.expenses) || 0;
     const netIncome = Number(totals.net_income) || 0;
-    const dso = Number(data.dso) || 0;
+    // DSO is absent when nothing was paid in the last 30 days: no collection
+    // period to measure, and 0.0 read as instant collection (NEW-80 / W-4)
+    const dso = data.dso == null ? null : Number(data.dso);
+    const dsoText = dso == null ? "&mdash;" : dso.toFixed(1);
+    const dsoTitle =
+      `${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30.` +
+      (dso == null ? ` ${Terms.text('No invoices or sales receipts were paid in the last 30 days, so there is no collection period to measure.')}` : "");
     const margin = totals.margin_pct == null ? null : Number(totals.margin_pct);
     const marginText = margin == null ? "&mdash;" : `${margin.toFixed(1)}%`;
     const marginTitle =
@@ -142,14 +148,17 @@ const AnalyticsPage = {
             <div class="analytics-kpi-grid">
                 <div class="analytics-kpi" title="${escapeHtml(Terms.text(this.REVENUE_BASIS))}"><div class="analytics-kpi-label">${Terms.text('Revenue (ledger)')}</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
                 <div class="analytics-kpi" title="${escapeHtml(this.EXPENSE_BASIS)}"><div class="analytics-kpi-label">Expenses (ledger)</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
-                <div class="analytics-kpi" title="${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30."><div class="analytics-kpi-label">DSO (Days)</div><div class="analytics-kpi-value kpi-blue">${dso.toFixed(1)}</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(dsoTitle)}"><div class="analytics-kpi-label">DSO (Days)</div><div class="analytics-kpi-value kpi-blue">${dsoText}</div></div>
                 <div class="analytics-kpi" title="${escapeHtml(marginTitle)}"><div class="analytics-kpi-label">Margin %</div><div class="analytics-kpi-value kpi-purple">${marginText}</div></div>
             </div>
 
             <div class="analytics-meta">${escapeHtml(Terms.text(this.BASIS_NOTE))}</div>
 
             <div class="analytics-section-title">Revenue Trend &mdash; Last 12 Months</div>
-            <div class="analytics-card"><div class="chart-wrap"><canvas id="chart-revenue-trend"></canvas></div></div>
+            <div class="analytics-card">
+                <div class="chart-wrap"><canvas id="chart-revenue-trend"></canvas></div>
+                ${this._trendTable(data.revenue_trend)}
+            </div>
 
             <div class="analytics-two-col">
                 <div class="analytics-card">
@@ -210,6 +219,17 @@ const AnalyticsPage = {
         `;
   },
 
+  // The doughnut's slices: the accounts with net spending, largest first.
+  // An account that nets to a credit for the period (a refund larger than
+  // the spending, since the ledger can do that and paid bills could not)
+  // has no slice — Chart.js would size one by the absolute value, as if it
+  // were spending (NEW-78) — and its table row has no swatch.
+  _expenseSlices(byCategory) {
+    return Object.entries(byCategory || {})
+      .filter(([, a]) => Number(a) > 0)
+      .sort((a, b) => b[1] - a[1]);
+  },
+
   _expensesTable(byCategory) {
     const entries = Object.entries(byCategory || {}).sort(
       (a, b) => b[1] - a[1],
@@ -218,10 +238,17 @@ const AnalyticsPage = {
       return '<div class="analytics-empty">No expenses posted this period.</div>';
     }
     const palette = this.EXPENSE_PALETTE;
+    const sliced = this._expenseSlices(byCategory).map(([c]) => c);
+    const swatch = (c) => {
+      const i = sliced.indexOf(c);
+      return i < 0
+        ? ""
+        : `<span aria-hidden="true" class="chart-swatch" style="background:var(--chart-${palette[i % palette.length]})"></span> `;
+    };
     const rows = entries
       .map(
-        ([c, a], i) => `
-            <tr><td><span aria-hidden="true" class="chart-swatch" style="background:var(--chart-${palette[i % palette.length]})"></span> ${escapeHtml(c)}</td><td class="amount red">${formatCurrency(a)}</td></tr>
+        ([c, a]) => `
+            <tr><td>${swatch(c)}${escapeHtml(c)}</td><td class="amount ${Number(a) < 0 ? "green" : "red"}">${formatCurrency(a)}</td></tr>
         `,
       )
       .join("");
@@ -306,6 +333,31 @@ const AnalyticsPage = {
                         </tr>
                     </thead>
                     <tbody>${bodyRows}${totalsRow}</tbody>
+                </table>
+            </div>
+        `;
+  },
+
+  // Every month's figure in text, under the chart (NEW-81 / W-5: a point at
+  // the chart's edge or top could not carry its figure, and the card had no
+  // table to fall back on; the PDF always had this one)
+  _trendTable(trend) {
+    const entries = Object.entries(trend || {});
+    if (entries.length === 0) {
+      return '<div class="analytics-empty">No revenue data.</div>';
+    }
+    const rows = entries
+      .map(
+        ([m, v]) => `
+            <tr><td>${escapeHtml(m)}</td><td class="amount green">${formatCurrency(v)}</td></tr>
+        `,
+      )
+      .join("");
+    return `
+            <div class="table-container">
+                <table>
+                    <thead><tr><th scope="col">Month</th><th scope="col" class="amount">Revenue (ledger)</th></tr></thead>
+                    <tbody>${rows}</tbody>
                 </table>
             </div>
         `;
@@ -503,8 +555,7 @@ const AnalyticsPage = {
   _renderExpensesChart() {
     const ctx = $("#chart-expenses");
     if (!ctx) return;
-    const byCat = this.state.data.expenses_by_category || {};
-    const entries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    const entries = this._expenseSlices(this.state.data.expenses_by_category);
     if (entries.length === 0) return;
     const theme = this._chartDefaults();
 

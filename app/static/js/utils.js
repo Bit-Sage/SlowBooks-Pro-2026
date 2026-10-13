@@ -229,7 +229,8 @@ function cssVar(name) {
 // figure sits past its end, inside the bar when the chart area has no room
 // there; a stacked segment's sits in the segment when it fits; a slice's
 // sits in the slice (one under 4% is too thin to hold text); a point's
-// sits above it (below, for every other line). A label that would land on
+// sits above it (below, for every other line), sliding sideways to stay in
+// the chart area at a first or last point. A label that would land on
 // one already drawn, or outside the chart area, is left off, and so is one
 // on a mark whose colour gives neither ink nor white 4.5:1: a crowded line
 // shows what fits, and the table has the rest. Colours follow the theme at
@@ -249,9 +250,14 @@ function chartFigures(opts = {}) {
             const free = (b) => !placed.some(p => !(b.x + b.w < p.x || p.x + p.w < b.x || b.y + b.h < p.y || p.y + p.h < b.y));
             // 'drawn', or why not: 'outside' the chart area, 'taken' by a label
             // already there, or 'contrast' — no fill reads on the mark
-            const draw = (text, cx, cy, fill) => {
+            const draw = (text, cx, cy, fill, keepIn) => {
                 if (!fill) return 'contrast';
                 const w = ctx.measureText(text).width + 4, h = size + 2;
+                // a point's label slides sideways to stay in the chart area (a
+                // first or last month's point sits on the area's edge — NEW-81
+                // / W-5); a bar's does not, since 'outside' is how it learns
+                // to go inside the bar instead
+                if (keepIn) cx = Math.min(Math.max(cx, area.left + w / 2), area.right - w / 2);
                 const box = { x: cx - w / 2, y: cy - h / 2, w, h };
                 if (!inside(box)) return 'outside';
                 if (!free(box)) return 'taken';
@@ -317,7 +323,7 @@ function chartFigures(opts = {}) {
                         // chart (a line along the axis); one whose place is
                         // taken is left off
                         const dy = di % 2 ? h / 2 + 5 : -(h / 2 + 5);
-                        if (draw(text, el.x, el.y + dy, ink) === 'outside') draw(text, el.x, el.y - dy, ink);
+                        if (draw(text, el.x, el.y + dy, ink, true) === 'outside') draw(text, el.x, el.y - dy, ink, true);
                     }
                 });
             });

@@ -94,6 +94,26 @@ def test_a_figure_that_cannot_reach_aa_on_its_mark_is_left_off():
 
 
 @needs_node
+def test_a_point_on_the_edge_or_the_top_keeps_its_figure():
+    """The trend's first and last months sit on the area's edges and the
+    axis maximum on its top; their labels fell outside and were left off,
+    and the card had no table (NEW-81 / W-5). A point's label slides in
+    from the edge; the top point's goes below it."""
+    got = _probe()["edges"]
+    by = {(p["x"], p["y"]): p["text"] for p in got}
+    xs = sorted(p["x"] for p in got)
+    assert [p["text"] for p in sorted(got, key=lambda p: p["x"])] == [
+        "$1k",
+        "$2.5k",
+        "$1k",
+    ]
+    assert xs[0] > 0 and xs[-1] < 400  # slid in from the edges (6px per character + 4)
+    top = next(p for p in got if p["text"] == "$2.5k")
+    assert top["y"] > 0  # below the point on the top edge, inside the area
+    assert len(by) == 3
+
+
+@needs_node
 def test_points_are_labelled_where_the_labels_do_not_collide():
     lines = _probe()["lines"]
     texts = [(p["text"], p["x"], p["y"]) for p in lines]

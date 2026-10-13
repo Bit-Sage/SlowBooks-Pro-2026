@@ -212,7 +212,7 @@
     {% set totals = dashboard.get("totals") or {} %}
     {% set total_revenue  = totals.get("revenue") or 0 %}
     {% set total_expenses = totals.get("expenses") or 0 %}
-    {% set dso = dashboard.dso or 0 %}
+    {% set dso = dashboard.get("dso") %}
     {% set margin = totals.get("margin_pct") %}
 
     <h2 class="section">Key Metrics</h2>
@@ -227,11 +227,11 @@
         </div>
         <div class="kpi">
             <div class="kpi-label">DSO (Days)</div>
-            <div class="kpi-value kpi-blue">{{ "%.1f"|format(dso) }}</div>
+            <div class="kpi-value kpi-blue">{% if dso is number %}{{ "%.1f"|format(dso) }}{% else %}&mdash;{% endif %}</div>
         </div>
         <div class="kpi">
             <div class="kpi-label">Margin %</div>
-            <div class="kpi-value kpi-purple">{% if margin is none %}&mdash;{% else %}{{ "%.1f"|format(margin) }}%{% endif %}</div>
+            <div class="kpi-value kpi-purple">{% if margin is number %}{{ "%.1f"|format(margin) }}%{% else %}&mdash;{% endif %}</div>
         </div>
     </div>
 

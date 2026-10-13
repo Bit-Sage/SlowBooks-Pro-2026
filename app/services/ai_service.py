@@ -425,7 +425,7 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
     ar_aging = dashboard.get("ar_aging", {}) or {}
     ap_aging = dashboard.get("ap_aging", {}) or {}
     cash_forecast = dashboard.get("cash_forecast", []) or []
-    dso = dashboard.get("dso", 0) or 0
+    dso = dashboard.get("dso")  # None: nothing paid in the last 30 days (NEW-80)
 
     # One basis for the headline figures — the ledger's, as the Profit &
     # Loss counts them (2.22.3 gate, NEW-73 / W-2: revenue was the paid
@@ -491,7 +491,11 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
         f"Expenses:    ${total_expenses:,.0f}",
         f"Net income:  ${net_income:,.0f}",
         margin_line,
-        f"DSO:         {float(dso):.1f} days",
+        (
+            f"DSO:         {float(dso):.1f} days"
+            if dso is not None
+            else "DSO:         n/a (no invoices or sales receipts paid in the last 30 days)"
+        ),
         "",
         "=== TOP REVENUE CUSTOMERS (invoices and sales receipts paid in full) ===",
     ]

@@ -85,6 +85,12 @@ const line1 = { type: 'line', data: [{ x: 40, y: 100 }, { x: 60, y: 100 }, { x: 
 const line2 = { type: 'line', data: [{ x: 40, y: 104 }, { x: 60, y: 104 }, { x: 200, y: 104 }] };
 out.lines = run([{ data: [1000, 1000, 1000] }, { data: [2000, 2000, 2000] }], [line1, line2]);
 
+// a line's first and last points sit on the area's edges, and the top one on
+// its top (the month that is the axis maximum — NEW-81 / W-5): the label
+// slides in from the edge, and the top point's goes below it
+const edges = { type: 'line', data: [{ x: 0, y: 100 }, { x: 200, y: 0 }, { x: 400, y: 100 }] };
+out.edges = run([{ data: [1000, 2500, 1000] }], [edges]);
+
 // a hidden dataset draws nothing
 out.hidden = run([{ data: [5] }], [{ type: 'bar', hidden: true, data: [{ x: 10, y: 10, base: 100 }] }]);
 

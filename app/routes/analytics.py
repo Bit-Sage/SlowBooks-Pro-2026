@@ -281,7 +281,8 @@ def export_csv(
         for vendor, amount in (by_vendor or {}).items():
             writer.writerow(["ap_aging", bucket, _csv_safe(vendor), f"{amount:.2f}"])
 
-    writer.writerow(["dso", "days", "", f"{float(snap.get('dso') or 0):.2f}"])
+    dso = snap.get("dso")
+    writer.writerow(["dso", "days", "", "" if dso is None else f"{float(dso):.2f}"])
 
     for entry in snap.get("cash_forecast") or []:
         writer.writerow(

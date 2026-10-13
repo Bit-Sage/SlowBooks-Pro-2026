@@ -13,7 +13,7 @@ and the PDF heads the trend "Revenue (ledger)" (NEW-76 / W-1).
 
 import csv
 import io
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from app.services import ai_tools
@@ -298,3 +298,98 @@ def test_the_table_is_the_doughnuts_legend():
     css = (ROOT / "app" / "static" / "css" / "style.css").read_text(encoding="utf-8")
     assert ".chart-swatch {" in css
     assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);" in css
+
+
+def test_a_net_credit_account_has_no_slice_and_no_swatch(client, seed_accounts):
+    """A refund larger than the spending nets an expense account below zero.
+    Chart.js sizes a doughnut's arcs by absolute value, so the ring drew it
+    as spending (NEW-78). It keeps its row and its place in the totals; the
+    ring and the swatches are the accounts with net spending."""
+    _journal(client, seed_accounts, "6000", "3000", "48.00", text="Owner paid hosting")
+    _journal(client, seed_accounts, "6100", "1000", "120.00", text="Truck repair")
+    _journal(client, seed_accounts, "1000", "6100", "200.00", text="Refund")
+    dash = _dashboard(client)
+    assert dash["expenses_by_category"] == {
+        _label(seed_accounts, "6000"): 48.0,
+        _label(seed_accounts, "6100"): -80.0,
+    }
+    assert dash["totals"]["expenses"] == -32.0
+    js = (ROOT / "app" / "static" / "js" / "analytics.js").read_text(encoding="utf-8")
+    assert ".filter(([, a]) => Number(a) > 0)" in js  # _expenseSlices
+    assert (
+        "const entries = this._expenseSlices(this.state.data.expenses_by_category);"
+        in js
+    )
+    assert "const sliced = this._expenseSlices(byCategory).map(([c]) => c);" in js
+    assert "return i < 0" in js  # a row off the ring has no swatch
+
+
+def test_no_paid_sales_in_thirty_days_means_no_dso(
+    client, seed_accounts, seed_customer
+):
+    """$125k open and nothing paid in the last 30 days read "DSO 0.0 — lower
+    is better" (NEW-80 / W-4). There is no collection period to measure:
+    the dashboard says None, the page and the PDF a dash, the brief n/a."""
+    cid = seed_customer.id
+    old = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cid,
+            "date": (date.today() - timedelta(days=60)).isoformat(),
+            "lines": [{"description": "work", "quantity": 1, "rate": "500.00"}],
+        },
+    )
+    assert old.status_code == 201, old.text
+    assert client.post(f"/api/invoices/{old.json()['id']}/send").status_code in (
+        200,
+        201,
+    )
+    dash = client.get("/api/analytics/dashboard").json()
+    assert dash["dso"] is None
+    assert sum(sum(b.values()) for b in dash["ar_aging"].values()) == 500.0
+    prompt = build_insights_prompt(dash)
+    assert (
+        "DSO:         n/a (no invoices or sales receipts paid in the last 30 days)"
+        in prompt
+    )
+    r = client.get("/api/analytics/export.csv")
+    rows = [row for row in csv.reader(io.StringIO(r.content.decode("utf-8-sig")))]
+    assert ["dso", "days", "", ""] in rows
+    # a sale paid this month: a number again
+    paid = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cid,
+            "date": TODAY,
+            "lines": [{"description": "work", "quantity": 1, "rate": "250.00"}],
+        },
+    )
+    assert paid.status_code == 201, paid.text
+    pay = client.post(
+        "/api/payments",
+        json={
+            "customer_id": cid,
+            "date": TODAY,
+            "amount": "250.00",
+            "allocations": [{"invoice_id": paid.json()["id"], "amount": "250.00"}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    assert (
+        client.get("/api/analytics/dashboard").json()["dso"] == 60.0
+    )  # 500 / 250 × 30
+    js = (ROOT / "app" / "static" / "js" / "analytics.js").read_text(encoding="utf-8")
+    assert "const dso = data.dso == null ? null : Number(data.dso);" in js
+    assert 'const dsoText = dso == null ? "&mdash;" : dso.toFixed(1);' in js
+    assert "no collection period to measure" in js
+
+
+def test_the_trend_card_has_its_table():
+    """A point at the chart's edge or top could not carry its figure and the
+    card had no table (NEW-81 / W-5): it has one now, as the PDF does."""
+    js = (ROOT / "app" / "static" / "js" / "analytics.js").read_text(encoding="utf-8")
+    assert "${this._trendTable(data.revenue_trend)}" in js
+    assert (
+        '<th scope="col">Month</th><th scope="col" class="amount">Revenue (ledger)</th>'
+        in js
+    )

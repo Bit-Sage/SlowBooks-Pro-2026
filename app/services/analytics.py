@@ -76,27 +76,33 @@ class AnalyticsEngine:
     # ------------------------------------------------------------------
 
     def revenue_by_customer(self, start_date: date = None, end_date: date = None):
-        """Paid revenue per customer, for the given date window.
+        """Paid revenue per customer, for the given date window: invoices and
+        sales receipts dated in it and paid in full, **before sales tax** and
+        in home currency — what the ledger booked to income for each of them
+        (the tax went to a liability; 2.22.3 gate, NEW-79: this summed
+        `Invoice.total`, so a $1,000 invoice at 10% tax read $1,100 beside a
+        ledger revenue of $1,000).
 
         Defaults to month-to-date.
         """
+        from app.services.contact_balances import home_amount
+
         if start_date is None:
             start_date = _month_start(date.today())
         if end_date is None:
             end_date = date.today()
 
         rows = (
-            self.db.query(
-                Customer.name,
-                func.coalesce(func.sum(Invoice.total), 0).label("revenue"),
-            )
+            self.db.query(Customer.name, Invoice.subtotal, Invoice.exchange_rate)
             .join(Invoice, Invoice.customer_id == Customer.id)
             .filter(Invoice.date >= start_date, Invoice.date <= end_date)
             .filter(Invoice.status == InvoiceStatus.PAID)
-            .group_by(Customer.id, Customer.name)
             .all()
         )
-        return {name: float(revenue or 0) for name, revenue in rows}
+        out: dict = {}
+        for name, subtotal, rate in rows:
+            out[name] = out.get(name, Decimal(0)) + home_amount(subtotal, rate)
+        return {name: float(amount) for name, amount in out.items()}
 
     def revenue_trend(self, months: int = 12):
         """Monthly income for the last N months (oldest → newest), from the
@@ -311,7 +317,10 @@ class AnalyticsEngine:
     def dso(self):
         """Days Sales Outstanding = (open A/R / last-30d paid revenue) * 30.
 
-        Returns 0 when there's no recent revenue (no meaningful DSO).
+        None when nothing was paid in the last 30 days: there is no
+        collection period to measure, and 0.0 read as instant collection
+        beside $125k of open invoices (2.22.3 gate, NEW-80 / W-4). The page,
+        the PDF and the brief show it as absent.
         """
         thirty_days_ago = date.today() - _days(30)
 
@@ -333,8 +342,8 @@ class AnalyticsEngine:
             Decimal(0),
         )
 
-        if recent_revenue == 0:
-            return 0.0
+        if recent_revenue <= 0:
+            return None
         return float((ar_balance / recent_revenue) * 30)
 
     def cash_forecast(self, days: int = 90):
@@ -402,25 +411,29 @@ class AnalyticsEngine:
     # ------------------------------------------------------------------
 
     def customer_profit(self):
-        """Lifetime paid revenue per customer (first pass at profitability).
+        """Lifetime paid revenue per customer (first pass at profitability),
+        before sales tax and in home currency, as `revenue_by_customer`.
 
         Real COGS attribution would require per-customer cost tagging, which
         SlowBooks doesn't model yet — so for now this is revenue-only.
         """
+        from app.services.contact_balances import home_amount
+
         rows = (
-            self.db.query(
-                Customer.name,
-                func.coalesce(func.sum(Invoice.total), 0).label("revenue"),
-            )
+            self.db.query(Customer.name, Invoice.subtotal, Invoice.exchange_rate)
             .outerjoin(
                 Invoice,
                 (Invoice.customer_id == Customer.id)
                 & (Invoice.status == InvoiceStatus.PAID),
             )
-            .group_by(Customer.id, Customer.name)
             .all()
         )
-        return {name: {"revenue": float(revenue or 0)} for name, revenue in rows}
+        out: dict = {}
+        for name, subtotal, rate in rows:
+            out[name] = out.get(name, Decimal(0)) + (
+                home_amount(subtotal, rate) if subtotal is not None else Decimal(0)
+            )
+        return {name: {"revenue": float(amount)} for name, amount in out.items()}
 
     # ------------------------------------------------------------------
     # Aggregate

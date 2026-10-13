@@ -16,12 +16,13 @@ JS = Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "analytics.
 PERIOD = "start_date=2026-09-01&end_date=2026-09-30"
 
 
-def _invoice(client, customer_id, when, rate):
+def _invoice(client, customer_id, when, rate, tax_rate="0"):
     r = client.post(
         "/api/invoices",
         json={
             "customer_id": customer_id,
             "date": when,
+            "tax_rate": tax_rate,
             "lines": [{"description": "work", "quantity": 1, "rate": rate}],
         },
     )
@@ -125,3 +126,19 @@ def test_the_pdf_labels_the_basis():
         }
     )
     assert "&mdash;" in html and "0.0%" not in html
+
+
+def test_revenue_by_customer_is_before_sales_tax(client, seed_accounts, seed_customer):
+    """A paid $1,000 invoice at 10% tax: the customer's revenue is $1,000,
+    as the ledger booked it to income (the $100 went to Sales Tax Payable),
+    not the $1,100 collected (2.22.3 gate, NEW-79: the note said revenue by
+    customer can total less than the ledger's revenue, and tax made it
+    more)."""
+    cid = seed_customer.id
+    inv = _invoice(client, cid, "2026-09-10", "1000.00", tax_rate="0.10")
+    assert float(inv["total"]) == 1100.0 and float(inv["subtotal"]) == 1000.0
+    _pay(client, cid, inv, "2026-09-12")
+    dash = client.get(f"/api/analytics/dashboard?{PERIOD}").json()
+    assert dash["revenue_by_customer"] == {seed_customer.name: 1000.0}
+    assert dash["totals"]["revenue"] == 1000.0
+    assert dash["customer_profit"][seed_customer.name] == {"revenue": 1000.0}
