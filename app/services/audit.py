@@ -38,6 +38,7 @@ _SKIP_TABLES = {
     "portal_accesses",  # portal cookie / token claim access log
     "login_attempts",  # admin failed-login tracking
     "document_audits",  # hash-chain document audit
+    "request_keys",  # retry-safe request identities (#292): the payment is the event
     "email_log",  # outbound email send log
 }
 

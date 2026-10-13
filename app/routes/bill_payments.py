@@ -5,7 +5,7 @@
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
@@ -18,6 +18,8 @@ from app.services.accounting import (
     get_checking_account_id,
 )
 from app.services.closing_date import check_closing_date
+from app.services import request_keys
+from app.services.audit import _actor
 
 router = APIRouter(prefix="/api/bill-payments", tags=["bill_payments"])
 
@@ -71,8 +73,17 @@ def get_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=BillPaymentResponse, status_code=201)
-def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
+def create_bill_payment(
+    data: BillPaymentCreate, request: Request, db: Session = Depends(get_db)
+):
     check_closing_date(db, data.date)
+    # A retry of a request whose response was lost must not pay the bill
+    # twice (#292): an Idempotency-Key header names the intended payment
+    replay = request_keys.reserve(
+        db, request, "POST /api/bill-payments", data.model_dump(mode="json"), _actor(db)
+    )
+    if replay is not None and not isinstance(replay, request_keys.Reservation):
+        return replay
 
     vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
     if not vendor:
@@ -220,10 +231,12 @@ def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
         )
         payment.transaction_id = txn.id
 
-    db.commit()
+    db.flush()
     db.refresh(payment)
     resp = BillPaymentResponse.model_validate(payment)
     resp.vendor_name = vendor.name
+    request_keys.finish(db, replay, 201, resp.model_dump(mode="json"))
+    db.commit()
     return resp
 
 

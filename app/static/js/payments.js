@@ -117,6 +117,7 @@ const PaymentsPage = {
     _cents(v) { return Math.round((parseFloat(v) || 0) * 100); },
 
     async showForm(_ignoredId = null, prefillCustomerId = null) {
+        PaymentsPage._requestKey = null; // a new form, a new key (#292)
         const [customers, accounts] = await Promise.all([
             API.get('/customers?active_only=true'),
             API.get('/accounts'),
@@ -535,11 +536,25 @@ const PaymentsPage = {
             allocations,
         };
 
+        // One key per form: a second Save while the first is in flight is
+        // ignored, and a Save sent again after a lost response answers with
+        // the payment already recorded instead of a second one (#292)
+        if (PaymentsPage._saving) return;
+        PaymentsPage._saving = true;
+        const button = form.querySelector ? form.querySelector('button[type="submit"]') : null;
+        if (button) button.disabled = true;
+        if (!PaymentsPage._requestKey) PaymentsPage._requestKey = App.requestKey ? App.requestKey() : 'k-' + Date.now();
         try {
-            await API.post('/payments', data);
+            await API.post('/payments', data, null, { 'Idempotency-Key': PaymentsPage._requestKey });
+            PaymentsPage._requestKey = null;
             toast('Payment recorded');
             App.refresh();
-        } catch (err) { toast(err.message, 'error'); }
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            PaymentsPage._saving = false;
+            if (button) button.disabled = false;
+        }
     },
 };
 

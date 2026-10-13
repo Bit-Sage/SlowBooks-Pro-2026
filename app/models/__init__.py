@@ -180,3 +180,4 @@ __all__ = [
     "ResellerPermit",
 ]
 from app.models.ocr_templates import OcrTemplate  # noqa: F401
+from app.models.request_keys import RequestKey  # noqa: F401

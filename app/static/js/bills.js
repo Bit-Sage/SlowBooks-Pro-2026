@@ -554,6 +554,7 @@ const BillsPage = {
     // `vendorId`: only that vendor's open bills, from the vendor's own page
     // (#223, NEW-21); the list says so and offers every vendor's.
     async showPayForm(vendorId = null) {
+        BillsPage._payKey = null; // a new form, a new key (#292)
         const [vendors, bills, accounts] = await Promise.all([
             API.get('/vendors?active_only=true'),
             fetchAllPages('/bills?open_only=true'),
@@ -646,6 +647,14 @@ const BillsPage = {
         if (!(await Overdraft.confirm(fromId, outgoing, '1000'))) return;
 
         const paid = [];
+        // One key per form and vendor: a second Pay while one is in flight is
+        // ignored, and a Pay sent again after a lost response answers with
+        // the payment already recorded instead of a second one (#292)
+        if (BillsPage._paying) return;
+        BillsPage._paying = true;
+        const payButton = form.querySelector ? form.querySelector('button[type="submit"]') : null;
+        if (payButton) payButton.disabled = true;
+        if (!BillsPage._payKey) BillsPage._payKey = App.requestKey ? App.requestKey() : 'k-' + Date.now();
         try {
             for (const [vendorId, v] of byVendor) {
                 await API.post('/bill-payments', {
@@ -656,9 +665,10 @@ const BillsPage = {
                     check_number: checkNumber,
                     pay_from_account_id: fromId,
                     allocations: v.allocations,
-                });
+                }, null, { 'Idempotency-Key': `${BillsPage._payKey}:${vendorId}` });
                 paid.push(v.name);
             }
+            BillsPage._payKey = null;
             toast(byVendor.size > 1 ? `Bills paid: ${byVendor.size} payments, one per vendor` : 'Bills paid');
             closeModal();
             App.navigate('#/bills');
@@ -671,6 +681,9 @@ const BillsPage = {
             } else {
                 toast(err.message, 'error');
             }
+        } finally {
+            BillsPage._paying = false;
+            if (payButton) payButton.disabled = false;
         }
     },
 
