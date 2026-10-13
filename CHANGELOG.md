@@ -7,6 +7,8 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+- Sage 50 US migration accepts numeric account types from the Chart of Accounts List export, verified against a Sage 50 2026 sample-company export. Existing text account types remain supported.
+
 ### v2.22.3 — The ledger behind the dashboard
 
 Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
