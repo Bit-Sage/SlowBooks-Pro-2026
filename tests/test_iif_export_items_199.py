@@ -222,8 +222,11 @@ def test_a_document_in_another_currency_prices_its_lines_in_home_currency(
     [spl] = _lines(text, "SPL")
     cols = spl.split("\t")
     amount, qnty, price = Decimal(cols[5]), Decimal(cols[-3]), Decimal(cols[-2])
-    assert (qnty, price) == (Decimal("-3"), Decimal("41.1459"))  # 33.33 × 1.2345
     assert amount == Decimal("-123.44")  # 99.99 EUR at 1.2345, as the ledger books it
+    assert (qnty, price) == (
+        Decimal("-3"),
+        Decimal("41.1467"),
+    )  # 123.44 ÷ 3, four places
     assert (qnty * price).quantize(Decimal("0.01")) == amount
     # a home-currency row keeps the typed price
     assert _item_fields_plain(client, seed_accounts)
@@ -238,3 +241,52 @@ def _item_fields_plain(client, seed_accounts):
         quantity, rate, item, is_taxable = Decimal("2"), Decimal("25.50"), None, True
 
     return _item_fields(Line()) == ["", "-2", "25.5", "Y"]
+
+
+def test_a_large_quantity_gets_the_places_it_needs(client, db_session, seed_accounts):
+    """Round 2's PRICE was the rate converted and rounded to four places:
+    1,000 × 0.3333 EUR at 1.2345 wrote PRICE 0.4115 beside AMOUNT -411.46,
+    and 1,000 × 0.4115 is 411.50 (2.23.0 gate, W-6 / NEW-93). The price
+    now comes from the booked amount, to the places the quantity needs."""
+    from decimal import Decimal
+
+    from app.models.invoices import Invoice
+
+    cust, job, door, labor = _books(client, seed_accounts)
+    inv = _post(
+        client,
+        "/api/invoices",
+        {
+            "customer_id": cust["id"],
+            "date": "2026-09-13",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": door["id"],
+                    "description": "Washers",
+                    "quantity": "1000",
+                    "rate": "0.3333",
+                },
+                {
+                    "item_id": labor["id"],
+                    "description": "Seven",
+                    "quantity": "7",
+                    "rate": "1.111",
+                    "is_taxable": False,
+                },
+            ],
+        },
+    )
+    row = db_session.get(Invoice, inv["id"])
+    row.currency, row.exchange_rate = "EUR", Decimal("1.2345")
+    db_session.commit()
+    text = client.get("/api/iif/export/invoices").text
+    rows = [ln for ln in _lines(text, "SPL") if f"\t{inv['invoice_number']}\t" in ln]
+    seen = {}
+    for ln in rows:
+        cols = ln.split("\t")
+        amount, qnty, price = Decimal(cols[5]), Decimal(cols[-3]), Decimal(cols[-2])
+        seen[qnty] = (amount, price)
+        assert (qnty * price).quantize(Decimal("0.01")) == amount, ln
+    assert seen[Decimal("-1000")] == (Decimal("-411.46"), Decimal("0.41146"))
+    assert seen[Decimal("-7")] == (Decimal("-9.60"), Decimal("1.3714"))

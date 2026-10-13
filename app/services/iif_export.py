@@ -198,16 +198,23 @@ def _plain(value) -> str:
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
-def _item_fields(il, rate: Decimal = Decimal("1")) -> list[str]:
+def _item_fields(il, rate: Decimal = Decimal("1"), home_amount=None) -> list[str]:
     """INVITEM, QNTY, PRICE, TAXABLE for one sale line, the way Intuit's
     sample files carry them: the item's name, the quantity negative, the
     unit price positive, Y/N. Every amount in the file is in the home
-    currency, so on a document in another currency the unit price is
-    converted at the document's rate, to four places, and QNTY × PRICE
-    still gives AMOUNT to the cent (2.23.0 gate, W-4)."""
+    currency, so on a document in another currency PRICE is the line's
+    home-currency amount — the one its journal was booked at — divided by
+    the quantity, to the places the quantity needs (four at least, two
+    more than the quantity has digits), so QNTY × PRICE gives AMOUNT to
+    the cent at any quantity (2.23.0 gate, W-4; then W-6 / NEW-93: a
+    rate converted and rounded to four places missed by 4 cents at a
+    quantity of 1,000)."""
     qty = Decimal(str(il.quantity if il.quantity is not None else 1))
     price = Decimal(str(il.rate or 0))
-    if rate != 1:
+    if rate != 1 and home_amount is not None and qty:
+        places = max(4, len(str(int(abs(qty)))) + 2)
+        price = (Decimal(str(home_amount)) / qty).quantize(Decimal(1).scaleb(-places))
+    elif rate != 1:
         price = (price * rate).quantize(Decimal("0.0001"))
     return [
         _iif_text(il.item.name) if il.item else "",
@@ -528,7 +535,7 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                     _iif_text(il.description),
                     cls,
                 ]
-                + _item_fields(il, _rate(inv))
+                + _item_fields(il, _rate(inv), credit)
             )
 
         # SPL line for tax if applicable
@@ -1096,7 +1103,7 @@ def export_sales_receipts(
                 "",
                 il.description or "",
                 cls,
-                extra=_item_fields(il, _rate(inv)),
+                extra=_item_fields(il, _rate(inv), credit),
             )
         if tax > 0:
             lines += _row(

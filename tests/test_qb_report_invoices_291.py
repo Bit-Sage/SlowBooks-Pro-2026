@@ -396,3 +396,17 @@ def test_an_invoice_with_a_payment_on_it_is_left_alone(
     inv = db_session.query(Invoice).filter_by(invoice_number="1031").one()
     assert float(inv.amount_paid) == 100.0
     assert db_session.query(Payment).filter_by(reference="1031").count() == 0
+
+
+def test_the_no_open_balance_notice_counts_what_came_in_and_is_silent_otherwise(
+    client, db_session, seed_accounts
+):
+    """A re-upload that skipped every invoice still said "every invoice came
+    in open" (2.23.0 gate, NEW-92)."""
+    _items(client, seed_accounts)
+    first = import_qb_report(db_session, PLAIN)
+    notices = [w for w in first["warnings"] if "no Open Balance column" in w]
+    assert len(notices) == 1 and "the 3 invoices that came in are open" in notices[0]
+    again = import_qb_report(db_session, PLAIN)
+    assert again["invoices"] == 0 and again["duplicates_skipped"] == 3
+    assert not any("Open Balance" in w for w in again["warnings"]), again["warnings"]

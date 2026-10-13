@@ -642,14 +642,6 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
         if b["kind"] == "invoice"
     ]
     has_paid_column = "Open Balance" in cols or "Paid" in cols
-    if blocks and "Open Balance" not in cols and "Paid" not in cols:
-        result["warnings"].append(
-            "The report has no Open Balance column, so every invoice came in "
-            "open. Add Open Balance (Customize Report → Display → Columns) and "
-            "re-upload it: an invoice already here with nothing paid on it is "
-            "marked paid or partly paid from that column — or record the "
-            "payments here."
-        )
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
     # The import's own messages say the company's word for the report's
@@ -863,6 +855,20 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                 f"{doc} {blk.get('num') or blk['row']}: "
                 + safe_message(e, "QB report import")
             )
+
+    # Said once, after the fact, and only about invoices this upload brought
+    # in: a re-upload that skipped them all said "every invoice came in
+    # open" (2.23.0 gate, NEW-92).
+    if result["imported"] and not has_paid_column:
+        n = result["imported"]
+        result["warnings"].append(
+            f"The report has no Open Balance column, so the {n} "
+            f"{words('invoice' if n == 1 else 'invoices')} that came in "
+            f"{'is' if n == 1 else 'are'} open. Add Open Balance (Customize "
+            "Report → Display → Columns) and re-upload it: an invoice here with "
+            "nothing paid on it is marked paid or partly paid from that column "
+            "— or record the payments here."
+        )
 
     db.commit()
     return result
