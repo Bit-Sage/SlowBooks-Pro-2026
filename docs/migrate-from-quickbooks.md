@@ -117,7 +117,9 @@ The same report, filtered to **Invoice** instead of Sales Receipt:
 3. **Customize Report → Display → Columns**: keep the defaults and add
    **Open Balance** (and **Due Date** if you want due dates). Without
    Open Balance the importer cannot tell a paid invoice from an open one,
-   so every invoice comes in open and the import says so.
+   so every invoice comes in open and the import says how many did; upload
+   the report again with the column and the invoices here that have
+   nothing paid on them are marked paid or partly paid from it.
 4. Excel → Create New Worksheet, save as CSV, and upload it under
    **QuickBooks Interop → Import from Report CSV**. The report type is
    detected from the rows: an invoice's header row posts to Accounts
@@ -130,8 +132,11 @@ row, its Customer:Job (the job is created under the customer on first
 sight), and its number. With Open Balance: **0.00** lands as **paid**, with
 a payment for the total dated the invoice's date, deposited to Undeposited
 Funds; between zero and the total lands **partly paid**, with a payment for
-the paid part; equal to the total lands **open**. Re-uploads skip invoices
-already here by number (or customer, date and total when unnumbered). The
+the paid part; equal to the total lands **open**. Re-uploads skip an
+invoice already here: the same customer's under the report's number, as it
+was numbered here or as the import renumbered it when that number was
+taken (`QB-1031`), or, unnumbered, the customer's invoice of that date and
+total. The
 payments QuickBooks recorded are not in this report, so an imported paid
 invoice carries one payment dated the invoice; a Deposit Detail import
 then moves that money from Undeposited Funds to the bank.
