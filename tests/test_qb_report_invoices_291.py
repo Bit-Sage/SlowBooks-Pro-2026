@@ -233,3 +233,166 @@ def test_the_ledger_says_the_documents_face_and_the_messages_the_companys_word(
         e.startswith("Pledge 1031:") and "the pledge total" in e
         for e in result["errors"]
     ), result["errors"]
+
+
+# ---- the same source document (2.23.0 gate, W-2 / NEW-87, NEW-84) ----
+
+
+def _renumber(db_session, invoice_id, number):
+    """The API numbers documents itself; the gate's companies carry these
+    numbers from their own history, so give it to the row."""
+    from app.models.invoices import Invoice
+
+    inv = db_session.get(Invoice, invoice_id)
+    inv.invoice_number = number
+    db_session.commit()
+
+
+def _invoice_here(client, db_session, customer_name, number, total="99.00"):
+    cust = client.post("/api/customers", json={"name": customer_name})
+    assert cust.status_code == 201, cust.text
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cust.json()["id"],
+            "date": "2026-03-01",
+            "lines": [{"description": "work", "quantity": 1, "rate": total}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    _renumber(db_session, r.json()["id"], number)
+    return r.json()
+
+
+def test_another_customers_invoice_under_the_same_number_is_not_a_duplicate(
+    client, db_session, seed_accounts
+):
+    """The number alone said "already here" when any invoice here carried
+    1031; the report's 1031 is Alex Vega's, this one is someone else's."""
+    from app.models.invoices import Invoice
+
+    _items(client, seed_accounts)
+    _invoice_here(client, db_session, "Garland Theater", "1031")
+    result = import_qb_report(db_session, WITH_OPEN)
+    assert result["invoices"] == 3 and result["duplicates_skipped"] == 0, result
+    mine = db_session.query(Invoice).filter_by(invoice_number="QB-1031").one()
+    assert mine.customer.name == "Alex Vega" and float(mine.total) == 1350.0
+    theirs = db_session.query(Invoice).filter_by(invoice_number="1031").one()
+    assert theirs.customer.name == "Garland Theater"
+
+
+def test_a_renumbered_import_is_found_again_on_the_next_upload(
+    client, db_session, seed_accounts
+):
+    """A sales receipt here held 1031, so the import came in as QB-1031 —
+    and every upload after that imported it again (QB-1031-1, -2 …) with
+    another payment each time."""
+    from app.models.invoices import Invoice
+    from app.models.payments import Payment
+
+    _items(client, seed_accounts)
+    r = client.post(
+        "/api/sales-receipts",
+        json={
+            "customer_id": client.post(
+                "/api/customers", json={"name": "Walk-in"}
+            ).json()["id"],
+            "date": "2026-02-02",
+            "method": "Cash",
+            "lines": [{"description": "cash sale", "quantity": 1, "rate": "5.00"}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    _renumber(db_session, r.json()["invoice"]["id"], "1031")
+    first = import_qb_report(db_session, WITH_OPEN)
+    assert first["invoices"] == 3 and first["duplicates_skipped"] == 0, first
+    assert db_session.query(Invoice).filter_by(invoice_number="QB-1031").count() == 1
+    payments = db_session.query(Payment).count()
+    again = import_qb_report(db_session, WITH_OPEN)
+    assert again["invoices"] == 0 and again["invoices_updated"] == 0, again
+    assert again["duplicates_skipped"] == 4  # three invoices and the receipt
+    assert (
+        db_session.query(Invoice)
+        .filter(Invoice.invoice_number.like("QB-1031%"))
+        .count()
+        == 1
+    )
+    assert db_session.query(Payment).count() == payments
+
+
+def test_an_open_balance_upload_marks_the_open_ones_paid(
+    client, db_session, seed_accounts
+):
+    """Without the column every invoice came in open; uploading the report
+    again with it, the ones with nothing paid on them take their payment
+    (the warning says so). One with no open balance owed stays as it is."""
+    from app.models.invoices import Invoice, InvoiceStatus
+    from app.models.payments import Payment
+
+    _items(client, seed_accounts)
+    plain = import_qb_report(db_session, PLAIN)
+    assert plain["invoices"] == 3 and plain["invoices_open"] == 3
+    assert any("marked paid or partly paid" in w for w in plain["warnings"])
+    then = import_qb_report(db_session, WITH_OPEN)
+    assert then["invoices"] == 0 and then["sales_receipts"] == 1, then
+    assert then["invoices_updated"] == 2  # 1031 paid, 1032 partly paid
+    assert then["duplicates_skipped"] == 1  # 1033 is open in the report too
+    by_num = {i.invoice_number: i for i in db_session.query(Invoice).all()}
+    assert by_num["1031"].status == InvoiceStatus.PAID
+    assert float(by_num["1031"].amount_paid) == 1350.0
+    assert by_num["1032"].status == InvoiceStatus.PARTIAL
+    assert (float(by_num["1032"].amount_paid), float(by_num["1032"].balance_due)) == (
+        300.0,
+        237.5,
+    )
+    assert by_num["1033"].status == InvoiceStatus.SENT
+    paid = (
+        db_session.query(Payment)
+        .filter(Payment.deposit_to_account_id.isnot(None))
+        .all()
+    )
+    assert sorted(float(p.amount) for p in paid if p.reference in ("1031", "1032")) == [
+        300.0,
+        1350.0,
+    ]
+    assert all(p.transaction_id for p in paid)
+    # a third upload changes nothing
+    third = import_qb_report(db_session, WITH_OPEN)
+    assert (
+        third["invoices"],
+        third["invoices_updated"],
+        third["duplicates_skipped"],
+    ) == (
+        0,
+        0,
+        4,
+    )
+    assert db_session.query(Payment).count() == len(paid)
+
+
+def test_an_invoice_with_a_payment_on_it_is_left_alone(
+    client, db_session, seed_accounts
+):
+    from app.models.invoices import Invoice
+    from app.models.payments import Payment
+
+    _items(client, seed_accounts)
+    import_qb_report(db_session, PLAIN)
+    inv = db_session.query(Invoice).filter_by(invoice_number="1031").one()
+    r = client.post(
+        "/api/payments",
+        json={
+            "customer_id": inv.customer_id,
+            "date": "2026-05-01",
+            "amount": "100.00",
+            "method": "Check",
+            "allocations": [{"invoice_id": inv.id, "amount": "100.00"}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    then = import_qb_report(db_session, WITH_OPEN)
+    assert then["invoices_updated"] == 1  # 1032 only
+    db_session.expire_all()
+    inv = db_session.query(Invoice).filter_by(invoice_number="1031").one()
+    assert float(inv.amount_paid) == 100.0
+    assert db_session.query(Payment).filter_by(reference="1031").count() == 0

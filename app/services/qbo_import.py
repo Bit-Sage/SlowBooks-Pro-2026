@@ -23,6 +23,7 @@ from app.models.banking import BankAccount
 from app.models.contacts import Customer, Vendor
 from app.models.items import Item, ItemType
 from app.models.jobs import Job
+from app.services.audit import audited_bulk_delete
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
 from app.models.qbo_mapping import QBOMapping
@@ -694,8 +695,10 @@ def _bring_lines_across(db, mapping, invoice, source, kind) -> bool:
         return False
     old_lines = snapshot_invoice_lines(invoice)
     invoice.tax_rate = values["tax_rate"]
-    db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id).delete()
-    db.flush()
+    # each old line leaves a DELETE event with its amounts (#289)
+    audited_bulk_delete(
+        db, db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id)
+    )
     for order, line in enumerate(values["lines"]):
         db.add(InvoiceLine(invoice_id=invoice.id, line_order=order, **line))
     db.flush()
@@ -780,8 +783,10 @@ def _refresh_invoice(db, mapping, source, kind, errors) -> None:
         setattr(invoice, key, values[key])
     invoice.tax_amount, invoice.total = values["tax_amount"], values["total"]
     invoice.tax_rate = values["tax_rate"]
-    db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id).delete()
-    db.flush()
+    # each old line leaves a DELETE event with its amounts (#289)
+    audited_bulk_delete(
+        db, db.query(InvoiceLine).filter(InvoiceLine.invoice_id == invoice.id)
+    )
     for order, line in enumerate(values["lines"]):
         db.add(InvoiceLine(invoice_id=invoice.id, line_order=order, **line))
     db.flush()

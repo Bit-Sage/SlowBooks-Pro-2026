@@ -110,9 +110,10 @@ const IIFPage = {
                         Receipt or Invoice (a receipt imports as a paid sale + payment; an invoice with
                         its lines, its Customer:Job and its number, open, partly paid or paid by the
                         report's <strong>Open Balance</strong> column — add that column, or every
-                        invoice comes in open), <strong>Deposit Detail</strong>, or <strong>Check
-                        Detail</strong> (both import as journal entries on your bank account). Keep
-                        the report's default columns. Safe to re-upload — duplicates are skipped.
+                        invoice comes in open; upload again with it and the open ones here are marked
+                        paid), <strong>Deposit Detail</strong>, or <strong>Check Detail</strong> (both
+                        import as journal entries on your bank account). Keep the report's default
+                        columns. Safe to re-upload — what is already here is skipped.
                     </p>
                     <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report CSV file" accept=".csv" style="font-size:11px; margin-bottom:8px;">
                     <div>
@@ -162,12 +163,17 @@ const IIFPage = {
             if (result.invoices > 0) {
                 html += `<div class="result-row"><span style="font-size:11px;color:var(--gray-500)">${result.invoices_open || 0} open, ${result.invoices_partly_paid || 0} partly paid, ${result.invoices_paid || 0} paid</span></div>`;
             }
+            if (result.invoices_updated > 0) {
+                html += `<div class="result-row"><span>Already here, marked paid or partly paid from Open Balance</span><span class="result-count">${result.invoices_updated}</span></div>`;
+            }
             if (result.duplicates_skipped > 0) {
                 html += `<div class="result-row"><span>Duplicates skipped</span><span class="result-count">${result.duplicates_skipped}</span></div>`;
             }
             html += '</div>';
             if (result.warnings?.length) {
-                html += '<div class="iif-errors" style="border-color:var(--warning,#cc9933);">';
+                // a warning sits in the warnings box, as the IIF import's do
+                // (it sat in the error box with an orange border)
+                html += '<div class="iif-warnings">';
                 result.warnings.forEach(w => { html += `${escapeHtml(w)}<br>`; });
                 html += '</div>';
             }

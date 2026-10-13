@@ -198,15 +198,21 @@ def _plain(value) -> str:
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
-def _item_fields(il) -> list[str]:
+def _item_fields(il, rate: Decimal = Decimal("1")) -> list[str]:
     """INVITEM, QNTY, PRICE, TAXABLE for one sale line, the way Intuit's
     sample files carry them: the item's name, the quantity negative, the
-    unit price positive, Y/N."""
+    unit price positive, Y/N. Every amount in the file is in the home
+    currency, so on a document in another currency the unit price is
+    converted at the document's rate, to four places, and QNTY × PRICE
+    still gives AMOUNT to the cent (2.23.0 gate, W-4)."""
     qty = Decimal(str(il.quantity if il.quantity is not None else 1))
+    price = Decimal(str(il.rate or 0))
+    if rate != 1:
+        price = (price * rate).quantize(Decimal("0.0001"))
     return [
         _iif_text(il.item.name) if il.item else "",
         _plain(-qty),
-        _plain(il.rate),
+        _plain(price),
         "N" if getattr(il, "is_taxable", True) is False else "Y",
     ]
 
@@ -522,7 +528,7 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                     _iif_text(il.description),
                     cls,
                 ]
-                + _item_fields(il)
+                + _item_fields(il, _rate(inv))
             )
 
         # SPL line for tax if applicable
@@ -1090,7 +1096,7 @@ def export_sales_receipts(
                 "",
                 il.description or "",
                 cls,
-                extra=_item_fields(il),
+                extra=_item_fields(il, _rate(inv)),
             )
         if tax > 0:
             lines += _row(

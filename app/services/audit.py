@@ -120,32 +120,30 @@ def log_event(
 
 def audited_bulk_delete(db: Session, query) -> int:
     """Delete the rows a query names, with a DELETE audit event for each —
-    the same event, with the same old_values, that deleting the instance
-    through the session would have written.
+    the event, with the old_values, that deleting the instance through
+    the session writes; returns how many.
 
     The contract for a posted document's line replacement (#289): editing
-    a bill's or an invoice's lines, and re-posting its journal, removes
+    a bill's or an invoice's lines, and re-posting its journal, removed
     the old lines with Query.delete(), which never passes through
     session.deleted, so the after_flush hook saw nothing — the edit's own
     UPDATE and the new lines' INSERTs were in the log, the old lines'
     amounts were not. Every caller that replaces lines goes through here,
     in the same transaction as the replacement, so the log carries each
-    old line (its account and amounts) and each new one."""
+    old line (its account and amounts) and each new one.
+
+    Each row is deleted through the session and flushed here: the hook
+    writes its event, and the identity map lets the row go. The first
+    version logged each row itself and then bulk-deleted with
+    synchronize_session=False, which left the loaded rows in the session;
+    when SQLite reused their ids for the new lines, SQLAlchemy warned
+    "Identity map already had an identity" on every edit (2.23.0 gate,
+    NEW-91)."""
     rows = query.all()
     for row in rows:
-        table = getattr(row, "__tablename__", None)
-        record_id = getattr(row, "id", None)
-        if not table or record_id is None or table in _SKIP_TABLES:
-            continue
-        log_event(
-            db,
-            table,
-            record_id,
-            "DELETE",
-            old_values=_get_instance_dict(row),
-            source="api",
-        )
-    return query.delete(synchronize_session=False)
+        db.delete(row)
+    db.flush()
+    return len(rows)
 
 
 def _after_flush(session, flush_context):

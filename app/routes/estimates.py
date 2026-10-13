@@ -22,6 +22,7 @@ from app.routes.invoices.helpers import (
     resolve_line_taxable,
 )
 from app.routes._helpers import clamp_pagination
+from app.services.audit import audited_bulk_delete
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.contacts import Customer
@@ -214,7 +215,10 @@ def update_estimate(
         # 2.17.3 exploratory fixes). The customer is the one the estimate
         # has after this edit.
         resolve_line_taxable(db, data.lines, db.get(Customer, estimate.customer_id))
-        db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).delete()
+        # each old line leaves a DELETE event with its amounts (#289)
+        audited_bulk_delete(
+            db, db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id)
+        )
         for i, line_data in enumerate(data.lines):
             line = EstimateLine(
                 estimate_id=estimate_id,

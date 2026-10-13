@@ -18,16 +18,22 @@ invoices. The same Transaction Detail report filtered to Invoice now
 imports each invoice with its lines (item, quantity, price, tax), its
 Customer:Job and its number; open, partly paid or paid by the report's
 Open Balance column, with a payment for what was paid; without that column
-every invoice comes in open and the import says so. An invoice's header
-row posts to Accounts Receivable and a receipt's to the deposit account,
-so one file can hold both.
+every invoice comes in open and the import says so, and uploading the
+report again with the column marks the open ones here paid or partly paid
+from it. An invoice is already here when it is the same customer's under
+the report's number, as it was numbered here or as the import renumbered
+it when that number was taken (QB-1031) — not when any invoice here
+carries the number. An invoice's header row posts to Accounts Receivable
+and a receipt's to the deposit account, so one file can hold both.
 
 **The IIF export keeps an invoice's job, items and quantities** (#199).
 It wrote the customer without the job and split rows with no item,
 quantity or price. Per Intuit's own sample import files: the TRNS row
 names the full Customer:Job; INVITEM, QNTY, PRICE and TAXABLE sit on the
-split rows only, the quantity negative and the price positive on a sale.
-Invoices and sales receipts. **The IIF import names what it does not
+split rows only, the quantity negative and the price positive on a sale;
+the import reads TAXABLE back. On a document in another currency the
+unit price is converted at the document's rate, so QNTY × PRICE gives
+the file's home-currency AMOUNT to the cent. Invoices and sales receipts. **The IIF import names what it does not
 take** (#288): a GENERAL JOURNAL, CHECK or other block outside the
 dispatch was skipped without a word; Validate now lists each with its
 number, type, date, document number and name, the import counts them,
@@ -38,19 +44,23 @@ imported or failed.
 loses its response was retried and booked twice. An Idempotency-Key
 header on POST /api/payments or /api/bill-payments names the intended
 payment: the same key with the same body answers with the first
-response, the same key with another body is refused, a first delivery
-still running is refused until it finishes. The Receive Payment and Pay
-Bills forms send one per submit. One new table, request_keys (migration
+response, the same key with another body is refused (bodies compared by
+their values, so 100 and 100.00 are one amount), a first delivery still
+running is refused until it finishes. The Receive Payment and Pay Bills
+forms send one per submit. One new table, request_keys (migration
 d6f7a8b9c0e1).
 
 **Line replacement is audited per line** (#289). Editing a posted bill's
 or invoice's lines removed the old ones past the audit hooks; every
 replacement now writes a DELETE event for each old bill line, invoice
 line and journal line, with its account and amounts, in the same
-transaction as the edit.
+transaction as the edit — the QuickBooks Online re-import of a changed
+sale and an estimate edit included — and each replaced row leaves the
+session as it goes.
 
 **Two things said plainly.** The invoice form says that creating an
-invoice posts it to the books, Draft meaning not yet marked sent (#293).
+invoice posts it to the books, Draft meaning not yet marked sent, and the
+Create button names that note for a screen reader (#293).
 The AI guide on the site, the README and the docs say what stays on your
 machine — the company file and the API — and what a cloud-backed CLI's
 model sees (#294).

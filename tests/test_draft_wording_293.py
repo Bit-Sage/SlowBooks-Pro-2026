@@ -48,3 +48,17 @@ def test_a_draft_is_posted_and_mark_sent_posts_nothing_more(
     assert client.get(f"/api/invoices/{inv['id']}").json()["status"] == "sent"
     db_session.expire_all()
     assert db_session.query(Transaction).count() == posted  # nothing more
+
+
+def test_the_create_button_names_its_note_for_a_screen_reader():
+    """VoiceOver read "Create Invoice, button" and never the note beside it
+    (2.23.0 gate, NEW-89): the button describes itself by the note."""
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/invoices.js").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "data-invoice-logo-action${id ? '' : ' aria-describedby=\"inv-create-note\"'}"
+        in js
+    )

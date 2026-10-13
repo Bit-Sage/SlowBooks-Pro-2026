@@ -152,6 +152,9 @@ def test_the_round_trip_keeps_the_job_the_items_and_the_quantities(
     ]
     assert float(back.total) == float(first["total"]) == 142.5
     assert float(back.tax_amount) == 7.5
+    # the labor line went out TAXABLE N and comes back so (it came back
+    # taxable, the line's default, so a re-tax on the edit form taxed it)
+    assert [ln.is_taxable for ln in lines] == [True, False]
 
 
 def test_a_sales_receipt_carries_its_items_too(client, seed_accounts):
@@ -182,3 +185,56 @@ def test_a_sales_receipt_carries_its_items_too(client, seed_accounts):
     assert header.endswith("\tINVITEM\tQNTY\tPRICE\tTAXABLE")
     [spl] = _lines(text, "SPL")
     assert spl.endswith("\tExterior door\t-2\t25\tY") and "\t-50.00\t" in spl
+
+
+def test_a_document_in_another_currency_prices_its_lines_in_home_currency(
+    client, db_session, seed_accounts
+):
+    """Every amount in the file is home currency (the ledger's); the unit
+    price was the typed one in the document's currency, so AMOUNT was not
+    QNTY × PRICE on those rows (2.23.0 gate, W-4 / NEW-90)."""
+    from decimal import Decimal
+
+    from app.models.invoices import Invoice
+
+    cust, job, door, labor = _books(client, seed_accounts)
+    inv = _post(
+        client,
+        "/api/invoices",
+        {
+            "customer_id": cust["id"],
+            "date": "2026-09-12",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": door["id"],
+                    "description": "Widget",
+                    "quantity": "3",
+                    "rate": "33.33",
+                }
+            ],
+        },
+    )
+    row = db_session.get(Invoice, inv["id"])
+    row.currency, row.exchange_rate = "EUR", Decimal("1.2345")
+    db_session.commit()
+    text = client.get("/api/iif/export/invoices").text
+    [spl] = _lines(text, "SPL")
+    cols = spl.split("\t")
+    amount, qnty, price = Decimal(cols[5]), Decimal(cols[-3]), Decimal(cols[-2])
+    assert (qnty, price) == (Decimal("-3"), Decimal("41.1459"))  # 33.33 × 1.2345
+    assert amount == Decimal("-123.44")  # 99.99 EUR at 1.2345, as the ledger books it
+    assert (qnty * price).quantize(Decimal("0.01")) == amount
+    # a home-currency row keeps the typed price
+    assert _item_fields_plain(client, seed_accounts)
+
+
+def _item_fields_plain(client, seed_accounts):
+    from decimal import Decimal
+
+    from app.services.iif_export import _item_fields
+
+    class Line:
+        quantity, rate, item, is_taxable = Decimal("2"), Decimal("25.50"), None, True
+
+    return _item_fields(Line()) == ["", "-2", "25.5", "Y"]

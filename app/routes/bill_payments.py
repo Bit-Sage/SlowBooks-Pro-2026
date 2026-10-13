@@ -82,7 +82,7 @@ def create_bill_payment(
     # A retry of a request whose response was lost must not pay the bill
     # twice (#292): an Idempotency-Key header names the intended payment
     replay = request_keys.reserve(
-        db, request, "POST /api/bill-payments", data.model_dump(mode="json"), _actor(db)
+        db, request, "POST /api/bill-payments", data.model_dump(), _actor(db)
     )
     if replay is not None and not isinstance(replay, request_keys.Reservation):
         return replay

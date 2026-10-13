@@ -21,7 +21,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from enum import Enum
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -35,10 +37,32 @@ RETENTION_DAYS = 7
 _KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
+def _canonical(value):
+    """The validated body with every number in one spelling: a Decimal
+    as its plain digits with no trailing zeros (100.00 and 100 are the
+    same amount; 1.2345 keeps its places), a date as ISO text, an enum as
+    its value. The routes hash the model's own dump (Decimals, dates), not
+    its JSON, which kept the client's spelling of each amount and made a
+    re-serialising retry a different request (2.23.0 gate, NEW-86)."""
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, Enum):
+        return _canonical(value.value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    return value
+
+
 def payload_hash(payload) -> str:
-    """The body, canonical: key order and numbers as JSON, so the same
+    """The body, canonical: key order and numbers as values, so the same
     intended payment hashes the same however the client spelled it."""
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = json.dumps(
+        _canonical(payload), sort_keys=True, separators=(",", ":"), default=str
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -114,7 +138,9 @@ def finish(db: Session, reservation, status_code: int, body) -> None:
 
 def _sweep(db: Session) -> None:
     """Rows past the retention window go; a retry that late is new."""
-    cutoff = datetime.utcnow() - timedelta(days=RETENTION_DAYS)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        days=RETENTION_DAYS
+    )
     db.query(RequestKey).filter(RequestKey.created_at < cutoff).delete(
         synchronize_session=False
     )

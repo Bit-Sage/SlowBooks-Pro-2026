@@ -1372,6 +1372,9 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
             quantity=qty,
             rate=rate,
             amount=spl_amount,
+            # the split row's TAXABLE (N on a line the export marked so);
+            # blank is taxable, as QuickBooks reads it (2.23.0 gate, W-3)
+            is_taxable=spl.get("TAXABLE", "").strip().upper() != "N",
             line_order=line_order,
         )
         db.add(line)

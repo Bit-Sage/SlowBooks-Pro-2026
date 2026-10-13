@@ -97,7 +97,7 @@ def create_payment(
     # payment twice (#292): an Idempotency-Key header names the intended
     # payment, and its answer is kept with it.
     replay = request_keys.reserve(
-        db, request, "POST /api/payments", data.model_dump(mode="json"), _actor(db)
+        db, request, "POST /api/payments", data.model_dump(), _actor(db)
     )
     if replay is not None and not isinstance(replay, request_keys.Reservation):
         return replay

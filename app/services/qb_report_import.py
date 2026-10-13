@@ -24,6 +24,7 @@ import logging
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
@@ -529,6 +530,85 @@ def _status_for(total: Decimal, block: dict):
     return open_bal, paid, status
 
 
+# Statuses an invoice cannot take a report's payment in: something is paid
+# on it already, or it is void.
+_SETTLED = {InvoiceStatus.PAID, InvoiceStatus.PARTIAL} | {
+    st for st in InvoiceStatus if "VOID" in st.name
+}
+
+
+def _same_invoice(db: Session, customer_id: int, blk: dict):
+    """The query for the invoice a report row already is here: this
+    customer's, under the report's number as it was kept or renumbered
+    (QB-<num>, QB-<num>-<n>), or — with no number — of the same date and
+    total."""
+    q = db.query(Invoice).filter(
+        Invoice.is_sales_receipt.is_(False), Invoice.customer_id == customer_id
+    )
+    num = blk.get("num")
+    if num:
+        return q.filter(
+            or_(
+                Invoice.invoice_number == num,
+                Invoice.invoice_number == f"QB-{num}",
+                Invoice.invoice_number.like(f"QB-{num}-%"),
+            )
+        )
+    return q.filter(Invoice.date == blk["date"], Invoice.total == blk["total"])
+
+
+def _nothing_paid(db: Session, invoice) -> bool:
+    return (
+        invoice.status not in _SETTLED
+        and _q(Decimal(str(invoice.amount_paid or 0))) == 0
+        and db.query(PaymentAllocation.id).filter_by(invoice_id=invoice.id).first()
+        is None
+    )
+
+
+def _record_report_payment(db, invoice, customer_id, paid_amt, ar_id, ledger_ref):
+    """What QuickBooks showed as paid: one payment, dated the invoice, to
+    Undeposited Funds (the report has no payment dates), applied to the
+    invoice and posted."""
+    uf_id = get_undeposited_funds_id(db)
+    payment = Payment(
+        customer_id=customer_id,
+        date=invoice.date,
+        amount=paid_amt,
+        reference=invoice.invoice_number,
+        deposit_to_account_id=uf_id,
+    )
+    db.add(payment)
+    db.flush()
+    db.add(
+        PaymentAllocation(payment_id=payment.id, invoice_id=invoice.id, amount=paid_amt)
+    )
+    if ar_id and uf_id:
+        txn = create_journal_entry(
+            db,
+            invoice.date,
+            f"QB report import — Payment for {ledger_ref}",
+            [
+                {
+                    "account_id": uf_id,
+                    "debit": paid_amt,
+                    "credit": Decimal("0"),
+                    "description": ledger_ref,
+                },
+                {
+                    "account_id": ar_id,
+                    "debit": Decimal("0"),
+                    "credit": paid_amt,
+                    "description": ledger_ref,
+                },
+            ],
+            source_type="payment",
+            source_id=payment.id,
+        )
+        payment.transaction_id = txn.id
+    return payment
+
+
 def import_invoice_report(db: Session, csv_text: str) -> dict:
     """Import a Transaction Detail by Date CSV filtered to Invoice (#291):
     each invoice with its lines (item, quantity, price, tax), its
@@ -541,6 +621,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
         "open": 0,
         "partly_paid": 0,
         "paid": 0,
+        "updated": 0,  # already here and open; marked paid from Open Balance
         "duplicates_skipped": 0,
         "errors": [],
         "warnings": [],
@@ -560,12 +641,14 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
         for b in _group_sales(rows, cols, header_idx, result["errors"], _ar_names(db))
         if b["kind"] == "invoice"
     ]
+    has_paid_column = "Open Balance" in cols or "Paid" in cols
     if blocks and "Open Balance" not in cols and "Paid" not in cols:
         result["warnings"].append(
             "The report has no Open Balance column, so every invoice came in "
             "open. Add Open Balance (Customize Report → Display → Columns) and "
-            "re-upload to bring them in as paid, partly paid or open — the "
-            "ones already here are skipped — or record the payments here."
+            "re-upload it: an invoice already here with nothing paid on it is "
+            "marked paid or partly paid from that column — or record the "
+            "payments here."
         )
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
@@ -604,22 +687,44 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                     db.add(customer)
                     db.flush()
 
-            # Dedup: by number among invoices, else customer + date + total
-            dup_q = db.query(Invoice).filter(Invoice.is_sales_receipt.is_(False))
-            if blk["num"]:
-                dup = dup_q.filter(Invoice.invoice_number == blk["num"]).first()
-            else:
-                dup = dup_q.filter(
-                    Invoice.customer_id == customer.id,
-                    Invoice.date == blk["date"],
-                    Invoice.total == blk["total"],
-                ).first()
+            # Already here? The same source document: this customer's
+            # invoice under the report's number — as it was numbered here,
+            # or as the import renumbered it when the number was taken
+            # (QB-1031, QB-1031-1 …) — or, with no number, the customer's
+            # invoice of that date and total. The number alone matched
+            # another customer's invoice (skipped as a duplicate) and missed
+            # the import's own renumbered copies (imported again on every
+            # upload) (2.23.0 gate, W-2 / NEW-87).
+            dup = _same_invoice(db, customer.id, blk).first()
+            open_bal, paid_amt, status = _status_for(blk["total"], blk)
             if dup:
+                # An invoice that came in open before the report had its
+                # Open Balance column takes its payment from this upload,
+                # as the warning promised; one with anything paid on it
+                # already, or a different total, is left alone (NEW-84).
+                if (
+                    has_paid_column
+                    and paid_amt > 0
+                    and _nothing_paid(db, dup)
+                    and _q(Decimal(str(dup.total or 0))) == blk["total"]
+                ):
+                    ledger_ref = document_reference(
+                        document_label(dup, words), dup.invoice_number
+                    )
+                    _record_report_payment(
+                        db, dup, customer.id, paid_amt, ar_id, ledger_ref
+                    )
+                    dup.amount_paid = paid_amt
+                    dup.balance_due = open_bal
+                    dup.status = status
+                    db.flush()
+                    sp.commit()
+                    result["updated"] += 1
+                    continue
                 sp.rollback()
                 result["duplicates_skipped"] += 1
                 continue
 
-            open_bal, paid_amt, status = _status_for(blk["total"], blk)
             subtotal = _q(line_sum)
             invoice = Invoice(
                 invoice_number=_assign_number(db, blk["num"], prefix="QB"),
@@ -733,44 +838,9 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
             # What QuickBooks showed as paid: one payment, dated the invoice,
             # to Undeposited Funds (the report has no payment dates)
             if paid_amt > 0:
-                uf_id = get_undeposited_funds_id(db)
-                payment = Payment(
-                    customer_id=customer.id,
-                    date=invoice.date,
-                    amount=paid_amt,
-                    reference=invoice.invoice_number,
-                    deposit_to_account_id=uf_id,
+                _record_report_payment(
+                    db, invoice, customer.id, paid_amt, ar_id, ledger_ref
                 )
-                db.add(payment)
-                db.flush()
-                db.add(
-                    PaymentAllocation(
-                        payment_id=payment.id, invoice_id=invoice.id, amount=paid_amt
-                    )
-                )
-                if ar_id and uf_id:
-                    txn = create_journal_entry(
-                        db,
-                        invoice.date,
-                        f"QB report import — Payment for {ledger_ref}",
-                        [
-                            {
-                                "account_id": uf_id,
-                                "debit": paid_amt,
-                                "credit": Decimal("0"),
-                                "description": ledger_ref,
-                            },
-                            {
-                                "account_id": ar_id,
-                                "debit": Decimal("0"),
-                                "credit": paid_amt,
-                                "description": ledger_ref,
-                            },
-                        ],
-                        source_type="payment",
-                        source_id=payment.id,
-                    )
-                    payment.transaction_id = txn.id
 
             db.flush()
             db.refresh(invoice)
@@ -1134,6 +1204,7 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         "invoices_open": 0,
         "invoices_partly_paid": 0,
         "invoices_paid": 0,
+        "invoices_updated": 0,
         "deposits": 0,
         "checks": 0,
         "duplicates_skipped": 0,
@@ -1162,6 +1233,7 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
             base["invoices_open"] = r.get("open", 0)
             base["invoices_partly_paid"] = r.get("partly_paid", 0)
             base["invoices_paid"] = r.get("paid", 0)
+            base["invoices_updated"] = r.get("updated", 0)
             sub["duplicates_skipped"] += r.get("duplicates_skipped", 0)
             sub["errors"] += r.get("errors", [])
             sub["warnings"] += r.get("warnings", [])

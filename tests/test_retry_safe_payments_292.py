@@ -9,6 +9,7 @@ delivery still running is refused until it finishes, and no header is an
 ordinary POST, as before.
 """
 
+import json
 from pathlib import Path
 
 from app.models.payments import Payment
@@ -116,7 +117,7 @@ def test_a_first_delivery_still_running_is_refused_until_it_finishes(
     body = _body(seed_customer.id, inv)
     # the twin's reservation, response not yet stored (as during its write);
     # hashed the way the route hashes: the validated body, every field
-    digest = payload_hash(PaymentCreate(**body).model_dump(mode="json"))
+    digest = payload_hash(PaymentCreate(**body).model_dump())
     db_session.add(
         RequestKey(
             route="POST /api/payments", key=KEY["Idempotency-Key"], payload_hash=digest
@@ -249,3 +250,31 @@ def test_the_forms_send_a_key_and_guard_the_submit():
     assert "if (BillsPage._paying) return;" in bills
     app = (ROOT / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert "requestKey() {" in app and "crypto.randomUUID()" in app
+
+
+def test_the_same_amount_spelled_differently_is_the_same_request(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A retry that re-serialised 100.00 as 100 was refused as "a different
+    request" and, taking a new key as told, would have booked twice
+    (2.23.0 gate, NEW-86): the hash reads the numbers, not the spelling."""
+    from decimal import Decimal
+
+    from app.services.request_keys import payload_hash
+
+    inv = _invoice(client, seed_customer.id)
+    body = _body(seed_customer.id, inv)
+    first = client.post("/api/payments", json=body, headers=KEY)
+    assert first.status_code == 201, first.text
+    respelled = json.loads(
+        json.dumps(body).replace('"100.00"', '"100"').replace("100.00", "100")
+    )
+    assert respelled != body
+    again = client.post("/api/payments", json=respelled, headers=KEY)
+    assert again.status_code == 201 and again.headers.get("X-Replayed") == "true"
+    assert again.json() == first.json()
+    assert db_session.query(Payment).count() == 1
+    assert payload_hash({"a": Decimal("100.00")}) == payload_hash({"a": Decimal("100")})
+    assert payload_hash({"a": Decimal("1.2345")}) != payload_hash(
+        {"a": Decimal("1.23")}
+    )

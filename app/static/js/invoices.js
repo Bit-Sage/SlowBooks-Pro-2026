@@ -690,7 +690,7 @@ const InvoicesPage = {
                 ${id ? '' : `<div class="hint" id="inv-create-note">Creating this ${T('invoice')} posts it to the books now; Draft means not yet marked sent. Items tracked in inventory come out of stock when it is created.</div>`}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary" data-invoice-logo-action>${id ? 'Update' : 'Create'} ${T('Invoice')}</button>
+                    <button type="submit" class="btn btn-primary" data-invoice-logo-action${id ? '' : ' aria-describedby="inv-create-note"'}>${id ? 'Update' : 'Create'} ${T('Invoice')}</button>
                 </div>
             </form>`);
         if (!id && inv.customer_id) InvoicesPage.customerSelected(inv.customer_id);
