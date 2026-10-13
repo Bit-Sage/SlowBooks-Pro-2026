@@ -158,6 +158,15 @@ _TXN_COLUMNS = [
     "MEMO",
     "CLASS",
 ]
+# The split-row columns of a sale (invoice, sales receipt): the item, the
+# quantity, the unit price and whether the line is taxable, after the
+# shared columns — on !SPL rows only, which is where QuickBooks takes them
+# (INVITEM on a !TRNS header is error 15101 in QuickBooks 2019+). Per
+# Intuit's own sample import files: QNTY negative and PRICE positive on a
+# sale, AMOUNT = QNTY × PRICE; the TRNS row's NAME is the full
+# Customer:Job (#199: the export wrote the customer alone and no item,
+# quantity or price, so a round trip lost the job and every quantity).
+_SPL_ITEM_COLUMNS = _TXN_COLUMNS + ["INVITEM", "QNTY", "PRICE", "TAXABLE"]
 _TXN_COLUMNS_SHORT = [
     "TRNSTYPE",
     "DATE",
@@ -170,13 +179,49 @@ _TXN_COLUMNS_SHORT = [
 ]
 
 
-def _txn_header(columns: list[str] = _TXN_COLUMNS) -> str:
-    """!TRNS / !SPL / !ENDTRNS header trio for one column set."""
+def _txn_header(
+    columns: list[str] = _TXN_COLUMNS, spl_columns: list[str] | None = None
+) -> str:
+    """!TRNS / !SPL / !ENDTRNS header trio; the !SPL row may declare more
+    columns than the !TRNS row (a sale's item columns)."""
     return (
         _iif_line(["!TRNS"] + columns)
-        + _iif_line(["!SPL"] + columns)
+        + _iif_line(["!SPL"] + (spl_columns or columns))
         + _iif_line(["!ENDTRNS"])
     )
+
+
+def _plain(value) -> str:
+    """A quantity or a unit price as QuickBooks writes it: no exponent, no
+    trailing zeros (25.0000 → 25, 1.50 → 1.5)."""
+    text = format(Decimal(str(value or 0)), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _item_fields(il) -> list[str]:
+    """INVITEM, QNTY, PRICE, TAXABLE for one sale line, the way Intuit's
+    sample files carry them: the item's name, the quantity negative, the
+    unit price positive, Y/N."""
+    qty = Decimal(str(il.quantity if il.quantity is not None else 1))
+    return [
+        _iif_text(il.item.name) if il.item else "",
+        _plain(-qty),
+        _plain(il.rate),
+        "N" if getattr(il, "is_taxable", True) is False else "Y",
+    ]
+
+
+def _customer_job(db: Session, customer, job_id) -> str:
+    """QuickBooks' NAME for a sale, raw: "Customer" or "Customer:Job" (the
+    caller cleans it as it does any name)."""
+    name = customer.name if customer else ""
+    if job_id:
+        from app.models.jobs import Job
+
+        job = db.get(Job, job_id)
+        if job and job.name:
+            name = f"{name}:{job.name}"
+    return name
 
 
 def _resolve_account_name(db: Session, account_id: int) -> str:
@@ -405,8 +450,8 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
       SPL lines: negative amount (credit to income accounts)
       Sum of TRNS + all SPL = 0 (balanced transaction)
     """
-    # Transaction header — defines columns for both TRNS and SPL lines
-    header = _txn_header(_TXN_COLUMNS)
+    # Transaction header — the SPL rows carry the item columns too (#199)
+    header = _txn_header(_TXN_COLUMNS, _SPL_ITEM_COLUMNS)
 
     query = (
         db.query(Invoice)
@@ -429,6 +474,10 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
     for inv in invoices:
         cls = _class_name(db, getattr(inv, "class_id", None))
         cust_name = _iif_text(inv.customer.name) if inv.customer else ""
+        # the TRNS row names the Customer:Job, so the job survives the trip
+        header_name = _iif_text(
+            _customer_job(db, inv.customer, getattr(inv, "job_id", None))
+        )
         inv_date = _iif_date(inv.date)
         due_date = _iif_date(inv.due_date)
         splits, tax_amt, home = _sale_amounts(inv)
@@ -441,7 +490,7 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                 "INVOICE",
                 inv_date,
                 "Accounts Receivable",
-                cust_name,
+                header_name,
                 str(total_home),
                 inv.invoice_number or "",
                 due_date,
@@ -473,6 +522,7 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                     _iif_text(il.description),
                     cls,
                 ]
+                + _item_fields(il)
             )
 
         # SPL line for tax if applicable
@@ -490,6 +540,10 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                     "",
                     "Sales Tax",
                     cls,
+                    "",
+                    "",
+                    "",
+                    "",
                 ]
             )
 
@@ -756,7 +810,18 @@ def export_classes(db: Session) -> str:
 
 
 def _row(
-    kind, trnstype, d, acct, name, amount, docnum="", due="", terms="", memo="", cls=""
+    kind,
+    trnstype,
+    d,
+    acct,
+    name,
+    amount,
+    docnum="",
+    due="",
+    terms="",
+    memo="",
+    cls="",
+    extra=None,
 ):
     return _iif_line(
         [
@@ -772,6 +837,7 @@ def _row(
             _iif_text(memo),
             cls,
         ]
+        + list(extra or [])
     )
 
 
@@ -977,10 +1043,11 @@ def export_sales_receipts(
         q = q.filter(Invoice.date >= date_from)
     if date_to:
         q = q.filter(Invoice.date <= date_to)
-    lines = _txn_header()
+    lines = _txn_header(_TXN_COLUMNS, _SPL_ITEM_COLUMNS)
     for inv in q.order_by(Invoice.date, Invoice.id).all():
         cls = _class_name(db, inv.class_id)
         cust = inv.customer.name if inv.customer else ""
+        header_name = _customer_job(db, inv.customer, getattr(inv, "job_id", None))
         pay = (
             db.query(Payment)
             .filter(Payment.customer_id == inv.customer_id, Payment.date == inv.date)
@@ -999,7 +1066,7 @@ def export_sales_receipts(
             "CASH SALE",
             d,
             dep_name,
-            cust,
+            header_name,
             home[0][0],
             inv.invoice_number or "",
             "",
@@ -1023,6 +1090,7 @@ def export_sales_receipts(
                 "",
                 il.description or "",
                 cls,
+                extra=_item_fields(il),
             )
         if tax > 0:
             lines += _row(
@@ -1037,6 +1105,7 @@ def export_sales_receipts(
                 "",
                 "Sales Tax",
                 cls,
+                extra=["", "", "", ""],
             )
         lines += _iif_line(["ENDTRNS"])
     return lines
