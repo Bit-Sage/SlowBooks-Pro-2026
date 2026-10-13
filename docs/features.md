@@ -378,6 +378,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 - **Validation** — Pre-flight validation of .iif files before import (checks structure, account types, balanced transactions)
 - **Date Range Filtering** — Export invoices and payments for specific date ranges
 - **Round-Trip Safe** — Export from Slowbooks, re-import into Slowbooks — deduplication prevents double-entry
+- **Import from Report CSV** — QuickBooks Desktop can't export transactions to IIF, so a detail report saved as CSV uploads instead, the report type detected from its columns and rows: Transaction Detail filtered to **Sales Receipt** (a paid sale + payment each), filtered to **Invoice** (v2.23.0, #291: each invoice with its item lines, quantity and price, its sales tax, its Customer:Job and its number; open, partly paid or paid by the report's Open Balance column, with a payment for what was paid, dated the invoice, to Undeposited Funds — without that column every invoice comes in open and the import says so; an invoice's header row posts to Accounts Receivable and a receipt's to the deposit account, so one file can hold both), **Deposit Detail** and **Check Detail** (journal entries on the bank account). Re-uploads skip what is already here
 
 Full IIF format reference, account-type mapping, and round-trip examples live in the [QuickBooks 2003 Interop](#quickbooks-2003-pro-iif-interoperability) section below.
 
