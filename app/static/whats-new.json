@@ -3,7 +3,9 @@
     "title": "The ledger behind the dashboard",
     "items": [
       "Analytics reads the ledger: the revenue trend, expenses by category (each account by its name) and the four KPI cards, with the PDF and the AI brief, count every posting dated in the period as the Profit & Loss does — bills when dated, expenses, register entries, card charges, payroll and journal entries — on one basis, so the margin is net income over revenue (it was paid bills and paid invoices, so a company that books through a bank feed and journal entries saw nothing). Revenue by customer stays paid invoices and says so (#281)",
-      "A receipt attaches to a journal entry, as it does to a bill or an expense: the file behind an entry that only a journal entry can record, such as an owner paying a business expense personally (#281)"
+      "A receipt attaches to a journal entry, as it does to a bill or an expense: the file behind an entry that only a journal entry can record, such as an owner paying a business expense personally (#281)",
+      "Four fixes from a static review of the source (#284–#287): a bill payment that names no bank is refused whole when Checking is missing, instead of posting without a journal; A/P aging as of a date leaves out bills dated after it; a journal entry is refused rather than stored a cent out when its amounts are not in cents; the 1099 summary and the 1099 forms leave voided bill payments out",
+      "Quitting the desktop app run from source stops its server (#283, @jacilynh), and on Windows the server now leaves with its launcher however the launcher went"
     ]
   },
   "2.22.2": {

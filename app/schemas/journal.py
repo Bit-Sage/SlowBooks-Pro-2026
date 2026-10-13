@@ -2,7 +2,7 @@ from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.schemas.common import StrictModel
 
 
@@ -15,6 +15,16 @@ class JournalLineCreate(StrictModel):
     is_billable: bool = False
     debit: Decimal = Decimal("0")
     credit: Decimal = Decimal("0")
+
+    @field_validator("debit", "credit")
+    @classmethod
+    def _cents(cls, value: Decimal) -> Decimal:
+        # the ledger holds two decimals; a sub-cent amount that balanced on
+        # paper could be stored a cent out (#286), so it is refused here
+        if value != value.quantize(Decimal("0.01")):
+            raise ValueError("Amounts are in cents: at most two decimal places.")
+        return value
+
     description: Optional[str] = None
 
 

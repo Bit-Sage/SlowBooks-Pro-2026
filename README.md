@@ -84,8 +84,12 @@ and point; and landmarks with skip links on the long forms and the chart.
 2.22.3 (#281): Analytics reads the ledger — the KPI cards, the trend, the
 expenses by category (named) and the AI brief, on one basis, as the Profit
 & Loss counts them, rather than paid bills and paid invoices, so a
-bank-fed, journal-entry company sees its figures and its margin; and a
-receipt attaches to a journal entry.
+bank-fed, journal-entry company sees its figures and its margin; a
+receipt attaches to a journal entry; four ledger-correctness fixes from a
+static review (#284–#287: a bill payment with no bank and no Checking
+account is refused whole, A/P aging as of a date, journals in cents, voided
+payments out of the 1099s); and a source run's server stops with its
+launcher (#283, @jacilynh), on Windows however the launcher went.
 
 **v2.21 — Three things you'd reach for.** Click a vendor for its own
 page, with its bills, payments, credits and what's owed (#223). Edit a

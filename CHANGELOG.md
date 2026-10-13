@@ -73,6 +73,21 @@ server on its port, since the watcher ran on macOS and Linux only and the
 window-close cleanup never saw it go; the server now holds a handle on
 its launcher and leaves with it, installed or from source.
 
+**Four findings from a static review of the source** (#284–#287,
+@johncarterlives), each reproduced in a test before it was fixed. A bill
+payment that names no bank now resolves Checking (1000) before anything
+is written — a chart without it gets a 409 naming the account, with no
+payment, allocations or bill balances left behind (the default lookup
+answered None and the payment committed without a journal). A/P aging as
+of a date leaves out bills dated after it, as A/R aging always did; a bill
+paid since that date is not rebuilt as owed on it — the report is the
+current ledger aged, not a reconstruction. A manual journal takes cents:
+the API refuses a sub-cent amount, and the posting service rounds every
+line to cents before it checks the balance, so a journal that balanced on
+paper and not in the ledger's two decimals is refused rather than stored
+a cent out. The 1099 summary and the 1099-NEC / 1096 totals leave voided
+bill payments out, as the A/P aging already did.
+
 **A receipt attaches to a journal entry.** `/api/attachments` whitelisted
 eight record types and not `journal_entry`, though a journal entry is
 sometimes the only right record of a real transaction — an owner paying a

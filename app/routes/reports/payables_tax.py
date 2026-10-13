@@ -274,10 +274,15 @@ def ap_aging_report(db: Session, as_of_date: date) -> dict:
             }
         return aging[vid]
 
+    # Today's open bills dated on or before the report's date, aged against
+    # it, as the A/R side does (#285: a bill dated after the date was in
+    # the report). A bill paid since the date is not rebuilt as owed on it:
+    # this is the current ledger aged, not a reconstruction.
     bills = (
         db.query(Bill)
         .filter(Bill.status.in_([BillStatus.UNPAID, BillStatus.PARTIAL]))
         .filter(Bill.balance_due > 0)
+        .filter(Bill.date <= as_of_date)
         .all()
     )
     for bill in bills:
@@ -382,6 +387,9 @@ def report_1099_summary(
             BillPaymentAllocation.bill_payment_id == BillPayment.id,
         )
         .filter(sqlfunc.extract("year", BillPayment.date) == year)
+        # a voided payment keeps its allocation rows (the void restores the
+        # bills' balances and flags the payment); it is not money paid (#287)
+        .filter(BillPayment.is_voided.isnot(True))
         .group_by(BillPayment.vendor_id)
         .all()
     )

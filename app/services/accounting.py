@@ -186,17 +186,25 @@ def create_journal_entry(
 
         check_closing_date(db, txn_date)
 
+    # Every amount in cents before anything is checked or written: the
+    # columns hold two decimals, so a journal that balanced on sub-cent
+    # values could be stored a cent out (#286) — the stored precision is
+    # the one that has to balance.
+    lines = [
+        {**line, "debit": _q(line.get("debit", 0)), "credit": _q(line.get("credit", 0))}
+        for line in lines
+    ]
+
     # Validate individual lines before summing
     for i, line in enumerate(lines):
-        debit = Decimal(str(line.get("debit", 0)))
-        credit = Decimal(str(line.get("credit", 0)))
+        debit, credit = line["debit"], line["credit"]
         if debit < 0 or credit < 0:
             raise DataProblem(f"Line {i+1}: debit and credit must be non-negative")
         if debit > 0 and credit > 0:
             raise DataProblem(f"Line {i+1}: a line cannot have both debit and credit")
 
-    total_debit = sum(Decimal(str(line.get("debit", 0))) for line in lines)
-    total_credit = sum(Decimal(str(line.get("credit", 0))) for line in lines)
+    total_debit = sum((line["debit"] for line in lines), Decimal("0"))
+    total_credit = sum((line["credit"] for line in lines), Decimal("0"))
 
     if total_debit != total_credit:
         # The sentence a person reads when they save an unbalanced entry
@@ -308,6 +316,15 @@ def get_undeposited_funds_id(db: Session) -> int:
 def get_ap_account_id(db: Session) -> int:
     """Accounts Payable (2000). Raises MissingControlAccount."""
     return control_accounts.resolve(db, "2000")
+
+
+def get_checking_account_id(db: Session) -> int:
+    """Checking (1000), the default bank for a bill payment that names none.
+    Raises MissingControlAccount — a 409 naming the account — rather than
+    letting the payment post without a bank (#284: the default lookup
+    answered None when 1000 was missing, and the payment, its allocations
+    and the bills' balances were committed with no journal behind them)."""
+    return control_accounts.resolve(db, "1000")
 
 
 def get_cc_account_id(db: Session) -> int:

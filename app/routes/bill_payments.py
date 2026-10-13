@@ -11,9 +11,12 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.bills import Bill, BillStatus, BillPayment, BillPaymentAllocation
 from app.models.contacts import Vendor
-from app.models.accounts import Account
 from app.schemas.bills import BillPaymentCreate, BillPaymentResponse
-from app.services.accounting import create_journal_entry, get_ap_account_id
+from app.services.accounting import (
+    create_journal_entry,
+    get_ap_account_id,
+    get_checking_account_id,
+)
 from app.services.closing_date import check_closing_date
 
 router = APIRouter(prefix="/api/bill-payments", tags=["bill_payments"])
@@ -87,6 +90,13 @@ def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
     alloc_total = sum(a.amount for a in data.allocations)
     if alloc_total > data.amount:
         raise HTTPException(status_code=400, detail="Allocations exceed payment amount")
+
+    # The accounts the journal needs, resolved before anything is written:
+    # a missing one is a 409 naming it, with no payment, allocations or
+    # bill balances left behind (#284: the default bank answered None
+    # when 1000 was missing, and the payment committed without a journal).
+    ap_id = get_ap_account_id(db)
+    bank_id = data.pay_from_account_id or get_checking_account_id(db)
 
     payment = BillPayment(
         vendor_id=data.vendor_id,
@@ -164,15 +174,8 @@ def create_bill_payment(data: BillPaymentCreate, db: Session = Depends(get_db)):
         else:
             bill.status = BillStatus.PARTIAL
 
-    # Journal: DR AP, CR Bank
-    ap_id = get_ap_account_id(db)
-    bank_id = data.pay_from_account_id
-    if not bank_id:
-        # Default to first checking account
-        checking = db.query(Account).filter(Account.account_number == "1000").first()
-        bank_id = checking.id if checking else None
-
-    if ap_id and bank_id:
+    # Journal: DR AP, CR Bank — always; the accounts were resolved above
+    if True:
         # Cash paid, in home currency at the payment-date rate; A/P
         # relieved at each bill's BOOKED rate. Unallocated remainder (a
         # vendor prepayment) has no booking rate yet, so it relieves at
