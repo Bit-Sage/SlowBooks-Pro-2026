@@ -381,19 +381,11 @@ def start_server(
         cwd = get_data_dir()
         cwd.mkdir(parents=True, exist_ok=True)
     else:
-        cmd = [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "app.main:app",
-            "--host",
-            bind_host,
-            "--port",
-            str(port),
-            # cmd.exe consoles don't render ANSI colors by default; without
-            # this the logs are full of "<-[32m" escape-code garbage.
-            "--no-use-colors",
-        ]
+        # The same --_serve child as the frozen build, so a source run gets
+        # the parent watcher too (#52). A bare `-m uvicorn` child had none:
+        # Command-Q left it on the port, and the next launch was refused as
+        # "already running". Host and port reach it through _server_env().
+        cmd = [sys.executable, str(Path(__file__).resolve()), "--_serve"]
         cwd = ROOT
     return subprocess.Popen(
         cmd,
@@ -1836,10 +1828,12 @@ def raise_timer_resolution(period_ms: int = 1):
 
 
 def _serve() -> int:
-    """Internal: run the uvicorn server in this process. The frozen build
-    has no child interpreter for `-m uvicorn`, so start_server() re-execs
-    the bundled exe with --_serve instead; all configuration (DATABASE_URL,
-    APP_PORT, SLOWBOOKS_*) arrives via the environment from _server_env()."""
+    """Internal: run the uvicorn server in this process. start_server()
+    launches every server child this way: the frozen build re-execs the
+    bundled exe with --_serve (it has no interpreter for `-m uvicorn`), and
+    a source run re-runs this script with it, so both get the parent
+    watcher. All configuration (DATABASE_URL, APP_PORT, SLOWBOOKS_*)
+    arrives via the environment from _server_env()."""
     import uvicorn
 
     if sys.platform != "win32":
