@@ -644,6 +644,13 @@ const App = {
     // Upload on an invoice). Opening a record's form stays: it opens locked,
     // with the read-only note, and for some records it is the only view.
     // Reads stay too: View, Print, Save PDF, reports and IIF/CSV exports.
+    // A request key for a write a client may retry (#292): random, so two
+    // forms never share one; the browser's own generator where it has it
+    requestKey() {
+        try { return crypto.randomUUID(); } catch (e) { /* no crypto: fall through */ }
+        return 'k-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+    },
+
     WRITE_ACTIONS: new Set([
         'InvoicesPage.void', 'InvoicesPage.markSent', 'InvoicesPage.duplicate', 'InvoicesPage.uploadAttachment',
         'InvoicesPage.deleteAttachment', 'InvoicesPage.showApplyCredit', 'InvoicesPage.showWriteOff',
