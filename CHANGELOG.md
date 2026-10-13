@@ -7,6 +7,8 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+- Migration dry runs now refuse chart, ledger, or supplied trial-balance files with no recognised records, instead of reporting a successful empty import or silently skipping balance verification.
+
 ### v2.22.3 — The ledger behind the dashboard
 
 Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
