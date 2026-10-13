@@ -687,6 +687,7 @@ const InvoicesPage = {
                 </div>
                 <div class="form-group" style="margin-top:12px;"><label>Notes</label>
                     <textarea name="notes">${escapeHtml(inv.notes || '')}</textarea></div>
+                ${id ? '' : `<div class="hint" id="inv-create-note">Creating this ${T('invoice')} posts it to the books now; Draft means not yet marked sent. Items tracked in inventory come out of stock when it is created.</div>`}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary" data-invoice-logo-action>${id ? 'Update' : 'Create'} ${T('Invoice')}</button>
