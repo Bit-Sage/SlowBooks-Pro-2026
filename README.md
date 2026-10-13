@@ -65,7 +65,8 @@ times the request arrives (#292); editing a posted bill's or invoice's
 lines leaves a DELETE event for every old line (#289); the invoice form
 says that creating one posts it (#293); and the AI guide, the README and
 the docs say what stays on your machine and what a cloud model sees
-(#294).
+(#294). Line quantities keep four decimal places, so an imported 2.125
+stays 2.125 instead of reading 2.12 and losing cents on the next edit.
 
 **v2.22 — Connected.** Every report view has an address, so a report, a
 class's P&L or a drill-down can be bookmarked, pasted, reloaded and left

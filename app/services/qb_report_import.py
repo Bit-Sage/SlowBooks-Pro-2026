@@ -162,7 +162,7 @@ def _header_kind(row, cols, ar_names) -> str:
     )
 
 
-def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES):
+def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
     """Group data rows into sales — receipts and invoices alike.
 
     A row whose Split column is "-SPLIT-" is a sale's header: it carries
@@ -225,6 +225,15 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES):
                 current["tax_rate"] = rate
             continue
         qty = abs(_amount(_cell(row, cols, "Qty"))) or Decimal("1")
+        kept = qty.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        if kept != qty and warnings is not None:
+            # quantities are kept to four places (2.23.0, NEW-94)
+            warnings.append(
+                f"{current['num'] or f'row {current['row']}'}: quantity {qty} kept as "
+                f"{kept} (quantities are kept to four decimal places; the line "
+                "amount is the report's)"
+            )
+        qty = kept
         current["lines"].append(
             {
                 "description": _cell(row, cols, "Memo")
@@ -239,12 +248,12 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES):
     return sales
 
 
-def _group_receipts(rows, cols, start, errors, ar_names=_AR_NAMES):
+def _group_receipts(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
     """The sales receipts of a report (an invoice's block, which posts to
     Accounts Receivable, is the invoice importer's)."""
     return [
         b
-        for b in _group_sales(rows, cols, start, errors, ar_names)
+        for b in _group_sales(rows, cols, start, errors, ar_names, warnings=warnings)
         if b["kind"] == "receipt"
     ]
 
@@ -294,7 +303,9 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
         )
         return result
 
-    receipts = _group_receipts(rows, cols, header_idx, result["errors"], _ar_names(db))
+    receipts = _group_receipts(
+        rows, cols, header_idx, result["errors"], _ar_names(db), result["warnings"]
+    )
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
 
@@ -537,6 +548,12 @@ _SETTLED = {InvoiceStatus.PAID, InvoiceStatus.PARTIAL} | {
 }
 
 
+def _a(word: str) -> str:
+    """The word with its article: "an invoice", "a pledge" (2.23.0 gate,
+    W-7: the notice switched vocabulary halfway for a nonprofit)."""
+    return ("an " if word[:1].lower() in "aeiou" else "a ") + word
+
+
 def _same_invoice(db: Session, customer_id: int, blk: dict):
     """The query for the invoice a report row already is here: this
     customer's, under the report's number as it was kept or renumbered
@@ -638,7 +655,9 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
 
     blocks = [
         b
-        for b in _group_sales(rows, cols, header_idx, result["errors"], _ar_names(db))
+        for b in _group_sales(
+            rows, cols, header_idx, result["errors"], _ar_names(db), result["warnings"]
+        )
         if b["kind"] == "invoice"
     ]
     has_paid_column = "Open Balance" in cols or "Paid" in cols
@@ -865,9 +884,9 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
             f"The report has no Open Balance column, so the {n} "
             f"{words('invoice' if n == 1 else 'invoices')} that came in "
             f"{'is' if n == 1 else 'are'} open. Add Open Balance (Customize "
-            "Report → Display → Columns) and re-upload it: an invoice here with "
-            "nothing paid on it is marked paid or partly paid from that column "
-            "— or record the payments here."
+            f"Report → Display → Columns) and re-upload it: {_a(words('invoice'))} "
+            "here with nothing paid on it is marked paid or partly paid from that "
+            "column — or record the payments here."
         )
 
     db.commit()

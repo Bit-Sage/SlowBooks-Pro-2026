@@ -34,7 +34,17 @@ split rows only, the quantity negative and the price positive on a sale;
 the import reads TAXABLE back. On a document in another currency PRICE
 is the line's booked home-currency amount divided by its quantity, to the
 places the quantity needs, so QNTY × PRICE gives the file's AMOUNT to the
-cent at any quantity. Invoices and sales receipts. **The IIF import names what it does not
+cent at any quantity. Invoices and sales receipts.
+
+**Quantities keep four decimal places.** Every sale and purchase line's
+quantity was stored to two, so the IIF import and the report import kept
+2.125 as 2.12 (or 2.13), the edit form showed the rounded quantity with a
+total cents short, and the export wrote it beside the line's real amount.
+Invoice, estimate, credit memo, recurring invoice, bill, purchase order
+and vendor credit lines now hold four places (migration e8f9a0b1c2d3), as
+unit prices have since 2.17.3; the API and the documents show a quantity
+as entered (2.125; 3.00 as before), the forms take four places, a finer
+one is refused, and the imports round one with a note. **The IIF import names what it does not
 take** (#288): a GENERAL JOURNAL, CHECK or other block outside the
 dispatch was skipped without a word; Validate now lists each with its
 number, type, date, document number and name, the import counts them,
@@ -66,7 +76,7 @@ The AI guide on the site, the README and the docs say what stays on your
 machine — the company file and the API — and what a cloud-backed CLI's
 model sees (#294).
 
-No new API operations: 565. One migration.
+No new API operations: 565. Two migrations (request_keys; line quantities to four places).
 
 ### v2.22.3 — The ledger behind the dashboard
 

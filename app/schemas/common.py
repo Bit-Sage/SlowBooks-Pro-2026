@@ -84,6 +84,24 @@ def validate_non_negative_line(quantity, rate) -> None:
         raise ValueError("quantity must be non-negative; use a credit memo for refunds")
     if r < 0:
         raise ValueError("rate must be non-negative; use a credit memo for refunds")
+    if q != q.quantize(QUANTITY_PLACES):
+        raise ValueError("Quantities are kept to four decimal places.")
+
+
+# A line's quantity is stored to four decimal places (2.23.0, NEW-94: the
+# imports stored 2.125 and every read gave 2.12); finer is refused above,
+# as a sub-cent amount is.
+QUANTITY_PLACES = Decimal("0.0001")
+
+
+def quantity_text(value) -> str:
+    """A quantity as the API and the documents show it: two places as
+    before ("3.00", "1.50"), or the places it has when finer ("2.125",
+    "0.3333"), never a tail of zeros."""
+    d = Decimal(str(value if value is not None else 0))
+    if d == d.quantize(Decimal("0.01")):
+        return f"{d.quantize(Decimal('0.01')):f}"
+    return format(d.normalize(), "f")
 
 
 class StrictModel(BaseModel):

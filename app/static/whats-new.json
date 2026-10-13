@@ -6,7 +6,8 @@
       "The IIF export carries an invoice's job, items and quantities the way Intuit's own sample files do, so a round trip keeps them (#199); the IIF import names the transaction types it doesn't take and counts them instead of dropping them silently (#288)",
       "A payment or bill payment sent with an Idempotency-Key is booked once however many times the request arrives — the app's own forms send one (#292)",
       "Editing a posted bill's or invoice's lines leaves a DELETE event in the audit log for every old line, with its amounts (#289)",
-      "The invoice form says that creating an invoice posts it to the books, Draft meaning not yet marked sent (#293); the AI guide, the README and the docs say what stays on your machine and what a cloud model sees (#294)"
+      "The invoice form says that creating an invoice posts it to the books, Draft meaning not yet marked sent (#293); the AI guide, the README and the docs say what stays on your machine and what a cloud model sees (#294)",
+      "Line quantities keep four decimal places: an imported 2.125 stays 2.125 instead of reading 2.12 and losing cents on the next edit."
     ]
   },
   "2.22.3": {

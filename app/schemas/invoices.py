@@ -2,7 +2,14 @@ from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, PlainSerializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PlainSerializer,
+    field_validator,
+    model_validator,
+    field_serializer,
+)
 
 from app.models.invoices import InvoiceStatus
 from app.schemas.common import (
@@ -10,6 +17,7 @@ from app.schemas.common import (
     TaxRate,
     TaxRateOut,
     validate_non_negative_line,
+    quantity_text,
 )
 
 
@@ -67,6 +75,10 @@ class InvoiceLineResponse(BaseModel):
     line_order: int
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("quantity")
+    def _quantity(self, value):
+        return quantity_text(value)
 
 
 class InvoiceCreate(StrictModel):

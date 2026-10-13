@@ -147,7 +147,7 @@ const CreditMemosPage = {
         return `<tr data-cmline="${idx}">
                 <td><select class="line-item" onchange="CreditMemosPage.itemSelected(${idx})"><option value="">--</option>${itemOpts}</select></td>
                 <td><input class="line-desc"></td>
-                <td><input class="line-qty" type="number" step="0.01" value="1" oninput="CreditMemosPage.recalc()"></td>
+                <td><input class="line-qty" type="number" step="0.0001" value="1" oninput="CreditMemosPage.recalc()"></td>
                 <td><input class="line-rate" type="number" step="0.0001" min="0" value="0" oninput="CreditMemosPage.recalc()"></td>
                 <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" checked onchange="CreditMemosPage.recalc()"></td>
                 <td class="col-amount line-amount">$0.00</td>

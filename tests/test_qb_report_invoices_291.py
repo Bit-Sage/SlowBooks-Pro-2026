@@ -410,3 +410,17 @@ def test_the_no_open_balance_notice_counts_what_came_in_and_is_silent_otherwise(
     again = import_qb_report(db_session, PLAIN)
     assert again["invoices"] == 0 and again["duplicates_skipped"] == 3
     assert not any("Open Balance" in w for w in again["warnings"]), again["warnings"]
+
+
+def test_the_no_open_balance_notice_speaks_the_companys_words_throughout(
+    client, db_session, seed_accounts
+):
+    """For a nonprofit the sentence counted pledges and then said "an
+    invoice here" (2.23.0 gate, W-7)."""
+    _items(client, seed_accounts)
+    client.put("/api/settings", json={"company_type": "nonprofit"})
+    result = import_qb_report(db_session, PLAIN)
+    notice = next(w for w in result["warnings"] if "no Open Balance column" in w)
+    assert "the 3 pledges that came in are open" in notice
+    assert "a pledge here with nothing paid on it" in notice
+    assert "invoice" not in notice.lower(), notice

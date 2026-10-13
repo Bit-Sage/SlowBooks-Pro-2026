@@ -14,7 +14,7 @@
 
 import logging
 from datetime import datetime, date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -813,6 +813,20 @@ def import_items(db: Session, rows: list) -> dict:
 # identity, so a mixed file reconciles — parsed blocks = imported +
 # duplicates + unsupported + failed (#288: they used to vanish without a
 # word). Extend the dispatch and this set together when adding a type.
+def _four_places(qty: Decimal, warnings, doc) -> Decimal:
+    """A line's quantity is kept to four decimal places (2.23.0, NEW-94);
+    a finer one in the file is rounded on the way in, and the result says
+    so, since the line's amount is the file's and no longer quantity ×
+    price to the last digit."""
+    kept = qty.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    if kept != qty and warnings is not None:
+        warnings.append(
+            f"Document {doc}: quantity {qty} kept as {kept} (quantities are kept "
+            "to four decimal places; the line amount is the file's)"
+        )
+    return kept
+
+
 SUPPORTED_TRNS_TYPES = frozenset(
     {
         "INVOICE",
@@ -892,7 +906,7 @@ def import_transactions(db: Session, blocks: list) -> dict:
             trns_type = trns.get("TRNSTYPE", "").strip().upper()
 
             if trns_type == "INVOICE":
-                result = _import_invoice(db, trns, spls)
+                result = _import_invoice(db, trns, spls, warnings)
                 if result:
                     counts["invoices"] += 1
                     if not result.transaction_id:
@@ -921,7 +935,7 @@ def import_transactions(db: Session, blocks: list) -> dict:
                         f"Sales receipt block {i + 1}: no customer name; "
                         f"assigned to '{WALK_IN_CUSTOMER_NAME}'"
                     )
-                result = _import_cash_sale(db, trns, spls)
+                result = _import_cash_sale(db, trns, spls, warnings)
                 if result:
                     counts["sales_receipts"] += 1
                     if not result.transaction_id:
@@ -932,7 +946,7 @@ def import_transactions(db: Session, blocks: list) -> dict:
                 else:
                     counts["duplicates_skipped"] += 1
             elif trns_type == "ESTIMATE":
-                result = _import_estimate(db, trns, spls)
+                result = _import_estimate(db, trns, spls, warnings)
                 if result:
                     counts["estimates"] += 1
                 else:
@@ -1277,7 +1291,7 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
     return txn
 
 
-def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
+def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoice:
     """Create an Invoice from IIF TRNS/SPL data.
 
     Convention assumed: TRNS.AMOUNT is positive (AR debit = invoice total), each
@@ -1360,7 +1374,9 @@ def _import_invoice(db: Session, trns: dict, spls: list) -> Invoice:
             if item:
                 item_id = item.id
 
-        qty = abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1")
+        qty = _four_places(
+            abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1"), warnings, doc_num
+        )
         rate = abs(_parse_decimal(spl.get("PRICE", "")))
         if rate == 0 and qty > 0:
             rate = _q(spl_amount / qty)
@@ -1599,7 +1615,7 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
 WALK_IN_CUSTOMER_NAME = "Walk-In Customer"
 
 
-def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
+def _import_cash_sale(db: Session, trns: dict, spls: list, warnings=None) -> Invoice:
     """Create a paid invoice + payment from an IIF CASH SALE block.
 
     QB writes sales receipts as TRNSTYPE "CASH SALE": the TRNS line debits
@@ -1642,7 +1658,7 @@ def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
 
         trns["DOCNUM"] = next_invoice_number(db)
 
-    invoice = _import_invoice(db, trns, spls)
+    invoice = _import_invoice(db, trns, spls, warnings)
     if invoice is None:
         return None
     invoice.is_sales_receipt = True
@@ -1708,7 +1724,7 @@ def _import_cash_sale(db: Session, trns: dict, spls: list) -> Invoice:
     return invoice
 
 
-def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
+def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Estimate:
     """Create an Estimate from IIF TRNS/SPL data."""
     doc_num = trns.get("DOCNUM", "").strip()
 
@@ -1768,7 +1784,9 @@ def _import_estimate(db: Session, trns: dict, spls: list) -> Estimate:
             if item:
                 item_id = item.id
 
-        qty = abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1")
+        qty = _four_places(
+            abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1"), warnings, doc_num
+        )
         rate = abs(_parse_decimal(spl.get("PRICE", "")))
         if rate == 0 and qty > 0:
             rate = _q(spl_amount / qty)

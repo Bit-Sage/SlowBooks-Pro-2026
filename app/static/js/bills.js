@@ -312,7 +312,7 @@ const BillsPage = {
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
                 ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
-                <td><input class="line-qty" type="number" step="0.01" value="${line ? Number(l.quantity) : 1}" oninput="BillsPage.recalc()"></td>
+                <td><input class="line-qty" type="number" step="0.0001" value="${line ? Number(l.quantity) : 1}" oninput="BillsPage.recalc()"></td>
                 <td><input class="line-rate" type="number" step="0.0001" value="${line ? Number(l.rate) : 0}" oninput="BillsPage.recalc()"></td>
                 <td class="col-amount line-amount">$0.00</td>
             </tr>`;
