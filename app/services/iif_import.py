@@ -807,13 +807,68 @@ def import_items(db: Session, rows: list) -> dict:
     return {"imported": imported, "errors": errors}
 
 
+# The transaction types import_transactions dispatches. A block of any
+# other type (GENERAL JOURNAL, CHECK, CREDIT MEMO, TRANSFER, ...) is not
+# imported: validation names it and the import counts it, with the block's
+# identity, so a mixed file reconciles — parsed blocks = imported +
+# duplicates + unsupported + failed (#288: they used to vanish without a
+# word). Extend the dispatch and this set together when adding a type.
+SUPPORTED_TRNS_TYPES = frozenset(
+    {
+        "INVOICE",
+        "PAYMENT",
+        "CASH SALE",
+        "CASHSALE",
+        "SALES RECEIPT",
+        "ESTIMATE",
+        "BILL",
+        "DEPOSIT",
+    }
+)
+SUPPORTED_TRNS_TYPES_SENTENCE = (
+    "INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and DEPOSIT"
+)
+
+
+def _block_identity(i: int, trns: dict) -> dict:
+    """What a person needs to find the block in their file."""
+    return {
+        "block": i + 1,
+        "type": (trns.get("TRNSTYPE") or "").strip().upper(),
+        "date": (trns.get("DATE") or "").strip(),
+        "docnum": (trns.get("DOCNUM") or "").strip(),
+        "name": (trns.get("NAME") or "").strip(),
+    }
+
+
+def _unsupported_warnings(unsupported: list) -> list:
+    """One sentence per type, naming the blocks (the first few) and what
+    the importer does take, for validation and the import alike."""
+    by_type: dict = {}
+    for u in unsupported:
+        by_type.setdefault(u["type"], []).append(u["block"])
+    out = []
+    for ttype, blocks in by_type.items():
+        shown = ", ".join(str(b) for b in blocks[:6]) + (
+            ", …" if len(blocks) > 6 else ""
+        )
+        out.append(
+            f"{len(blocks)} {ttype} block{'s' if len(blocks) != 1 else ''} not imported "
+            f"(block{'s' if len(blocks) != 1 else ''} {shown}): the importer takes "
+            f"{SUPPORTED_TRNS_TYPES_SENTENCE}. Enter {'them' if len(blocks) != 1 else 'it'} "
+            f"by hand, or as journal entries."
+        )
+    return out
+
+
 def import_transactions(db: Session, blocks: list) -> dict:
     """Import transaction blocks (TRNS/SPL/ENDTRNS) from IIF.
 
     Routes by TRNSTYPE: INVOICE, PAYMENT, ESTIMATE, BILL, DEPOSIT,
-    CASH SALE (QB's sales receipts). Other types (GENERAL JOURNAL, etc.)
-    are silently skipped — extend the dispatch table here when adding
-    support.
+    CASH SALE (QB's sales receipts). Any other type is counted as
+    unsupported, with the block's identity, and reported (#288) —
+    extend the dispatch table and SUPPORTED_TRNS_TYPES together when
+    adding support.
     """
     counts = {
         "invoices": 0,
@@ -823,9 +878,11 @@ def import_transactions(db: Session, blocks: list) -> dict:
         "bills": 0,
         "deposits": 0,
         "duplicates_skipped": 0,
+        "unsupported": 0,
     }
     errors = []
     warnings = []
+    unsupported = []
 
     for i, block in enumerate(blocks):
         sp = db.begin_nested()
@@ -894,7 +951,11 @@ def import_transactions(db: Session, blocks: list) -> dict:
                     counts["deposits"] += 1
                 else:
                     counts["duplicates_skipped"] += 1
-            # Skip other transaction types (GENERAL JOURNAL, etc.) for now
+            else:
+                # Not a type the importer takes: counted and named, never
+                # dropped without a word (#288)
+                counts["unsupported"] += 1
+                unsupported.append(_block_identity(i, trns))
             sp.commit()
 
         except Exception as e:
@@ -907,7 +968,13 @@ def import_transactions(db: Session, blocks: list) -> dict:
                 }
             )
 
-    return {"imported": counts, "errors": errors, "warnings": warnings}
+    warnings.extend(_unsupported_warnings(unsupported))
+    return {
+        "imported": counts,
+        "errors": errors,
+        "warnings": warnings,
+        "unsupported": unsupported,
+    }
 
 
 def _resolve_block_class(db: Session, trns_type: str, doc_ref: str, spls: list):
@@ -1770,6 +1837,8 @@ def validate_iif(content: str) -> dict:
         "errors": [],
         "caps_names": 0,
         "caps_name_examples": [],
+        "unsupported": [],
+        "unsupported_counts": {},
     }
 
     try:
@@ -1851,6 +1920,7 @@ def validate_iif(content: str) -> dict:
             )
 
     # Validate transaction blocks
+    unsupported = []
     for i, block in enumerate(parsed.get("TRNS", [])):
         trns = block.get("trns", {})
         trns_type = trns.get("TRNSTYPE", "").strip()
@@ -1858,6 +1928,8 @@ def validate_iif(content: str) -> dict:
             report["errors"].append(f"Transaction block {i + 1}: missing TRNSTYPE")
             report["valid"] = False
             continue
+        if trns_type.upper() not in SUPPORTED_TRNS_TYPES:
+            unsupported.append(_block_identity(i, trns))
 
         trns_date = trns.get("DATE", "").strip()
         if not trns_date:
@@ -1876,6 +1948,15 @@ def validate_iif(content: str) -> dict:
                 f"Transaction block {i + 1} ({trns_type}): unbalanced by {balance} "
                 f"(TRNS={trns_amt}, SPL total={spl_total})"
             )
+
+    # The blocks the import would not take, named before the person decides
+    # (#288): the file stays valid, the warning says what and where.
+    report["unsupported"] = unsupported
+    counts_by_type: dict = {}
+    for u in unsupported:
+        counts_by_type[u["type"]] = counts_by_type.get(u["type"], 0) + 1
+    report["unsupported_counts"] = counts_by_type
+    report["warnings"].extend(_unsupported_warnings(unsupported))
 
     # What "Change ALL-CAPS names" would do to this file, shown before the
     # person decides; the file itself is left as it is.
@@ -1918,6 +1999,9 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
         "names_changed": 0,
         "errors": [],
         "warnings": [],
+        "transaction_blocks": 0,
+        "unsupported": 0,
+        "unsupported_blocks": [],
     }
 
     parsed = parse_iif(content)
@@ -1969,6 +2053,11 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
         result["bills"] = counts.get("bills", 0)
         result["deposits"] = counts.get("deposits", 0)
         result["duplicates_skipped"] = counts.get("duplicates_skipped", 0)
+        # every parsed block accounted for: imported + duplicates +
+        # unsupported + failed = transaction_blocks (#288)
+        result["transaction_blocks"] = len(parsed["TRNS"])
+        result["unsupported"] = counts.get("unsupported", 0)
+        result["unsupported_blocks"] = r.get("unsupported", [])
         result["errors"].extend(r["errors"])
         result["warnings"].extend(r.get("warnings", []))
 

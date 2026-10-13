@@ -124,13 +124,14 @@ const IIFPage = {
     // What an import says when it's done (#197). One that came back with
     // errors said "Imported 0 records" in green and "Import complete", and the
     // red box below was the only sign of them.
-    _reportImport(total, errors) {
+    _reportImport(total, errors, unsupported = 0) {
         const records = `Imported ${total} record${total === 1 ? '' : 's'}`;
+        const left = unsupported > 0 ? `, ${unsupported} not imported (type not supported)` : '';
         if (errors > 0) {
-            toast(`${records}, ${errors} error${errors === 1 ? '' : 's'}: see the list below`, 'error');
+            toast(`${records}${left}, ${errors} error${errors === 1 ? '' : 's'}: see the list below`, 'error');
             App.setStatus('QuickBooks Interop — Import finished with errors');
         } else {
-            toast(records);
+            toast(`${records}${left}`);
             App.setStatus('QuickBooks Interop — Import complete');
         }
     },
@@ -352,6 +353,15 @@ const IIFPage = {
             </div>`;
         }
 
+        // The blocks the import would not take, by type, before the person
+        // decides (#288); the warning below names each block
+        for (const [ttype, count] of Object.entries(report.unsupported_counts || {})) {
+            html += `<div class="result-row">
+                <span>${escapeHtml(ttype)} &mdash; not imported</span>
+                <span class="result-count">${count} block${count === 1 ? '' : 's'}</span>
+            </div>`;
+        }
+
         html += '</div>';
 
         if (report.errors && report.errors.length) {
@@ -412,7 +422,7 @@ const IIFPage = {
                           (result.sales_receipts || 0) +
                           (result.estimates || 0) + (result.bills || 0) +
                           (result.deposits || 0);
-            IIFPage._reportImport(total, (result.errors || []).length);
+            IIFPage._reportImport(total, (result.errors || []).length, result.unsupported || 0);
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Import failed');
@@ -449,6 +459,26 @@ const IIFPage = {
             html += `<div class="result-row">
                 <span>Already here, skipped</span>
                 <span class="result-count">${result.duplicates_skipped}</span>
+            </div>`;
+        }
+        // Blocks of a type the importer doesn't take (#288): counted and
+        // named, never dropped without a word; the warnings say which types
+        if (result.unsupported > 0) {
+            const named = (result.unsupported_blocks || []).slice(0, 8).map(u =>
+                `block ${u.block}: ${escapeHtml(u.type)}${u.docnum ? ' ' + escapeHtml(u.docnum) : ''}${u.date ? ', ' + escapeHtml(u.date) : ''}${u.name ? ', ' + escapeHtml(u.name) : ''}`).join('; ');
+            html += `<div class="result-row">
+                <span>Not imported (type not supported)</span>
+                <span class="result-count">${result.unsupported}</span>
+            </div>
+            <div class="result-row"><span style="font-size:11px;color:var(--gray-500)">${named}${(result.unsupported_blocks || []).length > 8 ? '; …' : ''}</span></div>`;
+        }
+        // Every transaction block in the file accounted for
+        if (result.transaction_blocks > 0) {
+            const imported = (result.invoices || 0) + (result.payments || 0) + (result.sales_receipts || 0)
+                + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0);
+            html += `<div class="result-row">
+                <span>Transaction blocks in the file</span>
+                <span class="result-count">${result.transaction_blocks}: ${imported} imported, ${result.duplicates_skipped || 0} already here, ${result.unsupported || 0} not imported, ${(result.errors || []).length} failed</span>
             </div>`;
         }
         if (result.names_changed > 0) {

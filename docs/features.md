@@ -372,7 +372,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 
 ## QuickBooks 2003 Pro Interoperability
 - **IIF Export** — Export all Slowbooks data (accounts, customers, vendors, items, invoices, payments, estimates) as .iif files importable into QB2003 via File > Utilities > Import > IIF Files
-- **IIF Import** — Parse and import .iif files exported from QB2003 with duplicate detection and per-row error handling
+- **IIF Import** — Parse and import .iif files exported from QB2003 with duplicate detection and per-row error handling. The importer takes INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and DEPOSIT blocks; any other type (GENERAL JOURNAL, CHECK, …) is named by Validate and counted by the import with each block's number, date, document number and name, so a mixed file reconciles — parsed blocks = imported + duplicates skipped + not imported + failed (v2.23.0, #288; they used to vanish without a word)
 - **Validation** — Pre-flight validation of .iif files before import (checks structure, account types, balanced transactions)
 - **Date Range Filtering** — Export invoices and payments for specific date ranges
 - **Round-Trip Safe** — Export from Slowbooks, re-import into Slowbooks — deduplication prevents double-entry
