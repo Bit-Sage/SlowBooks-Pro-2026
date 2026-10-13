@@ -67,7 +67,11 @@ desktop_launcher.py`) with Command-Q left its server running: the fix for
 it, but a source run started its server another way, without that watch,
 and the next launch was refused as "already running" until the leftover
 process was ended by hand. A source run now starts its server the same way
-the installed apps do.
+the installed apps do. And on Windows the server watches its launcher too
+(the gate's W-7): a launcher ended from Task Manager, or crashed, left the
+server on its port, since the watcher ran on macOS and Linux only and the
+window-close cleanup never saw it go; the server now holds a handle on
+its launcher and leaves with it, installed or from source.
 
 **A receipt attaches to a journal entry.** `/api/attachments` whitelisted
 eight record types and not `journal_entry`, though a journal entry is

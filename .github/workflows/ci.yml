@@ -150,7 +150,9 @@ jobs:
           # +1 a PDF test of the round-2 exports (WeasyPrint's native stack).
           # 2.22.2: +1 the deposit slip's real-PDF test (#260), which the
           # WeasyPrint hook skips here as it does the other PDF tests.
-          MAX_SKIPS: "116"
+          # 2.22.3: +1 PR #283's source-run process pair, POSIX-only (#121);
+          # its Windows counterpart runs here (W-7).
+          MAX_SKIPS: "117"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

@@ -300,3 +300,62 @@ def test_source_run_server_dies_with_its_launcher(tmp_path):
             _os.kill(server_pid, 9)
         if launcher.poll() is None:
             launcher.kill()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the Windows parent watcher (W-7)")
+def test_parent_watcher_exits_when_parent_dies_on_windows(tmp_path):
+    """Windows (2.22.3 gate, W-7): a launcher ended from Task Manager, or
+    crashed, left the server on its port — the watcher ran on POSIX only
+    and the window-close cleanup never saw TerminateProcess. The same
+    process pair as the POSIX test, with liveness read from tasklist (an
+    os.kill probe is a kill on Windows, #121) and the launcher ended the
+    way End task ends it."""
+    import subprocess
+    import sys as _sys
+    import time
+
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    child_script = tmp_path / "child.py"
+    child_script.write_text(
+        "import os, sys, time\n"
+        f"sys.path.insert(0, {str(root)!r})\n"
+        "import desktop_launcher\n"
+        "desktop_launcher._watch_parent(os.getppid())\n"
+        "time.sleep(30)\n"
+    )
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        "import subprocess, sys, time\n"
+        f"p = subprocess.Popen([sys.executable, {str(child_script)!r}])\n"
+        "print(p.pid, flush=True)\n"
+        "time.sleep(30)\n"
+    )
+
+    def alive(pid):
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        return f" {pid} " in out
+
+    parent = subprocess.Popen(
+        [_sys.executable, str(parent_script)], stdout=subprocess.PIPE, text=True
+    )
+    child_pid = int(parent.stdout.readline().strip())
+    try:
+        time.sleep(1.0)
+        assert alive(child_pid), "the child died on its own"
+        parent.kill()  # TerminateProcess: End task, a crash — no cleanup
+        parent.wait()
+        deadline = time.time() + 5
+        while alive(child_pid) and time.time() < deadline:
+            time.sleep(0.2)
+        assert not alive(child_pid), "server child outlived its launcher parent"
+    finally:
+        if alive(child_pid):
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/F"], capture_output=True
+            )
+        if parent.poll() is None:
+            parent.kill()

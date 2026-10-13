@@ -1680,8 +1680,15 @@ def _watch_parent(parent_pid: int, poll_seconds: float = 2.0) -> None:
     Server Edition is preserved BY DESIGN, not by accident: in
     --serve-lan / scheduled-task mode the launcher parent stays alive
     holding proc.wait(), so the watcher never fires and the server runs
-    perpetually. POSIX only (macOS + Linux); on Windows every quit path
-    goes through the window-close cleanup that already works.
+    perpetually.
+
+    POSIX (macOS + Linux) polls the parent: signal 0 and getppid. Windows
+    (2.22.3 gate, W-7) holds a handle on the parent process and waits on
+    it: WaitForSingleObject returns when the launcher is gone however it
+    went — Task Manager's End task, a crash, TerminateProcess — which the
+    window-close cleanup never saw, so the server sat on its port and the
+    next launch was refused as "already running". The handle pins the
+    process object, so a reused pid cannot fool it.
 
     (Deliberate "keep serving after the window closes" is a designed
     v2.6 feature — tray indicator + relaunch adoption — not an accident
@@ -1689,6 +1696,28 @@ def _watch_parent(parent_pid: int, poll_seconds: float = 2.0) -> None:
     """
     import threading
     import time as _t
+
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        SYNCHRONIZE = 0x00100000
+        INFINITE = 0xFFFFFFFF
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.WaitForSingleObject.restype = wintypes.DWORD
+        k32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        handle = k32.OpenProcess(SYNCHRONIZE, False, int(parent_pid))
+        if not handle:
+            return  # no such process, or no right to wait on it: serve as before
+
+        def _wait():
+            k32.WaitForSingleObject(handle, INFINITE)
+            os._exit(0)  # parent gone: take the port down with us
+
+        threading.Thread(target=_wait, daemon=True, name="parent-watch").start()
+        return
 
     def _poll():
         while True:
@@ -1836,8 +1865,7 @@ def _serve() -> int:
     arrives via the environment from _server_env()."""
     import uvicorn
 
-    if sys.platform != "win32":
-        _watch_parent(os.getppid())
+    _watch_parent(os.getppid())
 
     # Import the app OURSELVES rather than passing "app.main:app": when the
     # import fails, uvicorn's string loader reports only "Could not import
