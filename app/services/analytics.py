@@ -53,6 +53,18 @@ def _prev_month_start(d: date) -> date:
     return date(d.year, d.month - 1, 1)
 
 
+def account_label(number, name) -> str:
+    """How the Profit & Loss names an account on screen: "6100 - Auto & Truck
+    Expense" (the page, the PDF, the CSV, the AI brief and the AI tool all
+    use it, so a category reads the same everywhere — 2.22.3 gate, NEW-74:
+    it was the number alone)."""
+    number = str(number or "").strip()
+    name = str(name or "").strip()
+    if number and name:
+        return f"{number} - {name}"
+    return number or name or "Uncategorized"
+
+
 class AnalyticsEngine:
     """Real-time business intelligence over invoices / bills / accounts."""
 
@@ -145,15 +157,15 @@ class AnalyticsEngine:
         brief saw nothing either). A voided posting and its reversal net to
         zero and drop out.
 
-        Defaults to month-to-date. Keyed by account number (name when there
-        is none).
+        Defaults to month-to-date. Keyed by the account's label, "6100 -
+        Auto & Truck Expense", as the Profit & Loss names it.
         """
         if start_date is None:
             start_date = _month_start(date.today())
         if end_date is None:
             end_date = date.today()
         return {
-            (account_number or name or "Uncategorized"): amount
+            account_label(account_number, name): amount
             for account_number, name, amount in self.expenses_by_account(
                 start_date, end_date
             )
@@ -187,6 +199,56 @@ class AnalyticsEngine:
             if amount != 0:
                 out.append((number, name, amount))
         return out
+
+    def income_total(self, start_date: date = None, end_date: date = None):
+        """The ledger's income for the window: what was credited to income
+        accounts less what was debited back (accrual — the Profit & Loss's
+        total income for the same dates). Either bound may be None."""
+        q = (
+            self.db.query(
+                func.coalesce(
+                    func.sum(TransactionLine.credit - TransactionLine.debit), 0
+                )
+            )
+            .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+            .join(Account, TransactionLine.account_id == Account.id)
+            .filter(Account.account_type == AccountType.INCOME)
+        )
+        if start_date is not None:
+            q = q.filter(Transaction.date >= start_date)
+        if end_date is not None:
+            q = q.filter(Transaction.date <= end_date)
+        return round(float(q.scalar() or 0), 2)
+
+    def totals(self, start_date: date = None, end_date: date = None):
+        """Revenue, expenses, net income and margin on one basis — the
+        ledger's, as the Profit & Loss counts them — for the KPI cards, the
+        PDF and the AI brief (2.22.3 gate, NEW-73 / W-2: the margin divided
+        paid-invoice revenue into ledger expenses, so a company with
+        journal-entry income and no invoices read "Margin 0.0%" and a loss in
+        a profitable month). `margin_pct` is None when there is no revenue
+        to divide by. Defaults to month-to-date."""
+        if start_date is None:
+            start_date = _month_start(date.today())
+        if end_date is None:
+            end_date = date.today()
+        revenue = self.income_total(start_date, end_date)
+        expenses = round(
+            sum(
+                amount
+                for _, _, amount in self.expenses_by_account(start_date, end_date)
+            ),
+            2,
+        )
+        net_income = round(revenue - expenses, 2)
+        margin_pct = round(net_income / revenue * 100, 1) if revenue > 0 else None
+        return {
+            "basis": "ledger",
+            "revenue": revenue,
+            "expenses": expenses,
+            "net_income": net_income,
+            "margin_pct": margin_pct,
+        }
 
     # ------------------------------------------------------------------
     # Aging
@@ -368,12 +430,13 @@ class AnalyticsEngine:
         """All metrics in one shot — what the frontend hits on page load.
 
         `start_date` / `end_date` apply to the windowed metrics
-        (`revenue_by_customer`, `expenses_by_category`). The others have
-        their own time semantics: `revenue_trend` is always the last
-        12 months, aging is as-of-today, `cash_forecast` is the next 90
+        (`totals`, `revenue_by_customer`, `expenses_by_category`). The
+        others have their own time semantics: `revenue_trend` is always the
+        last 12 months, aging is as-of-today, `cash_forecast` is the next 90
         days.
         """
         return {
+            "totals": self.totals(start_date, end_date),
             "revenue_by_customer": self.revenue_by_customer(start_date, end_date),
             "revenue_trend": self.revenue_trend(),
             "expenses_by_category": self.expenses_by_category(start_date, end_date),

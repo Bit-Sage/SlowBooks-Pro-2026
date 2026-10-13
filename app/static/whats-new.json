@@ -2,7 +2,7 @@
   "2.22.3": {
     "title": "The ledger behind the dashboard",
     "items": [
-      "Analytics' expenses by category and the revenue trend, and the AI brief with them, read the ledger: bills when dated, expenses, register entries, card charges, payroll and journal entries, as the Profit & Loss counts them (it was paid bills and paid invoices only, so a company that books through a bank feed and journal entries saw nothing) — the screen and the PDF say the basis (#281)",
+      "Analytics reads the ledger: the revenue trend, expenses by category (each account by its name) and the four KPI cards, with the PDF and the AI brief, count every posting dated in the period as the Profit & Loss does — bills when dated, expenses, register entries, card charges, payroll and journal entries — on one basis, so the margin is net income over revenue (it was paid bills and paid invoices, so a company that books through a bank feed and journal entries saw nothing). Revenue by customer stays paid invoices and says so (#281)",
       "A receipt attaches to a journal entry, as it does to a bill or an expense: the file behind an entry that only a journal entry can record, such as an owner paying a business expense personally (#281)"
     ]
   },

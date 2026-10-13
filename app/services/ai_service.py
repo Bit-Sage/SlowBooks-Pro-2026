@@ -427,14 +427,21 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
     cash_forecast = dashboard.get("cash_forecast", []) or []
     dso = dashboard.get("dso", 0) or 0
 
-    total_revenue = sum(float(v or 0) for v in revenue_by_customer.values())
-    total_expenses = sum(float(v or 0) for v in expenses_by_category.values())
-    margin_pct = (
-        ((total_revenue - total_expenses) / total_revenue) * 100
-        if total_revenue > 0
-        else 0
+    # One basis for the headline figures — the ledger's, as the Profit &
+    # Loss counts them (2.22.3 gate, NEW-73 / W-2: revenue was the paid
+    # invoices and expenses the ledger, so a company with journal-entry
+    # income and no invoices read "Net income $-468" in a month its P&L
+    # had at $2,032). Revenue by customer stays a paid-basis section.
+    totals = dashboard.get("totals", {}) or {}
+    total_revenue = float(totals.get("revenue") or 0)
+    total_expenses = float(totals.get("expenses") or 0)
+    net_income = float(totals.get("net_income") or 0)
+    margin_pct = totals.get("margin_pct")
+    margin_line = (
+        f"Margin:      {float(margin_pct):.1f}%"
+        if margin_pct is not None
+        else "Margin:      n/a (no revenue in the period)"
     )
-    net_income = total_revenue - total_expenses
 
     # Top revenue customers
     top_customers = sorted(
@@ -479,20 +486,20 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
     lines = [
         f"Financial snapshot for {company} — {period_label}",
         "",
-        "=== KEY METRICS ===",
+        "=== KEY METRICS (the ledger, as the Profit & Loss counts them) ===",
         f"Revenue:     ${total_revenue:,.0f}",
         f"Expenses:    ${total_expenses:,.0f}",
         f"Net income:  ${net_income:,.0f}",
-        f"Margin:      {margin_pct:.1f}%",
+        margin_line,
         f"DSO:         {float(dso):.1f} days",
         "",
-        "=== TOP REVENUE CUSTOMERS ===",
+        "=== TOP REVENUE CUSTOMERS (invoices and sales receipts paid in full) ===",
     ]
     lines += [f"  {name}: ${float(amt or 0):,.0f}" for name, amt in top_customers] or [
         "  (none)"
     ]
 
-    lines += ["", "=== TOP EXPENSE CATEGORIES ==="]
+    lines += ["", "=== TOP EXPENSE CATEGORIES (the ledger, by account) ==="]
     lines += [f"  {cat}: ${float(amt or 0):,.0f}" for cat, amt in top_expenses] or [
         "  (none)"
     ]
@@ -515,6 +522,8 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
 
     lines += [
         "",
+        "Revenue by customer is a paid basis and can total less than Revenue; "
+        "the difference is unpaid or uninvoiced income, not a loss.",
         "Produce the analyst brief now. Use only the numbers above.",
     ]
     return "\n".join(lines)

@@ -454,7 +454,7 @@ def get_expenses_by_category(
     payroll and journal entries, as the Profit & Loss counts them. It read
     bill lines alone, so a bank-fed, journal-entry company got an empty
     answer. The same query the Analytics page uses."""
-    from app.services.analytics import AnalyticsEngine
+    from app.services.analytics import AnalyticsEngine, account_label
 
     sd = ed = None
     if start_date:
@@ -470,7 +470,7 @@ def get_expenses_by_category(
 
     expenses_by_category = {}
     for number, name, amount in AnalyticsEngine(db).expenses_by_account(sd, ed):
-        category_name = f"{number or ''} {name}".strip() or "Unclassified"
+        category_name = account_label(number, name)  # as the page names it
         expenses_by_category[category_name] = _to_float(
             Decimal(str(expenses_by_category.get(category_name, 0)))
             + Decimal(str(amount))

@@ -22,16 +22,25 @@
  */
 
 const AnalyticsPage = {
-  // What the figures count. Revenue here is invoices dated in the period
-  // and paid in full, not the Profit & Loss's accrual income: September's
-  // "Revenue $742.20" sat beside a $10.0M P&L for the same month with
-  // nothing to say why (2.17.3 exploratory test, W-L12). Say it on screen.
+  // What the figures count. The four cards, the trend and the doughnut are
+  // the ledger's (accrual, as the Profit & Loss) — one basis, so the margin
+  // is net income over revenue and not paid invoices over ledger expenses
+  // (2.22.3 gate, NEW-73 / W-2). Revenue by customer is invoices paid in
+  // full, and says so: September's "Revenue $742.20" once sat beside a
+  // $10.0M P&L for the same month with nothing to say why (2.17.3, W-L12).
   REVENUE_BASIS:
-    "Invoices and sales receipts dated in this period and paid in full. The Profit & Loss counts every invoice when it is issued, paid or not.",
+    "Everything credited to income accounts in this period, less what was debited back — invoices and sales receipts when dated (paid or not), deposits to income, journal entries — as the Profit & Loss counts it.",
   EXPENSE_BASIS:
     "Everything posted to expense and cost-of-goods accounts in this period — bills when dated (paid or not), expenses, register entries, card charges, payroll and journal entries — as the Profit & Loss counts them.",
+  MARGIN_BASIS:
+    "Net income over revenue, both from the ledger for this period.",
+  // The doughnut's colours, in slice order (largest first); the table under
+  // it is its legend, each row with the slice's swatch (2.22.3 gate, NEW-74:
+  // the categories carry the account's name now, and Chart.js's own legend
+  // clipped "6000 - Advertising & Marketing" at the card's edge)
+  EXPENSE_PALETTE: ["red", "blue", "orange", "purple", "green", "pink", "sky", "yellow"],
   BASIS_NOTE:
-    "Revenue by customer counts invoices and sales receipts dated in the period and paid in full — a paid basis. Expenses and the revenue trend count every posting in the ledger dated in the period (accrual), as the Profit & Loss report does, so the two can differ.",
+    "Revenue, expenses, net income and the margin count every posting in the ledger dated in the period (accrual), as the Profit & Loss report does. Revenue by customer counts invoices and sales receipts dated in the period and paid in full — a paid basis — so its total can be less than the revenue above.",
 
   // Persistent state — survives route navigation so users return to their
   // last-selected period.
@@ -94,13 +103,18 @@ const AnalyticsPage = {
       ? `${period.name.toUpperCase()} &middot; ${period.start} &rarr; ${period.end}`
       : "";
 
-    const totalRevenue = this._sum(data.revenue_by_customer);
-    const totalExpenses = this._sum(data.expenses_by_category);
+    // the server's totals: one basis for all four, and the PDF and the AI
+    // brief read the same block
+    const totals = data.totals || {};
+    const totalRevenue = Number(totals.revenue) || 0;
+    const totalExpenses = Number(totals.expenses) || 0;
+    const netIncome = Number(totals.net_income) || 0;
     const dso = Number(data.dso) || 0;
-    const margin =
-      totalRevenue > 0
-        ? ((totalRevenue - totalExpenses) / totalRevenue) * 100
-        : 0;
+    const margin = totals.margin_pct == null ? null : Number(totals.margin_pct);
+    const marginText = margin == null ? "&mdash;" : `${margin.toFixed(1)}%`;
+    const marginTitle =
+      `${this.MARGIN_BASIS} Net income ${formatCurrency(netIncome)} on revenue ${formatCurrency(totalRevenue)}` +
+      (margin == null ? " — no revenue to divide by." : ".");
 
     return `
             <div class="page-header analytics-header">
@@ -126,10 +140,10 @@ const AnalyticsPage = {
             ${this._aiActionsHtml()}
 
             <div class="analytics-kpi-grid">
-                <div class="analytics-kpi" title="${escapeHtml(Terms.text(this.REVENUE_BASIS))}"><div class="analytics-kpi-label">${Terms.text('Revenue (paid invoices)')}</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(Terms.text(this.REVENUE_BASIS))}"><div class="analytics-kpi-label">${Terms.text('Revenue (ledger)')}</div><div class="analytics-kpi-value kpi-green">${formatCurrency(totalRevenue)}</div></div>
                 <div class="analytics-kpi" title="${escapeHtml(this.EXPENSE_BASIS)}"><div class="analytics-kpi-label">Expenses (ledger)</div><div class="analytics-kpi-value kpi-red">${formatCurrency(totalExpenses)}</div></div>
                 <div class="analytics-kpi" title="${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30."><div class="analytics-kpi-label">DSO (Days)</div><div class="analytics-kpi-value kpi-blue">${dso.toFixed(1)}</div></div>
-                <div class="analytics-kpi"><div class="analytics-kpi-label">Margin %</div><div class="analytics-kpi-value kpi-purple">${margin.toFixed(1)}%</div></div>
+                <div class="analytics-kpi" title="${escapeHtml(marginTitle)}"><div class="analytics-kpi-label">Margin %</div><div class="analytics-kpi-value kpi-purple">${marginText}</div></div>
             </div>
 
             <div class="analytics-meta">${escapeHtml(Terms.text(this.BASIS_NOTE))}</div>
@@ -203,10 +217,11 @@ const AnalyticsPage = {
     if (entries.length === 0) {
       return '<div class="analytics-empty">No expenses posted this period.</div>';
     }
+    const palette = this.EXPENSE_PALETTE;
     const rows = entries
       .map(
-        ([c, a]) => `
-            <tr><td>${escapeHtml(c)}</td><td class="amount red">${formatCurrency(a)}</td></tr>
+        ([c, a], i) => `
+            <tr><td><span aria-hidden="true" class="chart-swatch" style="background:var(--chart-${palette[i % palette.length]})"></span> ${escapeHtml(c)}</td><td class="amount red">${formatCurrency(a)}</td></tr>
         `,
       )
       .join("");
@@ -493,16 +508,7 @@ const AnalyticsPage = {
     if (entries.length === 0) return;
     const theme = this._chartDefaults();
 
-    const palette = [
-      chartColor("red"),
-      chartColor("blue"),
-      chartColor("orange"),
-      chartColor("purple"),
-      chartColor("green"),
-      chartColor("pink"),
-      chartColor("sky"),
-      chartColor("yellow"),
-    ];
+    const palette = this.EXPENSE_PALETTE.map((name) => chartColor(name));
 
     this.state.charts.expenses = new Chart(ctx, {
       type: "doughnut",
@@ -521,7 +527,8 @@ const AnalyticsPage = {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { position: "right", labels: { color: theme.text } },
+          // the table under the chart is the legend (its rows carry the swatches)
+          legend: { display: false },
           tooltip: {
             callbacks: {
               label: (c) => `${c.label}: ${formatCurrency(c.parsed)}`,

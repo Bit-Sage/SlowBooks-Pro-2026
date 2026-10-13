@@ -246,6 +246,20 @@ def export_csv(
     writer.writerow(["period", "start", "", s.isoformat()])
     writer.writerow(["period", "end", "", e.isoformat()])
 
+    # the headline figures, on the ledger basis the page and the PDF show
+    totals = snap.get("totals") or {}
+    for key in ("revenue", "expenses", "net_income"):
+        writer.writerow(["totals", key, "ledger", f"{float(totals.get(key) or 0):.2f}"])
+    margin = totals.get("margin_pct")
+    writer.writerow(
+        [
+            "totals",
+            "margin_pct",
+            "ledger",
+            "" if margin is None else f"{float(margin):.1f}",
+        ]
+    )
+
     for customer, revenue in (snap.get("revenue_by_customer") or {}).items():
         writer.writerow(
             ["revenue_by_customer", _csv_safe(customer), "", f"{revenue:.2f}"]

@@ -68,6 +68,17 @@ const slices = { type: 'doughnut', data: [
 ] };
 out.slices = run([{ data: [7000, 2700, 300] }], [slices]);
 
+// a slice whose colour gives neither ink nor white 4.5:1 (the doughnut's red,
+// NEW-75) carries no figure — the table has it; a dark slice beside it does
+const lowc = { type: 'doughnut', data: [
+  { tooltipPosition: () => ({ x: 100, y: 60 }), options: { backgroundColor: '#1a3a5a' } },
+  { tooltipPosition: () => ({ x: 160, y: 140 }), options: { backgroundColor: '#e5484d' } },
+] };
+out.lowcontrast = run([{ data: [7000, 2700] }], [lowc]);
+// the same colour on a stacked segment wide and thick enough: nothing inside it either
+const lowbar = { type: 'bar', data: [{ x: 300, y: 50, base: 20, height: 40, horizontal: true, options: { backgroundColor: '#e5484d' } }] };
+out.lowcontrast_bar = run([{ stack: 'aging', data: [2800] }], [lowbar]);
+
 // two lines, three points each; the second line sits 4px under the first, so
 // its labels (below) stay clear while labels that would overlap are left off
 const line1 = { type: 'line', data: [{ x: 40, y: 100 }, { x: 60, y: 100 }, { x: 200, y: 100 }] };

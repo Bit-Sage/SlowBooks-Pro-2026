@@ -26,6 +26,23 @@ by customer stays what it was, invoices and sales receipts dated in the
 period and paid in full, because ledger lines carry no customer; the
 screen, the PDF and the KPI labels say which basis is which.
 
+**One basis for the headline figures.** The four KPI cards, the PDF's and
+the AI brief's revenue, net income and margin are the ledger's for the
+period — the Profit & Loss's figures — so the margin is net income over
+revenue (the gate found it dividing paid-invoice revenue into ledger
+expenses: a company with journal-entry income and no invoices read "Margin
+0.0%" and a loss in a profitable month). The margin shows a dash when there
+is no revenue. The dashboard payload carries `totals` (`revenue`,
+`expenses`, `net_income`, `margin_pct`, `basis`), the CSV export too.
+Expense categories carry the account's name, "6100 - Auto & Truck Expense",
+on the page, the PDF, the CSV, in the brief and in the AI tool (it was the
+number alone). The AI dropdown's **Expenses by category** says its figures
+are the ledger's and sits under Financial Reports (it said "vendor bill
+expenses"). The PDF heads the revenue trend "Revenue (ledger)". A chart's
+figure is drawn on a slice or segment only where ink or white reaches
+4.5:1; where neither does, the table has it (the doughnut's red, blue and
+purple drew figures at 4.2–4.4:1).
+
 **A receipt attaches to a journal entry.** `/api/attachments` whitelisted
 eight record types and not `journal_entry`, though a journal entry is
 sometimes the only right record of a real transaction — an owner paying a

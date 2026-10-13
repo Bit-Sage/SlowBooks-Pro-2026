@@ -3,16 +3,28 @@
 Expenses by category summed bill lines on paid bills, and the revenue trend
 paid invoices: a company that reconciles through a bank feed and records
 the rest as journal entries saw an empty doughnut and an AI brief with
-nothing in it. Both read the ledger now, as the Profit & Loss does.
+nothing in it. Both read the ledger now, as the Profit & Loss does — and so
+do the four KPI cards, the PDF's and the AI brief's headline figures, on
+one basis (2.22.3 gate, NEW-73 / W-2: the margin divided paid-invoice
+revenue into ledger expenses). Categories carry the account's name
+(NEW-74), the AI action says its figures are the ledger's (NEW-77 / W-3),
+and the PDF heads the trend "Revenue (ledger)" (NEW-76 / W-1).
 """
 
+import csv
+import io
 from datetime import date
+from pathlib import Path
 
 from app.services import ai_tools
-from app.services.analytics import AnalyticsEngine
+from app.services.ai_actions import ACTIONS, _format_user_prompt
+from app.services.ai_service import build_insights_prompt
+from app.services.analytics import AnalyticsEngine, account_label
 
+ROOT = Path(__file__).resolve().parents[1]
 THIS_MONTH = date.today().replace(day=1).isoformat()
 TODAY = date.today().isoformat()
+PERIOD = {"start_date": THIS_MONTH, "end_date": TODAY}
 
 
 def _journal(client, seed_accounts, dr, cr, amount, when=TODAY, text="Entry"):
@@ -39,12 +51,27 @@ def _journal(client, seed_accounts, dr, cr, amount, when=TODAY, text="Entry"):
     return r.json()
 
 
-def _expenses(client):
-    r = client.get(
-        "/api/analytics/dashboard", params={"start_date": THIS_MONTH, "end_date": TODAY}
-    )
+def _dashboard(client):
+    r = client.get("/api/analytics/dashboard", params=PERIOD)
     assert r.status_code == 200, r.text
-    return r.json()["expenses_by_category"]
+    return r.json()
+
+
+def _expenses(client):
+    return _dashboard(client)["expenses_by_category"]
+
+
+def _label(seed_accounts, number):
+    return f"{number} - {seed_accounts[number].name}"
+
+
+def test_the_label_is_the_profit_and_losss():
+    assert (
+        account_label("6100", "Auto & Truck Expense") == "6100 - Auto & Truck Expense"
+    )
+    assert account_label(None, "Postage") == "Postage"
+    assert account_label("6100", "") == "6100"
+    assert account_label(None, None) == "Uncategorized"
 
 
 def test_a_journal_entry_and_a_register_entry_count_as_expenses(client, seed_accounts):
@@ -65,7 +92,11 @@ def test_a_journal_entry_and_a_register_entry_count_as_expenses(client, seed_acc
     )
     assert r.status_code == 201, r.text
     got = _expenses(client)
-    assert got["6000"] == 48.0 and got["6100"] == 120.0, got
+    # named as the P&L names them, not by number alone (NEW-74)
+    assert got == {
+        _label(seed_accounts, "6000"): 48.0,
+        _label(seed_accounts, "6100"): 120.0,
+    }, got
 
 
 def test_an_unpaid_bill_counts_when_dated_and_a_void_nets_out(client, seed_accounts):
@@ -90,7 +121,8 @@ def test_an_unpaid_bill_counts_when_dated_and_a_void_nets_out(client, seed_accou
         },
     )
     assert r.status_code == 201, r.text
-    assert _expenses(client)["6000"] == 300.0  # unpaid, and counted
+    ads, auto = _label(seed_accounts, "6000"), _label(seed_accounts, "6100")
+    assert _expenses(client)[ads] == 300.0  # unpaid, and counted
     ex = client.post(
         "/api/expenses",
         json={
@@ -102,9 +134,9 @@ def test_an_unpaid_bill_counts_when_dated_and_a_void_nets_out(client, seed_accou
         },
     )
     assert ex.status_code == 201, ex.text
-    assert _expenses(client)["6100"] == 42.5
+    assert _expenses(client)[auto] == 42.5
     assert client.post(f"/api/expenses/{ex.json()['id']}/void").status_code == 200
-    assert "6100" not in _expenses(client)  # the reversal nets it to zero
+    assert auto not in _expenses(client)  # the reversal nets it to zero
 
 
 def test_the_revenue_trend_reads_income_postings(client, seed_accounts):
@@ -125,10 +157,70 @@ def test_revenue_by_customer_is_still_paid_invoices(client, seed_accounts):
     """Ledger lines carry no customer: that table keeps its paid basis, and
     the page says so (tests/test_analytics_basis.py pins the labels)."""
     _journal(client, seed_accounts, "1000", "4000", "2500.00")
-    dash = client.get(
-        "/api/analytics/dashboard", params={"start_date": THIS_MONTH, "end_date": TODAY}
-    ).json()
-    assert dash["revenue_by_customer"] == {}
+    assert _dashboard(client)["revenue_by_customer"] == {}
+
+
+def test_the_headline_figures_are_on_one_basis(client, seed_accounts):
+    """The gate's ledger company: $2,500 of journal-entry income, $468 of
+    expenses, no invoices. The P&L has net income $2,032 and a margin of
+    81.3%; the dashboard's totals say the same (NEW-73 / W-2: they read
+    "Revenue $0, Net income $-468, Margin 0.0%")."""
+    _journal(client, seed_accounts, "6000", "3000", "48.00", text="Owner paid hosting")
+    _journal(client, seed_accounts, "6100", "1000", "420.00", text="Truck repair")
+    _journal(client, seed_accounts, "1000", "4000", "2500.00", text="Deposit")
+    dash = _dashboard(client)
+    assert dash["totals"] == {
+        "basis": "ledger",
+        "revenue": 2500.0,
+        "expenses": 468.0,
+        "net_income": 2032.0,
+        "margin_pct": 81.3,
+    }
+    assert dash["revenue_by_customer"] == {}  # the paid basis, its own section
+    pl = client.get("/api/reports/profit-loss", params=PERIOD).json()
+    assert float(pl["total_income"]) == 2500.0
+    assert float(pl["net_income"]) == 2032.0
+
+
+def test_no_revenue_means_no_margin(client, seed_accounts):
+    """Expenses and nothing to divide them by: the margin is not 0.0%, it is
+    absent (the page and the PDF show a dash)."""
+    _journal(client, seed_accounts, "6000", "3000", "48.00")
+    totals = _dashboard(client)["totals"]
+    assert totals["revenue"] == 0.0 and totals["net_income"] == -48.0
+    assert totals["margin_pct"] is None
+
+
+def test_the_ai_brief_reads_the_same_totals(client, seed_accounts):
+    _journal(client, seed_accounts, "6000", "3000", "48.00", text="Owner paid hosting")
+    _journal(client, seed_accounts, "6100", "1000", "420.00", text="Truck repair")
+    _journal(client, seed_accounts, "1000", "4000", "2500.00", text="Deposit")
+    dash = _dashboard(client)
+    dash["period"] = {"name": "month", "start": THIS_MONTH, "end": TODAY}
+    prompt = build_insights_prompt(dash, "Ledger Scratch")
+    assert (
+        "=== KEY METRICS (the ledger, as the Profit & Loss counts them) ===" in prompt
+    )
+    assert "Revenue:     $2,500" in prompt
+    assert "Expenses:    $468" in prompt
+    assert "Net income:  $2,032" in prompt
+    assert "Margin:      81.3%" in prompt
+    # the categories are named, so the model can name them
+    assert f"  {_label(seed_accounts, '6100')}: $420" in prompt
+    assert "(invoices and sales receipts paid in full)" in prompt
+    assert "can total less than Revenue" in prompt
+    # and with no revenue the margin says so instead of 0.0%
+    empty = build_insights_prompt(
+        {
+            "totals": {
+                "revenue": 0.0,
+                "expenses": 48.0,
+                "net_income": -48.0,
+                "margin_pct": None,
+            }
+        }
+    )
+    assert "Margin:      n/a (no revenue in the period)" in empty
 
 
 def test_the_ai_tool_answers_from_the_same_ledger(client, db_session, seed_accounts):
@@ -138,9 +230,7 @@ def test_the_ai_tool_answers_from_the_same_ledger(client, db_session, seed_accou
     )
     got = ai_tools.get_expenses_by_category(db_session, THIS_MONTH, TODAY)
     assert got["total"] == 48.0
-    assert [r["category"] for r in got["results"]] == [
-        f"6000 {seed_accounts['6000'].name}"
-    ]
+    assert [r["category"] for r in got["results"]] == [_label(seed_accounts, "6000")]
     everything = ai_tools.get_expenses_by_category(db_session)
     assert everything["total"] == 60.0  # no dates: all time, as before
     # the engine's own rows, shared by both
@@ -148,3 +238,63 @@ def test_the_ai_tool_answers_from_the_same_ledger(client, db_session, seed_accou
         date.fromisoformat(THIS_MONTH), date.today()
     )
     assert [(n, a) for n, _, a in rows] == [("6000", 48.0)]
+
+
+def test_the_ai_action_says_its_figures_are_the_ledgers():
+    """The dropdown's "Expenses by category" framed its data as vendor bills
+    and sat under Vendors & Bills (NEW-77 / W-3)."""
+    spec = ACTIONS["expenses_by_category"]
+    assert spec.category == "Financial Reports"
+    assert spec.framing.startswith(
+        "Expenses for the period by account, from the ledger"
+    )
+    assert (
+        "journal entries" in spec.framing and "Not vendor bills alone" in spec.framing
+    )
+    prompt = _format_user_prompt(
+        spec, {"results": [], "total": 0}, date(2026, 10, 1), date(2026, 10, 12)
+    )
+    assert prompt.startswith(spec.framing)
+    assert "Vendor bill expenses" not in prompt
+
+
+def test_the_action_catalogue_lists_it_under_financial_reports(client):
+    groups = client.get("/api/analytics/ai-actions").json()["groups"]
+    by = {g["category"]: [a["key"] for a in g["actions"]] for g in groups}
+    assert "expenses_by_category" in by["Financial Reports"]
+    assert "expenses_by_category" not in by.get("Vendors & Bills", [])
+
+
+def test_the_csv_carries_the_totals_and_the_named_categories(client, seed_accounts):
+    _journal(client, seed_accounts, "6000", "3000", "48.00")
+    _journal(client, seed_accounts, "1000", "4000", "2500.00")
+    r = client.get("/api/analytics/export.csv", params=PERIOD)
+    assert r.status_code == 200, r.text
+    rows = [
+        row
+        for row in csv.reader(io.StringIO(r.content.decode("utf-8-sig")))
+        if row and not row[0].startswith("#")
+    ]
+    assert ["totals", "revenue", "ledger", "2500.00"] in rows
+    assert ["totals", "expenses", "ledger", "48.00"] in rows
+    assert ["totals", "net_income", "ledger", "2452.00"] in rows
+    assert ["totals", "margin_pct", "ledger", "98.1"] in rows
+    assert ["expenses_by_category", _label(seed_accounts, "6000"), "", "48.00"] in rows
+
+
+def test_the_table_is_the_doughnuts_legend():
+    """Chart.js's legend clipped "6000 - Advertising & Marketing" at the
+    card's edge once the categories were named, so it is off; the table
+    under the doughnut carries each slice's swatch, from the same palette in
+    the same order, by theme variable so a theme switch recolours it."""
+    js = (ROOT / "app" / "static" / "js" / "analytics.js").read_text(encoding="utf-8")
+    assert "legend: { display: false }" in js
+    assert (
+        'class="chart-swatch" style="background:var(--chart-${palette[i % palette.length]})"'
+        in js
+    )
+    assert "const palette = this.EXPENSE_PALETTE.map((name) => chartColor(name));" in js
+    assert "const palette = this.EXPENSE_PALETTE;" in js
+    css = (ROOT / "app" / "static" / "css" / "style.css").read_text(encoding="utf-8")
+    assert ".chart-swatch {" in css
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);" in css

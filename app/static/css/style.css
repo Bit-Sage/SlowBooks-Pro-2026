@@ -1042,6 +1042,8 @@ input:is([type="checkbox"], [type="radio"], [type="file"]):focus-visible {
 /* The dashboard aging legend's swatches: a coloured square, not a "■"
    character (text at 3.1:1, read aloud as "black square" — NEW-62) */
 .aging-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; }
+/* Analytics' expenses table is the doughnut's legend: a swatch per row */
+.chart-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 2px; }
 /* Form history: Check's answer carries a mark and the time (NEW-67) */
 .audit-status--ok { color: var(--text-success); }
 .audit-status--changed { color: var(--text-danger); }
@@ -2207,7 +2209,7 @@ tr.clickable { cursor: pointer; }
 
 .analytics-two-col {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); /* a card never grows past its column */
     gap: 12px;
 }
 

@@ -82,6 +82,18 @@ def test_slices_carry_their_figure_except_one_too_thin_to_hold_it():
 
 
 @needs_node
+def test_a_figure_that_cannot_reach_aa_on_its_mark_is_left_off():
+    """The doughnut's red gives ink 4.39:1 and white less; a figure drawn
+    there failed AA (NEW-75). Neither reaches 4.5, so the slice keeps its
+    figure in the table, as the dashboard's aging bar does; the dark slice
+    beside it is labelled. A stacked segment in that colour is left bare
+    too."""
+    got = _probe()
+    assert [(s["text"], s["fill"]) for s in got["lowcontrast"]] == [("$7k", "#ffffff")]
+    assert got["lowcontrast_bar"] == []
+
+
+@needs_node
 def test_points_are_labelled_where_the_labels_do_not_collide():
     lines = _probe()["lines"]
     texts = [(p["text"], p["x"], p["y"]) for p in lines]

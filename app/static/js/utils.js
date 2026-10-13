@@ -230,9 +230,10 @@ function cssVar(name) {
 // there; a stacked segment's sits in the segment when it fits; a slice's
 // sits in the slice (one under 4% is too thin to hold text); a point's
 // sits above it (below, for every other line). A label that would land on
-// one already drawn, or outside the chart area, is left off: a crowded
-// line shows what fits, and the table has the rest. Colours follow the
-// theme at draw time, so a theme change needs only a redraw.
+// one already drawn, or outside the chart area, is left off, and so is one
+// on a mark whose colour gives neither ink nor white 4.5:1: a crowded line
+// shows what fits, and the table has the rest. Colours follow the theme at
+// draw time, so a theme change needs only a redraw.
 function chartFigures(opts = {}) {
     const fmt = opts.format || compactMoney;
     const size = opts.size || 10;
@@ -246,8 +247,10 @@ function chartFigures(opts = {}) {
             const placed = [];
             const inside = (b) => b.x >= area.left && b.x + b.w <= area.right && b.y >= area.top && b.y + b.h <= area.bottom;
             const free = (b) => !placed.some(p => !(b.x + b.w < p.x || p.x + p.w < b.x || b.y + b.h < p.y || p.y + p.h < b.y));
-            // 'drawn', or why not: 'outside' the chart area, or 'taken' by a label already there
+            // 'drawn', or why not: 'outside' the chart area, 'taken' by a label
+            // already there, or 'contrast' — no fill reads on the mark
             const draw = (text, cx, cy, fill) => {
+                if (!fill) return 'contrast';
                 const w = ctx.measureText(text).width + 4, h = size + 2;
                 const box = { x: cx - w / 2, y: cy - h / 2, w, h };
                 if (!inside(box)) return 'outside';
@@ -257,7 +260,12 @@ function chartFigures(opts = {}) {
                 placed.push(box);
                 return 'drawn';
             };
-            const on = (color) => _textOn(color, dark);
+            // text on a mark: ink or white, whichever reads better, and only
+            // when it reaches AA (4.5:1) — a slice or segment where neither
+            // does keeps its figure in the table, as the dashboard's aging
+            // bar does (2.22.3 gate, NEW-75: the doughnut's red, blue and
+            // purple drew figures at 4.2–4.4:1)
+            const on = (color) => { const t = figureTextOn(color, dark); return t.ratio >= 4.5 ? t.fill : null; };
             ctx.save();
             ctx.font = `${size}px ${opts.family || 'system-ui, sans-serif'}`;
             ctx.textAlign = 'center';
