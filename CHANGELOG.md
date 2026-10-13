@@ -7,6 +7,8 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+- IIF sales receipts keep the deposit account from their own allocated payment when the customer has other payments on the same day.
+
 ### v2.22.3 — The ledger behind the dashboard
 
 Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
