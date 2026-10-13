@@ -76,6 +76,10 @@ Desktop does not export transactions to IIF natively. Two options:
     and the net matches the check.
   - **Transaction Detail filtered to Sales Receipt** — each receipt
     imports as a paid sale + payment (details below).
+  - **Transaction Detail filtered to Invoice** — each invoice imports
+    with its lines (item, quantity, price, tax) and its Customer:Job;
+    add the **Open Balance** column and each one lands open, partly paid
+    or paid, with a payment for what was paid (details below).
 
   Import your **lists first** (chart of accounts, customers, items via
   IIF) so account and item names resolve — deposit and check blocks
@@ -103,6 +107,34 @@ Desktop does not export transactions to IIF natively. Two options:
   IIF) so the report's account and item names resolve — unmatched
   accounts post to your default income account, with a warning naming
   them.
+
+### Invoices from a report CSV
+
+The same report, filtered to **Invoice** instead of Sales Receipt:
+
+1. **Reports → Custom Reports → Transaction Detail**, date range **All**.
+2. **Filters** tab → *Transaction Type* → **Invoice**.
+3. **Customize Report → Display → Columns**: keep the defaults and add
+   **Open Balance** (and **Due Date** if you want due dates). Without
+   Open Balance the importer cannot tell a paid invoice from an open one,
+   so every invoice comes in open and the import says so.
+4. Excel → Create New Worksheet, save as CSV, and upload it under
+   **QuickBooks Interop → Import from Report CSV**. The report type is
+   detected from the rows: an invoice's header row posts to Accounts
+   Receivable, a receipt's to the deposit account, so one file can hold
+   both.
+
+Each invoice imports with its item lines (item, quantity, unit price, from
+the Item, Qty and Sales Price columns), its sales tax from the percentage
+row, its Customer:Job (the job is created under the customer on first
+sight), and its number. With Open Balance: **0.00** lands as **paid**, with
+a payment for the total dated the invoice's date, deposited to Undeposited
+Funds; between zero and the total lands **partly paid**, with a payment for
+the paid part; equal to the total lands **open**. Re-uploads skip invoices
+already here by number (or customer, date and total when unnumbered). The
+payments QuickBooks recorded are not in this report, so an imported paid
+invoice carries one payment dated the invoice; a Deposit Detail import
+then moves that money from Undeposited Funds to the bank.
 
 ### How CASH SALE blocks import
 

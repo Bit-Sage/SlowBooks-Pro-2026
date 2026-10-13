@@ -41,6 +41,7 @@ from app.services.accounting import (
 )
 from app.services.csv_export import strip_formula_guard
 from app.services.iif_import import _find_account
+from app.services.jobs_service import resolve_customer_and_job
 from app.services.safe_errors import DataProblem, safe_message
 
 
@@ -123,33 +124,89 @@ def _cell(row: list[str], cols: dict, name: str) -> str:
     return (row[idx] or "").strip()
 
 
-def _group_receipts(rows, cols, start, errors):
-    """Group data rows into receipts.
+_AR_NAMES = frozenset({"accounts receivable", "a/r", "accounts receivable (a/r)"})
 
-    A row whose Split column is "-SPLIT-" is a receipt header: it carries
-    the customer, date, document number, deposit account, and the total
-    (Debit side). Rows that follow belong to that receipt: a percentage
-    in Sales Price marks a tax row; everything else is a line item with
-    a signed amount of Credit − Debit.
+
+def _ar_names(db: Session | None) -> frozenset:
+    """How the report may name the receivable account: the usual names and
+    this chart's own 1100 (renamed control accounts keep their number)."""
+    names = set(_AR_NAMES)
+    if db is not None:
+        try:
+            from app.services.control_accounts import find
+
+            ar_id = find(db, "1100")
+            acct = db.get(Account, ar_id) if ar_id else None
+            if acct and acct.name:
+                names.add(acct.name.strip().lower())
+        except Exception:  # a chart with no receivable: the usual names stand
+            pass
+    return frozenset(names)
+
+
+def _header_kind(row, cols, ar_names) -> str:
+    """An invoice's header row posts to Accounts Receivable; a sales
+    receipt's to the deposit account. A Type column, when the report has
+    one, says so outright (#291)."""
+    if "Type" in cols:
+        rtype = _cell(row, cols, "Type").strip().lower()
+        if rtype:
+            return "invoice" if rtype == "invoice" else "receipt"
+    return (
+        "invoice"
+        if _cell(row, cols, "Account").strip().lower() in ar_names
+        else "receipt"
+    )
+
+
+def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES):
+    """Group data rows into sales — receipts and invoices alike.
+
+    A row whose Split column is "-SPLIT-" is a sale's header: it carries
+    the customer (Customer:Job), date, document number, the posting
+    account (the deposit account for a receipt, Accounts Receivable for an
+    invoice), and the total (Debit side); an Open Balance, Paid or Due
+    Date column, when the report has one, is read from it too. Rows that
+    follow belong to that sale: a percentage in Sales Price marks a tax
+    row; everything else is a line item with a signed amount of
+    Credit − Debit.
     """
-    receipts = []
+    sales = []
     current = None
     for n, row in enumerate(rows[start + 1 :], start=start + 2):
         if not _parse_date(_cell(row, cols, "Date")):
             continue  # report group headers/footers/blank rails
         if _cell(row, cols, "Split") == "-SPLIT-":
+            open_cell = (
+                _cell(row, cols, "Open Balance") if "Open Balance" in cols else ""
+            )
+            paid_cell = (
+                _cell(row, cols, "Paid").strip().lower() if "Paid" in cols else ""
+            )
             current = {
                 "row": n,
+                "kind": _header_kind(row, cols, ar_names),
                 "num": _cell(row, cols, "Num"),
                 "date": _parse_date(_cell(row, cols, "Date")),
                 "customer": _cell(row, cols, "Name"),
                 "deposit_account": _cell(row, cols, "Account"),
                 "total": _q(_amount(_cell(row, cols, "Debit"))),
+                "open_balance": _q(_amount(open_cell)) if open_cell != "" else None,
+                "paid_flag": (
+                    True
+                    if paid_cell in ("paid", "yes", "y")
+                    else False if paid_cell in ("unpaid", "no", "n") else None
+                ),
+                "due_date": (
+                    _parse_date(_cell(row, cols, "Due Date"))
+                    if "Due Date" in cols
+                    else None
+                ),
                 "lines": [],
                 "tax_amount": Decimal("0"),
                 "tax_rate": Decimal("0"),
             }
-            receipts.append(current)
+            sales.append(current)
             continue
         if current is None:
             errors.append(f"Row {n}: detail line before any receipt header; skipped")
@@ -176,14 +233,25 @@ def _group_receipts(rows, cols, start, errors):
                 "amount": signed,
             }
         )
-    return receipts
+    return sales
 
 
-def _assign_number(db: Session, num: str) -> str:
-    """Use the report's Num when it's free; otherwise SR-prefix and bump.
+def _group_receipts(rows, cols, start, errors, ar_names=_AR_NAMES):
+    """The sales receipts of a report (an invoice's block, which posts to
+    Accounts Receivable, is the invoice importer's)."""
+    return [
+        b
+        for b in _group_sales(rows, cols, start, errors, ar_names)
+        if b["kind"] == "receipt"
+    ]
+
+
+def _assign_number(db: Session, num: str, prefix: str = "SR") -> str:
+    """Use the report's Num when it's free; otherwise prefix and bump.
 
     QB sales receipts run their own sequence (often 1, 2, 3 …), which can
-    collide with existing invoice numbers here.
+    collide with existing invoice numbers here; an invoice whose number is
+    taken gets a QB- prefix the same way.
     """
     from app.services.numbering import next_invoice_number
 
@@ -195,13 +263,13 @@ def _assign_number(db: Session, num: str) -> str:
         is not None
     ):
         n = 0
-        candidate = f"SR-{num}"
+        candidate = f"{prefix}-{num}"
         while (
             db.query(Invoice.id).filter(Invoice.invoice_number == candidate).first()
             is not None
         ):
             n += 1
-            candidate = f"SR-{num}-{n}"
+            candidate = f"{prefix}-{num}-{n}"
     return candidate
 
 
@@ -223,7 +291,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
         )
         return result
 
-    receipts = _group_receipts(rows, cols, header_idx, result["errors"])
+    receipts = _group_receipts(rows, cols, header_idx, result["errors"], _ar_names(db))
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
 
@@ -433,6 +501,286 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
             sp.rollback()
             result["errors"].append(
                 f"Receipt {rec.get('num') or rec['row']}: "
+                + safe_message(e, "QB report import")
+            )
+
+    db.commit()
+    return result
+
+
+def _status_for(total: Decimal, block: dict):
+    """Open balance, paid amount and status from the report's Open Balance
+    or Paid column; with neither, the invoice is open (#291)."""
+    if block.get("open_balance") is not None:
+        open_bal = _q(min(max(block["open_balance"], Decimal("0")), total))
+    elif block.get("paid_flag") is True:
+        open_bal = Decimal("0")
+    else:
+        open_bal = total
+    paid = _q(total - open_bal)
+    if open_bal == 0 and total > 0:
+        status = InvoiceStatus.PAID
+    elif paid > 0:
+        status = InvoiceStatus.PARTIAL
+    else:
+        status = InvoiceStatus.SENT
+    return open_bal, paid, status
+
+
+def import_invoice_report(db: Session, csv_text: str) -> dict:
+    """Import a Transaction Detail by Date CSV filtered to Invoice (#291):
+    each invoice with its lines (item, quantity, price, tax), its
+    Customer:Job and its number; open, partly paid or paid by the
+    report's Open Balance (or Paid) column, with a payment for what was
+    paid, dated the invoice, deposited to Undeposited Funds. Without that
+    column every invoice comes in open, and the import says so."""
+    result = {
+        "imported": 0,
+        "open": 0,
+        "partly_paid": 0,
+        "paid": 0,
+        "duplicates_skipped": 0,
+        "errors": [],
+        "warnings": [],
+    }
+    rows = _csv_rows(csv_text)
+    header_idx, cols = _find_header(rows)
+    if header_idx is None:
+        result["errors"].append(
+            "Could not find the report's column header row. Export the "
+            "Transaction Detail report with at least these columns: "
+            + ", ".join(REQUIRED_COLUMNS)
+        )
+        return result
+
+    blocks = [
+        b
+        for b in _group_sales(rows, cols, header_idx, result["errors"], _ar_names(db))
+        if b["kind"] == "invoice"
+    ]
+    if blocks and "Open Balance" not in cols and "Paid" not in cols:
+        result["warnings"].append(
+            "The report has no Open Balance column, so every invoice came in "
+            "open. Add Open Balance (Customize Report → Display → Columns) and "
+            "re-upload to bring them in as paid, partly paid or open — the "
+            "ones already here are skipped — or record the payments here."
+        )
+    ar_id = get_ar_account_id(db)
+    default_income_id = get_default_income_account_id(db)
+
+    for blk in blocks:
+        sp = db.begin_nested()
+        try:
+            ref = blk["num"] or f"row {blk['row']}"
+            line_sum = sum((ln["amount"] for ln in blk["lines"]), Decimal("0"))
+            expected = _q(line_sum + blk["tax_amount"])
+            if expected != blk["total"]:
+                sp.rollback()
+                result["errors"].append(
+                    f"Invoice {ref}: lines + tax ({expected}) do not equal the "
+                    f"invoice total ({blk['total']}); skipped"
+                )
+                continue
+
+            # Customer:Job — the job is created under the customer on first sight
+            customer, job = resolve_customer_and_job(
+                db, (blk["customer"] or "Walk-In Customer")[:200]
+            )
+            if customer is None:
+                customer = (
+                    db.query(Customer)
+                    .filter(Customer.name == "Walk-In Customer")
+                    .first()
+                )
+                if not customer:
+                    customer = Customer(name="Walk-In Customer", is_active=True)
+                    db.add(customer)
+                    db.flush()
+
+            # Dedup: by number among invoices, else customer + date + total
+            dup_q = db.query(Invoice).filter(Invoice.is_sales_receipt.is_(False))
+            if blk["num"]:
+                dup = dup_q.filter(Invoice.invoice_number == blk["num"]).first()
+            else:
+                dup = dup_q.filter(
+                    Invoice.customer_id == customer.id,
+                    Invoice.date == blk["date"],
+                    Invoice.total == blk["total"],
+                ).first()
+            if dup:
+                sp.rollback()
+                result["duplicates_skipped"] += 1
+                continue
+
+            open_bal, paid_amt, status = _status_for(blk["total"], blk)
+            subtotal = _q(line_sum)
+            invoice = Invoice(
+                invoice_number=_assign_number(db, blk["num"], prefix="QB"),
+                customer_id=customer.id,
+                job_id=job.id if job else None,
+                date=blk["date"],
+                due_date=blk["due_date"] or blk["date"],
+                status=status,
+                is_sales_receipt=False,
+                subtotal=subtotal,
+                tax_rate=blk["tax_rate"] if blk["tax_amount"] else Decimal("0"),
+                tax_amount=_q(blk["tax_amount"]),
+                total=blk["total"],
+                amount_paid=paid_amt,
+                balance_due=open_bal,
+            )
+            db.add(invoice)
+            db.flush()
+
+            for order, ln in enumerate(blk["lines"]):
+                item_id = None
+                if ln["item_name"]:
+                    item = db.query(Item).filter(Item.name == ln["item_name"]).first()
+                    if item:
+                        item_id = item.id
+                qty = ln["quantity"]
+                db.add(
+                    InvoiceLine(
+                        invoice_id=invoice.id,
+                        item_id=item_id,
+                        description=ln["description"] or None,
+                        quantity=qty,
+                        rate=_q(ln["amount"] / qty) if qty else ln["amount"],
+                        amount=ln["amount"],
+                        line_order=order,
+                    )
+                )
+
+            # The invoice's journal: DR A/R for the total; each positive line
+            # credits its account, a contra line debits it; tax credits its account
+            if ar_id and blk["total"] != 0:
+                journal_lines = [
+                    {
+                        "account_id": ar_id,
+                        "debit": blk["total"],
+                        "credit": Decimal("0"),
+                        "description": f"Invoice {invoice.invoice_number}",
+                    }
+                ]
+                unmatched = []
+                for ln in blk["lines"]:
+                    if ln["amount"] == 0:
+                        continue
+                    acct = _find_account(db, ln["account"])
+                    acct_id = acct.id if acct else default_income_id
+                    if not acct:
+                        unmatched.append(ln["account"] or "(blank)")
+                    if acct_id is None:
+                        continue
+                    journal_lines.append(
+                        {
+                            "account_id": acct_id,
+                            "debit": (
+                                -ln["amount"] if ln["amount"] < 0 else Decimal("0")
+                            ),
+                            "credit": (
+                                ln["amount"] if ln["amount"] > 0 else Decimal("0")
+                            ),
+                            "description": ln["description"] or "",
+                        }
+                    )
+                if blk["tax_amount"]:
+                    from app.services.accounting import get_sales_tax_account_id
+
+                    tax_id = get_sales_tax_account_id(db)
+                    if tax_id:
+                        journal_lines.append(
+                            {
+                                "account_id": tax_id,
+                                "debit": Decimal("0"),
+                                "credit": blk["tax_amount"],
+                                "description": "Sales tax",
+                            }
+                        )
+                total_dr = sum(jl["debit"] for jl in journal_lines)
+                total_cr = sum(jl["credit"] for jl in journal_lines)
+                if total_dr == total_cr and total_dr > 0:
+                    txn = create_journal_entry(
+                        db,
+                        invoice.date,
+                        f"QB report import — Invoice {invoice.invoice_number}",
+                        journal_lines,
+                        source_type="invoice",
+                        source_id=invoice.id,
+                    )
+                    invoice.transaction_id = txn.id
+                    if unmatched:
+                        result["warnings"].append(
+                            f"Invoice {ref}: account(s) not found, posted to "
+                            f"default income: {', '.join(sorted(set(unmatched)))}"
+                        )
+                else:
+                    result["warnings"].append(
+                        f"Invoice {ref}: imported but journal entry could not "
+                        "be created (account mismatch)"
+                    )
+
+            # What QuickBooks showed as paid: one payment, dated the invoice,
+            # to Undeposited Funds (the report has no payment dates)
+            if paid_amt > 0:
+                uf_id = get_undeposited_funds_id(db)
+                payment = Payment(
+                    customer_id=customer.id,
+                    date=invoice.date,
+                    amount=paid_amt,
+                    reference=invoice.invoice_number,
+                    deposit_to_account_id=uf_id,
+                )
+                db.add(payment)
+                db.flush()
+                db.add(
+                    PaymentAllocation(
+                        payment_id=payment.id, invoice_id=invoice.id, amount=paid_amt
+                    )
+                )
+                if ar_id and uf_id:
+                    txn = create_journal_entry(
+                        db,
+                        invoice.date,
+                        f"QB report import — Payment for invoice {invoice.invoice_number}",
+                        [
+                            {
+                                "account_id": uf_id,
+                                "debit": paid_amt,
+                                "credit": Decimal("0"),
+                                "description": f"Invoice {invoice.invoice_number}",
+                            },
+                            {
+                                "account_id": ar_id,
+                                "debit": Decimal("0"),
+                                "credit": paid_amt,
+                                "description": f"Invoice {invoice.invoice_number}",
+                            },
+                        ],
+                        source_type="payment",
+                        source_id=payment.id,
+                    )
+                    payment.transaction_id = txn.id
+
+            db.flush()
+            db.refresh(invoice)
+            from app.services.inventory_hooks import post_sale_for_invoice
+
+            post_sale_for_invoice(db, invoice, txn_date=invoice.date)
+
+            sp.commit()
+            result["imported"] += 1
+            result[
+                (
+                    "paid"
+                    if status == InvoiceStatus.PAID
+                    else "partly_paid" if status == InvoiceStatus.PARTIAL else "open"
+                )
+            ] += 1
+        except Exception as e:
+            sp.rollback()
+            result["errors"].append(
+                f"Invoice {blk.get('num') or blk['row']}: "
                 + safe_message(e, "QB report import")
             )
 
@@ -736,10 +1084,22 @@ def import_check_report(db: Session, csv_text: str) -> dict:
 # ============================================================================
 
 
-def detect_report_type(csv_text: str) -> str | None:
-    """Identify which QB report a CSV is, by column signature."""
+def _sale_kinds(rows, header_idx, cols, ar_names=_AR_NAMES) -> set:
+    return {b["kind"] for b in _group_sales(rows, cols, header_idx, [], ar_names)}
+
+
+def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
+    """Identify which QB report a CSV is, by column signature; a Transaction
+    Detail export is receipts, invoices, or both, by what its header rows
+    post to (#291)."""
     rows = _csv_rows(csv_text)
-    if _find_header_for(rows, REQUIRED_COLUMNS)[0] is not None:
+    header_idx, cols = _find_header_for(rows, REQUIRED_COLUMNS)
+    if header_idx is not None:
+        kinds = _sale_kinds(rows, header_idx, cols, _ar_names(db))
+        if kinds == {"invoice"}:
+            return "invoices"
+        if kinds == {"invoice", "receipt"}:
+            return "sales_and_invoices"
         return "sales_receipts"
     if _find_header_for(rows, CHECK_COLUMNS)[0] is not None:
         return "checks"
@@ -756,10 +1116,14 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
     deposit signature's bare "Amount" never appears in a check header
     ("Original Amount"/"Paid Amount" are distinct cells). (#62 review)
     """
-    kind = detect_report_type(csv_text)
+    kind = detect_report_type(csv_text, db)
     base = {
         "detected": kind,
         "sales_receipts": 0,
+        "invoices": 0,
+        "invoices_open": 0,
+        "invoices_partly_paid": 0,
+        "invoices_paid": 0,
         "deposits": 0,
         "checks": 0,
         "duplicates_skipped": 0,
@@ -769,13 +1133,28 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
     if kind is None:
         base["errors"].append(
             "Unrecognized report layout. Supported exports: Transaction "
-            "Detail (filtered to Sales Receipt), Deposit Detail, and "
-            "Check Detail — keep the report's default columns."
+            "Detail (filtered to Sales Receipt or Invoice), Deposit Detail, "
+            "and Check Detail — keep the report's default columns."
         )
         return base
-    if kind == "sales_receipts":
-        sub = import_sales_receipt_report(db, csv_text)
-        base["sales_receipts"] = sub.pop("imported", 0)
+    if kind in ("sales_receipts", "invoices", "sales_and_invoices"):
+        sub = {"duplicates_skipped": 0, "errors": [], "warnings": []}
+        if kind != "invoices":
+            r = import_sales_receipt_report(db, csv_text)
+            base["sales_receipts"] = r.pop("imported", 0)
+            for key in ("duplicates_skipped",):
+                sub[key] += r.get(key, 0)
+            sub["errors"] += r.get("errors", [])
+            sub["warnings"] += r.get("warnings", [])
+        if kind != "sales_receipts":
+            r = import_invoice_report(db, csv_text)
+            base["invoices"] = r.pop("imported", 0)
+            base["invoices_open"] = r.get("open", 0)
+            base["invoices_partly_paid"] = r.get("partly_paid", 0)
+            base["invoices_paid"] = r.get("paid", 0)
+            sub["duplicates_skipped"] += r.get("duplicates_skipped", 0)
+            sub["errors"] += r.get("errors", [])
+            sub["warnings"] += r.get("warnings", [])
     elif kind == "deposits":
         sub = import_deposit_report(db, csv_text)
         base["deposits"] = sub.pop("deposits", 0)

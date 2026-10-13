@@ -107,10 +107,12 @@ const IIFPage = {
                         QuickBooks Desktop can't export transactions to IIF — export a detail
                         <strong>report</strong> to CSV instead and upload it here. The report type is
                         detected automatically: <strong>Transaction Detail</strong> filtered to Sales
-                        Receipt (each imports as a paid sale + payment), <strong>Deposit
-                        Detail</strong>, or <strong>Check Detail</strong> (both import as journal
-                        entries on your bank account). Keep the report's default columns.
-                        Safe to re-upload — duplicates are skipped.
+                        Receipt or Invoice (a receipt imports as a paid sale + payment; an invoice with
+                        its lines, its Customer:Job and its number, open, partly paid or paid by the
+                        report's <strong>Open Balance</strong> column — add that column, or every
+                        invoice comes in open), <strong>Deposit Detail</strong>, or <strong>Check
+                        Detail</strong> (both import as journal entries on your bank account). Keep
+                        the report's default columns. Safe to re-upload — duplicates are skipped.
                     </p>
                     <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report CSV file" accept=".csv" style="font-size:11px; margin-bottom:8px;">
                     <div>
@@ -146,15 +148,18 @@ const IIFPage = {
             if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
             const result = await res.json();
 
-            const kindLabel = { sales_receipts: 'Sales Receipts', deposits: 'Deposits', checks: 'Checks' };
+            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks' };
             let html = '<div class="iif-results"><h4>Results</h4>';
             if (result.detected) {
                 html += `<div class="result-row"><span>Detected report</span><span class="result-count">${kindLabel[result.detected] || result.detected}</span></div>`;
             }
-            for (const key of ['sales_receipts', 'deposits', 'checks']) {
+            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks']) {
                 if (result[key] > 0) {
                     html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]} imported</span></div>`;
                 }
+            }
+            if (result.invoices > 0) {
+                html += `<div class="result-row"><span style="font-size:11px;color:var(--gray-500)">${result.invoices_open || 0} open, ${result.invoices_partly_paid || 0} partly paid, ${result.invoices_paid || 0} paid</span></div>`;
             }
             if (result.duplicates_skipped > 0) {
                 html += `<div class="result-row"><span>Duplicates skipped</span><span class="result-count">${result.duplicates_skipped}</span></div>`;
@@ -171,7 +176,7 @@ const IIFPage = {
                 html += '</div>';
             }
             $('#qbcsv-import-result').innerHTML = html;
-            const total = (result.sales_receipts || 0) + (result.deposits || 0) + (result.checks || 0);
+            const total = (result.sales_receipts || 0) + (result.invoices || 0) + (result.deposits || 0) + (result.checks || 0);
             IIFPage._reportImport(total, (result.errors || []).length);
         } catch (err) {
             toast(err.message, 'error');
