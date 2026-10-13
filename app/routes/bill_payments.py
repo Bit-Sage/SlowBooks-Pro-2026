@@ -74,7 +74,9 @@ def get_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=BillPaymentResponse, status_code=201)
 def create_bill_payment(
-    data: BillPaymentCreate, request: Request, db: Session = Depends(get_db)
+    data: BillPaymentCreate,
+    db: Session = Depends(get_db),
+    request: Request = None,
 ):
     check_closing_date(db, data.date)
     # A retry of a request whose response was lost must not pay the bill
