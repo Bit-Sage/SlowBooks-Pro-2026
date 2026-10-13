@@ -54,7 +54,9 @@ def reserve(db: Session, request: Request, route: str, payload, actor: str | Non
     JSONResponse (a replay: send it as the answer), or a Reservation to
     ``finish`` before the commit. Raises 409 for a reused key with another
     body, or a first delivery still running."""
-    key = request.headers.get(HEADER)
+    # an internal caller (a sales receipt composing a payment) passes no
+    # request: an ordinary write
+    key = request.headers.get(HEADER) if request is not None else None
     if not key:
         return None
     key = key.strip()

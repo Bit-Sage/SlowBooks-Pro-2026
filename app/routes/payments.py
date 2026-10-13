@@ -88,7 +88,9 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=PaymentResponse, status_code=201)
 def create_payment(
-    data: PaymentCreate, request: Request, db: Session = Depends(get_db)
+    data: PaymentCreate,
+    db: Session = Depends(get_db),
+    request: Request = None,
 ):
     check_closing_date(db, data.date)
     # A retry of a request whose response was lost must not book the
