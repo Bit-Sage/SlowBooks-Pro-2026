@@ -373,7 +373,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 ![Splash screen with build info](../screenshots/splash.png)
 
 ## QuickBooks 2003 Pro Interoperability
-- **IIF Export** — Export all Slowbooks data (accounts, customers, vendors, items, invoices, payments, estimates) as .iif files importable into QB2003 via File > Utilities > Import > IIF Files
+- **IIF Export** — Export all Slowbooks data (accounts, customers, vendors, items, invoices, payments, estimates) as .iif files importable into QB2003 via File > Utilities > Import > IIF Files. An invoice's or sales receipt's TRNS row names the full Customer:Job, and its split rows carry INVITEM, QNTY, PRICE and TAXABLE (quantity negative, price positive, as Intuit's own sample import files have them), so a round trip keeps the job, the items and the quantities (v2.23.0, #199; it wrote the customer alone and no item or quantity)
 - **IIF Import** — Parse and import .iif files exported from QB2003 with duplicate detection and per-row error handling. The importer takes INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and DEPOSIT blocks; any other type (GENERAL JOURNAL, CHECK, …) is named by Validate and counted by the import with each block's number, date, document number and name, so a mixed file reconciles — parsed blocks = imported + duplicates skipped + not imported + failed (v2.23.0, #288; they used to vanish without a word)
 - **Validation** — Pre-flight validation of .iif files before import (checks structure, account types, balanced transactions)
 - **Date Range Filtering** — Export invoices and payments for specific date ranges
