@@ -39,6 +39,8 @@ from app.services.accounting import (
     get_default_income_account_id,
     get_undeposited_funds_id,
 )
+from app.services.donor_documents import document_label
+from app.services.terminology import document_reference, terms_from_db
 from app.services.csv_export import strip_formula_guard
 from app.services.iif_import import _find_account
 from app.services.jobs_service import resolve_customer_and_job
@@ -567,6 +569,11 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
         )
     ar_id = get_ar_account_id(db)
     default_income_id = get_default_income_account_id(db)
+    # The import's own messages say the company's word for the report's
+    # document (Invoice, or Pledge on a nonprofit); what the ledger writes
+    # for a document it made says that document's face, as a posting does.
+    words = terms_from_db(db)
+    doc = words("Invoice")
 
     for blk in blocks:
         sp = db.begin_nested()
@@ -577,8 +584,8 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
             if expected != blk["total"]:
                 sp.rollback()
                 result["errors"].append(
-                    f"Invoice {ref}: lines + tax ({expected}) do not equal the "
-                    f"invoice total ({blk['total']}); skipped"
+                    f"{doc} {ref}: lines + tax ({expected}) do not equal the "
+                    f"{doc.lower()} total ({blk['total']}); skipped"
                 )
                 continue
 
@@ -631,6 +638,9 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
             )
             db.add(invoice)
             db.flush()
+            ledger_ref = document_reference(
+                document_label(invoice, words), invoice.invoice_number
+            )
 
             for order, ln in enumerate(blk["lines"]):
                 item_id = None
@@ -659,7 +669,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                         "account_id": ar_id,
                         "debit": blk["total"],
                         "credit": Decimal("0"),
-                        "description": f"Invoice {invoice.invoice_number}",
+                        "description": ledger_ref,
                     }
                 ]
                 unmatched = []
@@ -703,7 +713,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                     txn = create_journal_entry(
                         db,
                         invoice.date,
-                        f"QB report import — Invoice {invoice.invoice_number}",
+                        f"QB report import — {ledger_ref}",
                         journal_lines,
                         source_type="invoice",
                         source_id=invoice.id,
@@ -711,12 +721,12 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                     invoice.transaction_id = txn.id
                     if unmatched:
                         result["warnings"].append(
-                            f"Invoice {ref}: account(s) not found, posted to "
+                            f"{doc} {ref}: account(s) not found, posted to "
                             f"default income: {', '.join(sorted(set(unmatched)))}"
                         )
                 else:
                     result["warnings"].append(
-                        f"Invoice {ref}: imported but journal entry could not "
+                        f"{doc} {ref}: imported but journal entry could not "
                         "be created (account mismatch)"
                     )
 
@@ -742,19 +752,19 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                     txn = create_journal_entry(
                         db,
                         invoice.date,
-                        f"QB report import — Payment for invoice {invoice.invoice_number}",
+                        f"QB report import — Payment for {ledger_ref}",
                         [
                             {
                                 "account_id": uf_id,
                                 "debit": paid_amt,
                                 "credit": Decimal("0"),
-                                "description": f"Invoice {invoice.invoice_number}",
+                                "description": ledger_ref,
                             },
                             {
                                 "account_id": ar_id,
                                 "debit": Decimal("0"),
                                 "credit": paid_amt,
-                                "description": f"Invoice {invoice.invoice_number}",
+                                "description": ledger_ref,
                             },
                         ],
                         source_type="payment",
@@ -780,7 +790,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
         except Exception as e:
             sp.rollback()
             result["errors"].append(
-                f"Invoice {blk.get('num') or blk['row']}: "
+                f"{doc} {blk.get('num') or blk['row']}: "
                 + safe_message(e, "QB report import")
             )
 
