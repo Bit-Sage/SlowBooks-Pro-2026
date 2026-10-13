@@ -88,8 +88,24 @@ out.lines = run([{ data: [1000, 1000, 1000] }, { data: [2000, 2000, 2000] }], [l
 // a line's first and last points sit on the area's edges, and the top one on
 // its top (the month that is the axis maximum — NEW-81 / W-5): the label
 // slides in from the edge, and the top point's goes below it
-const edges = { type: 'line', data: [{ x: 0, y: 100 }, { x: 200, y: 0 }, { x: 400, y: 100 }] };
+const edges = { type: 'line', data: [{ x: 0, y: 40 }, { x: 200, y: 0 }, { x: 400, y: 40 }] };
 out.edges = run([{ data: [1000, 2500, 1000] }], [edges]);
+
+// a steep rise into a last-point maximum with no room above it (W-6: the
+// label under the peak sat on the line rising into it): above is off the
+// chart, below is crossed, so the label goes beside the point, to its left;
+// the middle point's label goes below, since its own line crosses the place
+// above; the first point's stays above
+const peak = { type: 'line', data: [{ x: 0, y: 290 }, { x: 200, y: 272 }, { x: 400, y: 32 }] };
+out.peak = run([{ data: [290, 272, 32] }], [peak], { left: 0, top: 24, right: 400, bottom: 300 });
+// a curve: the same points with bezier control points bulging the last
+// segment up through the place beside the peak, so the label takes a corner
+const bulge = { type: 'line', data: [
+  { x: 0, y: 290 },
+  { x: 200, y: 272, cp2x: 320, cp2y: 272 },
+  { x: 400, y: 32, cp1x: 330, cp1y: 20 },
+] };
+out.bulge = run([{ data: [290, 272, 32] }], [bulge], { left: 0, top: 24, right: 400, bottom: 300 });
 
 // a hidden dataset draws nothing
 out.hidden = run([{ data: [5] }], [{ type: 'bar', hidden: true, data: [{ x: 10, y: 10, base: 100 }] }]);

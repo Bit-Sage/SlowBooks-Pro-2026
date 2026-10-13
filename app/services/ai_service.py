@@ -494,7 +494,7 @@ def build_insights_prompt(dashboard: Dict[str, Any], company_name: str = "") -> 
         (
             f"DSO:         {float(dso):.1f} days"
             if dso is not None
-            else "DSO:         n/a (no invoices or sales receipts paid in the last 30 days)"
+            else "DSO:         n/a (no invoice or sales receipt dated in the last 30 days is paid in full)"
         ),
         "",
         "=== TOP REVENUE CUSTOMERS (invoices and sales receipts paid in full) ===",

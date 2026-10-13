@@ -349,7 +349,7 @@ def test_no_paid_sales_in_thirty_days_means_no_dso(
     assert sum(sum(b.values()) for b in dash["ar_aging"].values()) == 500.0
     prompt = build_insights_prompt(dash)
     assert (
-        "DSO:         n/a (no invoices or sales receipts paid in the last 30 days)"
+        "DSO:         n/a (no invoice or sales receipt dated in the last 30 days is paid in full)"
         in prompt
     )
     r = client.get("/api/analytics/export.csv")
@@ -382,6 +382,17 @@ def test_no_paid_sales_in_thirty_days_means_no_dso(
     assert "const dso = data.dso == null ? null : Number(data.dso);" in js
     assert 'const dsoText = dso == null ? "&mdash;" : dso.toFixed(1);' in js
     assert "no collection period to measure" in js
+    # the words say what the figure counts: invoices and sales receipts DATED in
+    # the window and paid in full — a payment received today on an older invoice
+    # is not in it (NEW-82)
+    assert (
+        "No invoice or sales receipt dated in the last 30 days has been paid in full"
+        in js
+    )
+    assert (
+        "invoices and sales receipts dated in the last 30 days and paid in full) × 30"
+        in js
+    )
 
 
 def test_the_trend_card_has_its_table():
@@ -393,3 +404,34 @@ def test_the_trend_card_has_its_table():
         '<th scope="col">Month</th><th scope="col" class="amount">Revenue (ledger)</th>'
         in js
     )
+
+
+def test_a_payment_today_on_an_older_invoice_is_not_in_the_dso(
+    client, seed_accounts, seed_customer
+):
+    """NEW-82: the denominator is invoices DATED in the last 30 days and paid
+    in full, so paying a 45-day-old invoice today leaves the DSO absent, and
+    the words say so rather than "nothing was paid"."""
+    cid = seed_customer.id
+    old = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cid,
+            "date": (date.today() - timedelta(days=45)).isoformat(),
+            "lines": [{"description": "work", "quantity": 1, "rate": "500.00"}],
+        },
+    )
+    assert old.status_code == 201, old.text
+    pay = client.post(
+        "/api/payments",
+        json={
+            "customer_id": cid,
+            "date": TODAY,
+            "amount": "500.00",
+            "allocations": [{"invoice_id": old.json()["id"], "amount": "500.00"}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    dash = client.get("/api/analytics/dashboard").json()
+    assert dash["dso"] is None
+    assert "is paid in full" in build_insights_prompt(dash)

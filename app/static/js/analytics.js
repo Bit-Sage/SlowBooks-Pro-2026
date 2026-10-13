@@ -114,8 +114,8 @@ const AnalyticsPage = {
     const dso = data.dso == null ? null : Number(data.dso);
     const dsoText = dso == null ? "&mdash;" : dso.toFixed(1);
     const dsoTitle =
-      `${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ last-30-day paid revenue) × 30.` +
-      (dso == null ? ` ${Terms.text('No invoices or sales receipts were paid in the last 30 days, so there is no collection period to measure.')}` : "");
+      `${Terms.text('Days Sales Outstanding — average number of days between invoicing a customer and collecting the payment.')} Lower is better. Computed as (open A/R balance ÷ invoices and sales receipts dated in the last 30 days and paid in full) × 30.` +
+      (dso == null ? ` ${Terms.text('No invoice or sales receipt dated in the last 30 days has been paid in full, so there is no collection period to measure.')}` : "");
     const margin = totals.margin_pct == null ? null : Number(totals.margin_pct);
     const marginText = margin == null ? "&mdash;" : `${margin.toFixed(1)}%`;
     const marginTitle =

@@ -100,17 +100,20 @@ def test_a_point_on_the_edge_or_the_top_keeps_its_figure():
     and the card had no table (NEW-81 / W-5). A point's label slides in
     from the edge; the top point's goes below it."""
     got = _probe()["edges"]
-    by = {(p["x"], p["y"]): p["text"] for p in got}
-    xs = sorted(p["x"] for p in got)
+    by = {p["text"]: (p["x"], p["y"]) for p in got}
     assert [p["text"] for p in sorted(got, key=lambda p: p["x"])] == [
         "$1k",
         "$2.5k",
         "$1k",
     ]
-    assert xs[0] > 0 and xs[-1] < 400  # slid in from the edges (6px per character + 4)
-    top = next(p for p in got if p["text"] == "$2.5k")
-    assert top["y"] > 0  # below the point on the top edge, inside the area
-    assert len(by) == 3
+    xs = sorted(p["x"] for p in got)
+    assert (
+        xs[0] == 11 and xs[-1] == 389
+    )  # slid in from the edges (6px per character + 4)
+    assert by["$2.5k"] == (200, 12)  # below the point on the top edge, inside the area
+    assert all(
+        p["y"] < 40 for p in got if p["text"] == "$1k"
+    )  # the edge points' stay above
 
 
 @needs_node
@@ -118,11 +121,30 @@ def test_points_are_labelled_where_the_labels_do_not_collide():
     lines = _probe()["lines"]
     texts = [(p["text"], p["x"], p["y"]) for p in lines]
     # the first line's labels sit above, the second's below; at x 40 and 60
-    # the two "$1k" labels would overlap (6px per character), so one is left off
+    # the two "$1k" labels would overlap (6px per character), so the second
+    # moves to its own side's corner (x 81) rather than vanishing, and the
+    # second line's does the same below — neither crosses to the other side
     above = [t for t in texts if t[0] == "$1k"]
     below = [t for t in texts if t[0] == "$2k"]
-    assert [t[1] for t in above] == [40, 200] and all(t[2] < 100 for t in above)
-    assert [t[1] for t in below] == [40, 200] and all(t[2] > 104 for t in below)
+    assert [t[1] for t in above] == [40, 81, 200] and all(t[2] < 100 for t in above)
+    assert [t[1] for t in below] == [40, 81, 200] and all(t[2] > 104 for t in below)
+
+
+@needs_node
+def test_a_figure_never_sits_on_its_own_line():
+    """A steep rise into a last-point maximum with no room above (W-6: the
+    label under the peak sat on the line rising into it). Above is off the
+    chart and below is crossed, so the label goes beside the point, to its
+    left, clear of the line; the middle point's own line crosses the place
+    straight above it, so its label takes the corner above; the first
+    point's stays above. When the line's curve bulges through every place
+    beside the peak, the label is left off and the table has it."""
+    got = _probe()
+    peak = {p["text"]: (p["x"], p["y"]) for p in got["peak"]}
+    assert peak["$32"] == (379, 32)  # beside the point: 400 − 11 (half the text) − 10
+    assert peak["$272"] == (176, 260) and peak["$290"] == (14, 278)
+    bulge = {p["text"]: (p["x"], p["y"]) for p in got["bulge"]}
+    assert "$32" not in bulge and bulge["$272"] == (200, 260)
 
 
 @needs_node

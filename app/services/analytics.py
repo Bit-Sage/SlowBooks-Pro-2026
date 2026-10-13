@@ -317,10 +317,13 @@ class AnalyticsEngine:
     def dso(self):
         """Days Sales Outstanding = (open A/R / last-30d paid revenue) * 30.
 
-        None when nothing was paid in the last 30 days: there is no
+        The denominator is the invoices and sales receipts DATED in the last
+        30 days that are paid in full (a payment received today on an older
+        invoice is not in it — the words on the card and in the brief say
+        so; 2.22.3 gate, NEW-82). None when that is nothing: there is no
         collection period to measure, and 0.0 read as instant collection
-        beside $125k of open invoices (2.22.3 gate, NEW-80 / W-4). The page,
-        the PDF and the brief show it as absent.
+        beside $125k of open invoices (NEW-80 / W-4). The page, the PDF and
+        the brief show it as absent.
         """
         thirty_days_ago = date.today() - _days(30)
 

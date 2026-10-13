@@ -223,6 +223,34 @@ function cssVar(name) {
     try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
 }
 
+// Does a line's own path run through a box? The segments into and out of
+// point `i`, each sampled along its curve (Chart.js keeps a tension line's
+// bezier control points on the point elements as cp1x/cp1y/cp2x/cp2y; a
+// straight segment when there are none), the box grown by the stroke's
+// half-width. Used to keep a point's figure off its own line (W-6).
+function _lineCrosses(points, i, box, grow) {
+    const x0 = box.x - grow, x1 = box.x + box.w + grow, y0 = box.y - grow, y1 = box.y + box.h + grow;
+    const hit = (x, y) => x > x0 && x < x1 && y > y0 && y < y1;
+    const pairs = [[points[i - 1], points[i]], [points[i], points[i + 1]]];
+    for (const [a, b] of pairs) {
+        if (!a || !b || a.skip || b.skip) continue;
+        const curved = [a.cp2x, a.cp2y, b.cp1x, b.cp1y].every((v) => typeof v === 'number' && !Number.isNaN(v));
+        for (let k = 0; k <= 24; k++) {
+            const t = k / 24, u = 1 - t;
+            let x, y;
+            if (curved) {
+                x = u * u * u * a.x + 3 * u * u * t * a.cp2x + 3 * u * t * t * b.cp1x + t * t * t * b.x;
+                y = u * u * u * a.y + 3 * u * u * t * a.cp2y + 3 * u * t * t * b.cp1y + t * t * t * b.y;
+            } else {
+                x = a.x + (b.x - a.x) * t;
+                y = a.y + (b.y - a.y) * t;
+            }
+            if (hit(x, y)) return true;
+        }
+    }
+    return false;
+}
+
 // A Chart.js plugin: every bar, slice and point gets its figure as text on
 // or beside the mark (#265), so the colour is not the only way from a mark
 // to its amount — the legend and the table under the chart stay. A bar's
@@ -230,8 +258,10 @@ function cssVar(name) {
 // there; a stacked segment's sits in the segment when it fits; a slice's
 // sits in the slice (one under 4% is too thin to hold text); a point's
 // sits above it (below, for every other line), sliding sideways to stay in
-// the chart area at a first or last point. A label that would land on
-// one already drawn, or outside the chart area, is left off, and so is one
+// the chart area at a first or last point, and moving to the other side,
+// beside the point or to a corner when its own line would run through it.
+// A label that would land on one already drawn, or outside the chart area,
+// or across its own line wherever it goes, is left off, and so is one
 // on a mark whose colour gives neither ink nor white 4.5:1: a crowded line
 // shows what fits, and the table has the rest. Colours follow the theme at
 // draw time, so a theme change needs only a redraw.
@@ -250,7 +280,8 @@ function chartFigures(opts = {}) {
             const free = (b) => !placed.some(p => !(b.x + b.w < p.x || p.x + p.w < b.x || b.y + b.h < p.y || p.y + p.h < b.y));
             // 'drawn', or why not: 'outside' the chart area, 'taken' by a label
             // already there, or 'contrast' — no fill reads on the mark
-            const draw = (text, cx, cy, fill, keepIn) => {
+            // 'crossed' — the mark's own line runs through the label (W-6)
+            const draw = (text, cx, cy, fill, keepIn, crossed) => {
                 if (!fill) return 'contrast';
                 const w = ctx.measureText(text).width + 4, h = size + 2;
                 // a point's label slides sideways to stay in the chart area (a
@@ -261,6 +292,7 @@ function chartFigures(opts = {}) {
                 const box = { x: cx - w / 2, y: cy - h / 2, w, h };
                 if (!inside(box)) return 'outside';
                 if (!free(box)) return 'taken';
+                if (crossed && crossed(box)) return 'crossed';
                 ctx.fillStyle = fill;
                 ctx.fillText(text, cx, cy);
                 placed.push(box);
@@ -319,11 +351,25 @@ function chartFigures(opts = {}) {
                     } else {
                         // a point: above it, below for every other line — its
                         // own side, so a label never reads as the other
-                        // line's; the other side only when its own is off the
-                        // chart (a line along the axis); one whose place is
-                        // taken is left off
-                        const dy = di % 2 ? h / 2 + 5 : -(h / 2 + 5);
-                        if (draw(text, el.x, el.y + dy, ink, true) === 'outside') draw(text, el.x, el.y - dy, ink, true);
+                        // line's; then the other side, beside the point, and
+                        // the four corners, the first place that is on the
+                        // chart, free, and not crossed by the point's own line
+                        // (the segments into and out of it, along their curve
+                        // — 2.22.3 gate, W-6: a label under a peak sat on the
+                        // line rising into it); one with no such place is left
+                        // off, and the table has it
+                        const crossed = (box) => _lineCrosses(meta.data, i, box, 2);
+                        // its own side first — straight, then the two corners —
+                        // so a moved label still reads as this line's; then
+                        // beside the point; the other side last
+                        const up = di % 2 ? 1 : -1, gx = w / 2 + 10, gy = h / 2 + 6;
+                        const spots = [
+                            [0, up], [-gx, up], [gx, up], [-gx, 0], [gx, 0],
+                            [0, -up], [-gx, -up], [gx, -up],
+                        ];
+                        for (const [sx, sy] of spots) {
+                            if (draw(text, el.x + sx, el.y + sy * gy, ink, true, crossed) === 'drawn') break;
+                        }
                     }
                 });
             });

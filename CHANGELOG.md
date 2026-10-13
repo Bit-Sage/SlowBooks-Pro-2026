@@ -7,15 +7,6 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
-### Fixed
-
-- Quitting the desktop app run from source (`python desktop_launcher.py`)
-  with Command-Q no longer leaves its server running. The fix for #52 gave
-  the installed apps' server a watch on the window that started it, so it
-  stops when the window's process goes; a source run started its server
-  another way, without that watch, and the next launch was refused as
-  "already running" until the leftover process was ended by hand. A source
-  run now starts its server the same way the installed apps do.
 ### v2.22.3 — The ledger behind the dashboard
 
 Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
@@ -55,13 +46,28 @@ purple drew figures at 4.2–4.4:1).
 Also from the gate: revenue by customer counts invoices and sales receipts
 before sales tax, in home currency — what the ledger booked to income for
 each (it included the tax, so it could exceed the ledger's revenue);
-DSO is a dash, "n/a" in the brief, when nothing was paid in the last 30
-days (0.0 read as instant collection beside open invoices); an expense
+DSO is a dash, "n/a" in the brief, when no invoice or sales receipt dated
+in the last 30 days has been paid in full — the card's hover and the
+brief say exactly that, since a payment received today on an older
+invoice is not in the figure (0.0 read as instant collection beside open
+invoices); an expense
 account that nets to a credit for the period (a refund larger than the
 spending) keeps its row and its place in the totals but gets no slice,
 which Chart.js would have sized by the absolute value; the revenue trend's
 card has a month-by-month table, and a point on the chart's edge or top
-keeps its figure, sliding in from the edge or going below the point.
+keeps its figure, sliding in from the edge or going below the point — and
+never on its own line: a figure its line would run through moves to a
+corner on its own side, beside the point, or to the other side, and one
+with no such place is left off, the table having it.
+
+**A source run's server stops when the launcher is quit** (#283,
+@jacilynh). Quitting the desktop app run from source (`python
+desktop_launcher.py`) with Command-Q left its server running: the fix for
+#52 gave the installed apps' server a watch on the window that started
+it, but a source run started its server another way, without that watch,
+and the next launch was refused as "already running" until the leftover
+process was ended by hand. A source run now starts its server the same way
+the installed apps do.
 
 **A receipt attaches to a journal entry.** `/api/attachments` whitelisted
 eight record types and not `journal_entry`, though a journal entry is
