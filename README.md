@@ -54,6 +54,19 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
+**v2.23 — Both ways with QuickBooks.** Invoices come in from a QuickBooks
+Desktop Transaction Detail report saved as CSV, with their lines, jobs and
+numbers, open or paid by the report's Open Balance column (#291); the IIF
+export carries an invoice's job, items and quantities the way Intuit's own
+sample files do, so a round trip keeps them (#199); the IIF import names
+the transaction types it doesn't take and counts them (#288). A payment or
+bill payment recorded with an Idempotency-Key is booked once however many
+times the request arrives (#292); editing a posted bill's or invoice's
+lines leaves a DELETE event for every old line (#289); the invoice form
+says that creating one posts it (#293); and the AI guide, the README and
+the docs say what stays on your machine and what a cloud model sees
+(#294).
+
 **v2.22 — Connected.** Every report view has an address, so a report, a
 class's P&L or a drill-down can be bookmarked, pasted, reloaded and left
 with Back (#237). P&L by Class scrolls sideways with the Account column
@@ -148,26 +161,6 @@ invoice edit from stripping its job costing (#187, @Bit-Sage); 2.17.3 makes
 Pay Bills pay each vendor separately and keeps every payment on its own
 customer's or vendor's documents (#189, @Bit-Sage).
 
-**v2.16 — The year at a glance.** Two new overview cards, both opt-in under
-Customize: **P&L: Year to Date** with cumulative net by month, and a
-**Balance Sheet Trend** over the last twelve month-ends that balances at
-every point and agrees with the report. Contributed by @jarvis4openclaw
-(#166). The chart of accounts import offers a CSV template. 2.16.1 fixes
-Wave's full export importing no journals after a passing dry run (#169);
-2.16.2 stops charging tax to non-taxable customers, widens every money
-column for large-denomination currencies (#173), and puts the estimate and
-job-cost forms right (#174, #176); 2.16.3 lets a fresh Docker image start again.
-
-Full history, with the reasoning behind each change, in
-**[CHANGELOG.md](CHANGELOG.md)**; the same entries with the test count
-per release at [slowbookspro.com/changelog](https://www.slowbookspro.com/changelog/).
-
-![Nonprofit mode on macOS and Windows: the Company Snapshot in donor words, the Statement of Functional Expenses, the Statement of Activities compared to prior year, Releases from Restriction, the Report Center in dark theme, and a Pledge Report PDF](screenshots/nonprofit-grid.png)
-
-*Nonprofit mode: one switch in Settings, and a church, a club or a PTO sees its own words on every screen and every printed page.*
-
----
-
 ## Wait — it does *that*?
 
 **Cryptographically tamper-evident tax forms.** Every W-2, W-3, 940, and
@@ -181,7 +174,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (565 operations in v2.22) — built for Claude
+self-documenting local REST API (565 operations in v2.23) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
