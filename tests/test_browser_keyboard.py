@@ -564,11 +564,12 @@ def test_no_dialog_opens_with_focus_on_void_or_delete(browser, company, books):
     confirms = []
     page.on("dialog", lambda d: (confirms.append(d.message), d.dismiss()))
     try:
-        # the three the gate named open on Void: the dialog itself takes
-        # focus, named by its title, and Return there does nothing
+        # two of the three the gate named open on Void (the third, the
+        # journal entry's view, has a file input first since 2.22.3, below):
+        # the dialog itself takes focus, named by its title, and Return
+        # there does nothing
         _visit(page, handled, "#/journal")
         for call in (
-            f"JournalPage.view({books['journal']})",
             f"DepositsPage.view({books['deposit']})",
             f"JobCostsPage.view({books['job_cost']})",
         ):
@@ -599,6 +600,17 @@ def test_no_dialog_opens_with_focus_on_void_or_delete(browser, company, books):
         page.wait_for_function(MODAL_SHOWN)
         settle(page, handled)
         assert page.evaluate(FOCUSED)["id"] != "modal"
+        # the journal entry's view (#281): its Attachments block, the same
+        # as an expense's, puts the file input ahead of Void, so the view
+        # opens there, as the expense's does — harmless, and Void is still
+        # never the first stop
+        page.evaluate("() => closeModal()")
+        page.evaluate(f"async () => {{ await JournalPage.view({books['journal']}); }}")
+        page.wait_for_function(MODAL_SHOWN)
+        settle(page, handled)
+        at = page.evaluate(FOCUSED)
+        assert at["id"] == "journal-attach-file" and not at["destructive"], at
+        assert page.locator("#modal-body [data-destructive]").count() == 1
         # and every dialog the app opens (the last of them as a read-only
         # sign-in sees it, which is how the sweep leaves the page)
         focused, unopened = _opens_safely(page, handled, books, groups)
@@ -1719,17 +1731,21 @@ def test_the_dialog_itself_and_a_field_take_focus_without_the_ring(
     browser, company, books
 ):
     """The ring is a control's. The dialog itself (tabindex −1), which
-    takes focus when its first control is Void (NEW-32), is a place and
-    draws none, whether the keyboard or a script put focus there; the next
-    Tab lands on a control with the ring. A field keeps its own focus
-    style, the blue border and pale ground, with no ring by keyboard and
-    none on a click into a box (review of NEW-43)."""
+    takes focus when its first control is Void (NEW-32; the deposit's view
+    here — the journal entry's opens on its file input since 2.22.3), is a
+    place and draws none, whether the keyboard or a script put focus there;
+    the next Tab lands on a control with the ring. A field keeps its own
+    focus style, the blue border and pale ground, with no ring by keyboard
+    and none on a click into a box (review of NEW-43)."""
     page, handled = _open(browser, company)
     try:
         _no_splash(page)
         _visit(page, handled, "#/journal")
         _open_dialog(
-            page, handled, f"JournalPage.view({books['journal']})", "#modal-body button"
+            page,
+            handled,
+            f"DepositsPage.view({books['deposit']})",
+            "#modal-body button",
         )
         assert page.evaluate(FOCUSED)["id"] == "modal"
         opened = page.evaluate(RING)

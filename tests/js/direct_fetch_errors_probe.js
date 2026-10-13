@@ -117,6 +117,11 @@ const scenarios = {
     await p.get('ExpensesPage').uploadAttachment(1);
     return last(p.toasts);
   },
+  async 'journal.js attachment'() {
+    const p = page(['app/static/js/journal.js']);
+    await p.get('JournalPage').uploadAttachment(1);
+    return last(p.toasts);
+  },
   async 'employees.js dropped document'() {
     const p = page(['app/static/js/employees.js']);
     await p.get('EmployeesPage')._uploadDroppedFile(1, { name: 'w4.pdf' });

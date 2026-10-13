@@ -77,3 +77,11 @@ def test_the_journal_entry_view_has_the_attachments_block():
     )
     assert 'id="journal-attach-file" aria-label="File to attach"' in js
     assert "JournalPage.loadAttachments(entry.id);" in js
+
+
+def test_a_read_only_sign_in_is_not_offered_attach_or_delete():
+    # Attach and an attachment's X call these, so a read-only sign-in,
+    # whom the server refuses, is not shown them (App.hideWriteControls);
+    # the file chooser is hidden as every file chooser is.
+    app_js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+    assert "'JournalPage.uploadAttachment', 'JournalPage.deleteAttachment'" in app_js
