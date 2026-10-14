@@ -66,11 +66,18 @@ def payload_hash(payload) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+ECHO = "Idempotency-Key"  # the response header: the key the answer was booked or replayed under
+
+
 class Reservation:
     """The row reserved for this delivery; ``finish`` fills it."""
 
     def __init__(self, row: RequestKey):
         self.row = row
+
+    @property
+    def key(self) -> str:
+        return self.row.key
 
 
 def reserve(db: Session, request: Request, route: str, payload, actor: str | None):
@@ -122,18 +129,23 @@ def reserve(db: Session, request: Request, route: str, payload, actor: str | Non
     return JSONResponse(
         status_code=existing.status_code or 200,
         content=json.loads(existing.response_json),
-        headers={"X-Replayed": "true"},
+        headers={"X-Replayed": "true", ECHO: key},
     )
 
 
-def finish(db: Session, reservation, status_code: int, body) -> None:
+def finish(db: Session, reservation, status_code: int, body, response=None) -> None:
     """After the write, before the commit: the response the key will
-    answer with from now on."""
+    answer with from now on. With ``response`` (the route's Response), the
+    answer carries the key it was booked under (2.23.0 gate, W-8: a
+    keyed POST that answered as if unkeyed left nothing to tell whether
+    the header had arrived)."""
     if reservation is None:
         return
     reservation.row.status_code = status_code
     reservation.row.response_json = json.dumps(body, default=str)
     db.flush()
+    if response is not None:
+        response.headers[ECHO] = reservation.key
 
 
 def _sweep(db: Session) -> None:

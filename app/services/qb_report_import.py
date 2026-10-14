@@ -231,9 +231,21 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
             warnings.append(
                 f"{current['num'] or f'row {current['row']}'}: quantity {qty} kept as "
                 f"{kept} (quantities are kept to four decimal places; the line "
-                "amount is the report's)"
+                "amount is the report's, and its unit price is set so that "
+                "quantity × price gives it)"
             )
         qty = kept
+        # The unit price: the report's Sales Price when it reproduces the
+        # amount at this quantity, else the amount ÷ the quantity to four
+        # places, so quantity × price is the amount an edit works out
+        # (2.23.0 gate, NEW-95: it was amount ÷ quantity to the cent).
+        listed = _amount(price) if price and not price.endswith("%") else Decimal("0")
+        if listed and _q(qty * abs(listed)) == abs(signed):
+            rate = abs(listed)
+        else:
+            rate = (abs(signed) / qty).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
         current["lines"].append(
             {
                 "description": _cell(row, cols, "Memo")
@@ -242,6 +254,7 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
                 "item_name": _cell(row, cols, "Item"),
                 "account": _cell(row, cols, "Account"),
                 "quantity": qty,
+                "rate": rate,
                 "amount": signed,
             }
         )
@@ -379,7 +392,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                         item_id=item_id,
                         description=ln["description"] or None,
                         quantity=qty,
-                        rate=_q(ln["amount"] / qty) if qty else ln["amount"],
+                        rate=ln["rate"],
                         amount=ln["amount"],
                         line_order=order,
                     )
@@ -771,7 +784,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                         item_id=item_id,
                         description=ln["description"] or None,
                         quantity=qty,
-                        rate=_q(ln["amount"] / qty) if qty else ln["amount"],
+                        rate=ln["rate"],
                         amount=ln["amount"],
                         line_order=order,
                     )

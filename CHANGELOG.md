@@ -44,7 +44,8 @@ Invoice, estimate, credit memo, recurring invoice, bill, purchase order
 and vendor credit lines now hold four places (migration e8f9a0b1c2d3), as
 unit prices have since 2.17.3; the API and the documents show a quantity
 as entered (2.125; 3.00 as before), the forms take four places, a finer
-one is refused, and the imports round one with a note. **The IIF import names what it does not
+one is refused, and the imports round one with a note, setting its unit
+price so that quantity × price still gives the line's amount. **The IIF import names what it does not
 take** (#288): a GENERAL JOURNAL, CHECK or other block outside the
 dispatch was skipped without a word; Validate now lists each with its
 number, type, date, document number and name, the import counts them,
@@ -57,7 +58,8 @@ header on POST /api/payments or /api/bill-payments names the intended
 payment: the same key with the same body answers with the first
 response, the same key with another body is refused (bodies compared by
 their values, so 100 and 100.00 are one amount), a first delivery still
-running is refused until it finishes. The Receive Payment and Pay Bills
+running is refused until it finishes, and every keyed answer names its
+key in an Idempotency-Key header. The Receive Payment and Pay Bills
 forms send one per submit. One new table, request_keys (migration
 d6f7a8b9c0e1).
 

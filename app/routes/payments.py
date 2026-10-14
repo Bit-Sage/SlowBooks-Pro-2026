@@ -5,7 +5,7 @@
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
@@ -91,6 +91,7 @@ def create_payment(
     data: PaymentCreate,
     db: Session = Depends(get_db),
     request: Request = None,
+    response: Response = None,
 ):
     check_closing_date(db, data.date)
     # A retry of a request whose response was lost must not book the
@@ -273,7 +274,7 @@ def create_payment(
     db.flush()
     db.refresh(payment)
     resp = _response(payment, customer.name)
-    request_keys.finish(db, replay, 201, resp.model_dump(mode="json"))
+    request_keys.finish(db, replay, 201, resp.model_dump(mode="json"), response)
     db.commit()
     return resp
 

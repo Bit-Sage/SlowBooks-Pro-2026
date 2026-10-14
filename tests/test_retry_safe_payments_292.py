@@ -278,3 +278,23 @@ def test_the_same_amount_spelled_differently_is_the_same_request(
     assert payload_hash({"a": Decimal("1.2345")}) != payload_hash(
         {"a": Decimal("1.23")}
     )
+
+
+def test_a_keyed_answer_names_its_key(client, db_session, seed_accounts, seed_customer):
+    """One keyed POST on Windows answered 201 with no replay and booked a
+    second payment, once in 22 tries, and nothing in the answer said whether
+    the header had arrived (2.23.0 gate, W-8). Every keyed answer, booked or
+    replayed, now carries the key; an unkeyed one carries none."""
+    inv = _invoice(client, seed_customer.id)
+    body = _body(seed_customer.id, inv)
+    first = client.post("/api/payments", json=body, headers=KEY)
+    assert (
+        first.status_code == 201
+        and first.headers.get("Idempotency-Key") == KEY["Idempotency-Key"]
+    )
+    again = client.post("/api/payments", json=body, headers=KEY)
+    assert again.headers.get("X-Replayed") == "true"
+    assert again.headers.get("Idempotency-Key") == KEY["Idempotency-Key"]
+    plain = client.post("/api/payments", json=body)
+    assert plain.status_code == 201 and "Idempotency-Key" not in plain.headers
+    assert db_session.query(Payment).count() == 2

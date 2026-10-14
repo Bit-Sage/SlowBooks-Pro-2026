@@ -822,9 +822,16 @@ def _four_places(qty: Decimal, warnings, doc) -> Decimal:
     if kept != qty and warnings is not None:
         warnings.append(
             f"Document {doc}: quantity {qty} kept as {kept} (quantities are kept "
-            "to four decimal places; the line amount is the file's)"
+            "to four decimal places; the line amount is the file's, and its unit "
+            "price is set so that quantity × price gives it)"
         )
     return kept
+
+
+def _unit_price(amount: Decimal, qty: Decimal) -> Decimal:
+    """The unit price a line's amount and quantity imply, to the four
+    places a rate keeps."""
+    return (amount / qty).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
 
 SUPPORTED_TRNS_TYPES = frozenset(
@@ -1374,12 +1381,14 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
             if item:
                 item_id = item.id
 
-        qty = _four_places(
-            abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1"), warnings, doc_num
-        )
+        qty_raw = abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1")
+        qty = _four_places(qty_raw, warnings, doc_num)
         rate = abs(_parse_decimal(spl.get("PRICE", "")))
-        if rate == 0 and qty > 0:
-            rate = _q(spl_amount / qty)
+        if (rate == 0 or qty != qty_raw) and qty > 0:
+            # no price in the file, or the quantity was rounded: the price
+            # follows the file's amount, so quantity × price is the amount
+            # an edit would work out (2.23.0 gate, NEW-95)
+            rate = _unit_price(spl_amount, qty)
 
         line = InvoiceLine(
             invoice_id=invoice.id,
@@ -1784,12 +1793,14 @@ def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Esti
             if item:
                 item_id = item.id
 
-        qty = _four_places(
-            abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1"), warnings, doc_num
-        )
+        qty_raw = abs(_parse_decimal(spl.get("QNTY", ""))) or Decimal("1")
+        qty = _four_places(qty_raw, warnings, doc_num)
         rate = abs(_parse_decimal(spl.get("PRICE", "")))
-        if rate == 0 and qty > 0:
-            rate = _q(spl_amount / qty)
+        if (rate == 0 or qty != qty_raw) and qty > 0:
+            # no price in the file, or the quantity was rounded: the price
+            # follows the file's amount, so quantity × price is the amount
+            # an edit would work out (2.23.0 gate, NEW-95)
+            rate = _unit_price(spl_amount, qty)
 
         line = EstimateLine(
             estimate_id=estimate.id,
