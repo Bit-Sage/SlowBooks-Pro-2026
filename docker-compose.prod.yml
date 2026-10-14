@@ -75,8 +75,9 @@ services:
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
 
       # Required secrets. ?:err makes compose refuse to start with them empty.
-      PAYROLL_ENCRYPTION_SECRET: ${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET — run: openssl rand -base64 32}
-      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY — run: openssl rand -hex 32}
+      # Quoted: a ": " inside a plain scalar reads as a mapping to Compose 2.40 (#307)
+      PAYROLL_ENCRYPTION_SECRET: "${PAYROLL_ENCRYPTION_SECRET:?missing PAYROLL_ENCRYPTION_SECRET; run openssl rand -base64 32}"
+      SESSION_SECRET_KEY: "${SESSION_SECRET_KEY:?missing SESSION_SECRET_KEY; run openssl rand -hex 32}"
 
       # Optional during key rotation
       PAYROLL_ENCRYPTION_SECRET_PREV: ${PAYROLL_ENCRYPTION_SECRET_PREV:-}
