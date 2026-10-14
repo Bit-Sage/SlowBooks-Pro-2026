@@ -57,6 +57,8 @@ container with room for Item, Account and Cost Code. The migration dry
 run no longer says a ledger had "no records recognised" when its rows
 were read and refused one by one for accounts an empty chart does not
 list; that sentence names a file only when its parser read nothing.
+The Windows CI skip budget counts the bill form's browser measurement
+(118).
 
 **A leaf green of our own.** The green that amounts, import results and
 the success toast use was the teal-leaning one the QuickBooks palette gave
