@@ -1983,6 +1983,11 @@ tr.clickable { cursor: pointer; }
     color: var(--qb-blue);
 }
 
+/* The per-line Class box on every form (Nonprofit.classCellHtml): the bill
+   form's cell squeezed it to 73 px, so "North LLC" read "North LL"; the
+   journal form's was 124 (2.23.1 gate, NEW-99). */
+td > select[class$="-fund"] { min-width: 124px; }
+
 .iif-file-info {
     display: flex;
     align-items: center;

@@ -222,9 +222,4 @@ def test_the_dark_success_toast_is_the_leaf_green():
 def test_the_line_class_box_is_wide_enough_for_a_name():
     """The bill form's cell squeezed the shared class box to 73 px, so
     "North LLC" read "North LL" (2.23.1 gate, NEW-99)."""
-    from pathlib import Path
-
-    js = (Path(__file__).resolve().parents[1] / "app/static/js/utils.js").read_text(
-        encoding="utf-8"
-    )
-    assert 'class="${cls}-fund" data-no-search style="min-width:124px"' in js
+    assert 'td > select[class$="-fund"] { min-width: 124px; }' in STYLE
