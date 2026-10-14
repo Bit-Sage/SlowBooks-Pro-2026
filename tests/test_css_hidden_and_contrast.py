@@ -223,3 +223,40 @@ def test_the_line_class_box_is_wide_enough_for_a_name():
     """The bill form's cell squeezed the shared class box to 73 px, so
     "North LLC" read "North LL" (2.23.1 gate, NEW-99)."""
     assert 'td > select[class$="-fund"] { min-width: 124px; }' in STYLE
+
+
+def test_dark_bold_and_amber_amounts_keep_their_colour_too():
+    """[data-theme="dark"] td strong coloured the bold figure itself, so the
+    aging totals and the cash forecast's net read plain; amber amounts had
+    no dark rule (2.23.1 gate, W-4 / NEW-102)."""
+    bold = DARK.index('[data-theme="dark"] td strong { color: #e0e4ec; }')
+    inherit = DARK.index('[data-theme="dark"] .amount.amber strong { color: inherit; }')
+    assert bold < inherit
+    assert '[data-theme="dark"] .amount.green strong,' in DARK
+    assert '[data-theme="dark"] .amount.red strong,' in DARK
+    assert '[data-theme="dark"] .amount.amber { color: var(--qb-orange); }' in DARK
+    panel = _token(DARK, "--panel-bg")
+    assert _ratio(_token(DARK, "--qb-orange"), panel) >= 4.5
+
+
+def test_the_bill_forms_line_table_scrolls_sideways_with_room_for_every_box():
+    """The 124 px Class box took its room from the bill form's Account and
+    Item boxes on a company with cost codes, so an account read "600…"
+    (2.23.1 gate, NEW-103). The table scrolls in its container, as the job
+    cost entry's does, and the boxes keep widths that show their names."""
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/bills.js").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        '<div class="table-container table-container--scroll"><table class="line-items-table bill-lines-table">'
+        in js
+    )
+    assert "</table></div>\n" in js
+    for rule in (
+        ".bill-lines-table .line-item { min-width: 110px; }",
+        ".bill-lines-table .line-account { min-width: 170px; }",
+        ".bill-lines-table .line-cost-code { min-width: 110px; }",
+    ):
+        assert rule in STYLE, rule

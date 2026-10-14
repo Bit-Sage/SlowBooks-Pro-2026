@@ -49,8 +49,11 @@ migration accepts the numeric account types the Chart of Accounts List export ca
 **Smaller things the gate found.** In the dark theme a green or red amount
 read as plain text (the theme's plain-amount rule outranked the colour by
 loading later), and the success toast kept 2.23.0's green; both carry the
-leaf green now. The shared per-line Class box has a minimum width, so
-"North LLC" no longer reads "North LL" on the bill form. The migration dry
+leaf green now, and so do bold and amber figures (the aging tables' totals
+and 30+ and 60+ columns, the cash forecast's net). The shared per-line
+Class box has a minimum width, so "North LLC" no longer reads "North LL",
+and the bill form's line table, the widest, scrolls sideways in its
+container with room for Item, Account and Cost Code. The migration dry
 run no longer says a ledger had "no records recognised" when its rows
 were read and refused one by one for accounts an empty chart does not
 list; that sentence names a file only when its parser read nothing.

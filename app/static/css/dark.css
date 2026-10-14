@@ -182,6 +182,14 @@
 
 /* Table strong text */
 [data-theme="dark"] td strong { color: #e0e4ec; }
+/* A bold figure in a green, red or amber cell keeps the cell's colour: the
+   rule above colours the <strong> itself, so Analytics' aging totals and the
+   cash forecast's net column read plain in the dark theme; and amber had no
+   dark rule at all (2.23.1 gate, W-4 / NEW-102). */
+[data-theme="dark"] .amount.amber { color: var(--qb-orange); }
+[data-theme="dark"] .amount.green strong,
+[data-theme="dark"] .amount.red strong,
+[data-theme="dark"] .amount.amber strong { color: inherit; }
 
 /* Cards */
 [data-theme="dark"] .card {
