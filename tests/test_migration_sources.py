@@ -332,3 +332,24 @@ def test_sage_header_only_ledger_is_refused_before_opening_balances(
     assert data["imported_accounts"] == data["imported_journals"] == 0
     assert any("No general ledger records" in e for e in data["errors"])
     assert db_session.query(Account).count() == before
+
+
+def test_a_header_only_chart_beside_a_good_ledger_blames_the_chart_alone(
+    client, seed_accounts
+):
+    """The ledger's rows were read, then refused one by one because the
+    empty chart lists none of their accounts; "No general ledger records
+    were recognised" beside those errors blamed a good file (2.23.1 gate,
+    W-1 / NEW-97). The sentence names a file only when its parser read
+    nothing and had nothing to say."""
+    response = client.post(
+        "/api/migration/sage/dry-run",
+        files=_files(
+            **{"chart.csv": SAGE_COA.splitlines()[0] + "\n", "journal.csv": SAGE_GL}
+        ),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["ok"] is False
+    assert any("No chart of accounts records" in e for e in data["errors"]), data
+    assert not any("No general ledger records" in e for e in data["errors"]), data

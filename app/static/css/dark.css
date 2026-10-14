@@ -444,6 +444,12 @@
 
 /* Amount columns */
 [data-theme="dark"] .amount { color: var(--text-primary); }
+/* A green or red amount keeps its colour: this rule loads after
+   .amount.green / .amount.red at the same specificity, so Analytics'
+   cash-flow and expense figures read as plain text in the dark theme
+   (2.23.1 gate, W-2 / NEW-101). */
+[data-theme="dark"] .amount.green { color: var(--sb-green); }
+[data-theme="dark"] .amount.red   { color: var(--qb-red); }
 
 /* Quick entry info box */
 [data-theme="dark"] .quick-entry-info {
@@ -520,7 +526,7 @@
 /* Toasts are white text on a colour, and this theme's green, red and blue
    are light: white on them read 2.72, 3.75 and 4.20:1. They keep the light
    theme's colours, 4.86, 5.14 and 6.00. */
-[data-theme="dark"] .toast-success { background: #2b8055; }
+[data-theme="dark"] .toast-success { background: #257321; }   /* the leaf green, white on it 5.91 (2.23.1) */
 [data-theme="dark"] .toast-error   { background: #cc3333; }
 [data-theme="dark"] .toast-info    { background: #336699; }
 

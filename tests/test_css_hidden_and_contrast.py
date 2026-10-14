@@ -189,3 +189,42 @@ def test_no_inline_style_uses_the_low_contrast_blue_for_a_link():
     for f in (ROOT / "app/static/js").glob("*.js"):
         js += f.read_text(encoding="utf-8")
     assert 'style="color:var(--qb-blue)' not in js.replace(" ", "")
+
+
+def test_dark_green_and_red_amounts_keep_their_colour_and_read_at_aa():
+    """[data-theme="dark"] .amount loaded after .amount.green / .amount.red
+    at the same specificity, so Analytics' cash-flow and expense figures
+    read as plain text in the dark theme (2.23.1 gate, W-2 / NEW-101)."""
+
+    plain = DARK.index('[data-theme="dark"] .amount { color: var(--text-primary); }')
+    green = DARK.index('[data-theme="dark"] .amount.green { color: var(--sb-green); }')
+    red = DARK.index('[data-theme="dark"] .amount.red   { color: var(--qb-red); }')
+    assert plain < green and plain < red  # the coloured rules win by order
+    panel = _token(DARK, "--panel-bg")
+    for name in ("--sb-green", "--qb-red"):
+        assert _ratio(_token(DARK, name), panel) >= 4.5, name
+
+
+def test_the_dark_success_toast_is_the_leaf_green():
+    """It kept 2.23.0's #2b8055 (4.86:1 under white) after the light theme
+    moved to #257321 (2.23.1 gate, W-3 / NEW-98)."""
+    import re
+
+    m = re.search(
+        r'\[data-theme="dark"\] \.toast-success \{ background: (#[0-9a-f]{6});', DARK
+    )
+    assert m and _hex(m.group(1)) == _token(STYLE, "--sb-green"), (
+        m.group(1) if m else None
+    )
+    assert _ratio((255, 255, 255), _hex(m.group(1))) >= 4.5
+
+
+def test_the_line_class_box_is_wide_enough_for_a_name():
+    """The bill form's cell squeezed the shared class box to 73 px, so
+    "North LLC" read "North LL" (2.23.1 gate, NEW-99)."""
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/utils.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'class="${cls}-fund" data-no-search style="min-width:124px"' in js

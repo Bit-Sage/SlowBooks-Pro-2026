@@ -132,6 +132,24 @@ def _home(lines: list[tuple], rate: Decimal) -> list[tuple]:
     return [(ln["debit"], ln["credit"]) for ln in converted]
 
 
+_IMPORT_PREFIXES = ("IIF Import — ", "QB report import — ")
+
+
+def _memo_text(description) -> str:
+    """A transaction's description as the file's MEMO, without the prefix
+    an import wrote in front of it ("IIF Import — Two entities"): a round
+    trip added another prefix each time (2.23.1 gate, NEW-100)."""
+    text = (description or "").strip()
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _IMPORT_PREFIXES:
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                changed = True
+    return text
+
+
 # A split row carries its line's own class when the line has one, else the
 # document's (2.23.1, #308: every split row wrote the header's class, so a
 # document whose lines belonged to two entities left with all of them under
@@ -1014,7 +1032,7 @@ def export_deposits(db: Session, date_from: date = None, date_to: date = None) -
             txn.reference or "",
             "",
             "",
-            txn.description or "",
+            _memo_text(txn.description),
             cls,
         )
         for ln in credits:
@@ -1029,7 +1047,7 @@ def export_deposits(db: Session, date_from: date = None, date_to: date = None) -
                 "",
                 "",
                 ln.description or "",
-                cls,
+                _class_name(db, getattr(ln, "class_id", None)) or cls,
             )
         lines += _iif_line(["ENDTRNS"])
     return lines

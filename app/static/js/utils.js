@@ -1046,7 +1046,9 @@ const Nonprofit = {
         const funds = (Nonprofit._funds || [])
             .filter(f => !f.is_archived || f.id === fundSelected)
             .map(f => `<option value="${f.id}" ${fundSelected === f.id ? 'selected' : ''}>${escapeHtml(f.name)}${f.is_archived ? ' (archived)' : ''}</option>`).join('');
-        return `<td><select class="${cls}-fund" data-no-search><option value="">Same as header</option>${funds}</select></td>`;
+        // min-width: the bill form's cell squeezed the box to 73 px, so "North LLC"
+        // read "North LL"; the journal form's is 124 (2.23.1 gate, NEW-99)
+        return `<td><select class="${cls}-fund" data-no-search style="min-width:124px"><option value="">Same as header</option>${funds}</select></td>`;
     },
     headHtml() { return Nonprofit.classHeadHtml() + (Nonprofit.enabled() ? `<th scope="col">Function</th>` : ''); },
     cellHtml(cls, selected, fundSelected) {

@@ -35,7 +35,9 @@ indexed and never read.
 header class on every split row, so a document with a North LLC line and
 a South LLC line left with both under North LLC; line-level classes
 exist since 2.22.0. The header's class is the fallback for a line without
-one.
+one. Deposits too, and a deposit's MEMO goes out as it was typed,
+without the "IIF Import — " an import wrote in front of its description
+(each round trip added another).
 
 **Contributed fixes** (@lEWFkRAD). Migration dry runs refuse a chart, ledger or supplied trial-balance file with no
 recognised records, instead of reporting a successful empty import or skipping balance verification (PR #304).
@@ -43,6 +45,15 @@ IIF sales receipts keep the deposit account of their own allocated payment when 
 on the same day; the latest same-day payment could supply another receipt's account (PR #305). The Sage 50 US
 migration accepts the numeric account types the Chart of Accounts List export carries, checked against a Sage 50
 2026 sample-company export; a real export rejected all 156 accounts (PR #306).
+
+**Smaller things the gate found.** In the dark theme a green or red amount
+read as plain text (the theme's plain-amount rule outranked the colour by
+loading later), and the success toast kept 2.23.0's green; both carry the
+leaf green now. The shared per-line Class box has a minimum width, so
+"North LLC" no longer reads "North LL" on the bill form. The migration dry
+run no longer says a ledger had "no records recognised" when its rows
+were read and refused one by one for accounts an empty chart does not
+list; that sentence names a file only when its parser read nothing.
 
 **A leaf green of our own.** The green that amounts, import results and
 the success toast use was the teal-leaning one the QuickBooks palette gave

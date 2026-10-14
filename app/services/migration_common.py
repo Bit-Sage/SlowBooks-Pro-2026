@@ -144,11 +144,15 @@ def dry_run_bundle(
     journals, gl_errors = parsers["gl"](bundle["gl"])
     errors.extend(gl_errors)
 
-    for kind, records, label in (
-        ("coa", accounts, "chart of accounts"),
-        ("gl", journals, "general ledger"),
+    # A file that parsed to nothing is named — unless its rows were read and
+    # refused one by one (a ledger whose accounts an empty chart does not
+    # list): those errors already say what happened, and "no records were
+    # recognised" beside them blamed a good file (2.23.1 gate, W-1 / NEW-97).
+    for kind, records, kind_errors, label in (
+        ("coa", accounts, coa_errors, "chart of accounts"),
+        ("gl", journals, gl_errors, "general ledger"),
     ):
-        if not records:
+        if not records and not kind_errors:
             header = (bundle[kind].lstrip("\ufeff").splitlines() or [""])[0]
             errors.append(
                 f"No {label} records were recognised in the {source_label} file. "

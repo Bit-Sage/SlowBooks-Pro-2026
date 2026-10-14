@@ -325,3 +325,52 @@ def test_the_deposit_report_reads_a_class_column_when_the_report_has_one(
     new = db_session.query(Transaction).filter(Transaction.id > 0).all()[before:]
     credit_classes = {ln.class_id for t in new for ln in t.lines if ln.credit}
     assert credit_classes == {north.id}, credit_classes
+
+
+def test_the_deposit_export_writes_each_credits_own_class_and_the_memo_as_typed(
+    client, db_session, seed_accounts
+):
+    """The fifth writer (deposits) still wrote the deposit's class on every
+    split row, so DEP-9's two credits left with no class (2.23.1 gate,
+    NEW-96); and the import's "IIF Import — " prefix went out in the MEMO,
+    so each round trip added another (NEW-100)."""
+    from app.models.transactions import Transaction
+
+    _post(client, "/api/vendors", {"name": "Pier Lumber"})
+    text = IIF_MIXED.replace("{expense}", seed_accounts["6000"].name).replace(
+        "{bank}", seed_accounts["1000"].name
+    )
+    assert _import_iif(client, text)["deposits"] == 1
+    out = client.get("/api/iif/export/deposits").text.replace("\r\n", "\n")
+    header = next(ln for ln in out.split("\n") if ln.startswith("!SPL\t")).split("\t")
+    ci, mi = header.index("CLASS"), header.index("MEMO")
+    spl = [
+        ln.split("\t")
+        for ln in out.split("\n")
+        if ln.startswith("SPL\t") and "\tDEP-9\t" in ln
+    ]
+    trns = [
+        ln.split("\t")
+        for ln in out.split("\n")
+        if ln.startswith("TRNS\t") and "\tDEP-9\t" in ln
+    ]
+    assert sorted(r[ci] for r in spl) == ["North LLC", "South LLC"], [
+        r[ci] for r in spl
+    ]
+    assert trns[0][header.index("MEMO")] == "Two entities", trns[0]
+    # the round trip keeps both classes and the memo as typed
+    again = out.replace("\tDEP-9\t", "\tDEP-9B\t")
+    assert _import_iif(client, again)["deposits"] == 1
+    dep = db_session.query(Transaction).filter_by(reference="DEP-9B").one()
+    assert sorted(ln.class_id for ln in dep.lines if ln.credit) == sorted(
+        ln.class_id
+        for ln in db_session.query(Transaction).filter_by(reference="DEP-9").one().lines
+        if ln.credit
+    )
+    out2 = client.get("/api/iif/export/deposits").text.replace("\r\n", "\n")
+    trns2 = [
+        ln.split("\t")
+        for ln in out2.split("\n")
+        if ln.startswith("TRNS\t") and "\tDEP-9B\t" in ln
+    ]
+    assert trns2[0][mi] == "Two entities", trns2[0][mi]
