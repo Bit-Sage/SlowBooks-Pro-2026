@@ -140,7 +140,7 @@ def test_a_green_amount_passes_AA_on_every_row_it_sits_on():
     and the hovered row."""
     import re
 
-    green = _token(STYLE, "--qb-green")
+    green = _token(STYLE, "--sb-green")
     striped = _hex(
         re.search(
             r"tbody tr:nth-child\(even\) \{ background: (#[0-9a-f]{6})", STYLE
@@ -166,7 +166,7 @@ def test_a_green_amount_passes_AA_on_every_row_it_sits_on():
         ("a hovered totals row", under_tint(hovered)),
     ):
         ratio = _ratio(green, bg)
-        assert ratio >= 4.5, f"--qb-green on {name} is {ratio:.2f}:1, below AA's 4.5"
+        assert ratio >= 4.5, f"--sb-green on {name} is {ratio:.2f}:1, below AA's 4.5"
 
 
 def test_the_dark_sidebar_footer_is_readable():

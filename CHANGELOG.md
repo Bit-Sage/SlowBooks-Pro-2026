@@ -44,6 +44,13 @@ on the same day; the latest same-day payment could supply another receipt's acco
 migration accepts the numeric account types the Chart of Accounts List export carries, checked against a Sage 50
 2026 sample-company export; a real export rejected all 156 accounts (PR #306).
 
+**A leaf green of our own.** The green that amounts, import results and
+the success toast use was the teal-leaning one the QuickBooks palette gave
+it, named for that heritage; it is a leaf green now (#257321 in the light
+theme, #6cc46a in the dark), named SlowBooks' own, at 5.91:1 on white,
+4.86 on a hovered totals row and 7.54 on the dark panel, white reading on
+it at 5.91 for the toast.
+
 No schema change. 565 API operations.
 
 ### v2.23.0 — Both ways with QuickBooks

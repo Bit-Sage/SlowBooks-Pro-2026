@@ -30,8 +30,8 @@
     --aging-30:       #e0a840;   /* 7.62:1 on the card */
     --aging-60:       #f97316;   /* 5.80 */
     --qb-teal:        #7abfbf;
-    --qb-green:       #4caf7a;
-    --qb-green-dark:  #3d9065;
+    --sb-green:       #6cc46a;   /* a leaf green on the panel (2.23.1) */
+    --sb-green-dark:  #59a157;
     --qb-gold:        #e0a840;
     --focus-ring:     var(--qb-gold);   /* the keyboard's ring (NEW-43): 7.6:1 on the panel, 6.4:1 on the bar */
     --focus-halo:     #14161c;          /* its halo, the page's own dark: 8.5:1 against it, white beside it or not */

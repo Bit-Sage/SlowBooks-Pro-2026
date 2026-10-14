@@ -165,12 +165,14 @@
     --qb-teal:        #76a4a4;
     /* Green and orange are text (report amounts, import results) and the
        success toast's ground: #339966 was 3.57:1 on white and #cc6633 3.81.
-       The green is 5.54:1 on white, 5.25 on a striped row and 4.96 on a
-       totals row's tint; #2b8055 was 4.36 there, under AA (2.22.1 gate,
-       NEW-50: Analytics' A/P aging TOTAL), and 4.0 on a hovered one, where
-       this is 4.55. The orange is 4.82 on white. */
-    --qb-green:       #277650;
-    --qb-green-dark:  #2d7d56;
+       2.23.1 (#308's release): the green is a leaf green, no longer the
+       teal-leaning #277650 the QuickBooks palette gave it, and carries
+       SlowBooks' own name. It is 5.91:1 on white, 5.60 on a striped
+       row, 5.30 on a totals row's tint and 4.86 on a hovered one
+       (AA's 4.5 everywhere a figure sits), and white reads on it at
+       5.91 for the toast. The orange is 4.82 on white. */
+    --sb-green:       #257321;
+    --sb-green-dark:  #21651d;
     --qb-gold:        #cc9933;
     /* The keyboard's ring (NEW-43): a deeper gold than the brand's, so it
        clears 3:1 against what it sits on (WCAG 1.4.11): 3.9:1 on white,
@@ -1345,7 +1347,7 @@ a:hover { text-decoration: underline; }
     border: 1px solid rgba(0,0,0,0.2);
 }
 
-.toast-success { background: var(--qb-green); }
+.toast-success { background: var(--sb-green); }
 .toast-error   { background: var(--qb-red); }
 .toast-info    { background: var(--qb-blue); }
 
@@ -2040,7 +2042,7 @@ tr.clickable { cursor: pointer; }
 }
 
 .iif-validation-ok {
-    color: var(--qb-green);
+    color: var(--sb-green);
     font-weight: 700;
 }
 
@@ -2185,7 +2187,7 @@ tr.clickable { cursor: pointer; }
     line-height: 1.1;
 }
 
-.analytics-kpi-value.kpi-green  { color: var(--qb-green); }
+.analytics-kpi-value.kpi-green  { color: var(--sb-green); }
 .analytics-kpi-value.kpi-red    { color: var(--qb-red); }
 .analytics-kpi-value.kpi-blue   { color: var(--qb-blue); }
 .analytics-kpi-value.kpi-purple { color: #a855f7; }
@@ -2246,7 +2248,7 @@ tr.clickable { cursor: pointer; }
 
 .analytics-error strong { display: block; margin-bottom: 4px; }
 
-.amount.green { color: var(--qb-green); }
+.amount.green { color: var(--sb-green); }
 .amount.red   { color: var(--qb-red); }
 .amount.amber { color: var(--qb-orange); }
 
