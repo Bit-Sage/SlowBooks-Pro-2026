@@ -5,13 +5,15 @@
 # PostgreSQL (Docker / server installs): pg_dump/pg_restore subprocess.
 # SQLite (native desktop installs): a snapshot copy of the company's .db
 # file via sqlite3's online backup API (consistent even with the app's own
-# connections open).
+# connections open). An encrypted company file (#290) is copied under its
+# key, so its backups are ciphertext too; a restore leaves the books in the
+# state they are in, whichever state the backup was in.
 # ============================================================================
 
 import logging
 import os
 import re
-import sqlite3
+import shutil
 import subprocess
 from contextlib import closing
 from datetime import datetime, timezone
@@ -21,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import DATABASE_URL
 from app.models.backups import Backup
-from app.services import storage
+from app.services import company_file, storage
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +156,17 @@ def _create_sqlite_backup(
 
     try:
         # sqlite3's online backup API gives a consistent snapshot even if
-        # the app holds open connections (unlike a raw file copy).
-        with closing(sqlite3.connect(src)) as source, closing(
-            sqlite3.connect(filepath)
+        # the app holds open connections (unlike a raw file copy). An
+        # encrypted company is copied under its key: the backup is
+        # ciphertext, readable with the same key.
+        key = (
+            company_file.resolve_key() if company_file.is_encrypted_file(src) else None
+        )
+        with closing(company_file.connect_raw(src, key)) as source, closing(
+            company_file.connect_raw(filepath, key)
         ) as dest:
             source.backup(dest)
-    except sqlite3.Error:
+    except company_file.errors():
         # Exception text can leak paths/internals into the HTTP response
         # (routes surface this error string) — log it, say something generic.
         logger.exception("SQLite backup failed")
@@ -194,16 +201,38 @@ def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
 
     db_module.engine.dispose()
 
+    live_encrypted = company_file.is_encrypted_file(dest)
+    backup_encrypted = company_file.is_encrypted_file(filepath)
+    key = None
+    if live_encrypted or backup_encrypted:
+        key = company_file.resolve_key()
+        if key is None:
+            return {"success": False, "error": company_file.NO_KEY_MESSAGE}
+    staged = None
     try:
-        with closing(sqlite3.connect(filepath)) as source, closing(
-            sqlite3.connect(dest)
-        ) as target:
+        source_path = filepath
+        if backup_encrypted != live_encrypted:
+            # The books stay in the state they are in: a plain backup
+            # restored into an encrypted company arrives encrypted, and
+            # the other way around. The backup file itself is never
+            # changed — a staged copy is converted and restored from.
+            staged = BACKUP_DIR / (filepath.name + ".restoring")
+            shutil.copy2(filepath, staged)
+            company_file.convert(staged, key, encrypt=live_encrypted)
+            source_path = staged
+        live_key = key if live_encrypted else None
+        with closing(
+            company_file.connect_raw(source_path, live_key)
+        ) as source, closing(company_file.connect_raw(dest, live_key)) as target:
             source.backup(target)
-    except sqlite3.Error:
+    except company_file.errors() + (OSError,):
         # Same shape as _create_sqlite_backup: no exception text in the
         # user-facing error (py/stack-trace-exposure) — details go to logs.
         logger.exception("SQLite restore failed")
         return {"success": False, "error": "SQLite restore failed. Check logs."}
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
     return {"success": True, "message": f"Restored from {safe_name}"}
 
@@ -370,10 +399,14 @@ def read_backup_facts(filename: str) -> dict:
     if path is None or path.suffix != ".db" or not path.exists():
         return {}
     facts = {"company_name": None, "revision": None}
+    key = None
+    if company_file.is_encrypted_file(path):
+        key = company_file.resolve_key()
+        if key is None:
+            return {}  # an encrypted backup with no key in hand: unreadable here
     try:
-        uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
-        with closing(sqlite3.connect(uri, uri=True)) as conn:
-            for key, sql in (
+        with closing(company_file.connect_raw(path, key, readonly=True)) as conn:
+            for fact, sql in (
                 (
                     "company_name",
                     "SELECT value FROM settings WHERE key = 'company_name'",
@@ -382,10 +415,10 @@ def read_backup_facts(filename: str) -> dict:
             ):
                 try:
                     row = conn.execute(sql).fetchone()
-                except sqlite3.Error:
+                except company_file.errors():
                     row = None
-                facts[key] = (row[0] or None) if row else None
-    except sqlite3.Error:
+                facts[fact] = (row[0] or None) if row else None
+    except company_file.errors():
         logger.exception("Could not read backup %s", path.name)
         return {}
     return facts
@@ -530,11 +563,12 @@ def bring_restored_books_up_to_date() -> dict:
     path = _sqlite_db_path()
     if path is None:
         return {"success": True}
+    key = company_file.resolve_key() if company_file.is_encrypted_file(path) else None
     try:
-        with closing(sqlite3.connect(path)) as conn:
+        with closing(company_file.connect_raw(path, key)) as conn:
             row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
         current = row[0] if row else None
-    except sqlite3.Error:
+    except company_file.errors():
         current = None  # no migration history: not a file alembic manages
     if not current:
         return {"success": True}
@@ -545,6 +579,7 @@ def bring_restored_books_up_to_date() -> dict:
         from alembic import command
 
         cfg.attributes["database_url"] = "sqlite:///" + path.as_posix()
+        cfg.attributes["company_file_key"] = key
         command.upgrade(cfg, "head")
     except Exception:
         logger.exception("Could not upgrade the restored books")

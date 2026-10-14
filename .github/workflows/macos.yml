@@ -82,6 +82,11 @@ jobs:
             -r requirements-desktop.txt \
             -r packaging/macos/requirements-build.txt
 
+      - name: The encrypted-file driver's wheel installed (issue #290)
+        # The smoke test below is the proof that counts (the module inside
+        # the frozen bundle); this names the wheel in the log either way.
+        run: python -c "import sqlcipher3; print('sqlcipher', sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+
       - name: Build the application icon
         run: |
           python packaging/macos/build_icon.py \

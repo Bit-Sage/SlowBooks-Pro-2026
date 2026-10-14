@@ -66,6 +66,7 @@ from app.routes import uploads
 
 # Phase 5: Advanced Integration
 from app.routes import bank_import, simplefin, tax, backups
+from app.routes import company_file as company_file_routes
 from app.routes import users as users_routes
 from app.routes import api_tokens as api_tokens_routes
 from app.routes import classes as classes_routes
@@ -218,7 +219,12 @@ def _run_startup_security_checks():
                 "redirect becomes a no-op."
             )
 
-    # Only after the cheap checks pass do we open a DB connection.
+    # Only after the cheap checks pass do we open a DB connection — and an
+    # encrypted company file is not opened at all without its key (#290):
+    # one sentence, before the migration guard or create_all can touch it.
+    from app.services.company_file import refuse_a_locked_file
+
+    refuse_a_locked_file()
     _refuse_a_database_behind_head()
     _create_missing_tables()
 
@@ -775,6 +781,9 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/tokens",
     "/api/settings",
     "/api/backups",
+    # Turning company-file encryption on or off is an administrator's
+    # decision (#290); the route asks for the company's name as well.
+    "/api/company-file",
     "/api/companies",
     "/api/migration",
     "/api/qbo/connect-manual",
@@ -1025,6 +1034,7 @@ app.include_router(users_routes.router)
 app.include_router(api_tokens_routes.router)
 app.include_router(tax.router)
 app.include_router(backups.router)
+app.include_router(company_file_routes.router)
 app.include_router(system_routes.router)
 # Phase 6: Ambitious
 app.include_router(companies.router)

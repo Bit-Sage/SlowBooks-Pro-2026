@@ -347,6 +347,7 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - Field-level Fernet encryption for bank routing/account numbers, with zero-downtime key rotation
 - Self-service portal tokens expire on 90-day idle + 1-year hard windows
 - Startup checks fail hard if production config is missing TLS, encryption secret, or HTTPS
+- **Company file encryption** (#290) — a desktop or Server Edition company file can be a SQLCipher file, off by default; an administrator turns it on from Settings with the company's name typed to confirm, the key comes from an operator-set secret, and backups are ciphertext under the same key. PostgreSQL deployments are the database host's job
 
 Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engineering log of the hardening pass is at [docs/security-hardening.md](security-hardening.md).
 
