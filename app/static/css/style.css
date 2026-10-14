@@ -1140,6 +1140,12 @@ a:hover { text-decoration: underline; }
     overflow-x: auto;
     padding-right: 8px;
     padding-bottom: 8px;
+    /* Room under the box for a classic horizontal bar (17px on macOS and
+       Windows), whether or not the engine counted the bar in the box's
+       height: WebKit drew the bill form's and the job cost entry's bar
+       over the top half of "+ Add Line" below (2.23.1 gate, NEW-104). The
+       button's own 8px above it make 20 together. */
+    margin-bottom: 12px;
 }
 /* Only the job cost entry's grid is wider than the dialog (its Bill? and
    remove columns); the estimate's fits, and a floor on every scrolling grid

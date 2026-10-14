@@ -265,7 +265,19 @@ def test_the_bill_forms_line_table_scrolls_sideways_with_room_for_every_box():
         assert rule in STYLE, rule
     # the widths reach the visible picker because combobox.js mirrors the
     # select's classes onto it (a rule on the 1px select did nothing)
-    js = (Path(__file__).resolve().parents[1] / "app/static/js/combobox.js").read_text(
+    cbx = (Path(__file__).resolve().parents[1] / "app/static/js/combobox.js").read_text(
         encoding="utf-8"
     )
-    assert "wrap.classList.add(`cbx--${c}`)" in js
+    assert "wrap.classList.add(`cbx--${c}`)" in cbx
+    # with those widths the table outgrew the 700px dialog on every company
+    # (NEW-105): the bill form opens wide, as the estimate's and the job
+    # cost entry's do, so the table fits whole where the window has room
+    assert (
+        "Save Bill'}</button>\n                </div>\n            </form>`, { wide: true });"
+        in js
+    )
+    # and under a scrolling table there is a classic bar's room, so
+    # "+ Add Line" clears a bar an engine draws below the box (WebKit, NEW-104)
+    scroll = STYLE[STYLE.index(".table-container--scroll {") :]
+    scroll = scroll[: scroll.index("}")]
+    assert "margin-bottom: 12px;" in scroll, scroll

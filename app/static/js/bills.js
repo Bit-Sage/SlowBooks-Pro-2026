@@ -277,7 +277,7 @@ const BillsPage = {
                     <button type="button" class="btn btn-secondary" onclick="ScanHelper.discard(); closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">${bill ? 'Save Changes' : 'Save Bill'}</button>
                 </div>
-            </form>`);
+            </form>`, { wide: true });
         if (bill) {
             const vendorSel = document.getElementById('bill-vendor');
             if (vendorSel) vendorSel.value = bill.vendor_id;

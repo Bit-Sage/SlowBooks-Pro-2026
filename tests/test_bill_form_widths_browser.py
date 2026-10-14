@@ -1,11 +1,18 @@
-"""The bill form's line boxes, measured in a browser (2.23.1 gate, NEW-103 /
-W-5). The first fix put width rules on the selects behind the type-ahead
-pickers, which the picker hides at 1px, so nothing on screen changed and a
-text-only pin passed anyway: the Account box stayed 55px and "6000 -
-Advertising & Marketing" read "600…". The rules sit on the visible picker
-now (combobox.js mirrors a select's classes onto it as cbx--<class>) and on
-the plain Description, Qty and Rate boxes. Skipped, as one module, where
-playwright or its Chromium is not installed.
+"""The bill form's line boxes and its dialog, measured in a browser (2.23.1
+gate, NEW-103 / W-5, then NEW-104 and NEW-105). The first fix put width
+rules on the selects behind the type-ahead pickers, which the picker hides
+at 1px, so nothing on screen changed and a text-only pin passed anyway: the
+Account box stayed 55px and "6000 - Advertising & Marketing" read "600…".
+The rules sit on the visible picker now (combobox.js mirrors a select's
+classes onto it as cbx--<class>) and on the plain Description, Qty and Rate
+boxes. With those widths the table outgrew the 700px dialog on every
+company, so Rate and Amount sat out of view at rest (NEW-105): the dialog
+opens wide now, as the estimate's and the job cost entry's do, and the
+table scrolls only where the window is too narrow for it. Where it scrolls,
+"+ Add Line" below it clears a classic scroll bar's height even in an
+engine that draws the bar below the box rather than inside it (WebKit,
+NEW-104). Skipped, as one module, where playwright or its Chromium is not
+installed.
 """
 
 import pytest
@@ -27,46 +34,86 @@ def classed_fixture(_classed):  # noqa: F811  (the fixture, by its name)
     return _classed
 
 
-def test_the_bill_forms_boxes_keep_their_widths_beside_the_class_box(
-    browser, company, books, classed, client
-):
-    # a cost code, so the form has its ninth column
+MEASURE = """() => {
+    const row = document.querySelector('#bill-lines tr');
+    const w = (sel) => { const e = row.querySelector(sel); return e ? Math.round(e.getBoundingClientRect().width) : null; };
+    const c = row.closest('.table-container');
+    const cr = c.getBoundingClientRect();
+    const modal = document.getElementById('modal');
+    const btn = [...document.querySelectorAll('#modal-body button')].find(b => b.textContent.trim() === '+ Add Line');
+    return {
+        item: w('.cbx--line-item'), account: w('.cbx--line-account'), cost: w('.cbx--line-cost-code'),
+        cls: w('.line-function-fund'), desc: w('.line-desc'), qty: w('.line-qty'), rate: w('.line-rate'),
+        hasCost: !!row.querySelector('.cbx--line-cost-code'),
+        wide: modal.classList.contains('modal--wide'),
+        modal: Math.round(modal.getBoundingClientRect().width),
+        overflow: getComputedStyle(c).overflowX,
+        scrollable: c.scrollWidth > c.clientWidth,
+        lastCellRight: Math.round(row.lastElementChild.getBoundingClientRect().right),
+        boxRight: Math.round(cr.left + c.clientLeft + c.clientWidth),
+        room: btn ? Math.round(btn.getBoundingClientRect().top - cr.bottom) : null,
+    };
+}"""
+
+# A classic horizontal scroll bar's height on macOS and Windows.
+BAR = 17
+
+
+def _bill_form(browser, company, client, width):
     r = client.post(
         "/api/cost-codes",
         json={"code": "01-100", "name": "Site Prep", "cost_type": "labor"},
     )
-    assert r.status_code in (200, 201), r.text
+    assert r.status_code in (200, 201, 400, 409), r.text  # once per company
     page, handled = _open(browser, company)
+    page.set_viewport_size({"width": width, "height": 821})
+    _visit(page, handled, "#/bills")
+    page.evaluate("async () => { await BillsPage.showForm(); }")
+    page.wait_for_function(OPEN, timeout=5000)
+    page.wait_for_selector("#bill-lines tr .cbx--line-account")
+    settle(page, handled)
+    return page
+
+
+def _boxes_hold(m):
+    assert m["hasCost"], m  # the ninth column is there
+    assert m["item"] >= 110 and m["account"] >= 200 and m["cost"] >= 110, m
+    assert m["cls"] >= 124 and m["desc"] >= 140, m
+    assert m["qty"] >= 64 and m["rate"] >= 84, m
+    assert m["overflow"] == "auto", m
+
+
+def test_at_the_agents_window_every_column_shows_at_rest(
+    browser, company, books, classed, client
+):
+    page = _bill_form(browser, company, client, 1264)  # the agents' window
     try:
-        page.set_viewport_size({"width": 1264, "height": 821})  # the agents' window
-        _visit(page, handled, "#/bills")
-        page.evaluate("async () => { await BillsPage.showForm(); }")
-        page.wait_for_function(OPEN, timeout=5000)
-        page.wait_for_selector("#bill-lines tr .cbx--line-account")
-        settle(page, handled)
-        m = page.evaluate("""() => {
-                const row = document.querySelector('#bill-lines tr');
-                const w = (sel) => { const e = row.querySelector(sel); return e ? Math.round(e.getBoundingClientRect().width) : null; };
-                const c = row.closest('.table-container');
-                return {
-                    item: w('.cbx--line-item'), account: w('.cbx--line-account'), cost: w('.cbx--line-cost-code'),
-                    cls: w('.line-function-fund'), desc: w('.line-desc'), qty: w('.line-qty'), rate: w('.line-rate'),
-                    scrollable: c ? c.scrollWidth > c.clientWidth : null,
-                    overflow: c ? getComputedStyle(c).overflowX : null,
-                    hasCost: !!row.querySelector('.cbx--line-cost-code'),
-                };
-            }""")
-        assert m["hasCost"], m  # the ninth column is there
-        assert m["item"] >= 110 and m["account"] >= 200 and m["cost"] >= 110, m
-        assert m["cls"] >= 124 and m["desc"] >= 140, m
-        assert m["qty"] >= 64 and m["rate"] >= 84, m
-        # wider than its dialog here, the table scrolls sideways rather than squeezing a box
-        assert m["overflow"] == "auto", m
-        if m["scrollable"]:
-            scrolled = page.evaluate(
-                """() => { const c = document.querySelector('#bill-lines tr').closest('.table-container');
-                           c.scrollLeft = 9999; return c.scrollLeft > 0; }"""
-            )
-            assert scrolled, m
+        m = page.evaluate(MEASURE)
+        _boxes_hold(m)
+        # the dialog grew to the window, and the table fits it whole
+        assert m["wide"] and m["modal"] >= 1000, m
+        assert not m["scrollable"], m
+        assert m["lastCellRight"] <= m["boxRight"], m
+    finally:
+        page.close()
+
+
+def test_in_a_narrow_window_the_table_scrolls_and_add_line_clears_the_bar(
+    browser, company, books, classed, client
+):
+    page = _bill_form(browser, company, client, 900)
+    try:
+        m = page.evaluate(MEASURE)
+        _boxes_hold(m)  # a box is never squeezed to fit; the table scrolls instead
+        assert m["wide"] and m["modal"] <= 900, m
+        assert m["scrollable"], m
+        scrolled = page.evaluate(
+            """() => { const c = document.querySelector('#bill-lines tr').closest('.table-container');
+                       c.scrollLeft = 9999; return c.scrollLeft > 0; }"""
+        )
+        assert scrolled, m
+        # "+ Add Line" sits below where a classic bar would be drawn, counted
+        # in the box's height (Chromium) or not (WebKit, NEW-104)
+        assert m["room"] is not None and m["room"] >= BAR, m
     finally:
         page.close()

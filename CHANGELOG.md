@@ -52,8 +52,13 @@ loading later), and the success toast kept 2.23.0's green; both carry the
 leaf green now, and so do bold and amber figures (the aging tables' totals
 and 30+ and 60+ columns, the cash forecast's net). The shared per-line
 Class box has a minimum width, so "North LLC" no longer reads "North LL",
-and the bill form's line table, the widest, scrolls sideways in its
-container with room for Item, Account and Cost Code. The migration dry
+and the bill form's line table, the widest, has room for Item, Account
+and Cost Code: the dialog opens as wide as the window allows, like the
+estimate's and the job cost entry's, so every column shows at rest where
+there is room, and the table scrolls sideways in its container where
+there is not. Under every scrolling line table there is room for a
+classic scroll bar, so "+ Add Line" sits below the bar on a Mac rather
+than half under it (the job cost entry had that since 2.18.0). The migration dry
 run no longer says a ledger had "no records recognised" when its rows
 were read and refused one by one for accounts an empty chart does not
 list; that sentence names a file only when its parser read nothing.
