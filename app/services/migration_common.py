@@ -144,6 +144,18 @@ def dry_run_bundle(
     journals, gl_errors = parsers["gl"](bundle["gl"])
     errors.extend(gl_errors)
 
+    for kind, records, label in (
+        ("coa", accounts, "chart of accounts"),
+        ("gl", journals, "general ledger"),
+    ):
+        if not records:
+            header = (bundle[kind].lstrip("\ufeff").splitlines() or [""])[0]
+            errors.append(
+                f"No {label} records were recognised in the {source_label} file. "
+                f"Check that the export contains data and the expected columns. "
+                f"The file's header row is: {header[:300]}"
+            )
+
     known = {a["name"].lower() for a in accounts}
     known |= {strip_code_suffix(a["name"]) for a in accounts}
     known |= {a.name.lower() for a in db.query(Account).all()}
@@ -213,6 +225,14 @@ def dry_run_bundle(
     if "tb" in bundle and "tb" in parsers:
         tb, tb_errors = parsers["tb"](bundle["tb"])
         errors.extend(tb_errors)
+        if not tb:
+            header = (bundle["tb"].lstrip("\ufeff").splitlines() or [""])[0]
+            errors.append(
+                f"No trial balance records were recognised in the {source_label} "
+                f"file, so balances could not be verified. Check that the export "
+                f"contains data and the expected columns. "
+                f"The file's header row is: {header[:300]}"
+            )
         residuals = []
         for name, expected in tb.items():
             got = simulated.get(name, Decimal("0"))

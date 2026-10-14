@@ -5,8 +5,6 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-## [Unreleased]
-
 ### v2.23.1 — Entities keep their class
 
 A QuickBooks file that keeps its entities apart by class (a nonprofit and
@@ -39,6 +37,7 @@ a South LLC line left with both under North LLC; line-level classes
 exist since 2.22.0. The header's class is the fallback for a line without
 one.
 
+**Contributed fixes.** Migration dry runs now refuse chart, ledger, or supplied trial-balance files with no recognised records, instead of reporting a successful empty import or silently skipping balance verification (@lEWFkRAD, PR #304).
 No schema change. 565 API operations.
 
 ### v2.23.0 — Both ways with QuickBooks
