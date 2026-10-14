@@ -66,7 +66,7 @@ lines leaves a DELETE event for every old line (#289); the invoice form
 says that creating one posts it (#293); and the AI guide, the README and
 the docs say what stays on your machine and what a cloud model sees
 (#294). Line quantities keep four decimal places, so an imported 2.125
-stays 2.125 instead of reading 2.12 and losing cents on the next edit. 2.23.1 keeps a QuickBooks file's entities apart: the IIF import and the
+stays 2.125 instead of reading 2.12 and losing cents on the next edit. 2.23.2 adds the plumbing for an encrypted company file (@grungenut, #290): with an operator-set secret, Settings turns SQLCipher encryption on or off in place, and backups follow the file. 2.23.1 keeps a QuickBooks file's entities apart: the IIF import and the
 report CSV import carry each posting's class, and the IIF export writes
 each line's own (#308).
 
@@ -177,7 +177,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (565 operations in v2.23) — built for Claude
+self-documenting local REST API (567 operations in v2.23) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

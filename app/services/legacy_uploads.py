@@ -32,7 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app.services import company_service, storage
+from app.services import company_file, company_service, storage
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +289,12 @@ def _company_file_needs_folder(path: Path) -> bool:
     is not a database can't copy anything; one that can't be read right now
     (another program is writing it) may still need the folder."""
     if not path.is_file():
+        return False
+    # An encrypted company file (#290) cannot be read here, and the read
+    # below would only write -wal and -shm files beside it for nothing. It
+    # was encrypted on this version or a later one, so it keeps nothing in
+    # the shared folder.
+    if company_file.is_encrypted_file(path):
         return False
     # Reading a WAL-mode company read-only made SQLite create empty -wal and
     # -shm files beside it, next to companies nobody had opened (macbase1

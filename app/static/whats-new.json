@@ -1,4 +1,12 @@
 {
+  "2.23.2": {
+    "title": "The plumbing for an encrypted company file",
+    "items": [
+      "Settings has Company File Encryption: with COMPANY_FILE_ENCRYPTION_SECRET set where SlowBooks Pro starts, an administrator turns it on or off in place, the company's name typed; the file on disk is a SQLCipher file, unreadable without the key (the first of @grungenut's pull requests behind #290).",
+      "Backups of an encrypted company are encrypted under the same key, and a restore leaves the books in the state they are in, whichever state the backup was in.",
+      "An encrypted file with no key, or the wrong one, stops with one sentence before anything opens it; a company that does not turn encryption on is untouched."
+    ]
+  },
   "2.23.1": {
     "title": "Entities keep their class",
     "items": [
