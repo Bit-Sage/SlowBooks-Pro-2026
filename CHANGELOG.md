@@ -7,6 +7,37 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### Company-file encryption, the plumbing (#290)
+
+The first of the pull requests behind #290, encrypting the company file at
+rest. Nothing changes for a company that does not turn it on.
+
+- **The company file can be a SQLCipher file.** The app opens one when its
+  key is in hand: the launcher has the key before the "already running"
+  check, before the migrations and before the server starts, and hands it
+  to each. A migration or a start without the key stops with one sentence,
+  never a traceback or SQLCipher's own log lines.
+- **Server Edition unlocks from an operator-set credential.** Set
+  `COMPANY_FILE_ENCRYPTION_SECRET` where SlowBooks Pro starts, the way
+  `PAYROLL_ENCRYPTION_SECRET` is set; the key derives from it the way the
+  payroll key does, under its own salt.
+- **Settings → Company File Encryption**, administrators only: whether the
+  file is encrypted and where the key comes from, and the switch, which
+  asks for the company's name typed before it rewrites the file in place
+  (SQLCipher's own export). A PostgreSQL company is told that encryption at
+  rest is the database host's job.
+- **Backups of an encrypted company are encrypted** under the same key,
+  and a restore leaves the books in the state they are in, whichever state
+  the backup was in.
+- The desktop's own key management (a key per installation, wrapped for
+  each administrator and under a recovery key) is the next pull request;
+  until then a desktop company turns encryption on with the same
+  operator-set secret.
+- `sqlcipher3>=0.6.3,<0.7` is a new dependency (Windows, macOS and Linux
+  wheels, SQLCipher 4.12 linked in). Both installers' smoke tests read its
+  version through the frozen bundle, then write and read back an encrypted
+  scratch file.
+
 ### v2.23.0 — Both ways with QuickBooks
 
 Every issue that was open after 2.22.3, in one release.

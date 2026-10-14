@@ -92,6 +92,10 @@ hiddenimports = (
         # function-level imports, but the PDF engine is not something to
         # leave to "usually" — name it, so its hook always fires.
         "weasyprint",
+        # The encrypted company file's driver (#290), imported lazily in
+        # app/services/company_file.py; the smoke test reads its version
+        # through the bundle.
+        "sqlcipher3",
     ]
 )
 

@@ -150,6 +150,36 @@ Ciphertext is now prefixed with `v1:` so older unversioned blobs still
 decrypt cleanly. Decrypt tries the current key first, then any
 configured previous key.
 
+### Company file encryption (SQLCipher, #290)
+
+A desktop company is one SQLite file. Turned on, it is a SQLCipher file:
+every page is encrypted under the driver (AES-256-CBC with a per-page
+HMAC), WAL and random access keep working, and a backup is a copy of
+ciphertext under the same key.
+
+- The engine takes `sqlcipher3` in place of `sqlite3` and keys each
+  connection first, before the WAL and `secure_delete` PRAGMAs. The key
+  goes in as a raw key (`x'…'`), so SQLCipher's own KDF does not run on
+  every checkout from the pool.
+- The key is found once, before the file is opened:
+  `SLOWBOOKS_COMPANY_FILE_KEY` (the launcher's hand-off to the server child
+  and to the migration) or `COMPANY_FILE_ENCRYPTION_SECRET` (an operator's,
+  for Server Edition), derived with PBKDF2-HMAC-SHA256 at 480,000 rounds
+  under the salt `slowbooks-company-file-v1`, so it never equals the
+  payroll key however the secrets are set.
+- An encrypted file with no key, or the wrong key, stops the start with one
+  sentence; SQLCipher's `ERROR CORE` lines are silenced on every connection
+  (`PRAGMA cipher_log_level = NONE`).
+- Turning it on or off is `POST /api/company-file/encryption`: administrator
+  only (the role middleware and the route), the company's name typed to
+  confirm, the file rewritten in place by SQLCipher's export under a write
+  lock.
+- PostgreSQL deployments are the database host's job, and the Settings
+  page says so.
+- Not yet: the desktop's own key management (per-administrator wrapping, a
+  recovery key). Until it lands, a desktop company uses the operator-set
+  secret too.
+
 ---
 
 ## OWASP Top 10 coverage

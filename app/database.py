@@ -25,7 +25,19 @@ if not _is_sqlite:
         pool_recycle=1800,
         pool_use_lifo=True,
     )
-engine = create_engine(DATABASE_URL, **_engine_kwargs)
+if _is_sqlite:
+    # A company file may be encrypted (SQLCipher, #290). The engine takes
+    # the sqlcipher3 module in place of sqlite3 and keys each connection
+    # before the PRAGMAs below — only when the file on disk is encrypted;
+    # a plain file, and the suite's :memory: database, open as they always
+    # did. The key is looked up once, and only if it is needed.
+    from app.services import company_file
+
+    engine = company_file.create_sqlite_engine(
+        DATABASE_URL, company_file.resolve_key, **_engine_kwargs
+    )
+else:
+    engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 
 def enable_sqlite_tuning(target_engine) -> None:

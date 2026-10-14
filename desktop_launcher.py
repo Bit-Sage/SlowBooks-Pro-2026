@@ -309,8 +309,16 @@ def prepare_env() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _server_env(db_url: str, port: int, bind_host: str = "127.0.0.1") -> dict:
+def _server_env(
+    db_url: str, port: int, bind_host: str = "127.0.0.1", key: bytes | None = None
+) -> dict:
     env = dict(os.environ)
+    # The company file's key (#290), when the file is encrypted: the server
+    # child and a migration child take it from here, so neither opens the
+    # file without it. A value inherited from the shell never leaks through.
+    env.pop("SLOWBOOKS_COMPANY_FILE_KEY", None)
+    if key is not None:
+        env["SLOWBOOKS_COMPANY_FILE_KEY"] = key.hex()
     env.update(
         {
             "DATABASE_URL": db_url,
@@ -332,8 +340,12 @@ def _server_env(db_url: str, port: int, bind_host: str = "127.0.0.1") -> dict:
     return env
 
 
-def migrate(db_url: str, output=None) -> None:
+def migrate(db_url: str, output=None, key: bytes | None = None) -> None:
     """Run `alembic upgrade head` against the chosen company database.
+
+    ``key`` is the company file's key when it is encrypted (#290): in hand
+    before the migration opens the file, handed over in-process through
+    the alembic config or to a child through its environment.
 
     Only meaningfully does work the first time a company file is opened
     (or after an app update ships new migrations); safe to run every time.
@@ -353,6 +365,7 @@ def migrate(db_url: str, output=None) -> None:
         cfg = Config(str(ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(ROOT / "migrations"))
         cfg.attributes["database_url"] = db_url
+        cfg.attributes["company_file_key"] = key
         os.environ["SLOWBOOKS_DATA_DIR"] = str(get_data_dir())
         # env.py imports app.database (import-time engine): make sure that
         # binds to SQLite — the bundle ships no Postgres driver.
@@ -363,7 +376,7 @@ def migrate(db_url: str, output=None) -> None:
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=ROOT,
-        env=_server_env(db_url, 0),
+        env=_server_env(db_url, 0, key=key),
         check=True,
         stdout=output,
         stderr=subprocess.STDOUT if output else None,
@@ -371,7 +384,11 @@ def migrate(db_url: str, output=None) -> None:
 
 
 def start_server(
-    db_url: str, port: int, output=None, bind_host: str = "127.0.0.1"
+    db_url: str,
+    port: int,
+    output=None,
+    bind_host: str = "127.0.0.1",
+    key: bytes | None = None,
 ) -> subprocess.Popen:
     if FROZEN:
         # Re-exec this same bundled exe; --_serve (handled at the top of
@@ -390,7 +407,7 @@ def start_server(
     return subprocess.Popen(
         cmd,
         cwd=cwd,
-        env=_server_env(db_url, port, bind_host),
+        env=_server_env(db_url, port, bind_host, key=key),
         stdout=output,
         stderr=subprocess.STDOUT if output else None,
     )
@@ -452,7 +469,19 @@ def launch_company(
     the next windowed launch (issue #110). The server itself takes its
     DATABASE_URL from the environment start_server() builds, so nothing
     needs the file."""
-    from app.services import company_service
+    from app.services import company_file, company_service
+
+    db_path = company_service.company_db_path(filename)
+    if db_path is None:
+        raise ValueError(f"Invalid company file name: {filename!r}")
+
+    # The key is in hand before anything opens the file (#290): before the
+    # already-running probe, before the migrations, before the server
+    # child, which takes it from the environment start_server() builds. An
+    # encrypted file with no key stops here, with one sentence.
+    key = company_file.resolve_key()
+    if company_file.is_encrypted_file(db_path) and key is None:
+        raise RuntimeError(company_file.NO_KEY_MESSAGE)
 
     # A second launch while the app is already open would lose the fight
     # for the port and fail confusingly -- say what's actually wrong.
@@ -463,18 +492,14 @@ def launch_company(
             "Manager if no window is visible -- then try again."
         )
 
-    db_path = company_service.company_db_path(filename)
-    if db_path is None:
-        raise ValueError(f"Invalid company file name: {filename!r}")
-
     db_url = "sqlite:///" + db_path.as_posix()
     if persist:
         set_env_value("DATABASE_URL", db_url)
         company_service.set_last_opened(filename)
 
-    migrate(db_url, output=output)
+    migrate(db_url, output=output, key=key)
 
-    proc = start_server(db_url, port, output=output, bind_host=bind_host)
+    proc = start_server(db_url, port, output=output, bind_host=bind_host, key=key)
     # 0.0.0.0 includes loopback; a specific interface bind does not.
     health_host = "127.0.0.1" if bind_host in ("127.0.0.1", "0.0.0.0") else bind_host
     if not wait_for_health(proc, port, host=health_host):
@@ -1958,6 +1983,37 @@ def run_smoke_test(port: int = 3999) -> int:
     )
     if sys.platform == "darwin" and status.get("engine") != "vision":
         print("smoke: FAIL Apple Vision is not the selected engine in the bundle")
+        return 1
+
+    # Point 1 of #290: the encrypted-file driver rides in the bundle. The
+    # module is imported lazily (app/services/company_file.py), so prove
+    # PyInstaller collected it by reading SQLCipher's version through it,
+    # then write one encrypted scratch file and read it back.
+    print("smoke: reading the SQLCipher version through the bundled module...")
+    from app.services import company_file
+
+    cipher = company_file.cipher_version()
+    if not cipher:
+        print("smoke: FAIL sqlcipher3 is not in the bundle")
+        return 1
+    print(f"smoke: sqlcipher {cipher}")
+    scratch = get_data_dir() / "smoke-cipher.db"
+    scratch.unlink(missing_ok=True)
+    key = os.urandom(company_file.KEY_BYTES)
+    conn = company_file.connect_raw(scratch, key)
+    conn.execute("CREATE TABLE t (x)")
+    conn.execute("INSERT INTO t VALUES (1)")
+    conn.commit()
+    conn.close()
+    if not company_file.is_encrypted_file(scratch):
+        print("smoke: FAIL the scratch file is not encrypted on disk")
+        return 1
+    conn = company_file.connect_raw(scratch, key)
+    row = conn.execute("SELECT x FROM t").fetchone()
+    conn.close()
+    scratch.unlink(missing_ok=True)
+    if row != (1,):
+        print("smoke: FAIL the encrypted scratch file did not read back")
         return 1
 
     print("smoke: PASS")

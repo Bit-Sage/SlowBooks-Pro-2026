@@ -10,6 +10,11 @@ starlette>=1.0.1,<2.0
 # Database
 sqlalchemy>=2.0.40,<2.1  # 2.1 made postgresql:// mean psycopg (v3), which is not installed: every fresh Docker image failed to import (2026-09-25). Move deliberately, with the gate.
 alembic>=1.16.0,<2.0
+# The encrypted company file (#290). sqlcipher3, not sqlcipher3-binary (that
+# one ships Linux wheels only): wheels for Windows, macOS and Linux, CPython
+# 3.9 to 3.14, with SQLCipher linked into the extension, nothing to carry
+# separately. Capped like the rest; move with the gate.
+sqlcipher3>=0.6.3,<0.7
 psycopg2-binary==2.9.12  # 2.9.10+ ships Python 3.13 wheels; 2.9.9 forces source build on slim images
 
 # Validation + settings

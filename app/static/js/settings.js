@@ -78,6 +78,7 @@ const SettingsPage = {
         SettingsPage._savedClosingDate = s.closing_date || '';
         setTimeout(() => {
             SettingsPage.loadBackups();
+            SettingsPage.loadCompanyFile();
             SettingsPage.loadLegacyFiles();
             SettingsPage.loadEmailTemplates();
             SettingsPage.loadAiConfig();
@@ -526,6 +527,12 @@ const SettingsPage = {
                     <div id="backup-list"></div>
                 </div>
 
+                <div class="settings-section" id="settings-company-file" data-admin hidden role="group" aria-labelledby="settings-h-company-file">
+                    <h3 id="settings-h-company-file">Company File Encryption</h3>
+                    <div id="company-file-status" style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"></div>
+                    <div id="company-file-actions" style="display:flex; gap:8px;" data-admin data-write></div>
+                </div>
+
                 ${SettingsPage._isAdmin() ? '<div class="settings-section" id="settings-legacy-files" data-admin hidden></div>' : ''}
 
                 <div class="settings-section" id="settings-users" data-admin style="display:none;" role="group" aria-labelledby="settings-h-users-server-edition">
@@ -680,6 +687,95 @@ const SettingsPage = {
             e.preventDefault();
             e.returnValue = '';
         });
+    },
+
+    // ------------------------------------------------------------------
+    // Company File Encryption (#290) — administrators only; the server
+    // enforces the same rule, this avoids a useless 403. The switch asks
+    // for the company's name typed, the way a restore asks before it
+    // replaces the books.
+    // ------------------------------------------------------------------
+    async loadCompanyFile() {
+        const section = $('#settings-company-file');
+        if (!section || !SettingsPage._isAdmin()) return;
+        let st;
+        try {
+            st = await API.get('/company-file/encryption');
+        } catch (e) {
+            return; // non-admin or pre-upgrade server: section stays hidden
+        }
+        SettingsPage._companyFile = st;
+        const status = $('#company-file-status');
+        const actions = $('#company-file-actions');
+        actions.innerHTML = '';
+        if (st.engine === 'postgresql') {
+            status.textContent = 'This company runs on PostgreSQL. Encrypting it at rest is the database host\'s job: '
+                + 'PostgreSQL\'s own disk encryption, or the volume it sits on.';
+        } else if (!st.supported) {
+            status.textContent = 'This build cannot encrypt the company file.';
+        } else if (st.encrypted) {
+            status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}), `
+                + 'and so is every backup of it. The key comes from '
+                + (st.key_source === 'secret' ? 'COMPANY_FILE_ENCRYPTION_SECRET' : 'the launcher') + '.';
+            actions.innerHTML = '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
+        } else {
+            status.innerHTML = `<strong>Off.</strong> ${escapeHtml(st.file)} is a plain SQLite file: anyone with the file can read the books. `
+                + (st.key_source
+                    ? 'A key is set, so encryption can be turned on.'
+                    : 'To turn it on, set COMPANY_FILE_ENCRYPTION_SECRET where SlowBooks Pro starts, then start it again.');
+            actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.key_source ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
+        }
+        section.hidden = false;
+    },
+
+    async confirmEncryption(enable) {
+        // The company as it is now, not the shell's copy from when the
+        // window opened (a rename since would name it wrong).
+        let company = (App.settings && App.settings.company_name) || '';
+        try {
+            const now = await API.get('/settings');
+            if (now && now.company_name) company = now.company_name;
+        } catch (e) { /* the shell's copy will do */ }
+        SettingsPage._encryptionName = company.trim().toLowerCase();
+        const what = enable
+            ? `<p style="margin:0 0 8px;"><strong>This rewrites the company file encrypted.</strong> From then on the file, and every backup
+                of it, opens only with the key; without the key the books are unreadable, including to SlowBooks Pro.</p>`
+            : `<p style="margin:0 0 8px;"><strong>This rewrites the company file as plain SQLite.</strong> Anyone with the file can read
+                the books again.</p>`;
+        openModal(enable ? 'Turn on company file encryption' : 'Turn off company file encryption', `
+            <form id="encryption-form" onsubmit="SettingsPage.changeEncryption(event, ${enable})">
+                ${what}
+                <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name to confirm.</p>
+                <div class="form-group">
+                    <label for="encryption-company-name">Company name</label>
+                    <input type="text" id="encryption-company-name" name="company_name" autocomplete="off" required
+                        placeholder="${escapeHtml(company)}"
+                        oninput="this.form.querySelector('button[type=submit]').disabled = this.value.trim().toLowerCase() !== SettingsPage._encryptionName">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn ${enable ? 'btn-primary' : 'btn-danger'}" disabled>${enable ? 'Encrypt the company file' : 'Remove the encryption'}</button>
+                </div>
+            </form>`);
+    },
+
+    async changeEncryption(e, enable) {
+        e.preventDefault();
+        const form = e.target;
+        const btn = form.querySelector('button[type=submit]');
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = enable ? 'Encrypting…' : 'Rewriting…';
+        try {
+            const result = await API.post('/company-file/encryption', { enabled: enable, company_name: form.company_name.value });
+            closeModal();
+            toast(result.encrypted ? 'The company file is encrypted.' : 'The company file is plain SQLite again.');
+            SettingsPage.loadCompanyFile();
+        } catch (err) {
+            toast(err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = label;
+        }
     },
 
     // ------------------------------------------------------------------

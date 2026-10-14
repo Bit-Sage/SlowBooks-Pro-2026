@@ -117,6 +117,12 @@ jobs:
           # before PyInstaller copies its metadata into the bundle.
           python -c "import importlib.metadata as m, collections, sys; c = collections.Counter(d.metadata['Name'].lower() for d in m.distributions()); dup = {k: v for k, v in c.items() if v > 1}; print('duplicate distributions:', dup or 'none'); sys.exit(1 if dup else 0)"
 
+      - name: The encrypted-file driver's wheel installed (issue #290)
+        # The smoke test below is the proof that counts (the module inside
+        # the frozen bundle); this names the wheel in the log either way.
+        shell: pwsh
+        run: python -c "import sqlcipher3; print('sqlcipher', sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+
       - name: Build the .ico from the icon asset
         shell: pwsh
         run: |
