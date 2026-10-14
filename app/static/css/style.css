@@ -1992,10 +1992,16 @@ td > select[class$="-fund"] { min-width: 124px; }
    its room from Account (77 → 58 px, "6000 - A…" → "600…") and Item (84 → 51)
    on a company with cost codes (2.23.1 gate, NEW-103). The table scrolls
    sideways in its container, as the job cost entry's does, and each box keeps
-   a width that shows its name. */
-.bill-lines-table .line-item { min-width: 110px; }
-.bill-lines-table .line-account { min-width: 170px; }
-.bill-lines-table .line-cost-code { min-width: 110px; }
+   a width that shows its name. The widths sit on the visible type-ahead
+   picker (cbx--<class>, mirrored from the select by combobox.js), not on the
+   1px select behind it, and on the plain Description, Qty and Rate boxes,
+   which the wider pickers squeezed next (round 3's W-5 / NEW-103). */
+.bill-lines-table .cbx--line-item { min-width: 110px; }
+.bill-lines-table .cbx--line-account { min-width: 200px; }
+.bill-lines-table .cbx--line-cost-code { min-width: 110px; }
+.bill-lines-table .line-desc { min-width: 140px; }
+.bill-lines-table .line-qty { min-width: 64px; }
+.bill-lines-table .line-rate { min-width: 84px; }
 
 .iif-file-info {
     display: flex;

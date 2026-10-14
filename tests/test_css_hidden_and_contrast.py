@@ -255,8 +255,17 @@ def test_the_bill_forms_line_table_scrolls_sideways_with_room_for_every_box():
     )
     assert "</table></div>\n" in js
     for rule in (
-        ".bill-lines-table .line-item { min-width: 110px; }",
-        ".bill-lines-table .line-account { min-width: 170px; }",
-        ".bill-lines-table .line-cost-code { min-width: 110px; }",
+        ".bill-lines-table .cbx--line-item { min-width: 110px; }",
+        ".bill-lines-table .cbx--line-account { min-width: 200px; }",
+        ".bill-lines-table .cbx--line-cost-code { min-width: 110px; }",
+        ".bill-lines-table .line-desc { min-width: 140px; }",
+        ".bill-lines-table .line-qty { min-width: 64px; }",
+        ".bill-lines-table .line-rate { min-width: 84px; }",
     ):
         assert rule in STYLE, rule
+    # the widths reach the visible picker because combobox.js mirrors the
+    # select's classes onto it (a rule on the 1px select did nothing)
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/combobox.js").read_text(
+        encoding="utf-8"
+    )
+    assert "wrap.classList.add(`cbx--${c}`)" in js
