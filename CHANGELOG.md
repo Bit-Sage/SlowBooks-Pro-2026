@@ -37,7 +37,13 @@ a South LLC line left with both under North LLC; line-level classes
 exist since 2.22.0. The header's class is the fallback for a line without
 one.
 
-**Contributed fixes.** Migration dry runs now refuse chart, ledger, or supplied trial-balance files with no recognised records, instead of reporting a successful empty import or silently skipping balance verification (@lEWFkRAD, PR #304).
+**Contributed fixes** (@lEWFkRAD). Migration dry runs refuse a chart, ledger or supplied trial-balance file with no
+recognised records, instead of reporting a successful empty import or skipping balance verification (PR #304).
+IIF sales receipts keep the deposit account of their own allocated payment when the customer has other payments
+on the same day; the latest same-day payment could supply another receipt's account (PR #305). The Sage 50 US
+migration accepts the numeric account types the Chart of Accounts List export carries, checked against a Sage 50
+2026 sample-company export; a real export rejected all 156 accounts (PR #306).
+
 No schema change. 565 API operations.
 
 ### v2.23.0 — Both ways with QuickBooks
@@ -112,10 +118,6 @@ machine — the company file and the API — and what a cloud-backed CLI's
 model sees (#294).
 
 No new API operations: 565. Two migrations (request_keys; line quantities to four places).
-
-- IIF sales receipts keep the deposit account from their own allocated payment when the customer has other payments on the same day.
-
-- Sage 50 US migration accepts numeric account types from the Chart of Accounts List export, verified against a Sage 50 2026 sample-company export. Existing text account types remain supported.
 
 ### v2.22.3 — The ledger behind the dashboard
 
