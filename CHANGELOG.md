@@ -66,9 +66,12 @@ and its toast counts what the panel counts, "Imported 1 class and 3
 transactions", rather than a total the panel never shows. The migration dry
 run no longer says a ledger had "no records recognised" when its rows
 were read and refused one by one for accounts an empty chart does not
-list; that sentence names a file only when its parser read nothing.
-The Windows CI skip budget counts the bill form's browser measurement
-(118).
+list; that sentence names a file only when its parser read nothing. And
+docker-compose.prod.yml parses again under Compose 2.40 (#307,
+@bracycpa): its two required-secret lines carried ": " inside unquoted
+messages, which that Compose read as a mapping; they are quoted, with the
+colon gone, and a test parses every compose file in the repo. The
+Windows CI skip budget counts the bill form's browser measurement (118).
 
 **A leaf green of our own.** The green that amounts, import results and
 the success toast use was the teal-leaning one the QuickBooks palette gave
