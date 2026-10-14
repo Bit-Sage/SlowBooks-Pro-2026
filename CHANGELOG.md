@@ -7,6 +7,40 @@ on what the software does, not on what sprint shipped what.
 
 ## [Unreleased]
 
+### v2.23.1 — Entities keep their class
+
+A QuickBooks file that keeps its entities apart by class (a nonprofit and
+two LLCs in one file is the usual shape) lost that coding on every
+migration path, so the new books showed income under Uncategorized and
+lines under another entity's class (#308, raised the morning after 2.23.0
+by an accountant's advice to diff the trial balance and open AR/AP per
+entity before switching).
+
+**The IIF import carries CLASS on every block type.** It read the class
+for BILL and DEPOSIT blocks only, so an invoice, sales receipt or
+estimate whose rows all said North LLC arrived with no class on the
+document, its lines or its posting. Every block now takes the TRNS row's
+class as the document's and each split row's own class on its line and
+its journal line (an estimate's lines carry none, so an estimate takes
+the document's), with the header's as the fallback; a block whose lines
+belong to two entities imports with each line under its own (it was
+refused); and a class the file names that the list did not carry is
+created on first sight with a note, as a customer or a job is.
+
+**The report CSV import reads the Class column.** On all four reports it
+takes (Transaction Detail for invoices and sales receipts, Deposit
+Detail, Check Detail), the header row's class is the document's and each
+line's is its own, created on first sight with a note. The column was
+indexed and never read.
+
+**The IIF export writes each line's own class.** It wrote the document's
+header class on every split row, so a document with a North LLC line and
+a South LLC line left with both under North LLC; line-level classes
+exist since 2.22.0. The header's class is the fallback for a line without
+one.
+
+No schema change. 565 API operations.
+
 ### v2.23.0 — Both ways with QuickBooks
 
 Every issue that was open after 2.22.3, in one release.

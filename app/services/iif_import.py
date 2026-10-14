@@ -67,7 +67,8 @@ def parse_iif(content: str) -> dict:
         # (File > Utilities > Export > Lists > Class List). A transaction
         # IIF only ever carries CLASS as a column on SPL rows, never the
         # definitions — so without this section there is nothing for
-        # _resolve_block_class to find.
+        # _block_classes to find; a class a block names that the list did not
+        # carry is created on first sight (#308).
         "CLASS": [],
         "CUST": [],
         "VEND": [],
@@ -959,7 +960,7 @@ def import_transactions(db: Session, blocks: list) -> dict:
                 else:
                     counts["duplicates_skipped"] += 1
             elif trns_type == "BILL":
-                result = _import_bill(db, trns, spls)
+                result = _import_bill(db, trns, spls, warnings)
                 if result:
                     counts["bills"] += 1
                 else:
@@ -967,7 +968,7 @@ def import_transactions(db: Session, blocks: list) -> dict:
                     # a deliberate dedup hit, not a silent drop.
                     counts["duplicates_skipped"] += 1
             elif trns_type == "DEPOSIT":
-                result = _import_deposit(db, trns, spls)
+                result = _import_deposit(db, trns, spls, warnings)
                 if result:
                     counts["deposits"] += 1
                 else:
@@ -998,39 +999,49 @@ def import_transactions(db: Session, blocks: list) -> dict:
     }
 
 
-def _resolve_block_class(db: Session, trns_type: str, doc_ref: str, spls: list):
-    """Collapse SPL.CLASS values to a single class_id at the document level.
-
-    Classes here are header-level (Bill.class_id / Transaction.class_id),
-    so when the IIF supplies a CLASS column on SPL rows:
-      - All CLASS values absent/empty → None (reports group with
-        Uncategorized).
-      - One distinct CLASS across the block → strict lookup; a missing
-        class raises the same way a missing vendor or account does.
-      - Multiple distinct CLASS values → ValueError. Refusing beats
-        silently filing the whole document under the first class.
-    """
+def _class_for(db: Session, name: str, warnings=None):
+    """A class by the name a file gives it: exact, then case-insensitive,
+    never fuzzy. A name the books do not have is created, as a customer, a
+    vendor or a job named in a file is, and the result says so (2.23.1,
+    #308: the import refused the block instead, and a file whose entities
+    are its classes arrived with no coding or none at all)."""
     from app.services.classes_service import resolve_class_id
 
-    names = {(s.get("CLASS") or "").strip() for s in spls}
-    names.discard("")
-    if not names:
+    name = (name or "").strip()
+    if not name:
         return None
-    if len(names) > 1:
-        raise DataProblem(
-            f"{trns_type} {doc_ref}: multiple CLASS values {sorted(names)} in one "
-            f"block — classes apply per document; split the block or unify the CLASS"
-        )
-    name = names.pop()
     class_id = resolve_class_id(db, name)
-    if class_id is None:
+    if class_id is not None:
+        return class_id
+    if len(name) > _CLASS_NAME_MAX:
         raise DataProblem(
-            f"{trns_type} {doc_ref}: class '{name}' not found. Import your "
-            f"QuickBooks class list (File > Utilities > Export > Lists > Class "
-            f"List) or create it under Settings → Classes first, or correct "
-            f"the CLASS in the IIF file."
+            f"class '{name}' is over the {_CLASS_NAME_MAX}-character limit; "
+            "shorten it in the file or create it under Settings → Classes first"
         )
-    return class_id
+    row = TxnClass(name=name)
+    db.add(row)
+    db.flush()
+    if warnings is not None:
+        warnings.append(
+            f"Class '{name}' is named in the file and was not in your books: created"
+        )
+    return row.id
+
+
+def _block_classes(db: Session, trns: dict, spls: list, warnings=None):
+    """The header class and each split row's class for a block (2.23.1,
+    #308). The header is the TRNS row's CLASS, else the one class every
+    split row shares, else none; a split row keeps its own CLASS, else the
+    header's. A block whose lines belong to two classes imports with each
+    line under its own, as the forms allow since 2.22.0; it was refused."""
+    line_names = [(spl.get("CLASS") or "").strip() for spl in spls]
+    header_name = (trns.get("CLASS") or "").strip()
+    if not header_name:
+        shared = {n for n in line_names if n}
+        header_name = shared.pop() if len(shared) == 1 else ""
+    header = _class_for(db, header_name, warnings)
+    lines = [_class_for(db, n, warnings) if n else header for n in line_names]
+    return header, lines
 
 
 def _validate_block_balance(trns_type: str, trns: dict, spls: list) -> Decimal:
@@ -1053,7 +1064,7 @@ def _validate_block_balance(trns_type: str, trns: dict, spls: list) -> Decimal:
     return trns_amt
 
 
-def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
+def _import_bill(db: Session, trns: dict, spls: list, warnings=None) -> Bill:
     """Create a Bill from IIF TRNS/SPL data.
 
     QB IIF BILL convention: TRNS.AMOUNT is negative on the AP account,
@@ -1111,7 +1122,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
     # Resolve all SPL expense accounts up front. Doing this BEFORE any
     # db.add() means a partial parse (one of three SPLs has a missing
     # account) raises cleanly without a half-created Bill row.
-    block_class_id = _resolve_block_class(db, "BILL", doc_num, spls)
+    block_class_id, line_classes = _block_classes(db, trns, spls, warnings)
     spl_resolved = []
     for spl in spls:
         spl_acct_name = spl.get("ACCNT", "").strip()
@@ -1148,7 +1159,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
     db.flush()
 
     journal_lines = []
-    for spl, spl_acct, spl_amount in spl_resolved:
+    for i, (spl, spl_acct, spl_amount) in enumerate(spl_resolved):
         amt = _q(abs(spl_amount))
         memo = spl.get("MEMO", "").strip() or None
         db.add(
@@ -1159,6 +1170,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
                 quantity=Decimal("1"),
                 rate=amt,
                 amount=amt,
+                class_id=line_classes[i],
             )
         )
         if amt > 0:
@@ -1168,6 +1180,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
                     "debit": amt,
                     "credit": Decimal("0"),
                     "description": memo or f"Bill {doc_num}",
+                    "class_id": line_classes[i],
                 }
             )
 
@@ -1195,7 +1208,7 @@ def _import_bill(db: Session, trns: dict, spls: list) -> Bill:
     return bill
 
 
-def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
+def _import_deposit(db: Session, trns: dict, spls: list, warnings=None) -> Transaction:
     """Create a deposit (journal-only Transaction) from IIF TRNS/SPL.
 
     QB IIF DEPOSIT convention: TRNS.AMOUNT positive on the bank account,
@@ -1259,9 +1272,7 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
         spl_amount = _parse_decimal(spl.get("AMOUNT", ""))
         spl_resolved.append((spl, spl_acct, spl_amount))
 
-    block_class_id = _resolve_block_class(
-        db, "DEPOSIT", doc_num or bank_acct_name, spls
-    )
+    block_class_id, line_classes = _block_classes(db, trns, spls, warnings)
 
     memo = trns.get("MEMO", "").strip()
     description = memo or f"Deposit to {bank_acct.name}"
@@ -1274,7 +1285,7 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
             "description": description,
         }
     ]
-    for spl, spl_acct, spl_amount in spl_resolved:
+    for i, (spl, spl_acct, spl_amount) in enumerate(spl_resolved):
         spl_memo = spl.get("MEMO", "").strip() or None
         journal_lines.append(
             {
@@ -1282,6 +1293,7 @@ def _import_deposit(db: Session, trns: dict, spls: list) -> Transaction:
                 "debit": Decimal("0"),
                 "credit": _q(abs(spl_amount)),
                 "description": spl_memo or description,
+                "class_id": line_classes[i],
             }
         )
 
@@ -1338,6 +1350,8 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
     due_date = _parse_iif_date(trns.get("DUEDATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))
 
+    # the entity coding: the header's class and each split row's (#308)
+    header_class_id, line_classes = _block_classes(db, trns, spls, warnings)
     invoice = Invoice(
         job_id=job.id if job else None,
         invoice_number=doc_num or None,
@@ -1351,6 +1365,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
         tax_amount=Decimal("0"),
         total=total,
         balance_due=total,
+        class_id=header_class_id,
     )
     db.add(invoice)
     db.flush()
@@ -1360,7 +1375,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
     tax_total = Decimal("0")
     line_order = 0
 
-    for spl in spls:
+    for spl_index, spl in enumerate(spls):
         acct_name = spl.get("ACCNT", "").strip()
         # Quantize each SPL amount to 2dp before accumulating so the stored
         # subtotal matches sum(line.amount). QB Pro fuel-surcharge / per-unit
@@ -1401,6 +1416,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
             # blank is taxable, as QuickBooks reads it (2.23.0 gate, W-3)
             is_taxable=spl.get("TAXABLE", "").strip().upper() != "N",
             line_order=line_order,
+            class_id=line_classes[spl_index],
         )
         db.add(line)
         subtotal += spl_amount
@@ -1421,11 +1437,12 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
                 "debit": invoice.total,
                 "credit": Decimal("0"),
                 "description": f"Invoice {doc_num}",
+                "class_id": header_class_id,
             },
         ]
 
         # Find income account for credit side
-        for spl in spls:
+        for spl_index, spl in enumerate(spls):
             acct_name = spl.get("ACCNT", "").strip()
             # Quantize to match the per-line amount written above; otherwise
             # the JE credits could land a cent off the AR debit when stored.
@@ -1440,6 +1457,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
                         "debit": Decimal("0"),
                         "credit": spl_amount,
                         "description": f"Invoice {doc_num}",
+                        "class_id": line_classes[spl_index],
                     }
                 )
             else:
@@ -1457,6 +1475,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
                 source_type="invoice",
                 job_id=invoice.job_id,
                 source_id=invoice.id,
+                class_id=header_class_id,
             )
             invoice.transaction_id = txn.id
         elif total_dr != total_cr:
@@ -1480,6 +1499,7 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
                     source_type="invoice",
                     job_id=invoice.job_id,
                     source_id=invoice.id,
+                    class_id=header_class_id,
                 )
                 invoice.transaction_id = txn.id
 
@@ -1756,6 +1776,8 @@ def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Esti
     est_date = _parse_iif_date(trns.get("DATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))
 
+    # an estimate takes the document's class; its lines carry none
+    header_class_id, _line_classes = _block_classes(db, trns, spls, warnings)
     estimate = Estimate(
         job_id=job.id if job else None,
         estimate_number=doc_num or None,
@@ -1766,6 +1788,7 @@ def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Esti
         tax_rate=Decimal("0"),
         tax_amount=Decimal("0"),
         total=total,
+        class_id=header_class_id,
     )
     db.add(estimate)
     db.flush()
@@ -1774,7 +1797,7 @@ def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Esti
     tax_total = Decimal("0")
     line_order = 0
 
-    for spl in spls:
+    for spl_index, spl in enumerate(spls):
         acct_name = spl.get("ACCNT", "").strip()
         # Same per-line quantization the invoice import uses; keeps stored
         # subtotal aligned with sum(line.amount) when the source IIF has
@@ -2043,7 +2066,7 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
     # Import lists first (order matters for FK resolution)
 
     # Classes have no dependencies of their own, but transactions cite them
-    # by name and _resolve_block_class refuses unknown ones — so the list
+    # by name, and a class the list did not carry is created on first sight (#308) — so the list
     # lands before anything that can carry a CLASS.
     if parsed["CLASS"]:
         r = import_classes(db, parsed["CLASS"])

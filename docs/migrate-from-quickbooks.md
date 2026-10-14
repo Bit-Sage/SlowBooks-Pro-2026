@@ -172,6 +172,18 @@ Details worth knowing:
 
 ---
 
+## Classes: entities kept apart in one file
+
+If your QuickBooks file keeps several entities apart by class (a nonprofit
+and two LLCs in one file, say), the class travels with every posting on
+both paths (v2.23.1): the IIF import takes the TRNS row's class as the
+document's and each split row's as its line's, and the report CSV import
+reads the Class column on every report it takes, header and lines. A class
+the file names that your books do not have is created on first sight, and
+the import's result says so. Check P&L by Class afterwards: every column
+should tie to the entity's own Profit & Loss in QuickBooks, and anything
+under Uncategorized is a posting QuickBooks had no class on either.
+
 ## After the import
 
 - Spot-check **Reports → Trial Balance** against the same report in

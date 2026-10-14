@@ -1,4 +1,12 @@
 {
+  "2.23.1": {
+    "title": "Entities keep their class",
+    "items": [
+      "A QuickBooks file that keeps its entities apart by class arrives with every posting still coded to its entity: the IIF import carries CLASS on every block type, each line under its own class, creating a class the file names on first sight (#308)",
+      "The report CSV import reads the Class column on invoices, sales receipts, deposits and checks, header and lines (#308)",
+      "The IIF export writes each line's own class, with the document's as the fallback, so a document split across two entities leaves intact (#308)"
+    ]
+  },
   "2.23.0": {
     "title": "Both ways with QuickBooks",
     "items": [

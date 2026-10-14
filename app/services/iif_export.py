@@ -132,6 +132,10 @@ def _home(lines: list[tuple], rate: Decimal) -> list[tuple]:
     return [(ln["debit"], ln["credit"]) for ln in converted]
 
 
+# A split row carries its line's own class when the line has one, else the
+# document's (2.23.1, #308: every split row wrote the header's class, so a
+# document whose lines belonged to two entities left with all of them under
+# one; line-level classes exist since 2.22.0).
 def _class_name(db: Session, class_id) -> str:
     """The class a document is tagged with, verbatim (Parent:Child paths
     round-trip). Empty when untagged — the CLASS column is still emitted so
@@ -533,7 +537,7 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
                     "",
                     "",
                     _iif_text(il.description),
-                    cls,
+                    _class_name(db, getattr(il, "class_id", None)) or cls,
                 ]
                 + _item_fields(il, _rate(inv), credit)
             )
@@ -780,7 +784,7 @@ def export_estimates(db: Session) -> str:
                     str(-amt),
                     est.estimate_number or "",
                     _iif_text(el.description),
-                    cls,
+                    _class_name(db, getattr(el, "class_id", None)) or cls,
                 ]
             )
 
@@ -961,7 +965,7 @@ def export_bills(db: Session, date_from: date = None, date_to: date = None) -> s
                 "",
                 "",
                 bl.description or "",
-                cls,
+                _class_name(db, getattr(bl, "class_id", None)) or cls,
             )
         if tax_on_its_own:
             lines += _row(
@@ -1102,7 +1106,7 @@ def export_sales_receipts(
                 "",
                 "",
                 il.description or "",
-                cls,
+                _class_name(db, getattr(il, "class_id", None)) or cls,
                 extra=_item_fields(il, _rate(inv), credit),
             )
         if tax > 0:

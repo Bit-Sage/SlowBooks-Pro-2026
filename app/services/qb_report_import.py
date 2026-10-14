@@ -208,6 +208,7 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
                 "lines": [],
                 "tax_amount": Decimal("0"),
                 "tax_rate": Decimal("0"),
+                "class": _cell(row, cols, "Class"),
             }
             sales.append(current)
             continue
@@ -256,6 +257,7 @@ def _group_sales(rows, cols, start, errors, ar_names=_AR_NAMES, warnings=None):
                 "quantity": qty,
                 "rate": rate,
                 "amount": signed,
+                "class": _cell(row, cols, "Class"),
             }
         )
     return sales
@@ -361,6 +363,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                 continue
 
             subtotal = _q(line_sum)
+            header_class_id = _line_classes(db, rec, result["warnings"])  # #308
             invoice = Invoice(
                 invoice_number=_assign_number(db, rec["num"]),
                 customer_id=customer.id,
@@ -375,6 +378,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                 total=rec["total"],
                 amount_paid=rec["total"],
                 balance_due=Decimal("0"),
+                class_id=header_class_id,
             )
             db.add(invoice)
             db.flush()
@@ -395,6 +399,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                         rate=ln["rate"],
                         amount=ln["amount"],
                         line_order=order,
+                        class_id=ln["class_id"],
                     )
                 )
 
@@ -408,6 +413,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                         "debit": rec["total"],
                         "credit": Decimal("0"),
                         "description": f"Sales receipt {invoice.invoice_number}",
+                        "class_id": header_class_id,
                     }
                 ]
                 unmatched = []
@@ -430,6 +436,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                                 ln["amount"] if ln["amount"] > 0 else Decimal("0")
                             ),
                             "description": ln["description"] or "",
+                            "class_id": ln["class_id"],
                         }
                     )
                 if rec["tax_amount"]:
@@ -455,6 +462,7 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                         journal_lines,
                         source_type="invoice",
                         source_id=invoice.id,
+                        class_id=header_class_id,
                     )
                     invoice.transaction_id = txn.id
                     if unmatched:
@@ -559,6 +567,53 @@ def _status_for(total: Decimal, block: dict):
 _SETTLED = {InvoiceStatus.PAID, InvoiceStatus.PARTIAL} | {
     st for st in InvoiceStatus if "VOID" in st.name
 }
+
+
+def _report_class(db: Session, name: str, warnings=None):
+    """The class a report row names (its Class column): exact, then
+    case-insensitive; a class the books do not have is created, as a
+    customer or a job named in a report is, and the result says so once
+    (2.23.1, #308: the column was read into the index and never used, so
+    a file whose entities are its classes arrived with every posting
+    under Uncategorized)."""
+    from app.models.classes import TxnClass
+    from app.services.classes_service import resolve_class_id
+
+    name = (name or "").strip()
+    if not name:
+        return None
+    class_id = resolve_class_id(db, name)
+    if class_id is not None:
+        return class_id
+    limit = TxnClass.__table__.c.name.type.length
+    if len(name) > limit:
+        raise DataProblem(
+            f"class '{name}' is over the {limit}-character limit; shorten it in "
+            "the report or create it under Settings → Classes first"
+        )
+    row = TxnClass(name=name)
+    db.add(row)
+    db.flush()
+    if warnings is not None:
+        note = (
+            f"Class '{name}' is named in the report and was not in your books: created"
+        )
+        if note not in warnings:
+            warnings.append(note)
+    return row.id
+
+
+def _line_classes(db: Session, block: dict, warnings) -> int | None:
+    """Resolve a sale's header class and each line's (its own, else the
+    header's) onto the block's dicts; returns the header's id."""
+    header_class_id = _report_class(db, block.get("class"), warnings)
+    for ln in block["lines"]:
+        ln["class_id"] = (
+            _report_class(db, ln.get("class"), warnings)
+            if ln.get("class")
+            else header_class_id
+        )
+    return header_class_id
 
 
 def _a(word: str) -> str:
@@ -750,6 +805,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                 continue
 
             subtotal = _q(line_sum)
+            header_class_id = _line_classes(db, blk, result["warnings"])  # #308
             invoice = Invoice(
                 invoice_number=_assign_number(db, blk["num"], prefix="QB"),
                 customer_id=customer.id,
@@ -764,6 +820,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                 total=blk["total"],
                 amount_paid=paid_amt,
                 balance_due=open_bal,
+                class_id=header_class_id,
             )
             db.add(invoice)
             db.flush()
@@ -787,6 +844,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                         rate=ln["rate"],
                         amount=ln["amount"],
                         line_order=order,
+                        class_id=ln["class_id"],
                     )
                 )
 
@@ -799,6 +857,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                         "debit": blk["total"],
                         "credit": Decimal("0"),
                         "description": ledger_ref,
+                        "class_id": header_class_id,
                     }
                 ]
                 unmatched = []
@@ -821,6 +880,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                                 ln["amount"] if ln["amount"] > 0 else Decimal("0")
                             ),
                             "description": ln["description"] or "",
+                            "class_id": ln["class_id"],
                         }
                     )
                 if blk["tax_amount"]:
@@ -846,6 +906,7 @@ def import_invoice_report(db: Session, csv_text: str) -> dict:
                         journal_lines,
                         source_type="invoice",
                         source_id=invoice.id,
+                        class_id=header_class_id,
                     )
                     invoice.transaction_id = txn.id
                     if unmatched:
@@ -989,8 +1050,10 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
                         f"source account '{acct_name}' not found - import "
                         "your chart of accounts (IIF lists) first"
                     )
-                detail.append((acct, amt, _cell(drow, cols, "Name")))
-            residual = total + sum(a for _, a, _ in detail)
+                detail.append(
+                    (acct, amt, _cell(drow, cols, "Name"), _cell(drow, cols, "Class"))
+                )
+            residual = total + sum(a for _, a, _, _ in detail)
             if abs(residual) > Decimal("0.01"):
                 raise DataProblem(
                     f"block does not balance (residual {residual}); "
@@ -1017,21 +1080,30 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
                 result["duplicates_skipped"] += 1
                 continue
 
+            header_class_id = _report_class(  # the header row's Class (#308)
+                db, _cell(hdr, cols, "Class"), result["warnings"]
+            )
             journal_lines = [
                 {
                     "account_id": bank.id,
                     "debit": total,
                     "credit": Decimal("0"),
                     "description": f"Deposit to {bank.name}",
+                    "class_id": header_class_id,
                 }
             ]
-            for acct, amt, name in detail:
+            for acct, amt, name, class_name in detail:
                 journal_lines.append(
                     {
                         "account_id": acct.id,
                         "debit": amt if amt > 0 else Decimal("0"),
                         "credit": -amt if amt < 0 else Decimal("0"),
                         "description": name or f"Deposit to {bank.name}",
+                        "class_id": (
+                            _report_class(db, class_name, result["warnings"])
+                            if class_name
+                            else header_class_id
+                        ),
                     }
                 )
             create_journal_entry(
@@ -1040,6 +1112,7 @@ def import_deposit_report(db: Session, csv_text: str) -> dict:
                 f"Deposit to {bank.name} ({total})",
                 journal_lines,
                 source_type="deposit",
+                class_id=header_class_id,
             )
             sp.commit()
             result["deposits"] += 1
@@ -1122,8 +1195,15 @@ def import_check_report(db: Session, csv_text: str) -> dict:
                         f"account '{acct_name}' not found - import your "
                         "chart of accounts (IIF lists) first"
                     )
-                splits.append((acct, signed, _cell(drow, cols, "Memo")))
-            split_sum = sum(a for _, a, _ in splits)
+                splits.append(
+                    (
+                        acct,
+                        signed,
+                        _cell(drow, cols, "Memo"),
+                        _cell(drow, cols, "Class"),
+                    )
+                )
+            split_sum = sum(a for _, a, _, _ in splits)
             if abs(split_sum - total) > Decimal("0.01"):
                 raise DataProblem(
                     f"splits ({split_sum}) do not equal the check total ({total})"
@@ -1151,21 +1231,30 @@ def import_check_report(db: Session, csv_text: str) -> dict:
                 result["duplicates_skipped"] += 1
                 continue
 
+            header_class_id = _report_class(  # the header row's Class (#308)
+                db, _cell(hdr, cols, "Class"), result["warnings"]
+            )
             journal_lines = [
                 {
                     "account_id": bank.id,
                     "debit": Decimal("0"),
                     "credit": total,
                     "description": desc,
+                    "class_id": header_class_id,
                 }
             ]
-            for acct, signed, line_memo in splits:
+            for acct, signed, line_memo, class_name in splits:
                 journal_lines.append(
                     {
                         "account_id": acct.id,
                         "debit": signed if signed > 0 else Decimal("0"),
                         "credit": -signed if signed < 0 else Decimal("0"),
                         "description": line_memo or desc,
+                        "class_id": (
+                            _report_class(db, class_name, result["warnings"])
+                            if class_name
+                            else header_class_id
+                        ),
                     }
                 )
             create_journal_entry(
@@ -1175,6 +1264,7 @@ def import_check_report(db: Session, csv_text: str) -> dict:
                 journal_lines,
                 source_type="check",
                 reference=num or "",
+                class_id=header_class_id,
             )
             sp.commit()
             result["checks"] += 1
