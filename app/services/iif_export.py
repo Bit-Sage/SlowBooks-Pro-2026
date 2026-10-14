@@ -1067,7 +1067,12 @@ def export_sales_receipts(
         header_name = _customer_job(db, inv.customer, getattr(inv, "job_id", None))
         pay = (
             db.query(Payment)
-            .filter(Payment.customer_id == inv.customer_id, Payment.date == inv.date)
+            .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+            .filter(
+                PaymentAllocation.invoice_id == inv.id,
+                Payment.customer_id == inv.customer_id,
+                Payment.is_voided.is_(False),
+            )
             .order_by(Payment.id.desc())
             .first()
         )

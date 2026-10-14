@@ -113,6 +113,8 @@ model sees (#294).
 
 No new API operations: 565. Two migrations (request_keys; line quantities to four places).
 
+- IIF sales receipts keep the deposit account from their own allocated payment when the customer has other payments on the same day.
+
 ### v2.22.3 — The ledger behind the dashboard
 
 Two gaps from a user bookkeeping a bank-fed, journal-entry-heavy company
