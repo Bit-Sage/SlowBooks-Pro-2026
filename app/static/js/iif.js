@@ -127,8 +127,8 @@ const IIFPage = {
     // What an import says when it's done (#197). One that came back with
     // errors said "Imported 0 records" in green and "Import complete", and the
     // red box below was the only sign of them.
-    _reportImport(total, errors, unsupported = 0) {
-        const records = `Imported ${total} record${total === 1 ? '' : 's'}`;
+    _reportImport(total, errors, unsupported = 0, words = null) {
+        const records = words || `Imported ${total} record${total === 1 ? '' : 's'}`;
         const left = unsupported > 0 ? `, ${unsupported} not imported (type not supported)` : '';
         if (errors > 0) {
             toast(`${records}${left}, ${errors} error${errors === 1 ? '' : 's'}: see the list below`, 'error');
@@ -433,11 +433,40 @@ const IIFPage = {
                           (result.sales_receipts || 0) +
                           (result.estimates || 0) + (result.bills || 0) +
                           (result.deposits || 0);
-            IIFPage._reportImport(total, (result.errors || []).length, result.unsupported || 0);
+            IIFPage._reportImport(total, (result.errors || []).length, result.unsupported || 0,
+                IIFPage._importedWords(result));
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Import failed');
         }
+    },
+
+    // Transactions the import took, every type together.
+    _transactionsImported(result) {
+        return (result.invoices || 0) + (result.payments || 0) + (result.sales_receipts || 0)
+            + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0);
+    },
+
+    // What the IIF import brought in, in the panel's own terms (2.23.1 gate,
+    // NEW-106: "Imported 4 records" was a class and three transactions added
+    // up, a total the panel never shows): "Imported 1 class and 3
+    // transactions"; a file of records already here, "Nothing imported, 3
+    // already here".
+    _importedWords(result) {
+        const parts = [];
+        const say = (n, one, many) => { if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`); };
+        say(result.classes || 0, 'class', 'classes');
+        say(result.accounts || 0, 'account', 'accounts');
+        say(result.customers || 0, 'customer', 'customers');
+        say(result.vendors || 0, 'vendor', 'vendors');
+        say(result.items || 0, 'item', 'items');
+        say(IIFPage._transactionsImported(result), 'transaction', 'transactions');
+        if (!parts.length) {
+            const here = result.duplicates_skipped || 0;
+            return here > 0 ? `Nothing imported, ${here} already here` : 'Nothing imported';
+        }
+        const last = parts.pop();
+        return `Imported ${parts.length ? `${parts.join(', ')} and ` : ''}${last}`;
     },
 
     _showImportResult(result) {
@@ -483,14 +512,14 @@ const IIFPage = {
             </div>
             <div class="result-row"><span style="font-size:11px;color:var(--gray-500)">${named}${(result.unsupported_blocks || []).length > 8 ? '; …' : ''}</span></div>`;
         }
-        // Every transaction block in the file accounted for
+        // Every transaction block in the file accounted for, in one sentence
+        // on a line of its own: as a label beside a count across the row it
+        // wrapped after "the", the count's "3:" reading as a superscript
+        // (2.23.1 gate, NEW-106)
         if (result.transaction_blocks > 0) {
-            const imported = (result.invoices || 0) + (result.payments || 0) + (result.sales_receipts || 0)
-                + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0);
-            html += `<div class="result-row">
-                <span>Transaction blocks in the file</span>
-                <span class="result-count">${result.transaction_blocks}: ${imported} imported, ${result.duplicates_skipped || 0} already here, ${result.unsupported || 0} not imported, ${(result.errors || []).length} failed</span>
-            </div>`;
+            const n = result.transaction_blocks;
+            const imported = IIFPage._transactionsImported(result);
+            html += `<div class="result-row result-row--line">${n} transaction block${n === 1 ? '' : 's'} in the file: ${imported} imported, ${result.duplicates_skipped || 0} already here, ${result.unsupported || 0} not imported, ${(result.errors || []).length} failed</div>`;
         }
         if (result.names_changed > 0) {
             html += `<div class="result-row">

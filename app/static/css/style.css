@@ -2062,6 +2062,13 @@ td > select[class$="-fund"] { min-width: 124px; }
     border-bottom: none;
 }
 
+/* The file's transaction blocks, accounted for in one sentence on a line of
+   its own: as a label and a count across the row it wrapped, the count's
+   "3:" beside "the" reading as a superscript (2.23.1 gate, NEW-106). */
+.iif-results .result-row--line {
+    display: block;
+}
+
 .iif-results .result-count {
     font-weight: 700;
     font-family: var(--font-mono);

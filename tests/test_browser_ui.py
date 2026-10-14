@@ -455,7 +455,7 @@ def test_an_import_with_errors_says_so(browser):
             {**IIF_RESULT, "errors": [{"row": 1, "message": PAYMENT_404}]},
             [
                 "toast toast-error",
-                "Imported 0 records, 1 error: see the list below",
+                "Nothing imported, 1 error: see the list below",
                 "QuickBooks Interop — Import finished with errors",
             ],
         ),
@@ -463,7 +463,25 @@ def test_an_import_with_errors_says_so(browser):
             {**IIF_RESULT, "payments": 1, "errors": []},
             [
                 "toast toast-success",
-                "Imported 1 record",
+                "Imported 1 transaction",
+                "QuickBooks Interop — Import complete",
+            ],
+        ),
+        # the owner's walkthrough file (2.23.1 gate, NEW-106): the toast
+        # counts what the panel counts, not "Imported 4 records"
+        "walkthrough": (
+            {
+                **IIF_RESULT,
+                "classes": 1,
+                "invoices": 1,
+                "bills": 1,
+                "deposits": 1,
+                "transaction_blocks": 3,
+                "errors": [],
+            },
+            [
+                "toast toast-success",
+                "Imported 1 class and 3 transactions",
                 "QuickBooks Interop — Import complete",
             ],
         ),
@@ -489,6 +507,25 @@ def test_an_import_with_errors_says_so(browser):
             assert _last_toast_and_status(page) == expected, name
             if name == "errors":
                 assert PAYMENT_404 in page.inner_text("#iif-import-result")
+            if name == "walkthrough":
+                # the file's blocks, accounted for in one sentence on a line
+                # of its own: as a label beside a count it wrapped after
+                # "the", the count's "3:" reading as a superscript (NEW-106)
+                rows = page.evaluate(
+                    """() => [...document.querySelectorAll('#iif-import-result .result-row')]
+                        .map(r => [r.textContent.replace(/\\s+/g, ' ').trim(),
+                                   Math.round(r.getBoundingClientRect().height),
+                                   r.querySelectorAll('span').length])"""
+                )
+                first, last = rows[0], rows[-1]
+                assert first[0] == "Classes 1 imported", rows
+                assert last[0] == (
+                    "3 transaction blocks in the file: 3 imported, 0 already here, "
+                    "0 not imported, 0 failed"
+                ), rows
+                assert (
+                    last[2] == 0 and last[1] == first[1]
+                ), rows  # one line, as tall as a plain row
         finally:
             page.close()
 

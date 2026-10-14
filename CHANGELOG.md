@@ -58,7 +58,12 @@ estimate's and the job cost entry's, so every column shows at rest where
 there is room, and the table scrolls sideways in its container where
 there is not. Under every scrolling line table there is room for a
 classic scroll bar, so "+ Add Line" sits below the bar on a Mac rather
-than half under it (the job cost entry had that since 2.18.0). The migration dry
+than half under it (the job cost entry had that since 2.18.0). The IIF
+import's result ends in one sentence on a line of its own, "3 transaction
+blocks in the file: 3 imported, 0 already here, 0 not imported, 0 failed"
+(as a label beside a count it wrapped, the count reading as a superscript),
+and its toast counts what the panel counts, "Imported 1 class and 3
+transactions", rather than a total the panel never shows. The migration dry
 run no longer says a ledger had "no records recognised" when its rows
 were read and refused one by one for accounts an empty chart does not
 list; that sentence names a file only when its parser read nothing.

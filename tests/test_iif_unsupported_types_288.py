@@ -127,3 +127,13 @@ def test_the_page_shows_the_count_and_the_reconciliation():
     assert "report.unsupported_counts" in js  # Validate, by type
     assert "result.unsupported" in js  # the import's row
     assert "result.transaction_blocks" in js  # every block accounted for
+    # as one sentence on a line of its own, not a label beside a count that
+    # wrapped after "the" with the count reading as a superscript (2.23.1
+    # gate, NEW-106); and the toast counts what the panel counts
+    assert (
+        '<div class="result-row result-row--line">${n} transaction block'
+        "${n === 1 ? '' : 's'} in the file: ${imported} imported, " in js
+    )
+    css = (ROOT / "app" / "static" / "css" / "style.css").read_text(encoding="utf-8")
+    assert ".iif-results .result-row--line {\n    display: block;\n}" in css
+    assert "IIFPage._importedWords(result)" in js
