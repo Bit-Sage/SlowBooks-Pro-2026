@@ -523,9 +523,8 @@ def test_an_import_with_errors_says_so(browser):
                     "3 transaction blocks in the file: 3 imported, 0 already here, "
                     "0 not imported, 0 failed"
                 ), rows
-                assert (
-                    last[2] == 0 and last[1] == first[1]
-                ), rows  # one line, as tall as a plain row
+                # one line: as tall as a plain row (the last row has no bottom border)
+                assert last[2] == 0 and abs(last[1] - first[1]) <= 1, rows
         finally:
             page.close()
 
