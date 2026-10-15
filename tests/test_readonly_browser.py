@@ -627,7 +627,7 @@ def test_a_read_only_sign_in_leaves_settings_unasked(
 # ---- a bookkeeper ------------------------------------------------------------
 # A bookkeeper keeps the daily books, but the administrator's writes are
 # refused to it: company settings, backups, new company files, the logo,
-# connecting and importing from QuickBooks Online, Migrate Data. The pages
+# Migrate Data. The pages
 # offered them all the same (2.18.0). The controls the owner and the gate
 # named, as the sweep labels them: the admin's pages must show each as the
 # administrator's, or the sweep is not looking.

@@ -2518,10 +2518,9 @@ def test_a_link_in_running_text_has_the_halo_where_the_gate_reads_its_ground(
     page, handled = _open(browser, company)
     try:
         _no_splash(page)
-        for route, link in (
-            ("#/banking", 'a[href="https://bridge.simplefin.org"]'),
-            ("#/settings", 'a[href="https://developer.intuit.com"]'),
-        ):
+        # (Settings' developer.intuit.com link left with the QuickBooks
+        # Online connector in 2.23.2)
+        for route, link in (("#/banking", 'a[href="https://bridge.simplefin.org"]'),):
             _visit(page, handled, route)
             _keyed(page, f"document.querySelector('#page-content {link}')")
             _both_themes(page, (route, link), GOLD)
