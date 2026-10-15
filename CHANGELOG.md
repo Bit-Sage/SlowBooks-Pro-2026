@@ -29,15 +29,25 @@ A Trial Balance exported on the cash basis is set aside with a note rather
 than read as opening balances, since the Journal is accrual; exported on
 the accrual basis it verifies the import. Built against a real company's
 export, twenty-four years and 9,510 transactions, every block balanced to
-the cent; the repository's fixtures are invented books in that layout. The
-API path stays for anyone who has production keys.
+the cent; the repository's fixtures are invented books in that layout.
+
+**The QuickBooks Online connector is gone.** Intuit OAuth, the import and
+the export over Intuit's API, the QuickBooks Online page in the sidebar,
+the Intuit app credentials under Settings, the eleven `/api/qbo` routes,
+the setup guide and the two SDKs (python-quickbooks, intuit-oauth) are
+removed. The connector never served an end user (the paragraph above
+says why), and the product touted it as working; a dead end is not
+shipped. A company file that was connected while it existed is cleaned of
+the connection's credentials and tokens on the first start after
+upgrading, and keeps what the import made: the documents it created still
+void and edit as they did, the item a discount came in on still takes a
+negative line, and the mappings table stays (no schema change). On the
+Migrate Data page the journals' Type reads "QuickBooks Online export".
 
 **Also.** Migrate Data accepts a zip or an .xlsx for every source (a sheet
 is read as CSV), the migration engine reads a figure written as formula
 text ("=23683.16"), and a source may name an account's bank kind and
 parent. One new dependency, openpyxl.
-
-No schema change. 565 API operations.
 
 **Company-file encryption, the plumbing** (#290, PR #311, @grungenut).
 The first of the pull requests behind #290, encrypting the company file at
@@ -75,13 +85,33 @@ uploads folder is still needed leaves an encrypted company file alone: it
 cannot read one, and the plain-SQLite read it made would have written
 sidecar files beside the encrypted file for nothing.
 
-No schema change. 567 API operations (the two company-file ones).
+**From the gate's first round** (Windows W-1, W-2; macOS NEW-108 to
+NEW-110): a Turn off that could not replace the company file (another
+program had it open) left a plain copy beside the encrypted one; it now
+tries again for a moment, then says so in one sentence and leaves nothing
+behind, and the next start sweeps what an interrupted rewrite left. "The
+key comes from COMPANY_FILE_ENCRYPTION_SECRET" where Settings said
+"launcher". A wrong key is refused before anything opens the file (it
+used to write to it first). The dates of a user's last sign-in and a
+token's last use carry their time zone, so an evening in Central time is
+no longer tomorrow's date.
 
-Also in this release: the first of @grungenut's pull requests behind #290
-(PR #311) above, merged as contributed, and the compose fix's missing
-CHANGELOG sentence (PR #312) in the 2.23.1 entry below.
+**From the gate's second round** (Windows W-3, W-4; macOS NEW-111 to
+NEW-117): the Migrate Data page counts the customers and vendors with the
+accounts and journals ("Imported 13 accounts, 13 journals, 2 customers and
+4 vendors"), says "1 journal" rather than "1 journals", and a dry run
+counts what an import would make, so a second upload of the same export
+reads "0 accounts, 0 journals, 0 customers, 0 vendors ready to import"
+above the note that says why. The engine's "No trial balance file
+supplied" note stays out when the dialect set a cash-basis Trial Balance
+aside with its own. Chart of Accounts orders accounts without a number by
+name, so a sub-account sits with its parent. The guide says how
+receivables and payables cross over: the export's A/R and A/P come in as
+their own accounts, and the open documents at the cut-over are entered
+afterwards against them.
 
-
+No schema change. 556 API operations (the two company-file ones added,
+the eleven QuickBooks Online ones removed).
 
 ### v2.23.1 — Entities keep their class
 

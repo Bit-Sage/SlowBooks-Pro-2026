@@ -8,7 +8,7 @@ For module-deep references (models, routes, UI pages, pending items),
 see [docs/payroll-hr-module.md](payroll-hr-module.md) for payroll/HR,
 [docs/security-hardening.md](security-hardening.md) for the security
 pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
-[QuickBooks Online](setup-qbo.md), [TLS proxy](tls-proxy-setup.md)).
+[TLS proxy](tls-proxy-setup.md)).
 
 ---
 
@@ -306,15 +306,6 @@ curl http://localhost:3001/api/analytics/export.pdf > snapshot.pdf
 - **Copy Payment Link** — One-click copy of the public payment URL from the invoice view modal
 - **Webhook Handler** — Idempotent Stripe webhook processes `checkout.session.completed` events with signature verification
 - **Setup Guide** — See [docs/setup-stripe.md](setup-stripe.md)
-
-## QuickBooks Online Integration
-- **OAuth 2.0** — Connect to QuickBooks Online via Intuit's OAuth Authorization Code flow with automatic token refresh
-- **Import from QBO** — Pull accounts, customers, vendors, items, invoices, payments, sales receipts, journal entries, and posted ledger activity from QBO with dependency-ordered import and duplicate detection
-- **Export to QBO** — Push Slowbooks data to QBO with entity type mapping and ID tracking
-- **ID Mapping** — `qbo_mappings` table tracks QBO ID ↔ Slowbooks ID per entity for dedup and re-sync
-- **Setup Guide** — See [docs/setup-qbo.md](setup-qbo.md)
-
-![QuickBooks Online Integration](../screenshots/qbo-integration.png)
 
 ## Communication & Export
 - **Invoice Email** — Send invoices as PDF attachments via SMTP with configurable email settings. Includes "Pay Online" button when Stripe is enabled
@@ -638,18 +629,6 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/bank-import/preview` | POST | Preview OFX/QFX transactions |
 | `/api/bank-import/import/{id}` | POST | Import OFX/QFX into bank account |
 
-### QuickBooks Online
-| Endpoint | Methods | Description |
-|----------|---------|-------------|
-| `/api/qbo/auth-url` | GET | Generate Intuit OAuth authorization URL |
-| `/api/qbo/callback` | GET | OAuth redirect handler (stores tokens) |
-| `/api/qbo/disconnect` | POST | Clear stored QBO tokens |
-| `/api/qbo/status` | GET | Connection status (never returns raw tokens) |
-| `/api/qbo/import` | POST | Import all entity types from QBO |
-| `/api/qbo/import/{entity}` | POST | Import single entity type |
-| `/api/qbo/export` | POST | Export all entity types to QBO |
-| `/api/qbo/export/{entity}` | POST | Export single entity type |
-
 ### Online Payments
 | Endpoint | Methods | Description |
 |----------|---------|-------------|
@@ -728,7 +707,7 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
   entries. A line without its own job inherits the document's.
 - Job Profitability report and per-job detail from posted ledger lines;
   "No job" bucket keeps totals equal to the P&L.
-- IIF `Customer:Job` and QBO sub-customers import as jobs under the customer.
+- IIF `Customer:Job` imports as a job under the customer.
 - Roadmap (cost codes, committed cost, change orders, progress billing,
   time/burden, WIP): `docs/design/projects.md`.
 - Cost codes (Settings → Cost Codes; CSI MasterFormat loader) with cost

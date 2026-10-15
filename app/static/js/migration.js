@@ -62,13 +62,40 @@ const MigrationPage = {
         return fd;
     },
 
+    // "13 journals", "1 journal": a count with its word.
+    _n(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; },
+
+    // What the result counts: accounts and journals always, customers and
+    // vendors when the source brings lists (the QuickBooks Online export).
+    // A dry run counts what an import would make: the chart's accounts not
+    // in the books yet, and the journals not already imported.
+    _counts(data, imported) {
+        const n = MigrationPage._n;
+        const accounts = imported ? data.imported_accounts
+            : (data.new_accounts ?? data.accounts);
+        const journals = imported ? data.imported_journals
+            : data.journals - (data.duplicate_journals || 0);
+        const parts = [n(accounts, 'account'), n(journals, 'journal')];
+        const customers = imported ? data.imported_customers : data.customers;
+        const vendors = imported ? data.imported_vendors : data.vendors;
+        if (customers != null) parts.push(n(customers, 'customer'));
+        if (vendors != null) parts.push(n(vendors, 'vendor'));
+        return parts;
+    },
+
+    // "13 accounts, 13 journals, 2 customers and 4 vendors"
+    _list(parts) {
+        return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+    },
+
     _renderResult(data, imported) {
         const errs = data.errors.map(e => `<li style="color:var(--danger);">${escapeHtml(e)}</li>`).join('');
         const warns = data.warnings.map(w => `<li style="color:var(--text-warning);">${escapeHtml(w)}</li>`).join('');
+        const parts = MigrationPage._counts(data, imported);
         const head = imported
-            ? (data.ok ? `<strong>Imported ${data.imported_accounts} accounts and ${data.imported_journals} journals.</strong>`
+            ? (data.ok ? `<strong>Imported ${MigrationPage._list(parts)}.</strong>`
                        : '<strong style="color:var(--danger);">Import refused — fix the dry-run errors below.</strong>')
-            : (data.ok ? `<strong>Dry run passed:</strong> ${data.accounts} accounts, ${data.journals} journals ready to import.`
+            : (data.ok ? `<strong>Dry run passed:</strong> ${parts.join(', ')} ready to import.`
                        : '<strong style="color:var(--danger);">Dry run failed:</strong>');
         $('#migration-result').innerHTML = `${head}<ul style="margin-top:6px;">${errs}${warns}</ul>`;
     },
@@ -97,7 +124,7 @@ const MigrationPage = {
             if (!resp.ok) throw new Error(await API.responseError(resp, 'Import failed'));
             const data = await resp.json();
             MigrationPage._renderResult(data, true);
-            if (data.ok) toast(`Imported ${data.imported_accounts} accounts, ${data.imported_journals} journals`);
+            if (data.ok) toast(`Imported ${MigrationPage._list(MigrationPage._counts(data, true))}`);
         } catch (err) { toast(err.message, 'error'); }
     },
 };

@@ -198,7 +198,6 @@ def test_setup_accounts_is_idempotent_and_yields_taken_numbers(client, seed_acco
 # "class code" on employees.
 LEAVE_ALONE = {
     "iif.js",
-    "qbo.js",
     "ocr.js",
     "ocr_canvas.js",
     "migration.js",
@@ -323,7 +322,6 @@ def test_invoice_and_receipt_pdfs_are_named_in_the_company_words(
 _SWEEP_EXEMPT = {
     # interop, tax, HR and shell files keep their own vocabulary by design
     "iif.js",
-    "qbo.js",
     "ocr.js",
     "ocr_receipts.js",
     "migration.js",

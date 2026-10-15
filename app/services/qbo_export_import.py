@@ -638,6 +638,7 @@ def _prepare(bundle: dict) -> tuple[dict, list[str]]:
     notes: list[str] = []
     if "tb" in bundle and trial_balance_basis(bundle["tb"]) == "cash":
         bundle["tb_names_only"] = bundle.pop("tb")
+        bundle["tb_set_aside"] = True  # the engine's "no trial balance" note stays out
         notes.append(
             "The Trial Balance was exported on the cash basis, and the Journal is "
             "accrual, so the two cannot be compared: balances were not verified. "
@@ -647,18 +648,20 @@ def _prepare(bundle: dict) -> tuple[dict, list[str]]:
     return bundle, notes
 
 
-def _counts(bundle: dict) -> dict:
+def _counts(db: Session, bundle: dict) -> dict:
+    """The customers and vendors an import would make: the lists' names not
+    in the books yet, as _import_contacts counts them."""
+
+    def new(kind, label, model):
+        if kind not in bundle:
+            return 0
+        have = {row.name.lower() for row in db.query(model.name).all()}
+        names = {spec["name"].lower() for spec in parse_contacts(bundle[kind], label)}
+        return len(names - have)
+
     return {
-        "customers": (
-            len(parse_contacts(bundle["customers"], "Customer"))
-            if "customers" in bundle
-            else 0
-        ),
-        "vendors": (
-            len(parse_contacts(bundle["vendors"], "Vendor"))
-            if "vendors" in bundle
-            else 0
-        ),
+        "customers": new("customers", "Customer", Customer),
+        "vendors": new("vendors", "Vendor", Vendor),
     }
 
 
@@ -666,7 +669,7 @@ def dry_run(db: Session, bundle: dict) -> dict:
     prepared, notes = _prepare(bundle)
     verdict = dry_run_bundle(db, prepared, _parsers(prepared), LABEL, SOURCE_TYPE)
     verdict["warnings"] = notes + list(_COA_NOTES) + verdict["warnings"]
-    verdict.update(_counts(bundle))
+    verdict.update(_counts(db, bundle))
     return verdict
 
 
@@ -674,7 +677,7 @@ def run_import(db: Session, bundle: dict) -> dict:
     prepared, notes = _prepare(bundle)
     result = run_import_bundle(db, prepared, _parsers(prepared), SOURCE_TYPE, LABEL)
     result["warnings"] = notes + list(_COA_NOTES) + result["warnings"]
-    result.update(_counts(bundle))
+    result.update(_counts(db, bundle))
     if result["ok"]:
         customers, vendors = _import_contacts(db, bundle)
         db.commit()

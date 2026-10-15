@@ -272,12 +272,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # public /pay/{token} page (a Jinja template, outside the JS scan).
     ("POST", "/api/payments/{provider_name}/webhook"),
     ("POST", "/api/payments/{provider_name}/create-checkout-session"),
-    ("GET", "/api/qbo/callback"),
-    # The synchronous QBO imports: the page starts a background run
-    # (POST /api/qbo/import-runs, #192). These stay for API clients, share
-    # its one-import-per-company guard, and are listed in docs/setup-qbo.md.
-    ("POST", "/api/qbo/import"),
-    ("POST", "/api/qbo/import/{entity}"),
     # The logo image. Its address IS the company_logo_path setting, which
     # the Settings page and the invoice view put in an <img src> as a value,
     # not a literal the JS scan can see.

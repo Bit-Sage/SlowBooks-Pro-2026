@@ -189,26 +189,6 @@ const scenarios = {
     await p.get('ScanHelper').scan({ name: 'receipt.jpg' }, () => {});
     return p.els['#scan-status'].textContent;
   },
-  async 'qbo.js import'() {
-    // The import runs on the server (#192): the page posts one start and
-    // says why it was refused in the import log's status line.
-    const p = page(['app/static/js/qbo.js']);
-    const Q = p.get('QBOPage');
-    Object.assign(Q, { _mounted: true, _monitorReady: true, _status: { connected: true } });
-    Q._getChecked = () => ['customers'];
-    Q._pollLog = async () => {};
-    await Q.importSelected();
-    return Q._startError ? p.els['#qbo-run-detail'].textContent : '(nothing shown)';
-  },
-  async 'qbo.js export'() {
-    const p = page(['app/static/js/qbo.js']);
-    const Q = p.get('QBOPage');
-    let shown = '(nothing shown)';
-    Q._getChecked = () => ['customers'];
-    Q._showResult = (_id, result) => { shown = result.errors.map(e => e.message).join(' | '); };
-    await Q.exportSelected();
-    return shown;
-  },
   async 'desktop_shim.js document window'() {
     // The shell's window.open: fetches the document itself and says why
     // it could not.

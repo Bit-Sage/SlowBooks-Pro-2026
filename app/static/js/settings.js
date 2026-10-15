@@ -30,9 +30,6 @@ const SettingsPage = {
         paypal_client_secret: 'the PayPal client secret, under Online Payments',
         square_access_token: 'the Square access token, under Online Payments',
         square_webhook_signature_key: 'the Square webhook signature key, under Online Payments',
-        qbo_client_secret: 'the QuickBooks Online client secret, under QuickBooks Online',
-        qbo_access_token: 'the QuickBooks Online connection: connect again on the QuickBooks Online page',
-        qbo_refresh_token: 'the QuickBooks Online connection: connect again on the QuickBooks Online page',
         simplefin_access_url: 'the SimpleFIN bank feed: connect again on Banking',
         closing_date_password: 'the closing-date password, under Closing Date',
         ai_api_key: 'the AI Insights API key, under AI Insights',
@@ -335,33 +332,6 @@ const SettingsPage = {
                         <div class="form-group"><label>Webhook Notification URL</label>
                             <input name="square_notification_url" value="${escapeHtml(s.square_notification_url || '')}"
                                 placeholder="Exact URL registered in the Square dashboard"></div>
-                    </div>
-                </div>
-
-                <div class="settings-section" role="group" aria-labelledby="settings-h-quickbooks-online">
-                    <h3 id="settings-h-quickbooks-online">QuickBooks Online</h3>
-                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
-                        Configure your Intuit Developer app credentials for QBO integration.
-                        Get these from <a href="https://developer.intuit.com" target="_blank" style="color:var(--text-link);">developer.intuit.com</a>.
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>Enable QBO Integration</label>
-                            <select name="qbo_enabled">
-                                <option value="false" ${s.qbo_enabled !== 'true' ? 'selected' : ''}>Disabled</option>
-                                <option value="true" ${s.qbo_enabled === 'true' ? 'selected' : ''}>Enabled</option>
-                            </select></div>
-                        <div class="form-group"><label>Environment</label>
-                            <select name="qbo_environment">
-                                <option value="sandbox" ${s.qbo_environment !== 'production' ? 'selected' : ''}>Sandbox</option>
-                                <option value="production" ${s.qbo_environment === 'production' ? 'selected' : ''}>Production</option>
-                            </select></div>
-                        <div class="form-group"><label>Client ID</label>
-                            <input name="qbo_client_id" value="${escapeHtml(s.qbo_client_id || '')}" placeholder="ABo8gw..."></div>
-                        <div class="form-group"><label>Client Secret</label>
-                            <input name="qbo_client_secret" type="password" value="${escapeHtml(s.qbo_client_secret || '')}" placeholder="tJCdgW..."></div>
-                        <div class="form-group full-width"><label>Redirect URI</label>
-                            <input name="qbo_redirect_uri" value="${escapeHtml(s.qbo_redirect_uri || 'http://localhost:8000/api/qbo/callback')}"
-                                placeholder="http://localhost:8000/api/qbo/callback"></div>
                     </div>
                 </div>
 

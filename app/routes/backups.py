@@ -100,25 +100,6 @@ def restore(data: RestoreRequest, db: Session = Depends(get_db)):
             status_code=404, detail=f"Backup file not found: {filepath.name}"
         )
 
-    # A QuickBooks Online import runs in the background and goes on writing,
-    # with the accounts and mappings it has read, into whatever books are
-    # there: replacing them under it would mix its writes into the backup.
-    from app.services import qbo_import_runs
-
-    importing = qbo_import_runs.store_for(db).latest()["run"]
-    if importing and importing["status"] in qbo_import_runs.ACTIVE:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "qbo_import_running",
-                "message": (
-                    "A QuickBooks Online import is still running for this "
-                    "company. Restore when it has finished; the QuickBooks "
-                    "Online page shows its progress."
-                ),
-            },
-        )
-
     other = backup_service.other_company(db, filepath.name)
     if other and not data.allow_other_company:
         raise HTTPException(

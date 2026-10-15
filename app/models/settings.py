@@ -100,17 +100,6 @@ DEFAULT_SETTINGS = {
     "simplefin_account_map": "{}",  # JSON {simplefin id: bank_account_id}
     "simplefin_accounts_cache": "[]",  # last-seen bridge accounts, for the UI
     "simplefin_last_sync": "",
-    # QuickBooks Online Integration
-    "qbo_enabled": "false",
-    "qbo_client_id": "",
-    "qbo_client_secret": "",
-    "qbo_redirect_uri": "http://localhost:3001/api/qbo/callback",
-    "qbo_environment": "sandbox",
-    "qbo_access_token": "",
-    "qbo_refresh_token": "",
-    "qbo_realm_id": "",
-    "qbo_token_expires_at": "",
-    "qbo_oauth_state": "",
     # Class tracking (#243): "true" starts every entry form with no class
     # chosen and asks before a transaction is saved without one (it would
     # be reported under Uncategorized); "false" starts the picker on

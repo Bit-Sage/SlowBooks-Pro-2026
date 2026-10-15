@@ -97,7 +97,10 @@ def list_accounts(
         q = q.filter(Account.account_type == account_type)
     if bank:
         q = q.filter(Account.bank_kind.isnot(None))
-    return _in_company_words(db, q.order_by(Account.account_number).all())
+    # By number, and accounts without one (a chart imported from QuickBooks
+    # Online, whose accounts carry none) by name, so a sub-account named
+    # Parent:Child sits with its parent.
+    return _in_company_words(db, q.order_by(Account.account_number, Account.name).all())
 
 
 @router.get("/{account_id}", response_model=AccountResponse)

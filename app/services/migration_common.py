@@ -273,14 +273,19 @@ def dry_run_bundle(
                         f"Trial balance mismatch for {name!r}: GL nets "
                         f"{_q(tb[name] - diff)}, trial balance says {_q(tb[name])}"
                     )
-    else:
+    elif not bundle.get("tb_set_aside"):
+        # A dialect that set the trial balance aside (one on the cash basis,
+        # beside an accrual journal) has said so in a note of its own.
         warnings.append("No trial balance file supplied — balance verification skipped")
 
+    existing = {a.name.lower() for a in db.query(Account).all()}
     return {
         "ok": not errors,
         "errors": errors,
         "warnings": warnings,
         "accounts": len(accounts),
+        # the chart's accounts not in the books yet: what an import would make
+        "new_accounts": len([a for a in accounts if a["name"].lower() not in existing]),
         "journals": len(journals),
         "duplicate_journals": len(duplicates),
         "opening_balances": opening_balances,

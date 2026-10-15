@@ -88,9 +88,6 @@ from app.routes import companies, employees, payroll
 # Phase 7: Online Payments
 from app.routes import provider_payments, public
 
-# Phase 8: QuickBooks Online
-from app.routes import qbo
-
 # Phase 9: Forum Bug Fixes & Missing Features
 from app.routes import journal, deposits, cc_charges, checks, expenses, transfers
 
@@ -390,9 +387,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass  # a diagnostic, never a reason not to boot
     # At-rest upgrade: encrypt any legacy plaintext credential rows (SMTP,
-    # payment, QBO, SimpleFIN secrets) on first boot after upgrading.
+    # payment, SimpleFIN secrets) on first boot after upgrading, and drop
+    # the rows of a retired integration's settings.
     try:
-        from app.services.settings_service import upgrade_plaintext_secrets
+        from app.services.settings_service import (
+            remove_retired_settings,
+            upgrade_plaintext_secrets,
+        )
 
         _db = SessionLocal()
         try:
@@ -401,6 +402,8 @@ async def lifespan(app: FastAPI):
             # logging taint (alert #38), and the count isn't worth arguing.
             if upgrade_plaintext_secrets(_db):
                 print("Encrypted legacy plaintext secret settings at rest")
+            if remove_retired_settings(_db):
+                print("Removed the settings of a retired integration")
         finally:
             _db.close()
     except Exception:
@@ -743,17 +746,6 @@ _AUTH_EXEMPT_EXACT = {
     "/analytics",  # redirect to SPA hash route
     "/favicon.ico",
     "/api/stripe/webhook",  # legacy alias — Stripe auth via signature
-    # Intuit's OAuth redirect lands the browser back here directly from
-    # accounts.intuit.com — a cross-site top-level navigation, so a
-    # SameSite=Strict session cookie is never attached (browsers withhold
-    # Strict cookies on any cross-site request, no exceptions). Session-
-    # gating this route made every QBO connection attempt dead-end on
-    # {"detail": "Not authenticated"} before qbo_service.handle_callback
-    # ever ran. Safe to exempt: the flow already carries its own CSRF
-    # protection independent of the session — get_auth_url() stores a
-    # random `state` token server-side and handle_callback() rejects any
-    # callback whose `state` doesn't match (see app/services/qbo_service.py).
-    "/api/qbo/callback",
 }
 # Provider payment routes that are public by design:
 #   - webhook: the provider's signature is the authentication
@@ -786,7 +778,6 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/company-file",
     "/api/companies",
     "/api/migration",
-    "/api/qbo/connect-manual",
     # Staff records carry SSN, pay rate and W-4 elections: creating or
     # editing one is HR, not daily books (GHSA-rh75-6834-f66j).
     "/api/employees",
@@ -1045,7 +1036,6 @@ app.include_router(provider_payments.router)
 app.include_router(provider_payments.legacy_stripe_router)
 app.include_router(public.router)
 # Phase 8: QuickBooks Online
-app.include_router(qbo.router)
 # Phase 9: Analytics (real-time business intelligence)
 app.include_router(analytics.router)
 # Phase 9: Forum Bug Fixes & Missing Features

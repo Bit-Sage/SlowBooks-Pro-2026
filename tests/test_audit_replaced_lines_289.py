@@ -161,7 +161,6 @@ def test_the_helper_is_the_only_way_lines_are_replaced():
         "app/routes/bills.py",
         "app/routes/invoices/crud.py",
         "app/routes/invoices/helpers.py",
-        "app/services/qbo_import.py",  # the QBO re-import of a changed sale (W-1)
         "app/routes/estimates.py",
     ):
         src = (root / rel).read_text(encoding="utf-8")
@@ -170,8 +169,6 @@ def test_the_helper_is_the_only_way_lines_are_replaced():
     assert ".filter(BillLine.bill_id == bill.id).delete()" not in bills
     crud = (root / "app/routes/invoices/crud.py").read_text(encoding="utf-8")
     assert "InvoiceLine.invoice_id == invoice_id).delete()" not in crud
-    qbo = (root / "app/services/qbo_import.py").read_text(encoding="utf-8")
-    assert "InvoiceLine.invoice_id == invoice.id).delete()" not in qbo
     est = (root / "app/routes/estimates.py").read_text(encoding="utf-8")
     assert "EstimateLine.estimate_id == estimate_id).delete()" not in est
     # the rows go through the session, not a bulk DELETE that leaves them loaded

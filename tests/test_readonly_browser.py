@@ -100,11 +100,9 @@ SWEEP = r"""(root) => {
   const ADMIN = new RegExp([
     /\bAPI\s*\.\s*(?:post|put|del|patch)\s*\(\s*['"`]\/(?:settings|backups|companies|users|tokens|employees|migration)\b/,
     /\bAPI\s*\.\s*(?:get|post|put|del|patch)\s*\(\s*['"`]\/(?:payroll|tax-forms|benefits|deductions|onboarding|users|tokens)\b/,
-    /\bAPI\s*\.\s*get\s*\(\s*['"`]\/qbo\/auth-url\b/,
-    /\bAPI\s*\.\s*(?:post|del)\s*\(\s*['"`]\/(?:qbo\/connect-manual|qbo\/import|uploads\/logo)\b/,
-    // fetch: an import from another program, starting a QBO import (not
-    // reading its log), the logo
-    /['"`]\/api\/(?:migration\/|qbo\/import-runs['"`]|uploads\/logo)/,
+    /\bAPI\s*\.\s*(?:post|del)\s*\(\s*['"`]\/uploads\/logo\b/,
+    // fetch: an import from another program, the logo
+    /['"`]\/api\/(?:migration\/|uploads\/logo)/,
   ].map(r => r.source).join('|'));
   const CALL = /\b(this|[A-Z][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/g;
   // A function's own code: not its comments, nor the handlers it writes
@@ -282,7 +280,6 @@ FOUND_ON_PAGES = {
     "#/batch-payments": {"Select All", "Apply Batch Payment"},
     "#/quick-entry": {"Save & Next (Ctrl+Enter)"},
     "#/csv": {"Import"},
-    "#/qbo": {"Finish QBO connection"},
     "#/banking": {"Connect"},
 }
 FOUND_IN_DIALOGS = {
@@ -647,7 +644,6 @@ ADMIN_ON_PAGES = {
         "ocr-engine-pref",
         "Save AI settings",
     },
-    "#/qbo": {"Start connection with Intuit", "Finish QBO connection"},
     "#/companies": {"+ New Company"},
 }
 KEEPER_NOTES = {
@@ -655,10 +651,6 @@ KEEPER_NOTES = {
         "Company settings are changed by an administrator.",
         "AI settings are changed by an administrator.",
         "Backups are made, downloaded and restored by an administrator.",
-    ],
-    "#/qbo": [
-        "Connecting to QuickBooks Online is done by an administrator.",
-        "Importing from QuickBooks Online is done by an administrator.",
     ],
     "#/companies": ["New company files are created by an administrator."],
 }
@@ -685,8 +677,8 @@ def test_no_page_offers_a_bookkeeper_an_administrators_control(
         for route in only
         if not keeper_run["headings"][route].endswith("is for administrators")
     } == {}
-    # everything else stays: Settings' lists, QBO's export, every other
-    # page's reads and writes
+    # everything else stays: Settings' lists, every other page's reads and
+    # writes
     assert (
         _lost_to_keeper({r: c for r, c in admin.items() if r not in only}, kept) == {}
     )
@@ -701,7 +693,6 @@ def test_no_page_offers_a_bookkeeper_an_administrators_control(
         "opening-balances",
         "settings",
         "companies",
-        "qbo",
     } <= set(keeper_run["sidebar"])
 
 

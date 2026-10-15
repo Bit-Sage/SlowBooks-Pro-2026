@@ -83,7 +83,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (567 operations in v2.23) — built for Claude
+self-documenting local REST API (556 operations in v2.23.2) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
@@ -144,8 +144,8 @@ Full catalog in **[docs/features.md](docs/features.md)**. Highlights:
 - **Interop & migration** — QuickBooks IIF round-trip incl. sales
   receipts, and QuickBooks Online from its own Export data zip with no
   Intuit developer app ([docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md)),
-  [QBO OAuth sync](docs/setup-qbo.md), Migrate Data for Xero / MYOB /
-  Sage 50 / Wave / Zoho Books / GnuCash, Opening Balances wizard
+  Migrate Data for Xero / MYOB / Sage 50 / Wave / Zoho Books / GnuCash,
+  Opening Balances wizard
 - **Fixed assets** — register, depreciation runs, disposal with
   gain/loss, reconciliation report
 - **Nonprofit mode** — your own words on every screen and document; funds
@@ -237,10 +237,10 @@ Production checklist: **[docs/release-checklist.md](docs/release-checklist.md)**
 | [docs/banking.md](docs/banking.md) | The register is the ledger: entries, feeds as a review queue, transfers, reconciliation |
 | [docs/nonprofit-module.md](docs/nonprofit-module.md) | Nonprofit mode: funds, restrictions, functional expenses, donor documents |
 | [docs/accessibility.md](docs/accessibility.md) | WCAG 2.1 AA conformance, known gaps, how to report a barrier |
-| [docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md) | QuickBooks Desktop (IIF) and Online migration (the API, or the Export data zip with no Intuit app), sales receipts included |
+| [docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md) | QuickBooks Desktop (IIF) and QuickBooks Online (its Export data zip, no Intuit app) migration, sales receipts included |
 | [docs/state-withholding.md](docs/state-withholding.md) | State income-tax withholding tables and their sources |
 | [docs/setup-bank-feeds.md](docs/setup-bank-feeds.md) | SimpleFIN bank feeds |
-| [docs/setup-qbo.md](docs/setup-qbo.md) · [Stripe](docs/setup-stripe.md) · [PayPal](docs/setup-paypal.md) · [Square](docs/setup-square.md) | Integrations |
+| [Stripe](docs/setup-stripe.md) · [PayPal](docs/setup-paypal.md) · [Square](docs/setup-square.md) | Payment integrations |
 | [docs/migrate-from-myob.md](docs/migrate-from-myob.md) | MYOB migration walkthrough |
 | [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) | Policy, contributing, history |
 

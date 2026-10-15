@@ -74,8 +74,6 @@ const App = {
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
         // Phase 4: CSV Import/Export
         '/csv':           { page: 'csv',             label: 'CSV Import/Export',  render: () => App.renderCSV() },
-        // Phase 8: QuickBooks Online
-        '/qbo':           { page: 'qbo',             label: 'QuickBooks Online',  render: () => QBOPage.render(), mount: () => QBOPage.mount() },
         // Phase 5: Advanced Integration
         '/tax':           { page: 'tax',             label: 'Tax Reports',        render: () => TaxPage.render() },
         // Phase 6: Ambitious
@@ -679,8 +677,7 @@ const App = {
         'BankingPage.dismissLegacy', 'BankingPage.syncSimpleFIN', 'BankingPage.disconnectSimpleFIN',
         'BankingPage.showSimpleFINHistory', 'BankRulesPage.deleteRule', 'BankRulesPage.applyAll', 'TaxPage.showPaySalesTax',
         'ReportsPage.sendCollectionLetters', 'ReportsPage.batchEmailStatements', 'ReportsPage.emailGivingStatements',
-        'ReportsPage.applyLateFees', 'ReportsPage.deleteSaved', 'QBOPage.importAll', 'QBOPage.importSelected',
-        'QBOPage.exportAll', 'QBOPage.exportSelected', 'QBOPage.connect', 'QBOPage.disconnect', 'IIFPage.importFile',
+        'ReportsPage.applyLateFees', 'ReportsPage.deleteSaved', 'IIFPage.importFile',
         'IIFPage.importQbReportCsv', 'MigrationPage.doImport', 'OpeningBalancesPage.save', 'BudgetsPage.saveAll',
     ]),
 

@@ -241,8 +241,8 @@ def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
 
 def kept_tax(invoice, tax_rate, lines):
     """The tax amount an edit keeps as it is: one an import brought with no
-    rate that gives it (QuickBooks Online's, when its tax lines don't make a
-    single rate; see qbo_import._qbo_rate). Worked out from the rate, it
+    rate that gives it (QuickBooks Online's, when its tax lines didn't make
+    a single rate). Worked out from the rate, it
     would come to 0.00. None when a rate is entered, when the invoice has a
     rate or no tax, or when no line is taxable now."""
     if tax_rate and Decimal(str(tax_rate)) != 0:
@@ -335,9 +335,9 @@ def _post_invoice_journal(
     """One construction/conversion/posting path for invoice create and edit.
 
     `balance_on_income` is for an invoice the QuickBooks Online import
-    created. Its discount and bundles come across as lines
-    (qbo_import._document_lines), so its lines add up to its total; a line
-    of a kind the import doesn't bring across still leaves a difference,
+    created. Its discount and bundles came across as lines, so its lines
+    add up to its total; a line of a kind the import didn't bring across
+    still leaves a difference,
     which the import log named. That difference posts to the income
     account, said plainly on the entry and in the server log, so the entry
     carries the total the invoice shows."""

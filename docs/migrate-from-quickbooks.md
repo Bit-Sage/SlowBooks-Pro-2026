@@ -5,41 +5,27 @@ QuickBooks you're leaving:
 
 | You're on | Use | Where in SlowBooks |
 |---|---|---|
-| **QuickBooks Online** | Direct API import over OAuth | sidebar → **QuickBooks Online** |
-| **QuickBooks Online**, no Intuit app | Its own Export data zip | sidebar → **Migrate Data** → QuickBooks Online export |
+| **QuickBooks Online** | Its own Export data zip (no Intuit app) | sidebar → **Migrate Data** → QuickBooks Online export |
 | **QuickBooks Desktop** (2003–current) | IIF file import | sidebar → **QuickBooks Interop** |
 
-Both paths import accounts, customers, vendors, items, invoices,
+The Desktop path imports accounts, customers, vendors, items, invoices,
 payments, and **sales receipts**. Sales receipts come across as what
 they are underneath: a paid invoice plus its payment, flagged so they
-show up on SlowBooks' own Sales Receipts page.
+show up on SlowBooks' own Sales Receipts page. The Online path brings
+the chart, every transaction as a journal entry, and the customer and
+vendor lists; documents start fresh from the cut-over date.
+
+Until 2.23.2 there was a third way, a connection to QuickBooks Online
+over Intuit's API. It needed an app in Intuit's developer portal, and
+keys that reach a real company sit behind an app questionnaire written
+for software vendors, so it never served anyone; it is gone, and the
+Export data path replaces it.
 
 ---
 
-## Path 1 — QuickBooks Online (direct API)
+## Path 1 — QuickBooks Online (Export data)
 
-One-time setup: connect SlowBooks to your QBO company with OAuth —
-follow [setup-qbo.md](setup-qbo.md) (free Intuit developer account,
-~10 minutes). Then:
-
-1. Open **QuickBooks Online** in the sidebar.
-2. Click **Import All Data**. Entities come over in dependency order
-   (accounts → customers → vendors → items → invoices → payments →
-   sales receipts), so references resolve as they land.
-3. Or use the checkboxes to import entity types selectively — e.g.
-   just **Sales Receipts** on a re-run.
-
-Re-runs are safe: every imported record is tracked by its QBO id, and
-untracked records are matched by name/number, so nothing imports twice.
-
----
-
-## Path 1b — QuickBooks Online without the API (Export data)
-
-Intuit's developer portal gives out sandbox keys freely, but keys that reach
-a real company sit behind an app questionnaire written for software vendors.
-If you would rather not go through that, QuickBooks Online's own export is
-enough, and needs no Intuit app at all.
+QuickBooks Online's own export is enough, and needs no Intuit app at all.
 
 1. In QuickBooks Online: the **gear** → **Tools** → **Export data**. Leave
    every report and list ticked, and set the date range to **All**. Before
@@ -75,6 +61,18 @@ What comes across:
 Re-uploading the same export is safe: every transaction is tracked by its
 type, number and date, and nothing posts twice. Afterwards, follow **After
 the import** below.
+
+**Receivables and payables.** The export names its control accounts
+"Accounts Receivable (A/R)" and "Accounts Payable (A/P)", and they come
+across as accounts of their own, beside SlowBooks' 1100 Accounts
+Receivable and 2000 Accounts Payable, with the balances the history gives
+them. The A/R and A/P aging read documents, not journal lines, so the
+open invoices and unpaid bills at the cut-over are entered as documents
+afterwards, dated as they were: an invoice posts to 1100, so offset its
+amount with a journal entry from the imported A/R account (and a bill's
+from the imported A/P account). When every open document is in, the
+imported accounts are at zero and the aging matches what QuickBooks
+showed.
 
 ## Path 2 — QuickBooks Desktop (IIF files)
 

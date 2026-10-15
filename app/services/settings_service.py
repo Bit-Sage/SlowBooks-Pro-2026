@@ -39,12 +39,37 @@ ENCRYPTED_SETTINGS_KEYS = frozenset(
         "paypal_client_secret",
         "square_access_token",
         "square_webhook_signature_key",
-        "qbo_client_secret",
-        "qbo_access_token",
-        "qbo_refresh_token",
         "simplefin_access_url",
     }
 )
+
+
+# The settings of the QuickBooks Online connector, retired in 2.23.2
+# (services/qbo_common.py says why): an Intuit app's credentials and the
+# tokens of a connection, with no reader left. A company file that holds
+# them is cleaned on the first start after upgrading.
+RETIRED_SETTINGS_KEYS = (
+    "qbo_enabled",
+    "qbo_client_id",
+    "qbo_client_secret",
+    "qbo_redirect_uri",
+    "qbo_environment",
+    "qbo_access_token",
+    "qbo_refresh_token",
+    "qbo_realm_id",
+    "qbo_token_expires_at",
+    "qbo_oauth_state",
+)
+
+
+def remove_retired_settings(db: Session) -> int:
+    """Delete the rows of RETIRED_SETTINGS_KEYS; the number removed."""
+    rows = db.query(Settings).filter(Settings.key.in_(RETIRED_SETTINGS_KEYS)).all()
+    for row in rows:
+        db.delete(row)
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 SECRET_PLACEHOLDER = "********"

@@ -5,6 +5,7 @@
       "Migrate Data takes QuickBooks Online's own Export data zip (the gear, Tools, Export data): the chart from the Balance Sheet and P&L, every Journal transaction as a journal entry, the Customer and Vendor lists. No Intuit developer app, no production keys.",
       "A zip or an .xlsx works for every migration source; a Trial Balance on the cash basis is set aside with a note, on the accrual basis it verifies the import.",
       "Built against a real company's export, 24 years and 9,510 transactions, every block balanced to the cent.",
+      "The QuickBooks Online connector is gone: the page, the Intuit app credentials under Settings, the API routes and the SDKs. It never reached a real company, and the Export data route above replaces it. A company connected back then keeps what the import made, and its old credentials are removed.",
       "Settings has Company File Encryption: with COMPANY_FILE_ENCRYPTION_SECRET set where SlowBooks Pro starts, an administrator turns it on or off in place, the company's name typed; the file on disk is a SQLCipher file, unreadable without the key (the first of @grungenut's pull requests behind #290).",
       "Backups of an encrypted company are encrypted under the same key, and a restore leaves the books in the state they are in, whichever state the backup was in.",
       "An encrypted file with no key, or the wrong one, stops with one sentence before anything opens it; a company that does not turn encryption on is untouched."

@@ -63,6 +63,7 @@ function sourceWord(type) {
         iif_import: 'IIF import', depreciation: 'Depreciation',
         asset_acquisition: 'Asset acquisition', asset_disposal: 'Asset disposal',
         qbo_ledger: 'QuickBooks import', qbo_journal: 'QuickBooks journal', qbo_cogs: 'QuickBooks cost of goods',
+        qbo_export_import: 'QuickBooks Online export',
     };
     const t = String(type || 'journal');
     for (const [end, word] of [['_void', 'void'], ['_edit', 'edit'], ['_apply', 'applied']]) {

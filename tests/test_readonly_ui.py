@@ -103,7 +103,6 @@ MARKED = {
         r"data-write><button[^>]*BatchPaymentsPage\.selectAll\(\)",
         r'data-write>\s*<button type="submit" class="btn btn-primary">Apply Batch Payment',
     ],
-    "qbo.js": [r'<form id="qbo-manual-connect" data-write'],
     "banking.js": [
         r'<form onsubmit="BankingPage\.connectSimpleFIN\(event\)" data-write>',
         r'class="review-cat" data-write',
