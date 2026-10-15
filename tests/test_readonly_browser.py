@@ -729,7 +729,8 @@ def test_a_bookkeeper_on_a_first_page_of_settings(browser, company, books, db_se
                 add_class: shown(add) && !add.disabled,
             };
         }""")
-        assert got["fields"] >= 50 and got["open"] == []
+        # 49 named fields since the QuickBooks Online section left (2.23.2)
+        assert got["fields"] >= 45 and got["open"] == []
         assert (got["save"], got["picker"], got["add_class"]) == (False, False, True)
         assert got["notes"] == KEEPER_NOTES["#/settings"]
         # opening a template asks for the template, and sends no settings
