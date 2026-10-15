@@ -1212,7 +1212,7 @@ const ReportsPage = {
                             <td>${formatDate(e.date)}</td>
                             <td>${escapeHtml(e.description)}</td>
                             <td>${escapeHtml(e.reference)}</td>
-                            <td style="font-size:10px; color:var(--gray-500);">${escapeHtml(e.source_type)}</td>
+                            <td style="font-size:10px; color:var(--gray-500);">${escapeHtml(sourceWord(e.source_type))}</td>
                             <td style="font-size:10px;">${escapeHtml(e.class_name || '')}</td>
                             <td class="amount">${e.debit > 0 ? formatCurrency(e.debit) : ""}</td>
                             <td class="amount">${e.credit > 0 ? formatCurrency(e.credit) : ""}</td>

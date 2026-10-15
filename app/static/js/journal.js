@@ -57,7 +57,7 @@ const JournalPage = {
                 <strong>Date:</strong> ${formatDate(entry.date)}<br>
                 <strong>Description:</strong> ${escapeHtml(entry.description)}<br>
                 ${entry.reference ? `<strong>Reference:</strong> ${escapeHtml(entry.reference)}<br>` : ''}
-                <strong>Type:</strong> ${escapeHtml(entry.source_type)}
+                <strong>Type:</strong> ${escapeHtml(sourceWord(entry.source_type))}
                 ${entry.voided ? '<div class="journal-voided" style="color:var(--danger);font-weight:700;margin-top:6px;">Voided</div>' : ''}
             </div>
             <div class="table-container"><table>

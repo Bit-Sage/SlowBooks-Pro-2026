@@ -60,6 +60,47 @@ def test_the_shell_settings_and_tree_have_no_connector():
     assert "/api/qbo" not in main and "routes import qbo" not in main
 
 
+def test_the_shell_links_no_connector_and_loads_no_missing_script():
+    """index.html, the SPA's shell, is outside app/ and kept the connector's
+    sidebar link ("Page not found" on a click) and its script tag (a 404 on
+    every page load) after the rest was removed (round 3, W-5 / NEW-115).
+    No link to #/qbo, no qbo.js, and every script the shell loads exists."""
+    shell = _read("index.html")
+    assert "#/qbo" not in shell and "qbo.js" not in shell
+    assert "QuickBooks Online" not in shell
+    scripts = re.findall(r'<script src="/static/js/([^"]+)"', shell)
+    assert len(scripts) > 20
+    missing = [name for name in scripts if not (ROOT / "app/static/js" / name).exists()]
+    assert missing == [], missing
+    links = re.findall(r'href="#/([a-z-]+)"', shell)
+    assert "iif" in links and "migrate" in links and "qbo" not in links
+
+
+def test_the_pages_name_an_imported_journals_source(client):
+    """A posting's Type on the registers, the General Ledger and a journal
+    entry's view goes through sourceWord, which names each migration's
+    journals (NEW-114: the register read "qbo export import")."""
+    utils = _read("app/static/js/utils.js")
+    for key, word in (
+        ("qbo_export_import", "QuickBooks Online export"),
+        ("wave_import", "Wave import"),
+        ("gnucash_import", "GnuCash import"),
+    ):
+        assert f"{key}: '{word}'" in utils, key
+    for rel in (
+        "app/static/js/banking.js",
+        "app/static/js/reports.js",
+        "app/static/js/journal.js",
+    ):
+        src = _read(rel)
+        assert "source_type || '').replace(/_/g, ' ')" not in src, rel
+        assert (
+            "escapeHtml(e.source_type)}" not in src
+            and "escapeHtml(entry.source_type)}" not in src
+        ), rel
+        assert "sourceWord(" in src, rel
+
+
 def test_no_connector_settings_remain_in_the_defaults():
     assert [k for k in DEFAULT_SETTINGS if k.startswith("qbo_")] == []
     assert [k for k in ENCRYPTED_SETTINGS_KEYS if k.startswith("qbo_")] == []

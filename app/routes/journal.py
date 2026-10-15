@@ -57,9 +57,17 @@ def list_journal_entries(source_type: str = None, db: Session = Depends(get_db))
                 QBOMapping.qbo_id.like("Journal:%"),
             ),
         )
+        # The journals a migration posted (Migrate Data's sources, the IIF
+        # opening balances) are journal entries too, and list here (2.23.2,
+        # NEW-118); their Type names the source.
+        from app.routes.migration import SOURCES
+
+        imported = [source_type for _, _, source_type in SOURCES.values()]
         q = q.filter(
             or_(
-                Transaction.source_type.in_(["manual", "qbo_journal"]),
+                Transaction.source_type.in_(
+                    ["manual", "qbo_journal", "iif_import", *imported]
+                ),
                 (Transaction.source_type == "qbo_ledger")
                 & Transaction.id.in_(report_journals),
             )

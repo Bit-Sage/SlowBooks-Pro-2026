@@ -110,6 +110,16 @@ receivables and payables cross over: the export's A/R and A/P come in as
 their own accounts, and the open documents at the cut-over are entered
 afterwards against them.
 
+**From the gate's third round** (Windows W-5; macOS NEW-114, NEW-118):
+the shell page still carried the connector's sidebar link, which opened
+"Page not found", and its script tag, a 404 on every page load; both are
+gone. The bank registers, the General Ledger's drill-down and a journal
+entry's view name a posting's source in words ("QuickBooks Online
+export", "Wave import") instead of its key. Journal Entries lists the
+journals a migration posted, every Migrate Data source's and the IIF
+opening entry; before, the 13 the export route posted were on no list,
+and a drill-down's link opened one over an empty page.
+
 No schema change. 556 API operations (the two company-file ones added,
 the eleven QuickBooks Online ones removed).
 

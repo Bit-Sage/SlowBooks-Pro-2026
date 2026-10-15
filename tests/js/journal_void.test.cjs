@@ -18,6 +18,7 @@ function page(entry) {
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
         })[character]),
         formatDate: value => value, formatCurrency: value => `$${value}`,
+        sourceWord: value => String(value || ''),
         CostCodes: { headHtml: () => '' },
         openModal: (title, html) => dialogs.push({ title, html }),
     };
@@ -59,6 +60,7 @@ function listPage(entries) {
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
         })[character]),
         formatDate: value => value, formatCurrency: value => `$${value}`,
+        sourceWord: value => String(value || ''),
         CostCodes: { headHtml: () => '' },
         openModal: (title, html) => { context.shown = html; },
     };
