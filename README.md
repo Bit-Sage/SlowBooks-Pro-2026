@@ -54,115 +54,18 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.23 — Both ways with QuickBooks.** Invoices come in from a QuickBooks
-Desktop Transaction Detail report saved as CSV, with their lines, jobs and
-numbers, open or paid by the report's Open Balance column (#291); the IIF
-export carries an invoice's job, items and quantities the way Intuit's own
-sample files do, so a round trip keeps them (#199); the IIF import names
-the transaction types it doesn't take and counts them (#288). A payment or
-bill payment recorded with an Idempotency-Key is booked once however many
-times the request arrives (#292); editing a posted bill's or invoice's
-lines leaves a DELETE event for every old line (#289); the invoice form
-says that creating one posts it (#293); and the AI guide, the README and
-the docs say what stays on your machine and what a cloud model sees
-(#294). Line quantities keep four decimal places, so an imported 2.125
-stays 2.125 instead of reading 2.12 and losing cents on the next edit. 2.23.2 adds the plumbing for an encrypted company file (@grungenut, #290): with an operator-set secret, Settings turns SQLCipher encryption on or off in place, and backups follow the file. 2.23.1 keeps a QuickBooks file's entities apart: the IIF import and the
-report CSV import carry each posting's class, and the IIF export writes
-each line's own (#308).
+**v2.24 — QuickBooks Online without the API, and the company file encrypted.** QuickBooks Online's own
+Export data zip (the gear, Tools, Export data) migrates a company with no
+Intuit developer app and no production keys: the chart from the Balance
+Sheet and the Profit and Loss, typed and nested as QuickBooks has it, every
+Journal transaction as a journal entry with its date, type, number, name
+and memo, and the Customer and Vendor lists. Upload the zip as downloaded,
+or its workbooks, or those saved as CSV. A Trial Balance on the cash basis
+is set aside with a note; on the accrual basis it verifies the import.
+Built against a real company's export, twenty-four years and 9,510
+transactions, every block balanced to the cent.
 
-**v2.22 — Connected.** Every report view has an address, so a report, a
-class's P&L or a drill-down can be bookmarked, pasted, reloaded and left
-with Back (#237). P&L by Class scrolls sideways with the Account column
-frozen, jumps to a class, chooses its columns, and saves as PDF, CSV and a
-saved report (#231–#233); a class's P&L is a report of its own and P&L by
-Job sits on the same grid (#235, #242). Classes have a page, with every
-line tagged to the class (#234); the General Ledger shows and filters by
-class (#236); the Chart of Accounts opens the register (#240). Every report
-row goes somewhere and the customer and vendor pages open their reports
-(#238, #239); the drill-down re-dates in place and every posting links to
-its document (#241); the per-line Class cell for every company, with a
-warning for a transaction saved without one (#243). And from the gate: a
-← Back in the toolbar (⌘[ / Alt+←), Tab reaching every control in a
-dialog on a Mac, a job that is always its customer's, and a closed report
-that stays closed. 2.22.1 brings Claude's request up to Anthropic's current
-API, with no temperature, which Claude Sonnet 5.5 refuses, and room for its
-thinking, tested against a live key on Anthropic's current models; a bill's
-class, job or tax rate can be changed through the API without resending its
-lines; and a saved AI key goes only to the provider it was entered for.
-2.22.2 is thirteen quick wins from Grok's exploration of 2.22.1 (#254–#266):
-AI Insights lists each provider's models from the provider; small balances
-write off from a report; the credit limit holds through the API; W-9 on
-file; Mark all when reconciling and a bank rule from a statement line; a
-deposit slip; an Items filter of what to reorder; cancel a time-off request
-(the hours and the relief journal come back); a form history under Tax
-Forms with a hash check; Alt+B and Alt+E; the figure on every bar, slice
-and point; and landmarks with skip links on the long forms and the chart.
-2.22.3 (#281): Analytics reads the ledger — the KPI cards, the trend, the
-expenses by category (named) and the AI brief, on one basis, as the Profit
-& Loss counts them, rather than paid bills and paid invoices, so a
-bank-fed, journal-entry company sees its figures and its margin; a
-receipt attaches to a journal entry; four ledger-correctness fixes from a
-static review (#284–#287: a bill payment with no bank and no Checking
-account is refused whole, A/P aging as of a date, journals in cents, voided
-payments out of the 1099s); and a source run's server stops with its
-launcher (#283, @jacilynh), on Windows however the launcher went.
-
-**v2.21 — Three things you'd reach for.** Click a vendor for its own
-page, with its bills, payments, credits and what's owed (#223). Edit a
-posted bill, the way an invoice is edited, with the ledger following and a
-bill never going below what's been paid (#225). An account in the General
-Ledger opens its register (#224).
-
-**v2.20 — Tidy lists, classes in detail.** Customers, Vendors, Items,
-Employees and Jobs show active records by default, with Inactive and All a
-click away and Make Inactive on every row (#210, asked for by Ryan of
-Cimarron Site Services). P&L by Class lists every account with a column per
-class, and any amount opens the transactions behind it (#213). 2.20.1
-shows the release notes once per version instead of on every start, and
-unlinks the sign-in and setup screens, both from @stevenmirabito.
-
-**v2.19 — Type to find it.** The pickers search as you type, as QuickBooks'
-do: a customer, vendor, item, account, employee, job or class picker, or any
-long list, narrows to what matches ("6500" finds 6500 Rent or Lease), and
-"+ New Customer" opens its quick add with the name you typed. Screen readers
-hear the picker's name, the number of matches and the highlighted one.
-
-**v2.18 — Around the ledger.** Two of the QA agents each ran a brand-new
-company for a day through the screens and checked every figure against the
-ledger; this release fixes all sixty-eight things they found around it.
-Pay Sales Tax works, supplier tax is part of a purchase's cost instead of
-reducing the tax owed, Schedule C keeps expenses in expenses, customer and
-vendor balances show what is owed, a customer's leftover payment can be
-applied later, and every aging report ties to the balance sheet. Time
-tracking works end to end, tax forms open in the Mac app, foreign-currency
-invoices can be paid from the screen, and backups are kept and restored per
-company. It also brings @Sciumo's QuickBooks Online import of journal
-entries and posted ledger activity, with a live import log (#192), a switch
-for the company logo on invoices, and **Fetch older history** for SimpleFIN
-bank feeds — up to a year where the provider keeps it (#181). Tax rates take
-four decimal places (8.875%), and the payment screens see every open invoice
-and bill, not just the newest 500 (#191). Each company now keeps its logo,
-attachments and employee documents in its own company file: companies on
-one desktop shared them, and a server published them without a sign-in.
-2.18.1 imports QuickBooks names without the quote marks QuickBooks puts
-around a name with a comma, offers to bring ALL-CAPS names in as normal
-capitalization (#195, @TheLocalW), imports the lines QuickBooks posts to a
-sub-account, and keeps the permit form's format note off its boxes (#194,
-@cnbarry1). 2.18.2 gives every form field a name a screen reader can say
-(#198), says so when an import comes back with errors (#197), and lists
-Claude and Grok first among the AI providers, with Claude on Sonnet 5.5
-(#200).
-
-**v2.17 — Your ledger, in a spreadsheet.** Trial Balance and General Ledger
-save as a CSV and a printable PDF, and Profit & Loss and Balance Sheet gain
-the CSV — amounts as plain numbers, ready to sum. The general ledger carries
-a balance brought forward, a running balance and a period total that ties to
-the trial balance. Bank feeds accept a setup token from any SimpleFIN
-provider. Asked for by @cnbarry1 (#179, #181). 2.17.1 makes AI analysis
-work again with OpenAI's current models (#185, @Sciumo); 2.17.2 stops an
-invoice edit from stripping its job costing (#187, @Bit-Sage); 2.17.3 makes
-Pay Bills pay each vendor separately and keeps every payment on its own
-customer's or vendor's documents (#189, @Bit-Sage).
+Patch releases and everything before 2.24 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 

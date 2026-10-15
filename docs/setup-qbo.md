@@ -1,5 +1,7 @@
 # QuickBooks Online Integration Setup
 
+> **No Intuit app?** Production keys from Intuit's developer portal sit behind an app questionnaire written for software vendors. QuickBooks Online's own **Export data** zip migrates a company without any of this: see [Path 1b in the QuickBooks guide](migrate-from-quickbooks.md#path-1b--quickbooks-online-without-the-api-export-data). The steps below are for an API connection with keys you already have.
+
 Connect Slowbooks to QuickBooks Online to import or export accounts, customers, vendors, items, invoices, and payments via Intuit's REST API.
 
 ---

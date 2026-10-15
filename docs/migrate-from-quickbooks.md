@@ -6,6 +6,7 @@ QuickBooks you're leaving:
 | You're on | Use | Where in SlowBooks |
 |---|---|---|
 | **QuickBooks Online** | Direct API import over OAuth | sidebar → **QuickBooks Online** |
+| **QuickBooks Online**, no Intuit app | Its own Export data zip | sidebar → **Migrate Data** → QuickBooks Online export |
 | **QuickBooks Desktop** (2003–current) | IIF file import | sidebar → **QuickBooks Interop** |
 
 Both paths import accounts, customers, vendors, items, invoices,
@@ -32,6 +33,48 @@ Re-runs are safe: every imported record is tracked by its QBO id, and
 untracked records are matched by name/number, so nothing imports twice.
 
 ---
+
+## Path 1b — QuickBooks Online without the API (Export data)
+
+Intuit's developer portal gives out sandbox keys freely, but keys that reach
+a real company sit behind an app questionnaire written for software vendors.
+If you would rather not go through that, QuickBooks Online's own export is
+enough, and needs no Intuit app at all.
+
+1. In QuickBooks Online: the **gear** → **Tools** → **Export data**. Leave
+   every report and list ticked, and set the date range to **All**. Before
+   you export, set the company's report basis to **Accrual** (the gear →
+   Account and settings → Advanced → Accounting method) if you want the
+   Trial Balance to verify the import; on the cash basis it is set aside
+   with a note.
+2. QuickBooks downloads a zip named for the company and the date. Keep it
+   as it is.
+3. In SlowBooks: sidebar → **Migrate Data** → source **QuickBooks Online
+   export** → upload the zip (or the workbooks inside it, or those saved as
+   CSV) → **Dry run**, read the result, then **Import**.
+
+What comes across:
+
+- **The chart** from the Balance Sheet and the Profit and Loss: every
+  account with a figure, typed by the section it sits under (Bank Accounts
+  are banks, Credit Cards are cards), sub-accounts named `Parent:Child` as
+  QuickBooks writes them elsewhere and placed under their parents.
+  QuickBooks Online accounts have no numbers, so these arrive without one;
+  give them numbers in Chart of Accounts afterwards if you like.
+- **Every transaction in the Journal** as a journal entry: invoices,
+  payments, bills, checks, deposits, transfers and journal entries alike,
+  with the date, type, number, name and memo, each block checked against
+  the totals the export carries. They are journal entries here, not
+  invoices or bills, which is what the ledger needs for history; start
+  documents fresh from the cut-over date.
+- **Customers and Vendors** with their emails, phones and addresses, named
+  as QuickBooks has them. The Employee list is left alone (the export
+  carries no payroll), as is the General Ledger, which repeats the Journal
+  by account.
+
+Re-uploading the same export is safe: every transaction is tracked by its
+type, number and date, and nothing posts twice. Afterwards, follow **After
+the import** below.
 
 ## Path 2 — QuickBooks Desktop (IIF files)
 

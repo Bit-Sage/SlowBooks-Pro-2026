@@ -48,6 +48,9 @@ def parse_amount(raw: str) -> Decimal:
     """Money cell → Decimal. Tolerates $, thousands separators, and
     accounting-style parentheses negatives."""
     raw = (raw or "").strip().replace(",", "").replace("$", "")
+    # QuickBooks Online's Excel exports write every figure as formula text
+    # ("=23683.16"), which a sheet-to-CSV pass keeps verbatim.
+    raw = raw.lstrip("=").strip()
     if not raw:
         return Decimal("0")
     negative = raw.startswith("(") and raw.endswith(")")
@@ -305,6 +308,13 @@ def run_import_bundle(
             account_type=spec["type"],
             description=spec["description"],
         )
+        # A dialect may say what kind of account it is (a bank, a card) and
+        # whose sub-account it is ("Parent:Child", the parent listed first).
+        if spec.get("bank_kind"):
+            acct.bank_kind = spec["bank_kind"]
+        parent_name = (spec.get("parent") or "").lower()
+        if parent_name and parent_name in by_name:
+            acct.parent_id = by_name[parent_name].id
         # Source-system codes can collide with the seeded chart's numbers —
         # the name stays authoritative; drop the code rather than fail.
         if spec["code"] and (
