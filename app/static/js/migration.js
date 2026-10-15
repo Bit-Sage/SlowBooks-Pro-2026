@@ -33,9 +33,11 @@ const MigrationPage = {
                     and <strong>general ledger / journals / transactions</strong>
                     (required), plus a <strong>trial balance</strong> when your system
                     offers one (recommended — enables balance verification). Files are
-                    recognized by name; CSV and tab-separated exports both work.
+                    recognized by name; CSV, tab-separated and Excel exports all work,
+                    and a <strong>zip</strong> is read as the files inside it. From
+                    QuickBooks Online, upload the Export data zip as downloaded.
                 </p>
-                <input type="file" id="migration-files" aria-label="Files to import" multiple accept=".csv,.txt" onchange="MigrationPage.reset()">
+                <input type="file" id="migration-files" aria-label="Files to import" multiple accept=".csv,.txt,.xlsx,.zip" onchange="MigrationPage.reset()">
                 <div class="form-actions" style="margin-top:12px;" data-write>
                     <button class="btn btn-primary" onclick="MigrationPage.dryRun()">Dry Run</button>
                     <button class="btn btn-danger" id="migration-import-btn" disabled onclick="MigrationPage.doImport()">Import</button>

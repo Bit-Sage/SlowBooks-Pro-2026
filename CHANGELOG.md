@@ -5,6 +5,40 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.24.0 — QuickBooks Online, without the API
+
+**Migrate from QuickBooks Online with its own export.** The QuickBooks
+Online path needed each user's own app in Intuit's developer portal, and
+keys that reach a real company sit behind Intuit's app questionnaire, an
+hour of vendor questions a bookkeeper connecting their own books cannot
+answer (@sutehk gave up after two, and said so; the sample company in the
+tests is named for them). QuickBooks Online's Export data (the
+gear, Tools, Export data) hands every user a zip of Excel workbooks, and
+Migrate Data takes that zip as downloaded, or its workbooks, or those saved
+as CSV, with no Intuit app at all. The chart comes from the Balance Sheet
+and the Profit and Loss, typed by the section each account sits under,
+sub-accounts named Parent:Child as QuickBooks writes them and placed under
+their parents, banks and cards marked as such. Every transaction in the
+Journal, invoices, payments, bills, checks, deposits, transfers and journal
+entries alike, posts as a journal entry with its date, type, number, name
+and memo, each block checked against the totals the file carries. The
+Customer and Vendor lists come across with their emails, phones and
+addresses. The General Ledger repeats the Journal by account and is left
+alone, as is the Employee list, which the export carries without payroll.
+A Trial Balance exported on the cash basis is set aside with a note rather
+than read as opening balances, since the Journal is accrual; exported on
+the accrual basis it verifies the import. Built against a real company's
+export, twenty-four years and 9,510 transactions, every block balanced to
+the cent; the repository's fixtures are invented books in that layout. The
+API path stays for anyone who has production keys.
+
+**Also.** Migrate Data accepts a zip or an .xlsx for every source (a sheet
+is read as CSV), the migration engine reads a figure written as formula
+text ("=23683.16"), and a source may name an account's bank kind and
+parent. One new dependency, openpyxl.
+
+No schema change. 565 API operations.
+
 ### v2.23.1 — Entities keep their class
 
 A QuickBooks file that keeps its entities apart by class (a nonprofit and

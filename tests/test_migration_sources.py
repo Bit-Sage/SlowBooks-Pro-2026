@@ -40,7 +40,7 @@ def _assert_balanced(db_session, journals):
 
 def test_sources_listing(client):
     keys = {s["key"] for s in client.get("/api/migration/sources").json()}
-    assert keys == {"xero", "myob", "sage", "wave", "zoho", "gnucash"}
+    assert keys == {"xero", "myob", "sage", "wave", "zoho", "gnucash", "qbo_export"}
 
 
 def test_unknown_source_400(client):

@@ -1,4 +1,12 @@
 {
+  "2.24.0": {
+    "title": "QuickBooks Online, without the API",
+    "items": [
+      "Migrate Data takes QuickBooks Online's own Export data zip (the gear, Tools, Export data): the chart from the Balance Sheet and P&L, every Journal transaction as a journal entry, the Customer and Vendor lists. No Intuit developer app, no production keys.",
+      "A zip or an .xlsx works for every migration source; a Trial Balance on the cash basis is set aside with a note, on the accrual basis it verifies the import.",
+      "Built against a real company's export, 24 years and 9,510 transactions, every block balanced to the cent."
+    ]
+  },
   "2.23.1": {
     "title": "Entities keep their class",
     "items": [

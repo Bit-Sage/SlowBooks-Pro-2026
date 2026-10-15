@@ -86,6 +86,9 @@ hiddenimports = (
         "clr_loader",
         # alembic.ini logging config
         "logging.config",
+        # The .xlsx reader behind the QuickBooks Online export import, imported
+        # lazily in app/routes/migration.py.
+        "openpyxl",
         "sqlalchemy.dialects.sqlite",
         # WeasyPrint is imported lazily since #121 (so the suite runs on a
         # machine without the native stack). PyInstaller's scanner does walk
