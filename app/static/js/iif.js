@@ -14,7 +14,7 @@ const IIFPage = {
     async render() {
         return `
             <div class="page-header">
-                <h2>QuickBooks Interop</h2>
+                <h2>Interoperability</h2>
                 <div style="font-size:10px; color:var(--text-muted);">
                     IIF Import/Export &mdash; Compatible with QuickBooks 2003 Pro
                 </div>
@@ -132,10 +132,10 @@ const IIFPage = {
         const left = unsupported > 0 ? `, ${unsupported} not imported (type not supported)` : '';
         if (errors > 0) {
             toast(`${records}${left}, ${errors} error${errors === 1 ? '' : 's'}: see the list below`, 'error');
-            App.setStatus('QuickBooks Interop — Import finished with errors');
+            App.setStatus('Interoperability — Import finished with errors');
         } else {
             toast(`${records}${left}`);
-            App.setStatus('QuickBooks Interop — Import complete');
+            App.setStatus('Interoperability — Import complete');
         }
     },
 
@@ -241,7 +241,7 @@ const IIFPage = {
                 setTimeout(() => URL.revokeObjectURL(a.href), 30000);
                 toast(`Exported ${filename}`);
             }
-            App.setStatus('QuickBooks Interop — Ready');
+            App.setStatus('Interoperability — Ready');
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Export failed');
@@ -333,7 +333,7 @@ const IIFPage = {
             } else {
                 toast('Validation found errors', 'error');
             }
-            App.setStatus('QuickBooks Interop — Ready');
+            App.setStatus('Interoperability — Ready');
         } catch (err) {
             toast(err.message, 'error');
             App.setStatus('Validation failed');

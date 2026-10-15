@@ -120,6 +120,10 @@ journals a migration posted, every Migrate Data source's and the IIF
 opening entry; before, the 13 the export route posted were on no list,
 and a drill-down's link opened one over an empty page.
 
+**From the gate's fourth round** (the owner, NEW-119): the sidebar's
+"QuickBooks Interop" entry reads "Interoperability", and so do the page's
+heading and its status line; the guides say the same.
+
 No schema change. 556 API operations (the two company-file ones added,
 the eleven QuickBooks Online ones removed).
 

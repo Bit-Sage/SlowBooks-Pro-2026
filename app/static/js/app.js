@@ -56,7 +56,7 @@ const App = {
         // ReportsPage._VIEWS (docs/dev/report-views.md).
         '/reports/:view': { page: 'reports',         label: 'Report',             render: (view, query) => App.withDocument(() => ReportsPage.render(), () => ReportsPage.openView(view, query)) },
         '/settings':      { page: 'settings',        label: 'Company Settings',   render: () => SettingsPage.render() },
-        '/iif':           { page: 'iif',             label: 'QuickBooks Interop', render: () => IIFPage.render() },
+        '/iif':           { page: 'iif',             label: 'Interoperability',   render: () => IIFPage.render() },
         '/quick-entry':   { page: 'quick-entry',     label: 'Quick Entry',        render: () => App.renderQuickEntry() },
         // Phase 1: Foundation
         '/audit':         { page: 'audit',           label: 'Audit Log',          render: () => AuditPage.render() },

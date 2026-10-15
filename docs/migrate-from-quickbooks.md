@@ -6,7 +6,7 @@ QuickBooks you're leaving:
 | You're on | Use | Where in SlowBooks |
 |---|---|---|
 | **QuickBooks Online** | Its own Export data zip (no Intuit app) | sidebar → **Migrate Data** → QuickBooks Online export |
-| **QuickBooks Desktop** (2003–current) | IIF file import | sidebar → **QuickBooks Interop** |
+| **QuickBooks Desktop** (2003–current) | IIF file import | sidebar → **Interoperability** |
 
 The Desktop path imports accounts, customers, vendors, items, invoices,
 payments, and **sales receipts**. Sales receipts come across as what
@@ -81,7 +81,7 @@ showed.
 QuickBooks Desktop's built-in IIF export (`File → Utilities → Export →
 Lists to IIF Files`) covers **lists only**: chart of accounts,
 customers, vendors, items. Export those and drop the `.iif` file(s) on
-**QuickBooks Interop → Import** — there's a **Validate** button that
+**Interoperability → Import** — there's a **Validate** button that
 checks the file before anything is written.
 
 Names typed in ALL CAPS in QuickBooks come across as typed. If you'd rather
@@ -104,7 +104,7 @@ Desktop does not export transactions to IIF natively. Two options:
   account names resolve.
 - **For sales receipts, deposits, and checks: a report CSV imports
   directly.** Three Desktop report exports upload straight into
-  **QuickBooks Interop → Import from Report CSV** (the report type is
+  **Interoperability → Import from Report CSV** (the report type is
   auto-detected):
 
   - **Deposit Detail** (`Reports → Banking → Deposit Detail`) — each
@@ -138,7 +138,7 @@ Desktop does not export transactions to IIF natively. Two options:
      Item, Qty, and Sales Price are used when present).
   5. **Excel → Create New Worksheet**, save as CSV (or Print → Save as
      CSV).
-  6. Upload it under **QuickBooks Interop → Sales Receipts from Report
+  6. Upload it under **Interoperability → Sales Receipts from Report
      CSV**. Each receipt imports as a paid sale + its payment, with
      balanced journals; applied-deposit and discount lines keep their
      signs, tax rows are recognized by the percentage in Sales Price,
@@ -162,7 +162,7 @@ The same report, filtered to **Invoice** instead of Sales Receipt:
    the report again with the column and the invoices here that have
    nothing paid on them are marked paid or partly paid from it.
 4. Excel → Create New Worksheet, save as CSV, and upload it under
-   **QuickBooks Interop → Import from Report CSV**. The report type is
+   **Interoperability → Import from Report CSV**. The report type is
    detected from the rows: an invoice's header row posts to Accounts
    Receivable, a receipt's to the deposit account, so one file can hold
    both.

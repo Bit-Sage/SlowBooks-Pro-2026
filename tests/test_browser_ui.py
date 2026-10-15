@@ -456,7 +456,7 @@ def test_an_import_with_errors_says_so(browser):
             [
                 "toast toast-error",
                 "Nothing imported, 1 error: see the list below",
-                "QuickBooks Interop — Import finished with errors",
+                "Interoperability — Import finished with errors",
             ],
         ),
         "clean": (
@@ -464,7 +464,7 @@ def test_an_import_with_errors_says_so(browser):
             [
                 "toast toast-success",
                 "Imported 1 transaction",
-                "QuickBooks Interop — Import complete",
+                "Interoperability — Import complete",
             ],
         ),
         # the owner's walkthrough file (2.23.1 gate, NEW-106): the toast
@@ -482,7 +482,7 @@ def test_an_import_with_errors_says_so(browser):
             [
                 "toast toast-success",
                 "Imported 1 class and 3 transactions",
-                "QuickBooks Interop — Import complete",
+                "Interoperability — Import complete",
             ],
         ),
     }
@@ -562,7 +562,7 @@ def test_a_report_csv_import_with_errors_says_so(browser):
         assert _last_toast_and_status(page) == [
             "toast toast-error",
             "Imported 0 records, 1 error: see the list below",
-            "QuickBooks Interop — Import finished with errors",
+            "Interoperability — Import finished with errors",
         ]
     finally:
         page.close()

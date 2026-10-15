@@ -386,11 +386,11 @@ Full IIF format reference, account-type mapping, and round-trip examples live in
 
 Slowbooks can exchange data with QuickBooks 2003 Pro via **Intuit Interchange Format (IIF)** — a tab-delimited text format that QB2003 uses for file-based import/export.
 
-![QuickBooks Interop Page](../screenshots/iif-interop.png)
+![Interoperability page](../screenshots/iif-interop.png)
 
 ### Exporting from Slowbooks to QB2003
 
-1. Navigate to **QuickBooks Interop** in the sidebar
+1. Navigate to **Interoperability** in the sidebar
 2. Click **Export All Data** (or export individual sections)
 3. For invoices/payments, optionally set a date range
 4. Save the `.iif` file
@@ -411,7 +411,7 @@ Slowbooks can exchange data with QuickBooks 2003 Pro via **Intuit Interchange Fo
 ### Importing from QB2003 to Slowbooks
 
 1. In QuickBooks 2003: **File > Utilities > Export > Lists to IIF Files**
-2. In Slowbooks: navigate to **QuickBooks Interop**
+2. In Slowbooks: navigate to **Interoperability**
 3. Drag and drop the `.iif` file (or click to browse)
 4. Click **Validate** — checks structure, account types, and balanced transactions
 5. If the file has names typed in ALL CAPS, Validate shows a few of them as they would import and offers **Change ALL-CAPS names to normal capitalization** (`BOB JONES` → `Bob Jones`, `ACME TOOLING, INC.` → `ACME Tooling, Inc.`). It is off unless you tick it: customer, vendor and account names only, item names kept as typed, and names already in your books are left alone (v2.18.1, #195)
