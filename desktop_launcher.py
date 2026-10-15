@@ -480,8 +480,16 @@ def launch_company(
     # child, which takes it from the environment start_server() builds. An
     # encrypted file with no key stops here, with one sentence.
     key = company_file.resolve_key()
-    if company_file.is_encrypted_file(db_path) and key is None:
-        raise RuntimeError(company_file.NO_KEY_MESSAGE)
+    company_file.sweep_stale_conversions(db_path)
+    if company_file.is_encrypted_file(db_path):
+        if key is None:
+            raise RuntimeError(company_file.NO_KEY_MESSAGE)
+        # A wrong key is refused before the migration opens the file
+        # writable, so it writes nothing (NEW-109).
+        try:
+            company_file.verify_key(db_path, key)
+        except company_file.CompanyFileLocked as exc:
+            raise RuntimeError(str(exc)) from exc
 
     # A second launch while the app is already open would lose the fight
     # for the port and fail confusingly -- say what's actually wrong.
