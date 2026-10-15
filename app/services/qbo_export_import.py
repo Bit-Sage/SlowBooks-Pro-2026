@@ -893,8 +893,8 @@ def _carry_plan(db: Session, bundle: dict) -> dict:
                 plan["duplicates"] += 1
             else:
                 plan["errors"].append(
-                    f"Invoice {item['num']} is in the books already, for {owner}, "
-                    f"not {item['customer']}"
+                    f"Number {item['num']} is on an invoice in the books already, "
+                    f"for {owner}, not {item['customer']}"
                 )
         else:
             key = (item["customer"].lower(), item["date"], -item["open"])
