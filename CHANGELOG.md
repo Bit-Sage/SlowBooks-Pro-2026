@@ -120,9 +120,21 @@ journals a migration posted, every Migrate Data source's and the IIF
 opening entry; before, the 13 the export route posted were on no list,
 and a drill-down's link opened one over an empty page.
 
-**From the gate's fourth round** (the owner, NEW-119): the sidebar's
-"QuickBooks Interop" entry reads "Interoperability", and so do the page's
-heading and its status line; the guides say the same.
+**From the gate's fourth round** (the owner, NEW-119 and NEW-120): the
+sidebar's "QuickBooks Interop" entry reads "Interoperability", and so do the
+page's heading and its status line; the guides say the same. And the
+invoices still open come across: upload QuickBooks Online's A/R Aging Detail
+report (Reports → A/R Aging Detail → Export to Excel) beside the zip, and
+each open invoice arrives as an invoice with its number, date, due date and
+open balance, and each payment not yet applied as an unapplied payment for
+what is left of it, so the A/R aging and every customer's balance are right
+from the first day. Their postings move the open balance from the export's
+own receivable account, where the history left it, to 1100 Accounts
+Receivable, and touch no income; that account ends at zero. The report is
+checked against the Journal before anything is written, and a difference is
+named. Built against a real company's report, every row matched to its
+Journal block; the sample's report is invented books in the same layout.
+Unpaid bills are still entered after the import.
 
 No schema change. 556 API operations (the two company-file ones added,
 the eleven QuickBooks Online ones removed).

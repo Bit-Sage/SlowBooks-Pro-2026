@@ -62,17 +62,20 @@ Re-uploading the same export is safe: every transaction is tracked by its
 type, number and date, and nothing posts twice. Afterwards, follow **After
 the import** below.
 
-**Receivables and payables.** The export names its control accounts
-"Accounts Receivable (A/R)" and "Accounts Payable (A/P)", and they come
-across as accounts of their own, beside SlowBooks' 1100 Accounts
-Receivable and 2000 Accounts Payable, with the balances the history gives
-them. The A/R and A/P aging read documents, not journal lines, so the
-open invoices and unpaid bills at the cut-over are entered as documents
-afterwards, dated as they were: an invoice posts to 1100, so offset its
-amount with a journal entry from the imported A/R account (and a bill's
-from the imported A/P account). When every open document is in, the
-imported accounts are at zero and the aging matches what QuickBooks
-showed.
+**Receivables and payables.** The Journal posts every invoice and payment
+to the export's own receivable account, "Accounts Receivable (A/R)", so
+what is still open sits there. To carry it over, download QuickBooks
+Online's **A/R Aging Detail** report (Reports → A/R Aging Detail → Export to
+Excel) and upload it with the zip. Each open invoice comes across as an
+invoice with its number, date, due date and open balance, and each payment
+not yet applied as an unapplied payment, so the A/R aging and every
+customer's balance are right; their postings move the open balance to 1100
+Accounts Receivable and touch no income, and "Accounts Receivable (A/R)"
+ends at zero. The dry run checks the report against the Journal and names
+any difference. Already imported the zip without it? Upload both again: the
+journals are skipped and only the open invoices come across. Unpaid bills
+are entered after the import, against the imported "Accounts Payable"
+account.
 
 ## Path 2 — QuickBooks Desktop (IIF files)
 

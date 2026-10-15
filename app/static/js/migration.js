@@ -35,7 +35,10 @@ const MigrationPage = {
                     offers one (recommended — enables balance verification). Files are
                     recognized by name; CSV, tab-separated and Excel exports all work,
                     and a <strong>zip</strong> is read as the files inside it. From
-                    QuickBooks Online, upload the Export data zip as downloaded.
+                    QuickBooks Online, upload the Export data zip as downloaded, with
+                    its <strong>A/R Aging Detail</strong> report beside it (Reports →
+                    A/R Aging Detail → Export to Excel) to carry the open invoices and
+                    unapplied payments over.
                 </p>
                 <input type="file" id="migration-files" aria-label="Files to import" multiple accept=".csv,.txt,.xlsx,.zip" onchange="MigrationPage.reset()">
                 <div class="form-actions" style="margin-top:12px;" data-write>
@@ -80,6 +83,11 @@ const MigrationPage = {
         const vendors = imported ? data.imported_vendors : data.vendors;
         if (customers != null) parts.push(n(customers, 'customer'));
         if (vendors != null) parts.push(n(vendors, 'vendor'));
+        // QuickBooks Online's A/R Aging Detail report, when it came with the export
+        const open = imported ? data.imported_open_invoices : data.open_invoices;
+        const unapplied = imported ? data.imported_unapplied_payments : data.unapplied_payments;
+        if (open != null) parts.push(n(open, 'open invoice'));
+        if (unapplied != null) parts.push(n(unapplied, 'unapplied payment'));
         return parts;
     },
 

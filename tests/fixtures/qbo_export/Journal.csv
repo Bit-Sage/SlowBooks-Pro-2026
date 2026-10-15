@@ -57,3 +57,27 @@
 ,,,,,Flyers,Operating Account,,=60.00
 ,,,,,,,=60.00,=60.00
 ,,,,,,,,
+,06/15/2026,Invoice,1002,Sam Ortiz - CUST,Buyer consultation,Accounts Receivable (A/R),=450.00,
+,,,,,Buyer consultation,Commission Income,,=450.00
+,,,,,,,=450.00,=450.00
+,,,,,,,,
+,06/30/2026,Payment,4417,Sam Ortiz - CUST,Payment,Undeposited Funds,=600.00,
+,,,,,Payment,Accounts Receivable (A/R),,=600.00
+,,,,,,,=600.00,=600.00
+,,,,,,,,
+,08/20/2026,Invoice,1003,Dana Reyes - CUST,Listing commission,Accounts Receivable (A/R),=800.00,
+,,,,,Listing commission,Commission Income,,=800.00
+,,,,,,,=800.00,=800.00
+,,,,,,,,
+,09/02/2026,Invoice,1004,Sam Ortiz - CUST,Market analysis,Accounts Receivable (A/R),=275.00,
+,,,,,Market analysis,Commission Income,,=275.00
+,,,,,,,=275.00,=275.00
+,,,,,,,,
+,09/25/2026,Payment,,Dana Reyes - CUST,Payment,Undeposited Funds,=300.00,
+,,,,,Payment,Accounts Receivable (A/R),,=300.00
+,,,,,,,=300.00,=300.00
+,,,,,,,,
+,10/01/2026,Payment,,Dana Reyes - CUST,Payment,Undeposited Funds,=100.00,
+,,,,,Payment,Accounts Receivable (A/R),,=100.00
+,,,,,,,=100.00,=100.00
+,,,,,,,,

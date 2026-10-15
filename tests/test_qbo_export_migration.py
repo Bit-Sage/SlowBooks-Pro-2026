@@ -123,7 +123,7 @@ def test_the_chart_comes_from_the_two_reports_typed_and_nested():
 def test_every_journal_block_is_one_balanced_group():
     groups, errors = qbo.parse_gl((FIXTURES / "Journal.csv").read_text())
     assert errors == []
-    assert len(groups) == 13
+    assert len(groups) == 19
     for group in groups:
         assert sum(r["debit"] - r["credit"] for r in group) == 0
     first = groups[0]
@@ -171,11 +171,19 @@ def test_the_bundle_dry_runs_with_the_cash_basis_named_and_nothing_written(
     data = resp.json()
     assert resp.status_code == 200, data
     assert data["ok"] is True, data["errors"]
-    assert data["accounts"] == 15 and data["journals"] == 13
+    assert data["accounts"] == 15 and data["journals"] == 19
     assert data["customers"] == 2 and data["vendors"] == 4
     assert any("cash basis" in w.lower() for w in data["warnings"]), data["warnings"]
     assert data["opening_balances"] == []
     assert _journals(db_session) == []
+    # without the A/R Aging Detail report: no counts for it, and a note says
+    # what the Journal leaves on receivables and how to carry it over
+    assert "open_invoices" not in data and "unapplied_payments" not in data
+    assert any(
+        "Journal leaves 525.00 on Accounts Receivable (A/R)" in w
+        and "A/R Aging Detail" in w
+        for w in data["warnings"]
+    ), data["warnings"]
 
 
 def test_the_bundle_imports_the_chart_the_journals_and_the_contacts(
@@ -198,7 +206,7 @@ def test_the_bundle_imports_the_chart_the_journals_and_the_contacts(
         db_session.query(Account).filter(Account.name == "Undeposited Funds").count()
         == 1
     )
-    assert data["imported_journals"] == 13
+    assert data["imported_journals"] == 19
     assert data["imported_customers"] == 2 and data["imported_vendors"] == 4
     facebook = (
         db_session.query(Account).filter(Account.name == "Advertising:Facebook").one()
@@ -218,7 +226,7 @@ def test_the_bundle_imports_the_chart_the_journals_and_the_contacts(
     )  # hidden by the P&L, typed by its parent
     assert postcards.account_type == AccountType.EXPENSE
     journals = _journals(db_session)
-    assert len(journals) == 13
+    assert len(journals) == 19
     for txn in journals:
         lines = db_session.query(TransactionLine).filter_by(transaction_id=txn.id).all()
         assert sum(ln.debit or 0 for ln in lines) == sum(ln.credit or 0 for ln in lines)
@@ -239,26 +247,23 @@ def test_the_bundle_imports_the_chart_the_journals_and_the_contacts(
 
 def test_a_second_import_posts_nothing_twice(client, db_session, seed_accounts):
     first = client.post("/api/migration/qbo_export/import", files=_csv_files()).json()
-    assert first["ok"] and first["imported_journals"] == 13
+    assert first["ok"] and first["imported_journals"] == 19
     again = client.post("/api/migration/qbo_export/import", files=_csv_files()).json()
     assert again["ok"], again["errors"]
-    assert again["imported_journals"] == 0 and again["duplicate_journals"] == 13
+    assert again["imported_journals"] == 0 and again["duplicate_journals"] == 19
     assert again["imported_accounts"] == 0
     assert again["imported_customers"] == 0 and again["imported_vendors"] == 0
-    assert len(_journals(db_session)) == 13
+    assert len(_journals(db_session)) == 19
 
 
 def test_an_accrual_trial_balance_is_verified_against_the_journal(
     client, db_session, seed_accounts
 ):
-    # on the accrual basis the invoice is open: A/R 0 → 0 still, since the
-    # payment closed it; everything the fixture's TB says matches the journal
+    # the same Trial Balance on the accrual basis: A/R carries the open
+    # invoices less the payments not applied (525.00), as the Journal does
     files = _csv_files([n for n in BUNDLE if n != "Trial_balance.csv"])
-    accrual = (
-        (FIXTURES / "Trial_balance.csv")
-        .read_text()
-        .replace("Cash Basis", "Accrual Basis")
-    )
+    accrual = (FIXTURES / "Trial_balance_accrual.csv").read_text()
+    assert "Accrual Basis" in accrual
     files.append(
         ("files", ("Trial_balance.csv", io.BytesIO(accrual.encode()), "text/csv"))
     )
@@ -293,7 +298,7 @@ def test_the_workbooks_and_the_zip_read_the_same_as_the_csvs(
         ],
     ).json()
     assert data["ok"] is True, data["errors"]
-    assert data["accounts"] == 15 and data["journals"] == 13
+    assert data["accounts"] == 15 and data["journals"] == 19
     # and the workbooks loose, without the zip
     files = [
         (
@@ -308,7 +313,7 @@ def test_the_workbooks_and_the_zip_read_the_same_as_the_csvs(
     ]
     data = client.post("/api/migration/qbo_export/import", files=files).json()
     assert data["ok"] is True, data["errors"]
-    assert data["imported_journals"] == 13 and data["imported_accounts"] == 13
+    assert data["imported_journals"] == 19 and data["imported_accounts"] == 13
 
 
 def test_a_zip_that_is_not_one_is_refused(client, seed_accounts):

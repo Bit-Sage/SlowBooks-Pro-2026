@@ -5,9 +5,9 @@
 # every user a zip of Excel workbooks: the reports Balance Sheet, Profit and
 # Loss, Trial Balance, General Ledger and Journal, and the lists Customers,
 # Vendors and Employees. No Intuit developer app, no production keys, no
-# questionnaire: the route Intuit's developer portal makes impractical for a
-# bookkeeper connecting their own books (the API path, docs/setup-qbo.md,
-# stays for those who have keys).
+# questionnaire: the route Intuit's developer portal made impractical for a
+# bookkeeper connecting their own books (the API connector was retired in
+# 2.23.2 for that reason).
 #
 # This dialect feeds the shared migration engine (migration_common):
 #   coa  the Balance Sheet and the P&L, one text — every leaf with a figure
@@ -17,6 +17,13 @@
 #        split lines, a totals row, a blank row
 #   tb   the Trial Balance — and the basis its footer names
 #   customers / vendors — the contact lists, names as QuickBooks has them
+#   ar_aging  the A/R Aging Detail report, a download of its own beside the
+#        zip (Reports → A/R Aging Detail → Export to Excel): the invoices
+#        still open and the customer payments not yet applied. The Journal
+#        posts them to the export's own receivable account as history; they
+#        are carried over from it to 1100 Accounts Receivable as documents,
+#        so the aging and every customer's balance are right, and the
+#        receivable account ends at zero.
 #
 # The bundle's quirks, read as they come: a leading blank column on the
 # journal and the lists, every figure as formula text ("=23683.16", the
@@ -28,8 +35,11 @@
 # aside with a note rather than mistaken for opening balances.
 #
 # Built against a real export (a 24-year company, 9,510 transactions, every
-# block balanced to the cent); the fixtures in tests/fixtures/qbo_export/
-# are invented books in that layout. Nothing of the real file is here.
+# block balanced to the cent) and that company's A/R Aging Detail report
+# (every open invoice and unapplied payment matched to its Journal block,
+# the report's total equal to what the Journal leaves on receivables); the
+# fixtures in tests/fixtures/qbo_export/ are invented books in that layout.
+# Nothing of the real files is here.
 # ============================================================================
 
 from __future__ import annotations
@@ -59,6 +69,10 @@ _DATE_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y")
 # save them. Order matters: "journal" before "general" (General_ledger is
 # the journal again, by account, and is left alone).
 _KINDS = (
+    # A report downloaded beside the bundle, named by QuickBooks
+    # "<Company>_A_R_Aging_Detail_Report.xlsx": before "customer" and
+    # "vendor", which an aging report's name may carry too.
+    ("aging", "ar_aging"),
     ("balance_sheet", "coa"),
     ("balance sheet", "coa"),
     ("balancesheet", "coa"),
@@ -233,6 +247,10 @@ def parse_coa(
                             "description": None,
                             "bank_kind": kind,
                             "parent": ":".join(parents) if parents else None,
+                            # the account the Journal's invoices and
+                            # payments post to (QuickBooks names it
+                            # "Accounts Receivable (A/R)")
+                            "receivable": "accounts receivable" in sections,
                         }
                     )
         stack.append((indent, name, is_account))
@@ -494,6 +512,7 @@ def parse_contacts(csv_text: str, label: str) -> list[dict]:
     i_name = col(label.lower())
     i_phone, i_email = col("phone numbers", "phone"), col("email")
     i_addr = col("billing address", "address")
+    i_full = col("full name")
     out = []
     for row in rows[header_at + 1 :]:
         name = _cell(row, i_name).strip()
@@ -509,6 +528,7 @@ def parse_contacts(csv_text: str, label: str) -> list[dict]:
                     :50
                 ],
                 "address": (_cell(row, i_addr).strip() if i_addr is not None else ""),
+                "full_name": (_cell(row, i_full).strip() if i_full is not None else ""),
             }
         )
     return out
@@ -579,6 +599,490 @@ def _import_contacts(db: Session, bundle: dict) -> tuple[int, int]:
             created_vendors += 1
     db.flush()
     return created_customers, created_vendors
+
+
+# ── the open invoices: the A/R Aging Detail report ─────────────────────────
+
+# The item a carried-over invoice's line is on. Its income account is the
+# export's own receivable account, on purpose: the sale is in the imported
+# history already, so the invoice's posting moves its open balance from
+# that account to 1100 Accounts Receivable and touches no income. An edit
+# or a void of the invoice posts through the same item, so it stays true.
+CARRY_ITEM = "QuickBooks Online open balance"
+
+
+def parse_ar_aging(csv_text: str) -> tuple[list[dict], list[str], list[str]]:
+    """The A/R Aging Detail report's rows as {kind, type, date, num,
+    customer, due_date, amount, open}: kind "invoice" for an invoice with
+    an open balance, "payment" for a payment not (fully) applied, whose
+    open balance is negative. The report's own layout: the title rows, a
+    header row (Date, Transaction type, Num, Customer full name, Due date,
+    Amount, Open balance), a section per aging bucket with its "Total for"
+    row, a TOTAL row and a footer with the time it was run. Returns the
+    rows, the errors (nothing can be carried) and the notes (a row left
+    where it is)."""
+    rows = _rows(csv_text)
+    items: list[dict] = []
+    errors: list[str] = []
+    notes: list[str] = []
+    header_at = None
+    for i, row in enumerate(rows):
+        cells = [c.strip().lower() for c in row]
+        if "date" in cells and "open balance" in cells:
+            header_at = i
+            break
+    if header_at is None:
+        errors.append(
+            "The A/R Aging Detail report has no row with Date and Open balance "
+            "columns: export it from QuickBooks Online (Reports → A/R Aging "
+            "Detail → Export to Excel) and upload it as it downloads"
+        )
+        return items, errors, notes
+    title = " ".join(c.strip() for row in rows[:header_at] for c in row if c.strip())
+    if not re.search(r"\bA/?R\s+aging\b", title, re.I):
+        notes.append(
+            f"{title[:120] or 'The aging report'} is not read: the open invoices "
+            "come from the A/R Aging Detail report. Unpaid bills are entered "
+            "after the import."
+        )
+        return items, errors, notes
+    header = [c.strip().lower() for c in rows[header_at]]
+
+    def col(*names):
+        for n in names:
+            if n in header:
+                return header.index(n)
+        return None
+
+    i_date, i_type = col("date"), col("transaction type", "type")
+    i_num, i_due = col("num", "no.", "number"), col("due date")
+    i_cust = col("customer full name", "customer", "name")
+    i_amount, i_open = col("amount"), col("open balance")
+    if None in (i_type, i_cust):
+        errors.append(
+            "The A/R Aging Detail report lacks its Transaction type or Customer "
+            "column: export it with the report's own columns"
+        )
+        return items, errors, notes
+    stated_total = None
+    left_alone = Decimal("0")  # the open balances of rows not carried over
+    numbers: dict[str, int] = {}
+    for n, row in enumerate(rows[header_at + 1 :], start=header_at + 2):
+        label = _cell(row, 0).strip()
+        if label.upper() == "TOTAL":
+            try:
+                stated_total = parse_amount(_cell(row, i_open))
+            except Exception:  # the total as a formula ("=H29+H33"): no figure
+                stated_total = None
+            continue
+        raw_date = _cell(row, i_date).strip()
+        ttype = _cell(row, i_type).strip()
+        if not raw_date or not ttype:
+            continue  # a section's heading or its total, a blank, the footer
+        customer = _cell(row, i_cust).strip()
+        num = _cell(row, i_num).strip() if i_num is not None else ""
+        try:
+            day = parse_date(raw_date, _DATE_FORMATS)
+            raw_due = _cell(row, i_due).strip() if i_due is not None else ""
+            due = parse_date(raw_due, _DATE_FORMATS) if raw_due else day
+            open_ = parse_amount(_cell(row, i_open))
+            amount = (
+                parse_amount(_cell(row, i_amount)) if i_amount is not None else open_
+            )
+        except Exception as exc:  # DataProblem: an unreadable cell
+            errors.append(f"A/R Aging Detail row {n}: {exc}")
+            continue
+        what = f"{ttype} {num}".strip() + f" of {day:%m/%d/%Y} for {customer}"
+        if not customer:
+            errors.append(f"A/R Aging Detail row {n}: {what} names no customer")
+            continue
+        kind = {"invoice": "invoice", "payment": "payment"}.get(ttype.lower())
+        if kind is None or (kind == "invoice") != (open_ > 0) or open_ == 0:
+            left_alone += open_
+            notes.append(
+                f"{what} ({open_:,.2f} open) is not carried over: it stays on the "
+                "export's receivable account. Enter it after the import."
+            )
+            continue
+        if kind == "invoice":
+            # QuickBooks Online lets two invoices share a number; ours are unique
+            base = num or f"QBO-{day:%Y%m%d}"
+            numbers[base] = numbers.get(base, 0) + 1
+            if numbers[base] > 1 or not num:
+                why = (
+                    "the report gives it no number"
+                    if not num
+                    else "another open invoice has its number"
+                )
+                num = f"{base}-{numbers[base]}"
+                notes.append(f"{what}: carried over as invoice {num} ({why})")
+        items.append(
+            {
+                "kind": kind,
+                "type": ttype,
+                "date": day,
+                "num": num[:50],
+                "customer": customer[:200],
+                "due_date": due,
+                "amount": amount,
+                "open": open_,
+            }
+        )
+    carried = sum((i["open"] for i in items), Decimal("0"))
+    if stated_total is not None and not errors and carried + left_alone != stated_total:
+        errors.append(
+            f"The A/R Aging Detail report's TOTAL ({stated_total:,.2f}) is not "
+            "the sum of its rows: export it again"
+        )
+    return items, errors, notes
+
+
+def _receivable_name(bundle: dict, groups: list[list[dict]]) -> str | None:
+    """The export's receivable account: the one the Balance Sheet lists
+    under Accounts Receivable (if there are several, the one the Journal's
+    invoices post to), else the account the invoices debit."""
+    saved = list(_COA_NOTES)  # parse_coa keeps its notes for the dry run
+    try:
+        accounts, _ = parse_coa(bundle.get("coa", ""))
+    finally:
+        _COA_NOTES[:] = saved
+    listed = [a["name"] for a in accounts if a.get("receivable")]
+    used: dict[str, int] = {}
+    for group in groups:
+        if group and group[0]["journal"].startswith("Invoice "):
+            for row in group:
+                if row["debit"] > 0:
+                    used[row["account"]] = used.get(row["account"], 0) + 1
+    if len(listed) == 1:
+        return listed[0]
+    for name in sorted(used, key=used.get, reverse=True):
+        if not listed or name in listed:
+            return name
+    return listed[0] if listed else None
+
+
+def _customer_names(db: Session, bundle: dict) -> dict[str, str]:
+    """Every name a customer may go by, lowercased, to the name it has
+    here: the books' customers, then the Customer list's names and (when
+    one person has it) its Full Name column."""
+    names = {c.name.lower(): c.name for c in db.query(Customer.name).all()}
+    if "customers" in bundle:
+        listed = parse_contacts(bundle["customers"], "Customer")
+        for spec in listed:
+            names.setdefault(spec["name"].lower(), spec["name"])
+        by_full: dict[str, list[str]] = {}
+        for spec in listed:
+            if spec.get("full_name"):
+                by_full.setdefault(spec["full_name"].lower(), []).append(spec["name"])
+        for full, display in by_full.items():
+            if len(display) == 1:
+                names.setdefault(full, display[0])
+    return names
+
+
+def _carry_plan(db: Session, bundle: dict) -> dict:
+    """What the A/R Aging Detail report carries over, checked against the
+    Journal and the books before anything is written: the invoices and
+    payments to carry (the ones already here left out), the export's
+    receivable account, the errors and the notes. Without the report, a
+    note says what the Journal leaves on receivables and how to bring it."""
+    from app.models.accounts import Account
+    from app.models.invoices import Invoice
+    from app.models.payments import Payment
+    from app.services.accounting import get_ar_account_id
+
+    plan = {
+        "given": "ar_aging" in bundle,
+        "invoices": [],
+        "payments": [],
+        "duplicates": 0,
+        "errors": [],
+        "notes": [],
+        "receivable": None,
+    }
+    if "gl" not in bundle or "coa" not in bundle:
+        return plan  # the engine names what is missing
+    groups, _ = parse_gl(bundle["gl"])
+    receivable = _receivable_name(bundle, groups)
+    plan["receivable"] = receivable
+    left = sum(
+        (
+            row["debit"] - row["credit"]
+            for group in groups
+            for row in group
+            if row["account"] == receivable
+        ),
+        Decimal("0"),
+    )
+    if not plan["given"]:
+        if receivable and left:
+            plan["notes"].append(
+                f"The Journal leaves {left:,.2f} on {receivable}: the invoices still "
+                "open and the payments not yet applied. To carry them over as "
+                "invoices and customer credits, download QuickBooks Online's A/R "
+                "Aging Detail report (Reports → A/R Aging Detail → Export to Excel) "
+                "and upload it with the export."
+            )
+        return plan
+    items, errors, notes = parse_ar_aging(bundle["ar_aging"])
+    plan["errors"].extend(errors)
+    plan["notes"].extend(notes)
+    if not items:
+        return plan
+    if receivable is None:
+        plan["errors"].append(
+            "The export has no receivable account (the Balance Sheet's Accounts "
+            "Receivable): the open invoices cannot be carried over"
+        )
+        return plan
+    try:
+        control = db.get(Account, get_ar_account_id(db))
+    except Exception:
+        control = None
+    if control is not None and control.name.lower() == receivable.lower():
+        plan["errors"].append(
+            f"The export's receivable account is named {receivable!r}, as 1100 is "
+            "here, so the history already posts to 1100 and the open invoices "
+            "would count twice. Rename it in QuickBooks Online (its default name "
+            "is Accounts Receivable (A/R)) and export again, or import without the "
+            "A/R Aging Detail report."
+        )
+        return plan
+    names = _customer_names(db, bundle)
+    unknown = set()
+    for item in items:
+        name = names.get(item["customer"].lower())
+        if name is None:
+            unknown.add(item["customer"])
+            name = item["customer"]
+        item["customer"] = name
+    for name in sorted(unknown):
+        plan["notes"].append(
+            f"{name} is on the A/R Aging Detail report but not on the Customer "
+            "list: the customer is created with the carried-over documents"
+        )
+    receivable_id = (
+        db.query(Account.id).filter(Account.name == receivable).scalar()
+        if receivable
+        else None
+    )
+    here = {
+        n: c
+        for n, c in db.query(Invoice.invoice_number, Customer.name).join(
+            Customer, Customer.id == Invoice.customer_id
+        )
+    }
+    carried_payments: dict[tuple, int] = {}
+    if receivable_id is not None:
+        for cname, pdate, amount in (
+            db.query(Customer.name, Payment.date, Payment.amount)
+            .join(Customer, Customer.id == Payment.customer_id)
+            .filter(
+                Payment.deposit_to_account_id == receivable_id,
+                Payment.is_voided.isnot(True),
+            )
+        ):
+            key = (cname.lower(), pdate, Decimal(str(amount)))
+            carried_payments[key] = carried_payments.get(key, 0) + 1
+    for item in items:
+        if item["kind"] == "invoice":
+            owner = here.get(item["num"])
+            if owner is None:
+                plan["invoices"].append(item)
+            elif owner.lower() == item["customer"].lower():
+                plan["duplicates"] += 1
+            else:
+                plan["errors"].append(
+                    f"Invoice {item['num']} is in the books already, for {owner}, "
+                    f"not {item['customer']}"
+                )
+        else:
+            key = (item["customer"].lower(), item["date"], -item["open"])
+            if carried_payments.get(key):
+                carried_payments[key] -= 1
+                plan["duplicates"] += 1
+            else:
+                plan["payments"].append(item)
+    total = sum((i["open"] for i in items), Decimal("0"))
+    control_name = (
+        f"{control.account_number} {control.name}".strip()
+        if control is not None
+        else "Accounts Receivable"
+    )
+    if plan["duplicates"] == len(items):
+        plan["notes"].append(
+            f"All {len(items)} rows of the A/R Aging Detail report are in the books "
+            "already from an earlier import: nothing is carried over twice."
+        )
+        return plan
+    if plan["duplicates"]:
+        plan["notes"].append(
+            f"{plan['duplicates']} of the A/R Aging Detail report's {len(items)} "
+            "rows are in the books already from an earlier import and will be "
+            "skipped, not carried over twice"
+        )
+    if total == left:
+        plan["notes"].append(
+            f"The A/R Aging Detail report's open invoices and unapplied payments "
+            f"come to {total:,.2f}, what the Journal leaves on {receivable}: they "
+            f"move to {control_name} as invoices and customer credits, and "
+            f"{receivable} ends at zero."
+        )
+    else:
+        plan["notes"].append(
+            f"The A/R Aging Detail report's open balances come to {total:,.2f}, and "
+            f"the Journal leaves {left:,.2f} on {receivable}: the difference, "
+            f"{left - total:,.2f}, stays on {receivable} (a report run on another "
+            "day than the export, or a row not carried over)."
+        )
+    return plan
+
+
+def _carry_item(db: Session, receivable_id: int):
+    from app.models.items import Item, ItemType
+
+    item = db.query(Item).filter(Item.name == CARRY_ITEM).first()
+    if item is None:
+        item = Item(
+            name=CARRY_ITEM,
+            item_type=ItemType.SERVICE,
+            description=(
+                "Open balances carried over from QuickBooks Online. Its income "
+                "account is the imported receivable account on purpose: the "
+                "sales are in the imported history already."
+            ),
+            rate=Decimal("0"),
+            is_taxable=False,
+            is_active=True,
+        )
+        db.add(item)
+    item.income_account_id = receivable_id
+    db.flush()
+    return item
+
+
+def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
+    """Carry the plan's invoices and payments over: each invoice with its
+    number, dates and open balance on the CARRY_ITEM line (its posting:
+    1100 debited, the receivable account credited), each unapplied
+    payment for its open part, unapplied (its posting: the receivable
+    account debited, 1100 credited). Returns (invoices, payments)."""
+    from app.models.accounts import Account
+    from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
+    from app.models.payments import Payment
+    from app.routes.invoices.helpers import _post_invoice_journal
+    from app.services.accounting import create_journal_entry, get_ar_account_id
+
+    if not (plan["invoices"] or plan["payments"]):
+        return 0, 0
+    receivable = db.query(Account).filter(Account.name == plan["receivable"]).one()
+    ar_id = get_ar_account_id(db)
+    item = _carry_item(db, receivable.id)
+    customers = {c.name.lower(): c for c in db.query(Customer).all()}
+
+    def customer(name):
+        found = customers.get(name.lower())
+        if found is None:
+            found = Customer(name=name)
+            db.add(found)
+            db.flush()
+            customers[name.lower()] = found
+        return found
+
+    for spec in plan["invoices"]:
+        who = customer(spec["customer"])
+        amount = spec["open"]
+        partly = spec["amount"] != amount
+        invoice = Invoice(
+            invoice_number=spec["num"],
+            customer_id=who.id,
+            status=InvoiceStatus.SENT,
+            date=spec["date"],
+            due_date=spec["due_date"],
+            terms="",
+            bill_address1=who.bill_address1,
+            bill_address2=who.bill_address2,
+            subtotal=amount,
+            tax_rate=Decimal("0"),
+            tax_amount=Decimal("0"),
+            total=amount,
+            amount_paid=Decimal("0"),
+            balance_due=amount,
+            notes=(
+                "Carried over from QuickBooks Online's A/R Aging Detail report: "
+                "the sale is in the imported history, and this is what was open."
+            ),
+        )
+        db.add(invoice)
+        db.flush()
+        line = InvoiceLine(
+            invoice_id=invoice.id,
+            item_id=item.id,
+            description=(
+                f"QuickBooks Online invoice {spec['num']} of {spec['date']:%m/%d/%Y}"
+                + (
+                    f" for {spec['amount']:,.2f}, {amount:,.2f} of it open"
+                    if partly
+                    else ""
+                )
+            ),
+            quantity=Decimal("1"),
+            rate=amount,
+            amount=amount,
+            is_taxable=False,
+            line_order=0,
+        )
+        db.add(line)
+        db.flush()
+        txn = _post_invoice_journal(db, invoice, [line], who.name)
+        invoice.transaction_id = txn.id
+    for spec in plan["payments"]:
+        who = customer(spec["customer"])
+        amount = -spec["open"]
+        payment = Payment(
+            customer_id=who.id,
+            date=spec["date"],
+            amount=amount,
+            reference=spec["num"] or None,
+            deposit_to_account_id=receivable.id,
+            notes=(
+                "Carried over from QuickBooks Online's A/R Aging Detail report: "
+                + (
+                    f"a payment of {-spec['amount']:,.2f}, {amount:,.2f} of it not "
+                    "applied there"
+                    if spec["amount"] != spec["open"]
+                    else "a payment not applied there"
+                )
+                + ". The money is in the imported history."
+            ),
+        )
+        db.add(payment)
+        db.flush()
+        txn = create_journal_entry(
+            db,
+            payment.date,
+            f"Payment from {who.name} (carried over from QuickBooks Online)",
+            [
+                {
+                    "account_id": receivable.id,
+                    "debit": amount,
+                    "credit": Decimal("0"),
+                    "description": "Unapplied payment carried over",
+                },
+                {
+                    "account_id": ar_id,
+                    "debit": Decimal("0"),
+                    "credit": amount,
+                    "description": "Unapplied payment carried over",
+                },
+            ],
+            source_type="payment",
+            source_id=payment.id,
+            reference=payment.reference or "",
+        )
+        payment.transaction_id = txn.id
+    db.flush()
+    return len(plan["invoices"]), len(plan["payments"])
 
 
 # ── the engine's hooks ─────────────────────────────────────────────────────
@@ -670,19 +1174,43 @@ def dry_run(db: Session, bundle: dict) -> dict:
     verdict = dry_run_bundle(db, prepared, _parsers(prepared), LABEL, SOURCE_TYPE)
     verdict["warnings"] = notes + list(_COA_NOTES) + verdict["warnings"]
     verdict.update(_counts(db, bundle))
+    plan = _carry_plan(db, bundle)
+    verdict["errors"] = verdict["errors"] + plan["errors"]
+    verdict["ok"] = verdict["ok"] and not plan["errors"]
+    verdict["warnings"] = verdict["warnings"] + plan["notes"]
+    if plan["given"]:
+        verdict["open_invoices"] = len(plan["invoices"])
+        verdict["unapplied_payments"] = len(plan["payments"])
     return verdict
 
 
 def run_import(db: Session, bundle: dict) -> dict:
+    plan = _carry_plan(db, bundle)  # checked before anything is written
+    if plan["errors"]:
+        refused = dry_run(db, bundle)
+        refused.update(
+            imported_accounts=0,
+            imported_journals=0,
+            imported_customers=0,
+            imported_vendors=0,
+        )
+        if plan["given"]:
+            refused.update(imported_open_invoices=0, imported_unapplied_payments=0)
+        return refused
     prepared, notes = _prepare(bundle)
     result = run_import_bundle(db, prepared, _parsers(prepared), SOURCE_TYPE, LABEL)
-    result["warnings"] = notes + list(_COA_NOTES) + result["warnings"]
+    result["warnings"] = notes + list(_COA_NOTES) + result["warnings"] + plan["notes"]
     result.update(_counts(db, bundle))
+    invoices = payments = 0
     if result["ok"]:
         customers, vendors = _import_contacts(db, bundle)
+        invoices, payments = _import_carried(db, plan)
         db.commit()
     else:
         customers = vendors = 0
     result["imported_customers"] = customers
     result["imported_vendors"] = vendors
+    if plan["given"]:
+        result["imported_open_invoices"] = invoices
+        result["imported_unapplied_payments"] = payments
     return result

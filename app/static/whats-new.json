@@ -3,6 +3,7 @@
     "title": "QuickBooks Online without the API, and the company file encrypted",
     "items": [
       "Migrate Data takes QuickBooks Online's own Export data zip (the gear, Tools, Export data): the chart from the Balance Sheet and P&L, every Journal transaction as a journal entry, the Customer and Vendor lists. No Intuit developer app, no production keys.",
+      "Upload QuickBooks Online's A/R Aging Detail report beside the zip and the open invoices and unapplied customer payments come across as documents, so the A/R aging is right from day one.",
       "A zip or an .xlsx works for every migration source; a Trial Balance on the cash basis is set aside with a note, on the accrual basis it verifies the import.",
       "Built against a real company's export, 24 years and 9,510 transactions, every block balanced to the cent.",
       "The QuickBooks Online connector is gone: the page, the Intuit app credentials under Settings, the API routes and the SDKs. It never reached a real company, and the Export data route above replaces it. A company connected back then keeps what the import made, and its old credentials are removed.",
