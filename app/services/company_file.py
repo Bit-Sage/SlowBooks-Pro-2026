@@ -40,6 +40,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -88,6 +89,18 @@ POSTGRESQL_MESSAGE = (
 class CompanyFileLocked(Exception):
     """An encrypted company file could not be opened: no key, the wrong key,
     or no SQLCipher in this build. ``str(exc)`` is the one sentence to show."""
+
+
+class CompanyFileBusy(CompanyFileLocked):
+    """The rewritten file could not take the company file's place: another
+    program holds the file open. ``str(exc)`` is the sentence to show."""
+
+
+BUSY_MESSAGE = (
+    "The company file could not be replaced: another program has it open (a "
+    "backup, sync or antivirus tool, or another SlowBooks Pro). Close it and "
+    "try again; the books are as they were."
+)
 
 
 KeyLike = Union[bytes, Callable[[], Optional[bytes]], None]
@@ -176,13 +189,16 @@ def _env_key() -> bytes | None:
 
 
 def key_source() -> str | None:
-    """Where a key would come from right now: "launcher" (the raw key the
-    launcher handed this process), "secret" (COMPANY_FILE_ENCRYPTION_SECRET),
-    or None."""
-    if _env_key() is not None:
-        return "launcher"
+    """Where the key comes from, as the person set it up: "secret"
+    (COMPANY_FILE_ENCRYPTION_SECRET, wherever SlowBooks Pro starts), or
+    "launcher" (a raw key the launcher handed this process from somewhere
+    else), or None. The launcher derives its key from the secret and hands
+    it over, so with the secret set the answer is the secret, not the
+    launcher (2.23.2 gate, W-2 / NEW-108)."""
     if _secret():
         return "secret"
+    if _env_key() is not None:
+        return "launcher"
     return None
 
 
@@ -405,12 +421,70 @@ def convert(path: Path, key: bytes | None, *, encrypt: bool) -> None:
         raise
     conn.close()
 
-    os.replace(target, path)
+    # On Windows a reader holding the file refuses the replace. Try for a
+    # moment, then give the file up: a failed Turn off once left the whole
+    # company as a plain .converting copy beside the encrypted file, readable
+    # with no key (2.23.2 gate, W-1).
+    last: Exception | None = None
+    for attempt in range(6):
+        try:
+            os.replace(target, path)
+            last = None
+            break
+        except OSError as exc:
+            last = exc
+            time.sleep(0.25 * (attempt + 1))
+    if last is not None:
+        target.unlink(missing_ok=True)
+        logger.warning("company file %s could not be replaced: %s", path.name, last)
+        raise CompanyFileBusy(BUSY_MESSAGE) from last
     for sidecar in ("-wal", "-shm"):
         Path(str(path) + sidecar).unlink(missing_ok=True)
     logger.info(
         "company file %s is now %s", path.name, "encrypted" if encrypt else "plain"
     )
+
+
+def sweep_stale_conversions(path: Path | str | None) -> list[str]:
+    """Remove what an interrupted rewrite could leave on disk: a
+    ``.converting`` file beside the company file (a plain copy of
+    encrypted books, or the other way round) and a ``.restoring`` staged
+    copy in the backups folder. Returns the names removed. Run at every
+    start, before anything opens the file."""
+    removed: list[str] = []
+    if path is not None:
+        path = Path(path)
+        for stale in (
+            path.with_name(path.name + ".converting"),
+            path.with_name(path.name + ".converting-journal"),
+        ):
+            if stale.exists():
+                stale.unlink(missing_ok=True)
+                removed.append(stale.name)
+    try:
+        from app.services import storage
+
+        folder = storage.backups_root()
+    except Exception:  # pragma: no cover - no backups root in this context
+        folder = None
+    if folder is not None and Path(folder).is_dir():
+        for stale in Path(folder).glob("*.restoring"):
+            stale.unlink(missing_ok=True)
+            removed.append(stale.name)
+    if removed:
+        logger.warning(
+            "removed what an interrupted rewrite left behind: %s", ", ".join(removed)
+        )
+    return removed
+
+
+def verify_key(path: Path | str, key: bytes) -> None:
+    """Prove the key opens the file without touching it: a read-only,
+    immutable open, so a wrong key neither writes nor folds the WAL (a
+    writable check did both: 2.23.2 gate, NEW-109). Raises CompanyFileLocked
+    with the sentence to show."""
+    conn = connect_raw(Path(path), key, readonly=True)
+    conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +520,15 @@ def refuse_a_locked_file() -> None:
     in this build, stops the start with one sentence before migrations or
     create_all can touch it."""
     path = active_path()
+    sweep_stale_conversions(path)
     if not is_encrypted_file(path):
         return
     if not available():
         raise RuntimeError(UNAVAILABLE_MESSAGE)
-    if resolve_key() is None:
+    key = resolve_key()
+    if key is None:
         raise RuntimeError(NO_KEY_MESSAGE)
+    try:
+        verify_key(path, key)
+    except CompanyFileLocked as exc:
+        raise RuntimeError(str(exc)) from exc

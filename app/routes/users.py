@@ -10,6 +10,7 @@
 import re
 from typing import Optional
 
+from datetime import timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field
 from app.schemas.common import StrictModel
@@ -18,6 +19,19 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.users import ROLE_ADMIN, VALID_ROLES, User
 from app.services.auth import MIN_PASSWORD_LEN, hash_password
+
+
+def _utc_iso(stamp):
+    """A stored timestamp as ISO text with its zone: SQLite's are naive UTC,
+    and a browser reads a naive stamp as local, which put "Last login" and
+    "Last used" on tomorrow's date from 7 pm Central (2.23.2 gate, NEW-110).
+    The backups list sends "+00:00" and is right; so do these now."""
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
+
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -36,8 +50,8 @@ def _user_out(u: User) -> dict:
         "display_name": u.display_name,
         "role": u.role,
         "is_active": u.is_active,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
-        "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        "created_at": _utc_iso(u.created_at),
+        "last_login_at": _utc_iso(u.last_login_at),
     }
 
 

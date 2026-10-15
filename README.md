@@ -54,18 +54,21 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.24 — QuickBooks Online without the API, and the company file encrypted.** QuickBooks Online's own
-Export data zip (the gear, Tools, Export data) migrates a company with no
-Intuit developer app and no production keys: the chart from the Balance
-Sheet and the Profit and Loss, typed and nested as QuickBooks has it, every
-Journal transaction as a journal entry with its date, type, number, name
-and memo, and the Customer and Vendor lists. Upload the zip as downloaded,
-or its workbooks, or those saved as CSV. A Trial Balance on the cash basis
-is set aside with a note; on the accrual basis it verifies the import.
-Built against a real company's export, twenty-four years and 9,510
-transactions, every block balanced to the cent.
+**v2.23 — Both ways with QuickBooks.** Invoices come in from a QuickBooks
+Desktop Transaction Detail report saved as CSV, with their lines, jobs and
+numbers, open or paid by the report's Open Balance column (#291); the IIF
+export carries an invoice's job, items and quantities the way Intuit's own
+sample files do, so a round trip keeps them (#199); the IIF import names
+the transaction types it doesn't take and counts them (#288). A payment or
+bill payment recorded with an Idempotency-Key is booked once however many
+times the request arrives (#292); editing a posted bill's or invoice's
+lines leaves a DELETE event for every old line (#289); the invoice form
+says that creating one posts it (#293); and the AI guide, the README and
+the docs say what stays on your machine and what a cloud model sees
+(#294). Line quantities keep four decimal places, so an imported 2.125
+stays 2.125 instead of reading 2.12 and losing cents on the next edit.
 
-Patch releases and everything before 2.24 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.23 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -139,7 +142,8 @@ Full catalog in **[docs/features.md](docs/features.md)**. Highlights:
   [PayPal](docs/setup-paypal.md), [Square](docs/setup-square.md) behind
   one abstraction, desktop-mode recording included
 - **Interop & migration** — QuickBooks IIF round-trip incl. sales
-  receipts ([docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md)),
+  receipts, and QuickBooks Online from its own Export data zip with no
+  Intuit developer app ([docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md)),
   [QBO OAuth sync](docs/setup-qbo.md), Migrate Data for Xero / MYOB /
   Sage 50 / Wave / Zoho Books / GnuCash, Opening Balances wizard
 - **Fixed assets** — register, depreciation runs, disposal with
@@ -233,7 +237,7 @@ Production checklist: **[docs/release-checklist.md](docs/release-checklist.md)**
 | [docs/banking.md](docs/banking.md) | The register is the ledger: entries, feeds as a review queue, transfers, reconciliation |
 | [docs/nonprofit-module.md](docs/nonprofit-module.md) | Nonprofit mode: funds, restrictions, functional expenses, donor documents |
 | [docs/accessibility.md](docs/accessibility.md) | WCAG 2.1 AA conformance, known gaps, how to report a barrier |
-| [docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md) | QuickBooks Desktop (IIF) and Online migration, sales receipts included |
+| [docs/migrate-from-quickbooks.md](docs/migrate-from-quickbooks.md) | QuickBooks Desktop (IIF) and Online migration (the API, or the Export data zip with no Intuit app), sales receipts included |
 | [docs/state-withholding.md](docs/state-withholding.md) | State income-tax withholding tables and their sources |
 | [docs/setup-bank-feeds.md](docs/setup-bank-feeds.md) | SimpleFIN bank feeds |
 | [docs/setup-qbo.md](docs/setup-qbo.md) · [Stripe](docs/setup-stripe.md) · [PayPal](docs/setup-paypal.md) · [Square](docs/setup-square.md) | Integrations |

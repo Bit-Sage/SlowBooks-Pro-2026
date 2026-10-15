@@ -92,7 +92,9 @@ def test_the_launchers_key_wins_over_the_secret(monkeypatch, no_key):
         "correct horse battery staple"
     )
     monkeypatch.setenv(company_file.KEY_ENV, KEY.hex())
-    assert company_file.key_source() == "launcher"
+    # the launcher's key is the one used; the secret is still where it
+    # came from, and what Settings names (W-2 / NEW-108)
+    assert company_file.key_source() == "secret"
     assert company_file.resolve_key() == KEY
 
 
@@ -656,3 +658,127 @@ def test_the_installers_carry_the_driver_and_the_smoke_test_proves_it():
     src = inspect.getsource(dl.run_smoke_test)
     assert "cipher_version()" in src
     assert "is_encrypted_file(scratch)" in src
+
+
+# ---------------------------------------------------------------------------
+# 2.23.2 gate, round 1: W-1, W-2 / NEW-108, NEW-109
+# ---------------------------------------------------------------------------
+
+
+def test_the_key_source_is_the_secret_the_launcher_hands_on(monkeypatch):
+    # the launcher derives its key from the secret and hands it to its
+    # server; Settings named "the launcher" where the person set a secret
+    monkeypatch.setenv(company_file.SECRET_ENV, "operator-secret")
+    monkeypatch.setenv(company_file.KEY_ENV, KEY.hex())
+    assert company_file.key_source() == "secret"
+    monkeypatch.delenv(company_file.SECRET_ENV)
+    assert company_file.key_source() == "launcher"
+    monkeypatch.delenv(company_file.KEY_ENV)
+    assert company_file.key_source() is None
+
+
+def test_a_rewrite_that_cannot_replace_the_file_leaves_no_copy(monkeypatch, tmp_path):
+    # W-1: another program holding the file open refused the replace on
+    # Windows, and a plain .converting copy of the encrypted books stayed
+    path = tmp_path / "books.db"
+    _new_company_file(path, KEY, rows=(1, 2, 3))
+    before = path.read_bytes()
+
+    def refuse(src, dst):
+        raise PermissionError(5, "Access is denied", str(dst))
+
+    monkeypatch.setattr(company_file.os, "replace", refuse)
+    monkeypatch.setattr(company_file.time, "sleep", lambda s: None)
+    with pytest.raises(company_file.CompanyFileLocked) as exc:
+        company_file.convert(path, KEY, encrypt=False)
+    assert "another program has it open" in str(exc.value)
+    assert isinstance(exc.value, company_file.CompanyFileBusy)
+    assert not path.with_name("books.db.converting").exists()
+    assert path.read_bytes() == before  # the books are as they were
+    assert _rows(path, KEY) == [1, 2, 3]
+
+
+def test_a_replace_that_fails_once_is_retried(monkeypatch, tmp_path):
+    path = tmp_path / "books.db"
+    _new_company_file(path, KEY, rows=(7,))
+    real = company_file.os.replace
+    calls = []
+
+    def flaky(src, dst):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError(5, "Access is denied", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(company_file.os, "replace", flaky)
+    monkeypatch.setattr(company_file.time, "sleep", lambda s: None)
+    company_file.convert(path, KEY, encrypt=False)
+    assert len(calls) == 2
+    assert not company_file.is_encrypted_file(path)
+    assert _rows(path) == [7]
+
+
+def test_a_start_sweeps_what_an_interrupted_rewrite_left(monkeypatch, tmp_path):
+    path = tmp_path / "books.db"
+    _new_company_file(path, rows=(1,))
+    stale = path.with_name("books.db.converting")
+    stale.write_bytes(b"SQLite format 3\x00" + b"\x00" * 100)
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    (backups / "old.db.restoring").write_bytes(b"x")
+    (backups / "keep.db").write_bytes(b"x")
+    from app.services import storage
+
+    monkeypatch.setattr(storage, "backups_root", lambda: backups)
+    removed = company_file.sweep_stale_conversions(path)
+    assert sorted(removed) == ["books.db.converting", "old.db.restoring"]
+    assert not stale.exists() and (backups / "keep.db").exists()
+    # and the startup guard runs it before anything else
+    monkeypatch.setattr(company_file, "active_path", lambda: path)
+    stale.write_bytes(b"again")
+    company_file.refuse_a_locked_file()
+    assert not stale.exists()
+
+
+def test_a_wrong_key_is_refused_without_touching_the_file(monkeypatch, tmp_path):
+    # NEW-109: the writable check folded the WAL and removed the sidecars;
+    # the read-only, immutable check changes nothing
+    path = tmp_path / "books.db"
+    _new_company_file(path, KEY, rows=(1, 2))
+    conn = company_file.connect_raw(path, KEY)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("INSERT INTO t VALUES (3)")
+    conn.commit()  # a WAL is left behind on purpose
+    before = path.read_bytes()
+    wal = path.with_name("books.db-wal")
+    had_wal = wal.exists()
+    monkeypatch.setattr(company_file, "active_path", lambda: path)
+    monkeypatch.setenv(company_file.KEY_ENV, OTHER.hex())
+    monkeypatch.delenv(company_file.SECRET_ENV, raising=False)
+    with pytest.raises(RuntimeError) as exc:
+        company_file.refuse_a_locked_file()
+    assert "does not open it" in str(exc.value)
+    assert path.read_bytes() == before
+    assert wal.exists() == had_wal
+    # (closing the test's own writer folds its WAL into the file: measure after)
+    conn.close()
+    settled = path.read_bytes()
+    # the right key, read-only, is accepted and changes nothing either
+    monkeypatch.setenv(company_file.KEY_ENV, KEY.hex())
+    company_file.refuse_a_locked_file()
+    assert path.read_bytes() == settled
+
+
+def test_the_launcher_refuses_a_wrong_key_before_the_migration(monkeypatch, tmp_path):
+    path = tmp_path / "books.db"
+    _new_company_file(path, KEY)
+    monkeypatch.setattr(company_service, "company_db_path", lambda f: path)
+    monkeypatch.setattr(company_file, "resolve_key", lambda: OTHER)
+    touched = []
+    monkeypatch.setattr(dl, "_server_already_running", lambda port: False)
+    monkeypatch.setattr(dl, "migrate", lambda *a, **k: touched.append("migrate"))
+    monkeypatch.setattr(dl, "start_server", lambda *a, **k: touched.append("start"))
+    with pytest.raises(RuntimeError) as exc:
+        dl.launch_company("books.db", 3999, persist=False)
+    assert "does not open it" in str(exc.value)
+    assert touched == []

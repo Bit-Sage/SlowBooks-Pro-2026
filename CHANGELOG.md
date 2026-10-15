@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.24.0 — QuickBooks Online without the API, and the company file encrypted
+### v2.23.2 — QuickBooks Online without the API, and the company file encrypted
 
 **Migrate from QuickBooks Online with its own export.** The QuickBooks
 Online path needed each user's own app in Intuit's developer portal, and
@@ -81,7 +81,6 @@ Also in this release: the first of @grungenut's pull requests behind #290
 (PR #311) above, merged as contributed, and the compose fix's missing
 CHANGELOG sentence (PR #312) in the 2.23.1 entry below.
 
-No schema change. 567 API operations (the two company-file ones).
 
 
 ### v2.23.1 — Entities keep their class

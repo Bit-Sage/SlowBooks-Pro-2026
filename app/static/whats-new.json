@@ -1,5 +1,5 @@
 {
-  "2.24.0": {
+  "2.23.2": {
     "title": "QuickBooks Online without the API, and the company file encrypted",
     "items": [
       "Migrate Data takes QuickBooks Online's own Export data zip (the gear, Tools, Export data): the chart from the Balance Sheet and P&L, every Journal transaction as a journal entry, the Customer and Vendor lists. No Intuit developer app, no production keys.",
