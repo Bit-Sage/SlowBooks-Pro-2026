@@ -3,7 +3,8 @@ of QuickBooks Desktop's Transaction Detail by Account exported to CSV (28
 columns, the labels before Type, an empty column between every field, a
 heading row per account with sub-accounts one column in, QuickBooks' "Total"
 rows and the TOTAL row, the Clr check glyph in the Windows code page, CRLF).
-Run it again when the transactions below change."""
+Run it again when the transactions below change. The sample company is Morden
+Bookkeeping, named for Kim Morden Bookkeeping, who brought the report."""
 
 from collections import OrderedDict
 from decimal import Decimal

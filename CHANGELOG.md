@@ -24,7 +24,8 @@ one line only is still one entry. A second upload posts nothing twice. A
 register-style report (no account above its rows) is told which report to
 export instead. Built against a real company's report, a year of a small
 practice's books in which every account matched QuickBooks to the cent; the
-fixture is invented books in that layout.
+fixture is invented books in that layout, and its sample company, Morden
+Bookkeeping, is named for Kim Morden Bookkeeping, who brought the report.
 
 No schema change. 556 API operations.
 

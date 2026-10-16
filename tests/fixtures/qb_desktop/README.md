@@ -5,3 +5,6 @@ Detail by Account saved as CSV: 28 columns, the labels before Type, an empty col
 row per account with sub-accounts one column in, QuickBooks' Total rows and the TOTAL row, the Clr check glyph in
 the Windows code page, CRLF line ends. `make_ledger_fixture.py` writes it. The real report the importer was built
 against is a bookkeeper's client's books and is not here.
+
+The sample company is **Morden Bookkeeping**, named for Kim Morden Bookkeeping, whose client's export this
+importer was built on and who said yes to the name.

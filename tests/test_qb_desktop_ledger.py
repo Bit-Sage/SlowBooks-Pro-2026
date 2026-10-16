@@ -13,6 +13,8 @@ whole.
 The fixture is invented books in the layout of a real export the importer
 was built against (a small practice's year, every account matching the
 totals QuickBooks printed); the real file stays private.
+The sample company is Morden Bookkeeping, named for Kim Morden Bookkeeping,
+who brought the report.
 """
 
 import io
