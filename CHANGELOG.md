@@ -5,6 +5,13 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+## [Unreleased]
+
+- **Mercury bank feed:** connect a read-only Mercury API token, map accounts,
+  and import posted transactions into Banking's review queue with deduplication
+  and matching. Optional signed balance webhooks update displayed bank balances;
+  transactions still import through manual sync. See [setup](docs/setup-mercury.md).
+
 ### v2.23.5 — A bookkeeper's first hour
 
 **A SimpleFIN feed that reports every sign the other way round imports
