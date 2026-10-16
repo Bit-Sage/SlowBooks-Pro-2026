@@ -150,12 +150,12 @@ const IIFPage = {
             if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
             const result = await res.json();
 
-            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks' };
+            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries' };
             let html = '<div class="iif-results"><h4>Results</h4>';
             if (result.detected) {
                 html += `<div class="result-row"><span>Detected report</span><span class="result-count">${kindLabel[result.detected] || result.detected}</span></div>`;
             }
-            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks']) {
+            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals']) {
                 if (result[key] > 0) {
                     html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]} imported</span></div>`;
                 }

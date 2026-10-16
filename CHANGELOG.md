@@ -5,6 +5,29 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.23.4 — Every QuickBooks Desktop transaction, as journal entries
+
+**QuickBooks Desktop's Transaction Detail by Account imports.** The report a
+bookkeeper exports for everything (Reports > Accountant & Taxes >
+Transaction Detail by Account) lists every deposit, check, transfer, general
+journal entry and opening balance, grouped by account, with the other side
+of each in Split. Import from Report CSV refused it as an unrecognized
+layout, so a Desktop company's transfers and journal entries had no way in.
+It now posts each transaction as one balanced journal entry with its date,
+number, name and memo, on the accounts the lists IIF made, sub-accounts
+included. Before anything is written the whole file is checked: every
+account in the chart, every transaction balanced, and every account's lines
+adding up to the total QuickBooks printed for it; a file that fails is
+refused whole, with the reason. Same-day transactions with no number are
+told apart by name, and a journal entry whose number QuickBooks printed on
+one line only is still one entry. A second upload posts nothing twice. A
+register-style report (no account above its rows) is told which report to
+export instead. Built against a real company's report, a year of a small
+practice's books in which every account matched QuickBooks to the cent; the
+fixture is invented books in that layout.
+
+No schema change. 556 API operations.
+
 ### v2.23.3 — Voids that always post, and imported invoices paid once
 
 **Voiding never fails on a long line memo** (#318, PR #319, @Justin-Rezamp).

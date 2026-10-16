@@ -96,9 +96,25 @@ books is renamed. Look over the examples first: a name that should stay in
 capitals (a company's initials) may not. A transactions file imported later
 still finds each name, whichever way it spells it.
 
-### Transactions need one extra step
+### Transactions: the Transaction Detail by Account report
 
-Desktop does not export transactions to IIF natively. Two options:
+The simplest way to bring every transaction across: in QuickBooks Desktop,
+**Reports > Accountant & Taxes > Transaction Detail by Account**, set the
+dates to **All**, and save it as CSV (keep the report's default columns).
+Import your lists IIF first, then upload the report under
+**Interoperability → Import from Report CSV**. Every deposit, check,
+transfer, general journal entry and opening balance comes across as a
+journal entry with its date, number, name and memo, and each account ends
+with the balance QuickBooks shows. The file is checked first and refused
+whole if anything is off, and uploading it again posts nothing twice.
+
+Journal entries carry the history; the A/R and A/P aging read invoices and
+bills, so a company that invoices in QuickBooks brings its open invoices in
+from the invoice report below.
+
+### Other transaction reports
+
+Desktop does not export transactions to IIF natively. Two other options:
 
 - **A third-party IIF transaction exporter** (several exist for QB
   Desktop). The importer understands `INVOICE`, `PAYMENT`,

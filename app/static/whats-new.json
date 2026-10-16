@@ -1,4 +1,11 @@
 {
+  "2.23.4": {
+    "title": "Every QuickBooks Desktop transaction, as journal entries",
+    "items": [
+      "QuickBooks Desktop's Transaction Detail by Account imports under Interoperability, Import from Report CSV: every deposit, check, transfer, journal entry and opening balance as a journal entry.",
+      "The whole file is checked first (accounts, balance, QuickBooks' own totals) and refused whole if anything is off; a second upload posts nothing twice."
+    ]
+  },
   "2.23.3": {
     "title": "Voids that always post, and imported invoices paid once",
     "items": [
