@@ -1,5 +1,5 @@
 /**
- * IIF Import/Export — QuickBooks 2003 Pro Interoperability
+ * IIF Import/Export — QuickBooks Desktop Interoperability
  *
  * In QB2003: Import: File > Utilities > Import > IIF Files
  * Export: File > Utilities > Export > Lists to IIF Files
@@ -16,7 +16,7 @@ const IIFPage = {
             <div class="page-header">
                 <h2>Interoperability</h2>
                 <div style="font-size:10px; color:var(--text-muted);">
-                    IIF Import/Export &mdash; Compatible with QuickBooks 2003 Pro
+                    IIF Import/Export &mdash; Works with QuickBooks Desktop
                 </div>
             </div>
 
@@ -25,7 +25,7 @@ const IIFPage = {
                 <div class="iif-section">
                     <h3>&#9660; Export to IIF</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
-                        Download Slowbooks data as .iif files for import into QuickBooks 2003 Pro
+                        Download Slowbooks data as .iif files for import into QuickBooks Desktop
                         via File &gt; Utilities &gt; Import &gt; IIF Files.
                     </p>
 
@@ -71,7 +71,7 @@ const IIFPage = {
                 <div class="iif-section" data-write>
                     <h3>&#9650; Import from IIF</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
-                        Upload .iif files exported from QuickBooks 2003 Pro
+                        Upload .iif files exported from QuickBooks Desktop
                         via File &gt; Utilities &gt; Export &gt; Lists to IIF Files.
                     </p>
 

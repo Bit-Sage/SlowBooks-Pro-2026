@@ -1,4 +1,12 @@
 {
+  "2.23.3": {
+    "title": "Voids that always post, and imported invoices paid once",
+    "items": [
+      "Voiding an entry with a long line memo works on every void path; a value the database refuses answers with a sentence, not an error page (@Justin-Rezamp).",
+      "Invoices the old QuickBooks Online import counted as paid twice get their paid amount, balance and status back on the first start.",
+      "The Interoperability page says QuickBooks Desktop, not QuickBooks 2003 Pro."
+    ]
+  },
   "2.23.2": {
     "title": "QuickBooks Online without the API, and the company file encrypted",
     "items": [

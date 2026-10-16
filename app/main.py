@@ -405,6 +405,14 @@ async def lifespan(app: FastAPI):
                 print("Encrypted legacy plaintext secret settings at rest")
             if remove_retired_settings(_db):
                 print("Removed the settings of a retired integration")
+            # #317: invoices the retired QuickBooks Online import counted as
+            # paid twice get their paid amount, balance and status back
+            from app.services.qbo_documents import repair_double_counted_payments
+
+            if repair_double_counted_payments(_db):
+                print(
+                    "Repaired invoices the QuickBooks Online import counted as paid twice"
+                )
         finally:
             _db.close()
     except Exception:

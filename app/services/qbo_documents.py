@@ -455,3 +455,71 @@ def adopt_unposted_payments(db: Session, invoice) -> None:
                 sibling.transaction_id = txn.id
                 mark_changed_here(db, sibling_map)
                 invoices.append(sibling)
+
+
+# ---------------------------------------------------------------------------
+# A repair for what the import left wrong (#317)
+# ---------------------------------------------------------------------------
+
+
+def repair_double_counted_payments(db: Session) -> int:
+    """#317: the connector's invoice import set an invoice's amount paid from
+    QuickBooks Online (its total less its balance), and its payment import
+    then added each payment's allocation to it again. A paid invoice read
+    paid twice (a 11,666.66 invoice paid 23,333.32, due -11,666.66), a
+    partly paid one owed too little, and the aging, statements and open
+    lists were off; the ledger was right.
+
+    The repair is exact, not a recompute of every invoice: an invoice the
+    import created whose amount paid, less any credit memos applied here,
+    is twice what the payments applied to it is set to what the payments
+    and credits applied, with its balance and status. Any other invoice
+    (one whose QuickBooks Online payments did not all come across, one
+    never imported) is left alone. Runs at startup; a second pass finds
+    nothing. Returns the number repaired."""
+    from sqlalchemy import func
+
+    from app.models.credit_memos import CreditApplication, CreditMemo, CreditMemoStatus
+    from app.models.payments import PaymentAllocation
+
+    imported = [
+        sid
+        for (sid,) in db.query(QBOMapping.slowbooks_id).filter(
+            QBOMapping.entity_type.in_(("invoice", "sales_receipt"))
+        )
+    ]
+    if not imported:
+        return 0
+    paid = dict(
+        db.query(PaymentAllocation.invoice_id, func.sum(PaymentAllocation.amount))
+        .join(Payment, Payment.id == PaymentAllocation.payment_id)
+        .filter(PaymentAllocation.invoice_id.in_(imported))
+        .filter(Payment.is_voided.isnot(True))
+        .group_by(PaymentAllocation.invoice_id)
+    )
+    credited = dict(
+        db.query(CreditApplication.invoice_id, func.sum(CreditApplication.amount))
+        .join(CreditMemo, CreditMemo.id == CreditApplication.credit_memo_id)
+        .filter(CreditApplication.invoice_id.in_(imported))
+        .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .group_by(CreditApplication.invoice_id)
+    )
+    repaired = 0
+    for invoice in db.query(Invoice).filter(Invoice.id.in_(imported)):
+        if invoice.status == InvoiceStatus.VOID:
+            continue
+        applied = Decimal(str(paid.get(invoice.id) or 0))
+        credits = Decimal(str(credited.get(invoice.id) or 0))
+        if applied <= 0:
+            continue
+        if Decimal(str(invoice.amount_paid or 0)) - credits != applied * 2:
+            continue
+        invoice.amount_paid = applied + credits
+        invoice.balance_due = Decimal(str(invoice.total or 0)) - invoice.amount_paid
+        invoice.status = (
+            InvoiceStatus.PAID if invoice.balance_due <= 0 else InvoiceStatus.PARTIAL
+        )
+        repaired += 1
+    if repaired:
+        db.commit()
+    return repaired

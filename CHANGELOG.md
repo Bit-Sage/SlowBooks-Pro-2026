@@ -5,6 +5,34 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.23.3 — Voids that always post, and imported invoices paid once
+
+**Voiding never fails on a long line memo** (#318, PR #319, @Justin-Rezamp).
+A reversal writes "VOID: " before each line's memo, so a memo of 295 to 300
+characters came out over the column's 300 and PostgreSQL refused the row:
+the void answered 500 and the entry could never be voided. The reversal's
+copy of the memo is cut to fit (the original keeps its full text), on every
+void path, and an in-kind gift's posted memo the same. A journal entry whose
+reversal still cannot post is left as it was with a sentence (400 or 422),
+and a value the database refuses anywhere answers 422 with a fixed sentence
+instead of a 500; the driver's text goes to the log only. Merged as
+contributed.
+
+**Invoices the QuickBooks Online import counted as paid twice are
+repaired** (#317, @tim-getthehayout). The connector removed in 2.23.2 set an
+imported invoice's amount paid from QuickBooks Online, then its payment
+import added each payment again: a paid invoice read paid twice with a
+negative balance, a partly paid one owed too little, and the aging,
+statements and open lists were off (the ledger was right). On the first
+start, an invoice the import created whose amount paid, less credits
+applied here, is exactly twice what its payments applied gets its paid
+amount, balance and status back. Any other invoice is left alone.
+
+**The Interoperability page says QuickBooks Desktop** (#316): its notes
+named QuickBooks 2003 Pro, as if IIF worked with that version only.
+
+No schema change. 556 API operations.
+
 ### v2.23.2 — QuickBooks Online without the API, and the company file encrypted
 
 **Migrate from QuickBooks Online with its own export.** The QuickBooks
