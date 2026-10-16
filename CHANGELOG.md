@@ -27,6 +27,13 @@ practice's books in which every account matched QuickBooks to the cent; the
 fixture is invented books in that layout, and its sample company, Morden
 Bookkeeping, is named for Kim Morden Bookkeeping, who brought the report.
 
+**From the gate's first round** (Windows W-1 to W-4; macOS NEW-122 to
+NEW-124): the imported entries list on Journal Entries, and their Type reads
+"QuickBooks Desktop import"; the result counts them ("Imported 8 records",
+not 0); the Import from Report CSV panel names Transaction Detail by
+Account; and a lists IIF's bank and credit card accounts come in as
+registers, so Banking lists them (they came in as plain accounts).
+
 No schema change. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once

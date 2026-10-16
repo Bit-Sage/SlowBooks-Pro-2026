@@ -206,3 +206,61 @@ def test_the_page_counts_the_journal_entries():
         encoding="utf-8"
     )
     assert "journals: 'Journal entries'" in js and "'checks', 'journals']" in js
+
+
+def test_the_entries_list_on_journal_entries_with_their_word(
+    client, db_session, seed_accounts
+):
+    """The page's own call, GET /api/journal with no filter, lists them
+    (2.23.4 gate, NEW-122), and their Type reads in words (W-3)."""
+    _chart(db_session)
+    _upload(client, FIXTURE.read_bytes())
+    listed = [
+        e for e in client.get("/api/journal").json() if e["source_type"] == SOURCE_TYPE
+    ]
+    assert len(listed) == 8
+    utils = (Path(__file__).resolve().parents[1] / "app/static/js/utils.js").read_text(
+        encoding="utf-8"
+    )
+    assert "qb_ledger_import: 'QuickBooks Desktop import'" in utils
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/iif.js").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "(result.checks || 0) + (result.journals || 0)" in js
+    )  # the toast counts them (NEW-123)
+    assert (
+        "Transaction Detail\n" in js
+        or "Transaction Detail" in js.split("Import from Report CSV")[1][:1500]
+    )
+
+
+def test_the_lists_iif_makes_bank_and_card_accounts_registers(
+    client, db_session, seed_accounts
+):
+    """A lists IIF's BANK and CCARD accounts come in with their bank kind, so
+    Banking lists them (2.23.4 gate, W-4)."""
+    iif = (
+        "!ACCNT\tNAME\tACCNTTYPE\r\n"
+        "ACCNT\tOperating Checking 4321\tBANK\r\n"
+        "ACCNT\tCompany Card\tCCARD\r\n"
+        "ACCNT\tRent Paid\tEXP\r\n"
+    )
+    r = client.post(
+        "/api/iif/import",
+        files={"file": ("lists.IIF", io.BytesIO(iif.encode()), "text/plain")},
+    )
+    assert r.status_code == 200, r.text
+    kinds = {
+        a.name: a.bank_kind
+        for a in db_session.query(Account).filter(
+            Account.name.in_(["Operating Checking 4321", "Company Card", "Rent Paid"])
+        )
+    }
+    assert kinds == {
+        "Operating Checking 4321": "bank",
+        "Company Card": "credit_card",
+        "Rent Paid": None,
+    }
+    banks = {a["name"] for a in client.get("/api/accounts", params={"bank": 1}).json()}
+    assert {"Operating Checking 4321", "Company Card"} <= banks

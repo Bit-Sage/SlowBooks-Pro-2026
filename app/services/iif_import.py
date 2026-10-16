@@ -511,6 +511,10 @@ def import_accounts(db: Session, rows: list) -> dict:
                 description=row.get("DESC", "").strip() or None,
                 parent_id=parent_id,
                 is_active=True,
+                # QuickBooks' BANK and CCARD accounts are registers here too,
+                # so Banking lists them (they came in as plain assets and
+                # liabilities: 2.23.4 gate, W-4)
+                bank_kind={"BANK": "bank", "CCARD": "credit_card"}.get(iif_type),
             )
             db.add(acct)
             db.flush()
