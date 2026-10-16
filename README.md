@@ -13,7 +13,8 @@ required** (Docker remains an optional path for Linux servers).
 [Windows installer](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-Setup-x64.exe) ·
 [macOS DMG](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-macos-arm64.dmg) ·
 [Docker / Linux](#quick-start) ·
-[slowbookspro.com](https://www.slowbookspro.com)
+[slowbookspro.com](https://www.slowbookspro.com) ·
+[🐢 Support SlowBooks Pro](https://ko-fi.com/Y7G628VSJ3)
 
 ![Slowbooks Pro 2026 Edition and Server Edition](screenshots/hero-abouts.png)
 
