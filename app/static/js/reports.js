@@ -1032,9 +1032,9 @@ const ReportsPage = {
             await ReportsPage.profitLossOfClass(prefill.class_id, null, prefill);
             return;
         }
-        await ReportsPage.openPeriodModal(T("Profit & Loss"), "this_year_to_date", async (_period, range) => {
-            const data = await API.get(`/reports/profit-loss?start_date=${range.start}&end_date=${range.end}`);
-            const pdfBtn = ReportsPage._exportButtons('profit-loss', `start_date=${range.start}&end_date=${range.end}`);
+        await ReportsPage.openPeriodModal(T("Profit & Loss"), "this_year_to_date", async (_period, range, params) => {
+            const data = await API.get(`/reports/profit-loss?start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}`);
+            const pdfBtn = ReportsPage._exportButtons('profit-loss', `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}`);
             // Build the onclick payload outside the template so we can
             // HTML-escape the embedded double quotes from JSON.stringify().
             // Otherwise the inner " breaks the outer onclick="…" attribute.
@@ -1067,13 +1067,35 @@ const ReportsPage = {
                         <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                     </tbody>
                 </table></div>`;
-        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill });
+        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, ...ReportsPage._sortOpts(prefill) });
+    },
+
+    // The accounts' order on the two statements (#326): by number, then
+    // name, as the Trial Balance lists them (the server's default), or by
+    // name; a sub-account under its parent either way. The choice is a
+    // report param, so it rides on the address, into a saved report and
+    // into the PDF and CSV, and the toolbar's select is drawn once beside
+    // Dates.
+    _sortOpts(prefill) {
+        const sort = prefill && prefill.sort === 'name' ? 'name' : '';
+        const params = sort ? { sort } : {};
+        const toolbar = `<div class="form-group">
+                    <label for="report-sort-select">Sort by</label>
+                    <select id="report-sort-select" data-no-search onchange="ReportsPage.setParam('sort', this.value === 'name' ? 'name' : '')">
+                        <option value="number" ${sort ? '' : 'selected'}>Account number</option>
+                        <option value="name" ${sort ? 'selected' : ''}>Account name</option>
+                    </select>
+                </div>`;
+        return { params, toolbar };
+    },
+    _sortQs(params) {
+        return params && params.sort === 'name' ? '&sort=name' : '';
     },
 
     async balanceSheet(prefill) {
-        await ReportsPage.openPeriodModal(T("Balance Sheet"), "this_year_to_date", async (_period, params) => {
-            const data = await API.get(`/reports/balance-sheet?as_of_date=${params.as_of_date}`);
-            const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${params.as_of_date}`);
+        await ReportsPage.openPeriodModal(T("Balance Sheet"), "this_year_to_date", async (_period, params, live) => {
+            const data = await API.get(`/reports/balance-sheet?as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
+            const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
             const drillCall = (i) => escapeHtml(
                 `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'balance-sheet')`
             );
@@ -1099,7 +1121,7 @@ const ReportsPage = {
                         <tr style="font-weight:600; background:var(--gray-50);"><td>${T('Total Equity')}</td><td class="amount">${formatCurrency(data.total_equity)}</td></tr>
                     </tbody>
                 </table></div>`;
-        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill });
+        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill, ...ReportsPage._sortOpts(prefill) });
     },
 
     async salesTax(prefill) {

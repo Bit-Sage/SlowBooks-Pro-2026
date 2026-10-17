@@ -32,10 +32,56 @@ def _in_class(db, class_id):
     return cls, class_attribution(uncat_id) == class_id
 
 
-def _totals_by_account(db, acct_type, date_start=None, date_end=None, in_class=None):
+ACCOUNT_ORDERS = ("number", "name")
+_SORT_QUERY = Query(
+    default="number",
+    pattern="^(number|name)$",
+    description=(
+        "The accounts' order: by number, then name, as the Trial Balance "
+        "lists them, or by name; a sub-account right after its parent either "
+        "way (#326)"
+    ),
+)
+
+
+def _account_order(db, sort="number"):
+    """A sort key for a report's account rows: by number then name (an
+    account with no number after the numbered ones, by name), or by name;
+    a sub-account right after its parent either way. The P&L and Balance
+    Sheet listed accounts in the order they were created (#326,
+    @TigerCoder27): the query had no ORDER BY, so a chart added to after
+    seeding read 6000, 6200, 6600, 6900, 6250, 6410."""
+    chart = {
+        a.id: (a.account_number or "", (a.name or "").lower(), a.parent_id)
+        for a in db.query(
+            Account.id, Account.account_number, Account.name, Account.parent_id
+        )
+    }
+
+    def level(account_id):
+        number, name, _ = chart[account_id]
+        if sort == "name":
+            return (0, name, number)
+        return (0, number, name) if number else (1, "", name)
+
+    def key(row):
+        path = []
+        account_id = row["account_id"]
+        while account_id in chart and len(path) < 32:
+            path.append(level(account_id))
+            account_id = chart[account_id][2]
+        return tuple(reversed(path)) or ((2, "", ""),)
+
+    return key
+
+
+def _totals_by_account(
+    db, acct_type, date_start=None, date_end=None, in_class=None, sort="number"
+):
     """Return a list of {account_id, account_name, account_number, amount}
     rows where amount is signed by the account type's natural balance
-    (always positive for a normal-balance ledger).
+    (always positive for a normal-balance ledger), in the chart's order
+    (`sort`: number or name, see _account_order).
 
     `account_id` is included so the SPA can drill into /account-transactions
     for any line — Phase 11 drill-down support.
@@ -71,6 +117,7 @@ def _totals_by_account(db, acct_type, date_start=None, date_end=None, in_class=N
                 "amount": float(amount),
             }
         )
+    rows.sort(key=_account_order(db, sort))
     return rows
 
 
@@ -84,6 +131,7 @@ def profit_loss(
     class_id: Annotated[
         Optional[int], Query(description="Only this class's lines (#213); omit for all")
     ] = None,
+    sort: str = _SORT_QUERY,
 ):
     if not start_date:
         start_date = date(date.today().year, 1, 1)
@@ -91,10 +139,14 @@ def profit_loss(
         end_date = date.today()
     cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
 
-    income = _totals_by_account(db, AccountType.INCOME, start_date, end_date, in_class)
-    cogs = _totals_by_account(db, AccountType.COGS, start_date, end_date, in_class)
+    income = _totals_by_account(
+        db, AccountType.INCOME, start_date, end_date, in_class, sort
+    )
+    cogs = _totals_by_account(
+        db, AccountType.COGS, start_date, end_date, in_class, sort
+    )
     expenses = _totals_by_account(
-        db, AccountType.EXPENSE, start_date, end_date, in_class
+        db, AccountType.EXPENSE, start_date, end_date, in_class, sort
     )
 
     total_income = sum(i["amount"] for i in income)
@@ -106,6 +158,7 @@ def profit_loss(
         "end_date": end_date.isoformat(),
         "class_id": cls.id if cls else None,
         "class_name": cls.name if cls else None,
+        "sort": sort,
         "income": income,
         "cogs": cogs,
         "expenses": expenses,
@@ -119,15 +172,19 @@ def profit_loss(
 
 @router.get("/balance-sheet")
 def balance_sheet(
-    as_of_date: date = Query(default=None), db: Session = Depends(get_db)
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+    sort: str = _SORT_QUERY,
 ):
     t = terms_from_db(db)
     if not as_of_date:
         as_of_date = date.today()
 
-    assets = _totals_by_account(db, AccountType.ASSET, date_end=as_of_date)
-    liabilities = _totals_by_account(db, AccountType.LIABILITY, date_end=as_of_date)
-    equity = _totals_by_account(db, AccountType.EQUITY, date_end=as_of_date)
+    assets = _totals_by_account(db, AccountType.ASSET, date_end=as_of_date, sort=sort)
+    liabilities = _totals_by_account(
+        db, AccountType.LIABILITY, date_end=as_of_date, sort=sort
+    )
+    equity = _totals_by_account(db, AccountType.EQUITY, date_end=as_of_date, sort=sort)
 
     total_assets = sum(a["amount"] for a in assets)
     total_liabilities = sum(liab["amount"] for liab in liabilities)
@@ -160,6 +217,7 @@ def balance_sheet(
 
     return {
         "as_of_date": as_of_date.isoformat(),
+        "sort": sort,
         "assets": assets,
         "liabilities": liabilities,
         "equity": equity,
@@ -1229,9 +1287,10 @@ def profit_loss_pdf(
     end_date: date = Query(default=None),
     class_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    sort: str = _SORT_QUERY,
 ):
     # class_id is a keyword: profit_loss takes db before it
-    data = profit_loss(start_date, end_date, db, class_id=class_id)
+    data = profit_loss(start_date, end_date, db, class_id=class_id, sort=sort)
     t = terms_from_db(db)
     return _pdf_response([_pl_section(data, t)], db, _pl_filename(data, t, "pdf"))
 
@@ -1372,10 +1431,11 @@ def profit_loss_csv_route(
     end_date: date = Query(default=None),
     class_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    sort: str = _SORT_QUERY,
 ):
     from app.services.ledger_exports import profit_loss_csv
 
-    data = profit_loss(start_date, end_date, db, class_id=class_id)
+    data = profit_loss(start_date, end_date, db, class_id=class_id, sort=sort)
     t = terms_from_db(db)
     return _csv_download(
         profit_loss_csv(data, _company_name(db), t),
@@ -1389,10 +1449,11 @@ def balance_sheet_csv_route(
     request: Request,
     as_of_date: date = Query(default=None),
     db: Session = Depends(get_db),
+    sort: str = _SORT_QUERY,
 ):
     from app.services.ledger_exports import balance_sheet_csv
 
-    data = balance_sheet(as_of_date, db)
+    data = balance_sheet(as_of_date, db, sort=sort)
     t = terms_from_db(db)
     return _csv_download(
         balance_sheet_csv(data, _company_name(db), t),
@@ -1403,9 +1464,11 @@ def balance_sheet_csv_route(
 
 @router.get("/balance-sheet/pdf")
 def balance_sheet_pdf(
-    as_of_date: date = Query(default=None), db: Session = Depends(get_db)
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+    sort: str = _SORT_QUERY,
 ):
-    data = balance_sheet(as_of_date, db)
+    data = balance_sheet(as_of_date, db, sort=sort)
     t = terms_from_db(db)
     return _pdf_response(
         [_bs_section(data, t)],

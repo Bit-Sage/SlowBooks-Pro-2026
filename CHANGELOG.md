@@ -27,6 +27,16 @@ practice's books in which every account matched QuickBooks to the cent; the
 fixture is invented books in that layout, and its sample company, Morden
 Bookkeeping, is named for Kim Morden Bookkeeping, who brought the report.
 
+**Accounts in order on the Profit & Loss and Balance Sheet** (#326,
+@TigerCoder27). Both listed accounts in the order they were created (the
+query grouped by account with no ORDER BY), so a chart added to after
+seeding read 6000, 6200, 6600, 6900, 6250, 6410. They read by number, then
+name, as the Trial Balance and General Ledger do, with an account that has
+no number after the numbered ones and a sub-account right after its parent;
+"Sort by" on either report lists them by name instead, and the choice rides
+into the PDF, the CSV, the address and a saved report (`sort=name` on the
+API). A company-wide default for the order can follow if it is wanted.
+
 **From the gate's first round** (Windows W-1 to W-4; macOS NEW-122 to
 NEW-124): the imported entries list on Journal Entries, and their Type reads
 "QuickBooks Desktop import"; the result counts them ("Imported 8 records",
