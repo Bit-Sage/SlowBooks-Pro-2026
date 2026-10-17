@@ -205,7 +205,10 @@ def test_the_page_counts_the_journal_entries():
     js = (Path(__file__).resolve().parents[1] / "app/static/js/iif.js").read_text(
         encoding="utf-8"
     )
-    assert "journals: 'Journal entries'" in js and "'checks', 'journals']" in js
+    assert "journals: 'Journal entries'" in js
+    assert (
+        "'checks', 'journals', 'time_entries']" in js
+    )  # time joined the count in 2.23.4
 
 
 def test_the_entries_list_on_journal_entries_with_their_word(

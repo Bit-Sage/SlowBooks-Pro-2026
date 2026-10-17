@@ -1317,6 +1317,10 @@ def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
 
     if is_ledger_header(_find_header_for(rows, LEDGER_COLUMNS)[1]):
         return "ledger"
+    from app.services.qb_time_import import TIME_COLUMNS, is_time_header
+
+    if is_time_header(_find_header_for(rows, TIME_COLUMNS)[1]):
+        return "time"
     return None
 
 
@@ -1340,6 +1344,7 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         "deposits": 0,
         "checks": 0,
         "journals": 0,
+        "time_entries": 0,
         "duplicates_skipped": 0,
         "errors": [],
         "warnings": [],
@@ -1348,8 +1353,8 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         base["errors"].append(
             "Unrecognized report layout. Supported exports: Transaction "
             "Detail (filtered to Sales Receipt or Invoice), Deposit Detail, "
-            "Check Detail and Transaction Detail by Account — keep the "
-            "report's default columns."
+            "Check Detail, Transaction Detail by Account and Time by Name by "
+            "Job detail — keep the report's default columns."
         )
         return base
     if kind in ("sales_receipts", "invoices", "sales_and_invoices"):
@@ -1378,6 +1383,13 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         header_at, cols = _find_header_for(rows, LEDGER_COLUMNS)
         sub = import_ledger_report(db, rows, header_at, cols)
         base["journals"] = sub.pop("journals", 0)
+    elif kind == "time":
+        from app.services.qb_time_import import TIME_COLUMNS, import_time_report
+
+        rows = _csv_rows(csv_text)
+        header_at, cols = _find_header_for(rows, TIME_COLUMNS)
+        sub = import_time_report(db, rows, header_at, cols)
+        base["time_entries"] = sub.pop("time_entries", 0)
     elif kind == "deposits":
         sub = import_deposit_report(db, csv_text)
         base["deposits"] = sub.pop("deposits", 0)

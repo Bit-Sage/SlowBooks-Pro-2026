@@ -37,6 +37,31 @@ no number after the numbered ones and a sub-account right after its parent;
 into the PDF, the CSV, the address and a saved report (`sort=name` on the
 API). A company-wide default for the order can follow if it is wanted.
 
+**QuickBooks Desktop's timesheets come across as time entries** (#323,
+@rcheetham). Desktop does not export timesheets to IIF, so a company has a
+report: Reports > Jobs, Time & Mileage > Time by Name by Job detail (or
+Time by Job by Name detail), saved as CSV or Excel, with a heading row per
+person and per customer:job, one row per entry (Date, Item, Billing Status,
+Duration, Notes) and QuickBooks' own Total rows. Import from Report CSV now
+takes it, Excel included: each row becomes an approved time entry under its
+employee, with the hours, the notes, the service item, the billing status
+(not billable, unbilled, billed) and the customer or job label as QuickBooks
+printed it, linked to the job when the label is one on the Jobs list. A
+person not on the Employees list is added from the name and named in the
+result, for their pay to be set. Imported time is history: it is marked as
+QuickBooks' on HR > Time Entries, and a pay run never picks it up. Before
+anything is written the whole file is checked, every group's hours against
+the total QuickBooks printed for it; a file that fails is refused whole. A
+second upload posts nothing twice; a row QuickBooks holds twice is two
+entries. Durations read as 2.25 or 2:15. Built against a real consultancy's
+half-year of timesheets (6,277 entries, every total matched); the fixture
+is invented timesheets in that layout.
+
+**The migration guide says what does not come across yet** (#323): payroll
+history, estimates and purchase orders as documents, inventory on hand,
+memorized transactions and attachments; each gets built around a real
+export someone sends.
+
 **From the gate's first round** (Windows W-1 to W-4; macOS NEW-122 to
 NEW-124): the imported entries list on Journal Entries, and their Type reads
 "QuickBooks Desktop import"; the result counts them ("Imported 8 records",
@@ -81,7 +106,9 @@ figure in black on a bright orange, which WCAG 2's arithmetic clears and
 the eye does not; the slice is a deeper orange now and its figure prints
 white.
 
-No schema change. 556 API operations.
+Schema: five nullable columns on time entries (the import's source and
+row fingerprint, billing status, service item, customer or job label),
+migration `b1c2d3e4f5a6`. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once
 

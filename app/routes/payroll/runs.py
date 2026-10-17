@@ -121,6 +121,9 @@ def _unapproved_time(db: Session, employee_id: int, start: date, end: date):
             TimeEntry.employee_id == employee_id,
             TimeEntry.status.in_([TimeEntryStatus.DRAFT, TimeEntryStatus.SUBMITTED]),
             TimeEntry.pay_run_id.is_(None),
+            TimeEntry.source.is_(
+                None
+            ),  # time imported from QuickBooks is history, never paid here (#323)
             TimeEntry.date >= start,
             TimeEntry.date <= end,
         )
@@ -220,6 +223,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
                         TimeEntry.employee_id == emp.id,
                         TimeEntry.status == TimeEntryStatus.APPROVED,
                         TimeEntry.pay_run_id.is_(None),
+                        TimeEntry.source.is_(None),  # imported history (#323)
                         TimeEntry.date >= data.period_start,
                         TimeEntry.date <= data.period_end,
                     )
