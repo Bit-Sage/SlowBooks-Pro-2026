@@ -14,6 +14,7 @@ from pathlib import Path
 
 from app.models.accounts import Account, AccountType
 from app.services.accounting import create_journal_entry
+from tests.conftest import WEASYPRINT_AVAILABLE
 
 MINE = {"Zeta Utilities", "Bank Fees", "Legal", "Automobile", "Fuel", "Aardvark Dues"}
 PERIOD = {"start_date": "2026-01-01", "end_date": "2026-12-31"}
@@ -148,13 +149,16 @@ def test_the_balance_sheet_and_the_exports_carry_the_order(
         "/api/reports/balance-sheet/csv", params={"as_of_date": "2026-12-31"}
     ).text
     assert bs_csv.index("Petty Cash") < bs_csv.index("Zed Deposits")
-    pdf = client.get(
-        "/api/reports/balance-sheet/pdf",
-        params={"as_of_date": "2026-12-31", "sort": "name"},
-    )
-    assert pdf.status_code == 200 and pdf.headers["content-type"].startswith(
-        "application/pdf"
-    )
+    # the PDF renders the same rows; a machine without WeasyPrint's native
+    # stack (the Windows CI runner) skips only this check, not the test
+    if WEASYPRINT_AVAILABLE:
+        pdf = client.get(
+            "/api/reports/balance-sheet/pdf",
+            params={"as_of_date": "2026-12-31", "sort": "name"},
+        )
+        assert pdf.status_code == 200 and pdf.headers["content-type"].startswith(
+            "application/pdf"
+        )
 
 
 def test_the_pages_offer_the_order_and_pass_it_on():
