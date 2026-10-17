@@ -75,8 +75,17 @@ def _minutes(raw: str) -> int:
     negative = raw.startswith("-")
     raw = raw.lstrip("-")
     if ":" in raw:
-        hours, minutes = raw.split(":", 1)
-        total = int(hours or "0") * 60 + int(minutes or "0")
+        # 2:15, or 00:20:00 (a Minutes-format CSV opened in Excel or Numbers
+        # and saved as .xlsx keeps each duration as a time of day; 2.23.4
+        # gate, NEW-137)
+        parts = raw.split(":")
+        hours, minutes = int(parts[0] or "0"), int(parts[1] or "0")
+        seconds = (
+            int(Decimal(parts[2]).to_integral_value())
+            if len(parts) > 2 and parts[2]
+            else 0
+        )
+        total = hours * 60 + minutes + int(round(seconds / 60))
     else:
         total = int((Decimal(raw) * 60).to_integral_value())
     return -total if negative else total

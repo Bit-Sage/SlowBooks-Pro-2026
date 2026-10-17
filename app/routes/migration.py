@@ -59,7 +59,7 @@ def _sheet_as_csv(content: bytes, computed: bool = False) -> str:
     without a computed value stays as its text."""
     import csv
     import io
-    from datetime import date, datetime
+    from datetime import date, datetime, time, timedelta
 
     try:
         import openpyxl
@@ -110,6 +110,14 @@ def _sheet_as_csv(content: bytes, computed: bool = False) -> str:
                 cells.append(cell.strftime("%m/%d/%Y"))
             elif isinstance(cell, date):
                 cells.append(cell.strftime("%m/%d/%Y"))
+            elif isinstance(cell, time):
+                # a duration Excel took for a time of day ("0:20" in a
+                # Minutes-format timesheet): hours and minutes (NEW-137)
+                cells.append(f"{cell.hour}:{cell.minute:02d}")
+            elif isinstance(cell, timedelta):
+                # a duration past a day, as Excel keeps [h]:mm
+                minutes = int(round(cell.total_seconds() / 60))
+                cells.append(f"{minutes // 60}:{minutes % 60:02d}")
             elif isinstance(cell, float) and cell.is_integer():
                 cells.append(str(int(cell)))
             else:

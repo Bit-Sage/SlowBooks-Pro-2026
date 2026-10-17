@@ -339,13 +339,17 @@ def general_ledger(
     )
 
     entries_by_account = {}
+    chart = _chart_index(db)
     for tl, txn, acct in results:
         key = acct.id
         if key not in entries_by_account:
+            path, label = _account_words(chart, acct.id)
             entries_by_account[key] = {
                 "account_id": acct.id,
                 "account_number": acct.account_number,
                 "account_name": acct.name,
+                "account_path": path or acct.name,
+                "account_label": label or acct.name,
                 "account_type": acct.account_type.value,
                 "normal_balance": "debit" if _sign(acct) > 0 else "credit",
                 "opening_balance": _sign(acct) * opening.get(acct.id, Decimal(0)),
@@ -376,7 +380,7 @@ def general_ledger(
     # the statements' order: by number then name, the unnumbered last, a
     # sub-account after its parent (ORDER BY account_number put the
     # unnumbered first: 2.23.4 gate, W-7)
-    accounts_list.sort(key=_account_order(db))
+    accounts_list.sort(key=_account_order(db, chart=chart))
     for a in accounts_list:
         a["closing_balance"] = float(a.pop("_running"))
         a["opening_balance"] = float(a["opening_balance"])
@@ -488,14 +492,18 @@ def trial_balance(
     items = []
     total_debit = Decimal(0)
     total_credit = Decimal(0)
+    chart = _chart_index(db)
     for acct_id, acct_num, acct_name, acct_type, debit, credit in results:
         total_debit += debit
         total_credit += credit
+        path, label = _account_words(chart, acct_id)
         items.append(
             {
                 "account_id": acct_id,
                 "account_number": acct_num or "",
                 "account_name": acct_name,
+                "account_path": path or acct_name,
+                "account_label": label or acct_name,
                 "account_type": acct_type.value,
                 "total_debit": float(debit),
                 "total_credit": float(credit),
@@ -503,8 +511,9 @@ def trial_balance(
             }
         )
     # by number then name, the unnumbered last, a sub-account after its
-    # parent (ORDER BY account_number put the unnumbered first: W-7)
-    items.sort(key=_account_order(db))
+    # parent (ORDER BY account_number put the unnumbered first: W-7); each
+    # row named by its path and number, as the statements' are (W-12)
+    items.sort(key=_account_order(db, chart=chart))
 
     return {
         "start_date": start_date.isoformat(),
@@ -1206,7 +1215,7 @@ def _tb_section(data: dict) -> dict:
     rows = [
         {
             "cells": [
-                f"{item['account_number']} {item['account_name']}".strip(),
+                _row_words(item),  # the number and path, as the statements (W-12)
                 _money(item["total_debit"]),
                 _money(item["total_credit"]),
             ]
@@ -1234,7 +1243,7 @@ def _tb_section(data: dict) -> dict:
 def _gl_section(data: dict) -> dict:
     rows = []
     for a in data["accounts"]:
-        head = f"{a['account_number'] or ''} {a['account_name']}".strip()
+        head = _row_words(a)  # the number and path, as the statements (W-12)
         rows.append({"cells": [head, "", "", "", "", ""], "style": "subtotal"})
         rows.append(
             {

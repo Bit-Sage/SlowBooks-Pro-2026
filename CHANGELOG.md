@@ -124,6 +124,13 @@ approved time there came from QuickBooks; the report file input takes
 Name); a seam between the aging bar's slices keeps two bands of one
 lightness apart; and What's new says the statements changed their order.
 
+**From the gate's eighth round** (Windows W-12, macOS NEW-137, NEW-138):
+the Trial Balance and General Ledger name a sub-account by its path and
+number too, on the page, in the CSV and in the PDF (they took the
+statements' order and printed "6210 Fuel" after a parent with no balance);
+and a Minutes-format timesheet opened in Excel or Numbers and saved as
+.xlsx, whose durations became times of day (00:20:00), imports.
+
 Schema: five nullable columns on time entries (the import's source and
 row fingerprint, billing status, service item, customer or job label),
 migration `b1c2d3e4f5a6`. 556 API operations.
