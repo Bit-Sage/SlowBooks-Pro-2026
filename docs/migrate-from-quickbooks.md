@@ -96,6 +96,11 @@ books is renamed. Look over the examples first: a name that should stay in
 capitals (a company's initials) may not. A transactions file imported later
 still finds each name, whichever way it spells it.
 
+Opening balances come with the **first** import of the lists. Importing the
+lists again later (to pick up new customers or vendors, say) posts none; the
+result names any account it created that carries a balance in the file, so
+you can enter the real ones by hand.
+
 ### Transactions: the Transaction Detail by Account report
 
 The simplest way to bring every transaction across: in QuickBooks Desktop,

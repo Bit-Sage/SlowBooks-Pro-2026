@@ -485,7 +485,16 @@ def import_accounts(db: Session, rows: list) -> dict:
             Transaction.reference == "IIF-OPENING",
         )
     }
+    # Opening balances come with a company's FIRST import of the lists. A
+    # later import posts none: lists imported on an older version, whose
+    # matching merged accounts wrongly, and imported again here would make
+    # the right accounts beside the wrong ones and post their balances a
+    # second time, the same debt twice (2.23.4 gate, NEW-128). Accounts
+    # created now that carry a balance in the file are named instead, for
+    # the person to enter any that are real.
+    opened_before = bool(already_opened)
     not_again = 0
+    unposted: list[str] = []
     merged: list[str] = []
 
     for i, row in enumerate(rows):
@@ -548,7 +557,7 @@ def import_accounts(db: Session, rows: list) -> dict:
             if existing:
                 sp.rollback()
                 if obamount != 0:
-                    if existing.id in already_opened:
+                    if opened_before:
                         not_again += 1
                     elif existing.id in ob_map:
                         warnings.append(
@@ -590,8 +599,14 @@ def import_accounts(db: Session, rows: list) -> dict:
             db.add(acct)
             db.flush()
             if obamount != 0:
-                ob_map[acct.id] = obamount
-                ob_first_source[acct.id] = full_name
+                if opened_before:
+                    unposted.append(
+                        f"'{full_name}' {abs(obamount):,.2f} "
+                        f"{'debit' if obamount > 0 else 'credit'}"
+                    )
+                else:
+                    ob_map[acct.id] = obamount
+                    ob_first_source[acct.id] = full_name
             sp.commit()
             imported += 1
 
@@ -605,11 +620,22 @@ def import_accounts(db: Session, rows: list) -> dict:
             + "; ".join(merged[:12])
             + (f"; and {len(merged) - 12} more" if len(merged) > 12 else "")
         )
-    if not_again:
-        warnings.append(
-            f"{not_again} opening balance(s) were posted by an earlier import of "
-            f"the lists and were not posted again"
+    if opened_before and (not_again or unposted):
+        text = (
+            "This company's opening balances came with an earlier import of the "
+            "lists, so none were posted this time"
         )
+        if not_again:
+            text += f": {not_again} account(s) already here keep the balance they have"
+        if unposted:
+            text += (
+                f"; {len(unposted)} account(s) created now carry a balance in the "
+                "file, not posted: "
+                + "; ".join(unposted[:12])
+                + (f"; and {len(unposted) - 12} more" if len(unposted) > 12 else "")
+                + ". Enter any that are real as an opening balance by hand"
+            )
+        warnings.append(text + ".")
 
     # Build a single opening-balance journal entry from OBAMOUNT values
     # (dropping any that summed to exactly zero after merging).

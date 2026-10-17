@@ -54,6 +54,14 @@ note. And a second upload of the same lists posted every opening balance
 again, doubling them all: a balance an earlier import posted is not posted
 again, and the result says how many were left alone.
 
+**From the gate's fourth round** (macOS NEW-128): lists first imported on
+an older version, whose matching merged accounts wrongly, and imported
+again on this one made the right accounts beside the wrong ones and posted
+their balances a second time, the same debt twice. Opening balances come
+with a company's first import of the lists; a later import posts none, and
+names the accounts it created that carry a balance in the file, for the
+person to enter any that are real by hand.
+
 No schema change. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once

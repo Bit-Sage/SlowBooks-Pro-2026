@@ -204,3 +204,41 @@ def test_a_same_named_account_of_another_type_is_created_beside_it(
     expense = next(a for a in insurances if a.account_type == AccountType.EXPENSE)
     assert expense.account_number == "6300" and Decimal(str(expense.balance)) == 0
     assert any("created beside it" in w for w in result["warnings"]), result["warnings"]
+
+
+def test_lists_imported_after_an_earlier_import_post_no_balances(
+    db_session, seed_accounts
+):
+    """NEW-128: lists first imported on an older version (whose matching
+    merged accounts wrongly), then imported again here, made the right
+    accounts beside the wrong ones and posted their balances a second time:
+    the same debt twice. Once a company holds an IIF opening entry, a later
+    lists import posts no balance at all; the accounts it creates that carry
+    one in the file are named, for the person to enter by hand."""
+    from app.services.iif_import import import_all
+
+    first = (
+        "!ACCNT\tNAME\tACCNTTYPE\tOBAMOUNT\r\n"
+        "ACCNT\tChecking\tBANK\t100.00\r\n"
+        "ACCNT\tOpening Bal Equity\tEQUITY\t-100.00\r\n"
+    )
+    r1 = import_all(db_session, first)
+    db_session.commit()
+    assert not r1["errors"] and len(_openings(db_session)) == 1
+    r2 = _import(db_session)
+    assert not r2["errors"], r2["errors"]
+    assert r2["accounts"] > 50
+    assert len(_openings(db_session)) == 1
+    checking = db_session.query(Account).filter(Account.account_number == "1000").one()
+    assert Decimal(str(checking.balance)) == Decimal("100.00")  # not 100 + 99,250.02
+    assert Decimal(str(_account(db_session, "CalOil Card").balance)) == 0
+    note = [
+        w
+        for w in r2["warnings"]
+        if w.startswith("This company's opening balances came with an earlier import")
+    ]
+    assert (
+        note
+        and "'CalOil Card' 1,403.99 credit" in note[0]
+        and "keep the balance they have" in note[0]
+    ), r2["warnings"]
