@@ -33,6 +33,9 @@ class ClaimRequest(StrictModel):
 
 class MapRequest(StrictModel):
     mapping: dict[str, int]
+    # Feeds whose bank connection reports amounts the other way round
+    # (deposits negative). Omitted leaves the stored choice as it is.
+    reversed: Optional[list[str]] = None
 
 
 class SyncRequest(StrictModel):
@@ -64,6 +67,9 @@ def status(db: Session = Depends(get_db)):
         "account_map": simplefin_service.parse_account_map(
             get_setting_raw(db, "simplefin_account_map") or "{}"
         ),
+        "reversed": simplefin_service.parse_reversed(
+            get_setting_raw(db, "simplefin_reversed") or "[]"
+        ),
         "accounts": cache if isinstance(cache, list) else [],
     }
 
@@ -80,6 +86,7 @@ def claim(payload: ClaimRequest, db: Session = Depends(get_db)):
     set_setting(db, "simplefin_access_url", access_url)
     set_setting(db, "simplefin_accounts_cache", json.dumps(accounts))
     set_setting(db, "simplefin_account_map", "{}")
+    set_setting(db, "simplefin_reversed", "[]")
     set_setting(db, "simplefin_last_sync", "")
     db.commit()
     return {"connected": True, "accounts": accounts}
@@ -100,8 +107,15 @@ def save_mapping(payload: MapRequest, db: Session = Depends(get_db)):
             )
         clean[str(sf_id)] = int(bank_account_id)
     set_setting(db, "simplefin_account_map", json.dumps(clean))
+    if payload.reversed is not None:
+        reversed_ids = sorted({str(sf_id) for sf_id in payload.reversed})
+        set_setting(db, "simplefin_reversed", json.dumps(reversed_ids))
+    else:
+        reversed_ids = simplefin_service.parse_reversed(
+            get_setting_raw(db, "simplefin_reversed") or "[]"
+        )
     db.commit()
-    return {"account_map": clean}
+    return {"account_map": clean, "reversed": reversed_ids}
 
 
 @router.post("/sync")
@@ -143,7 +157,12 @@ def sync(payload: Optional[SyncRequest] = None, db: Session = Depends(get_db)):
     except SimpleFINError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    result = simplefin_service.sync_accounts(db, data, account_map)
+    reversed_ids = set(
+        simplefin_service.parse_reversed(
+            get_setting_raw(db, "simplefin_reversed") or "[]"
+        )
+    )
+    result = simplefin_service.sync_accounts(db, data, account_map, reversed_ids)
     result["since"] = start.isoformat()
     set_setting(
         db,
@@ -164,6 +183,7 @@ def disconnect(db: Session = Depends(get_db)):
     """Forget the access URL, mapping, and cache. Imported rows stay."""
     set_setting(db, "simplefin_access_url", "")
     set_setting(db, "simplefin_account_map", "{}")
+    set_setting(db, "simplefin_reversed", "[]")
     set_setting(db, "simplefin_accounts_cache", "[]")
     set_setting(db, "simplefin_last_sync", "")
     db.commit()

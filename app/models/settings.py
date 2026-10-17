@@ -98,6 +98,9 @@ DEFAULT_SETTINGS = {
     # access_url embeds basic-auth creds — listed in SECRET_KEYS.
     "simplefin_access_url": "",
     "simplefin_account_map": "{}",  # JSON {simplefin id: bank_account_id}
+    # JSON [simplefin id, ...]: feeds whose bank connection reports amounts
+    # with the opposite sign (deposits negative); imported flipped
+    "simplefin_reversed": "[]",
     "simplefin_accounts_cache": "[]",  # last-seen bridge accounts, for the UI
     "simplefin_last_sync": "",
     # Class tracking (#243): "true" starts every entry form with no class
