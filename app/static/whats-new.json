@@ -1,4 +1,10 @@
 {
+  "2.23.5": {
+    "title": "A bookkeeper's first hour",
+    "items": [
+      "A SimpleFIN feed that reports every sign the other way round imports right: tick Reverse signs for that feed on Banking's bank-feed list."
+    ]
+  },
   "2.23.4": {
     "title": "Every QuickBooks Desktop transaction and timesheet",
     "items": [

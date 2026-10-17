@@ -5,6 +5,18 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.23.5 — A bookkeeper's first hour
+
+**A SimpleFIN feed that reports every sign the other way round imports
+right** (PR #327, @DefiAlan). Some bank connections present a checking
+account as a liability: a negative balance, deposits negative, withdrawals
+positive, so withdrawals imported as deposits and nothing auto-matched.
+The protocol gives no field to tell by, so the person says so: a Reverse
+signs checkbox per feed on Banking's bank-feed list, kept as a setting and
+applied before the rows reach matching, rules and dedup. Claim and
+disconnect reset it. Lines already imported the wrong way round are not
+rewritten; they dedup by their SimpleFIN id on the next sync.
+
 ### v2.23.4 — Every QuickBooks Desktop transaction, as journal entries
 
 **QuickBooks Desktop's Transaction Detail by Account imports.** The report a
