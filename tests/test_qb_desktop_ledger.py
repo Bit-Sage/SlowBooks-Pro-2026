@@ -264,3 +264,38 @@ def test_the_lists_iif_makes_bank_and_card_accounts_registers(
     }
     banks = {a["name"] for a in client.get("/api/accounts", params={"bank": 1}).json()}
     assert {"Operating Checking 4321", "Company Card"} <= banks
+
+
+def test_a_lists_iifs_credit_cards_are_liabilities(client, db_session, seed_accounts):
+    """QuickBooks for Mac's sample lists IIF: its CCARD accounts came in as
+    expenses (no CCARD in the type map), and round 2's register flag then put
+    them on Banking as cards (2.23.4 gate, NEW-125). They are liabilities."""
+    sample = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "sample_qbmac_opening_balances.iif"
+    )
+    r = client.post(
+        "/api/iif/import",
+        files={"file": (sample.name, io.BytesIO(sample.read_bytes()), "text/plain")},
+    )
+    assert r.status_code == 200, r.text
+    cards = db_session.query(Account).filter(Account.bank_kind == "credit_card").all()
+    assert cards and all(a.account_type == AccountType.LIABILITY for a in cards), [
+        (a.name, a.account_type) for a in cards
+    ]
+    assert (
+        db_session.query(Account)
+        .filter(Account.name.like("QBCC%"), Account.account_type == AccountType.EXPENSE)
+        .count()
+        == 0
+    )
+
+
+def test_a_journal_line_without_an_account_number_reads_cleanly():
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/journal.js").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "${l.account_number ? `${escapeHtml(l.account_number)} - ` : ''}" in js
+    )  # NEW-126

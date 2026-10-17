@@ -34,6 +34,12 @@ not 0); the Import from Report CSV panel names Transaction Detail by
 Account; and a lists IIF's bank and credit card accounts come in as
 registers, so Banking lists them (they came in as plain accounts).
 
+**From the gate's second round** (macOS NEW-125, NEW-126): a lists IIF's
+credit card accounts (CCARD) come in as liabilities; they fell back to
+expense accounts, which the register flag then put on Banking as cards. A
+journal entry's view no longer prints "- " before an account with no
+number.
+
 No schema change. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once
