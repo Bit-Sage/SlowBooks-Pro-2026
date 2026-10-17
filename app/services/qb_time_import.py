@@ -62,15 +62,28 @@ def is_time_header(cols: dict | None) -> bool:
     return bool(cols) and all(c in cols for c in TIME_COLUMNS)
 
 
-def _hours(raw: str) -> Decimal:
-    """2.25, or 2:15 (QuickBooks' minutes format)."""
+def _minutes(raw: str) -> int:
+    """A duration as whole minutes: 2:15 (QuickBooks' minutes format) is
+    135; 2.25 is 135; 0.33 (twenty minutes shown to two places) is 20.
+    QuickBooks keeps time in minutes, so a decimal it prints is within
+    0.005 of a whole number of minutes over sixty, and rounding recovers
+    it. Totals are compared in minutes, so three 0:20 rows meet their 1:00
+    (2.23.4 gate, NEW-130: in hours, 20/60 three times fell short of 1)."""
     raw = (raw or "").strip().replace(",", "")
     if not raw:
-        return Decimal("0")
+        return 0
+    negative = raw.startswith("-")
+    raw = raw.lstrip("-")
     if ":" in raw:
         hours, minutes = raw.split(":", 1)
-        return Decimal(hours or "0") + Decimal(minutes or "0") / Decimal(60)
-    return Decimal(raw)
+        total = int(hours or "0") * 60 + int(minutes or "0")
+    else:
+        total = int((Decimal(raw) * 60).to_integral_value())
+    return -total if negative else total
+
+
+def _hours(minutes: int) -> Decimal:
+    return Decimal(minutes) / Decimal(60)
 
 
 def _date(raw: str):
@@ -91,7 +104,7 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
     entries: list[dict] = []
     errors: list[str] = []
     stack: list[tuple[int, str]] = []
-    totals: list[tuple[tuple, Decimal]] = []
+    totals: list[tuple[tuple, int]] = []
 
     def cell(row, name):
         i = cols.get(name)
@@ -110,20 +123,29 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
             if label is None:
                 continue
             depth, text = label
-            try:
-                hours = _hours(cell(row, "Duration"))
-            except Exception:
-                hours = None
-            if text.upper() == "TOTAL":
-                if hours is not None:
-                    totals.append(((), hours))
-                continue
-            if text.startswith("Total "):
+            if text.upper() == "TOTAL" or text.startswith("Total "):
+                # QuickBooks' own total: read, or the file is refused (a
+                # total skipped in silence hid a deleted row; the Excel
+                # export writes them as formulas, read from their computed
+                # values: 2.23.4 gate, NEW-132)
+                try:
+                    minutes = _minutes(cell(row, "Duration"))
+                except Exception:
+                    errors.append(
+                        f"Row {n}: the total for {text[6:] or 'the report'} could "
+                        f"not be read ({cell(row, 'Duration')!r}). Save the file "
+                        "from Excel again, or export it as CSV."
+                    )
+                    minutes = None
+                if text.upper() == "TOTAL":
+                    if minutes is not None:
+                        totals.append(((), minutes))
+                    continue
                 while stack and stack[-1][0] > depth:
                     stack.pop()
                 if stack and stack[-1][0] == depth:
-                    if hours is not None:
-                        totals.append((tuple(name for _, name in stack), hours))
+                    if minutes is not None:
+                        totals.append((tuple(name for _, name in stack), minutes))
                     stack.pop()
                 continue
             while stack and stack[-1][0] >= depth:
@@ -137,7 +159,7 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
             )
             return [], errors
         try:
-            hours = _hours(cell(row, "Duration"))
+            minutes = _minutes(cell(row, "Duration"))
             day = _date(cell(row, "Date"))
         except Exception:
             # the cells as they read, never the exception's own words
@@ -146,7 +168,7 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
                 f"({cell(row, 'Duration')!r}) could not be read"
             )
             continue
-        if hours == 0:
+        if minutes == 0:
             continue
         entries.append(
             {
@@ -154,23 +176,25 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
                 "date": day,
                 "item": cell(row, "Item"),
                 "billing": cell(row, "Billing Status"),
-                "hours": hours,
+                "minutes": minutes,
+                "hours": _hours(minutes),
                 "notes": cell(row, "Notes"),
                 "row": n,
             }
         )
-    # QuickBooks' own totals: a group's rows add up to what it printed
-    for path, hours in totals:
-        mine = sum(
-            (e["hours"] for e in entries if e["labels"][: len(path)] == path),
-            Decimal("0"),
-        )
-        if mine != hours:
+    if errors:
+        return [], errors
+    # QuickBooks' own totals: a group's rows add up to what it printed, in
+    # whole minutes
+    for path, minutes in totals:
+        mine = sum(e["minutes"] for e in entries if e["labels"][: len(path)] == path)
+        if mine != minutes:
             where = ":".join(path) if path else "the whole report"
             errors.append(
-                f"The time under {where} comes to {mine:,.2f} hours and "
-                f"QuickBooks' total says {hours:,.2f}: the file looks cut short or "
-                "edited. Export it again."
+                f"The time under {where} comes to {_hours(mine):,.2f} hours "
+                f"({mine:,} minutes) and QuickBooks' total says "
+                f"{_hours(minutes):,.2f} ({minutes:,} minutes): the file looks cut "
+                "short or edited. Export it again."
             )
     return entries, errors
 
@@ -253,6 +277,11 @@ def import_time_report(
     employees = _employees(db)
     jobs = _jobs(db)
     person_at = _person_level(entries, employees)
+    # which report this is, for the result (W-10: the by-Job file said
+    # "Time by Name by Job")
+    result["report"] = (
+        "Time by Job by Name detail" if person_at == 1 else "Time by Name by Job detail"
+    )
     added: list[str] = []
     unlinked: OrderedDict = OrderedDict()
     have = {

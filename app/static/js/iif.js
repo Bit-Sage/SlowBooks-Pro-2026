@@ -117,7 +117,7 @@ const IIFPage = {
                         as a journal entry; import the lists IIF first); or, for timesheets, <strong>Time by Name by Job detail</strong> or <strong>Time by Job by Name detail</strong> (Reports > Jobs, Time &amp; Mileage), saved as CSV or Excel: every entry becomes an approved time entry under its employee, marked as QuickBooks' so no pay run picks it up. Keep the report's default
                         columns. Safe to re-upload — what is already here is skipped.
                     </p>
-                    <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report CSV file" accept=".csv" style="font-size:11px; margin-bottom:8px;">
+                    <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report file (CSV or Excel)" accept=".csv,.xlsx" style="font-size:11px; margin-bottom:8px;">
                     <div>
                         <button class="btn btn-primary" onclick="IIFPage.importQbReportCsv()">Import Report CSV</button>
                     </div>
@@ -143,7 +143,7 @@ const IIFPage = {
 
     async importQbReportCsv() {
         const input = $('#qbcsv-file-input');
-        if (!input?.files[0]) { toast('Choose a CSV file first', 'error'); return; }
+        if (!input?.files[0]) { toast('Choose a file first', 'error'); return; }
         const formData = new FormData();
         formData.append('file', input.files[0]);
         try {
@@ -155,7 +155,7 @@ const IIFPage = {
             const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries', time: 'Time by Name by Job detail', time_entries: 'Time entries' };
             let html = '<div class="iif-results"><h4>Results</h4>';
             if (result.detected) {
-                html += `<div class="result-row"><span>Detected report</span><span class="result-count">${kindLabel[result.detected] || result.detected}</span></div>`;
+                html += `<div class="result-row"><span>Detected report</span><span class="result-count">${escapeHtml(result.report || kindLabel[result.detected] || result.detected)}</span></div>`;
             }
             for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries']) {
                 if (result[key] > 0) {

@@ -1046,7 +1046,7 @@ const ReportsPage = {
                 return items.map(i =>
                     `<tr><td style="padding-left:24px;">
                         <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                           onclick="${drillCall(i)}">${escapeHtml(i.account_name)}</a>
+                           onclick="${drillCall(i)}">${escapeHtml(i.account_label || i.account_name)}</a>
                         </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`
                 ).join("");
             };
@@ -1102,7 +1102,7 @@ const ReportsPage = {
             const section = (items) => items.map(i =>
                 `<tr><td style="padding-left:24px;">
                     <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                       onclick="${drillCall(i)}">${escapeHtml(i.account_name)}</a>
+                       onclick="${drillCall(i)}">${escapeHtml(i.account_label || i.account_name)}</a>
                     </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`
             ).join("") || `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
             return `${pdfBtn}

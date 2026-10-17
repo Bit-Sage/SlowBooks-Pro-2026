@@ -35,7 +35,12 @@ name, as the Trial Balance and General Ledger do, with an account that has
 no number after the numbered ones and a sub-account right after its parent;
 "Sort by" on either report lists them by name instead, and the choice rides
 into the PDF, the CSV, the address and a saved report (`sort=name` on the
-API). A company-wide default for the order can follow if it is wanted.
+API). A statement row names a sub-account by its path ("Automobile:
+Insurance") with its number first, so two accounts of one name tell apart
+and a sub-account whose parent has no amount still says where it sits; the
+Trial Balance and General Ledger put the accounts with no number last too
+(they came first, in creation order). A company-wide default for the order
+can follow if it is wanted.
 
 **QuickBooks Desktop's timesheets come across as time entries** (#323,
 @rcheetham). Desktop does not export timesheets to IIF, so a company has a
@@ -105,6 +110,19 @@ On the dashboard's A/R Aging bar, the light theme's 31-60 slice printed its
 figure in black on a bright orange, which WCAG 2's arithmetic clears and
 the eye does not; the slice is a deeper orange now and its figure prints
 white.
+
+**From the gate's seventh round** (macOS NEW-130 to NEW-135; Windows W-7
+to W-11): a timesheet in QuickBooks' Minutes format imports (0:20 three
+times under a total of 1:00 was refused as short: totals are compared in
+whole minutes now, and a decimal that is minutes shown to two places counts
+as those minutes); a Total the Excel export writes as a formula reads from
+the value Excel computed for it, and a Total that cannot be read refuses
+the file instead of being passed over; the New Pay Run form's time column
+leaves imported time out, and a run with nothing else to pay says the
+approved time there came from QuickBooks; the report file input takes
+.xlsx; the result names the report it read (by Name by Job, or by Job by
+Name); a seam between the aging bar's slices keeps two bands of one
+lightness apart; and What's new says the statements changed their order.
 
 Schema: five nullable columns on time entries (the import's source and
 row fingerprint, billing status, service item, customer or job label),

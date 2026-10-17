@@ -201,7 +201,7 @@ async def csv_import_qb_report(
         # its first sheet, cells as they read
         from app.routes.migration import _sheet_as_csv
 
-        content = _sheet_as_csv(raw)
+        content = _sheet_as_csv(raw, computed=True)
     else:
         content = _decode_csv_upload(raw)
     return import_qb_report(db, content)

@@ -1345,6 +1345,7 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         "checks": 0,
         "journals": 0,
         "time_entries": 0,
+        "report": None,
         "duplicates_skipped": 0,
         "errors": [],
         "warnings": [],
@@ -1390,6 +1391,7 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         header_at, cols = _find_header_for(rows, TIME_COLUMNS)
         sub = import_time_report(db, rows, header_at, cols)
         base["time_entries"] = sub.pop("time_entries", 0)
+        base["report"] = sub.pop("report", None)
     elif kind == "deposits":
         sub = import_deposit_report(db, csv_text)
         base["deposits"] = sub.pop("deposits", 0)

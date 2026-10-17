@@ -171,7 +171,7 @@ def profit_loss_csv(data: dict, company: str, words) -> str:
                 [
                     label,
                     i.get("account_number") or "",
-                    i["account_name"],
+                    i.get("account_path") or i["account_name"],  # W-8
                     _money(i["amount"]),
                 ]
             )
@@ -309,7 +309,7 @@ def balance_sheet_csv(data: dict, company: str, words) -> str:
                 [
                     label,
                     i.get("account_number") or "",
-                    i["account_name"],
+                    i.get("account_path") or i["account_name"],  # W-8
                     _money(i["amount"]),
                 ]
             )

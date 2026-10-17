@@ -124,7 +124,9 @@ so the way across is a report: **Reports > Jobs, Time & Mileage > Time by
 Name by Job detail** (Time by Job by Name detail reads the same), with the
 dates set to **All**, saved as CSV or Excel. Upload it under
 Interoperability → Import from Report CSV. Every row becomes an approved
-time entry under its employee, with the hours (2.25 or 2:15), the notes, the
+time entry under its employee, with the hours (2.25 or 2:15; QuickBooks'
+minutes are kept exact, and an Excel file's Total rows read from the values
+Excel computed), the notes, the
 service item, the billing status (not billable, unbilled, billed) and the
 customer or job label as QuickBooks printed it; the entry links to the job
 when the label is one on the Jobs list, so import the lists IIF first for

@@ -44,35 +44,62 @@ _SORT_QUERY = Query(
 )
 
 
-def _account_order(db, sort="number"):
-    """A sort key for a report's account rows: by number then name (an
-    account with no number after the numbered ones, by name), or by name;
-    a sub-account right after its parent either way. The P&L and Balance
-    Sheet listed accounts in the order they were created (#326,
-    @TigerCoder27): the query had no ORDER BY, so a chart added to after
-    seeding read 6000, 6200, 6600, 6900, 6250, 6410."""
-    chart = {
-        a.id: (a.account_number or "", (a.name or "").lower(), a.parent_id)
+def _chart_index(db) -> dict:
+    """Every account's number, name and parent, by id."""
+    return {
+        a.id: (a.account_number or "", a.name or "", a.parent_id)
         for a in db.query(
             Account.id, Account.account_number, Account.name, Account.parent_id
         )
     }
 
+
+def _chain(chart: dict, account_id) -> list:
+    """The account's ids from the root down, the account itself last."""
+    path = []
+    while account_id in chart and len(path) < 32:
+        path.append(account_id)
+        account_id = chart[account_id][2]
+    return list(reversed(path))
+
+
+def _account_order(db, sort="number", chart: dict | None = None):
+    """A sort key for a report's account rows: by number then name (an
+    account with no number after the numbered ones, by name), or by name;
+    a sub-account right after its parent either way. The P&L and Balance
+    Sheet listed accounts in the order they were created (#326,
+    @TigerCoder27): the query had no ORDER BY, so a chart added to after
+    seeding read 6000, 6200, 6600, 6900, 6250, 6410. The Trial Balance and
+    General Ledger take the same key: ORDER BY account_number put the
+    accounts with no number first, in creation order (2.23.4 gate, W-7)."""
+    chart = chart if chart is not None else _chart_index(db)
+
     def level(account_id):
         number, name, _ = chart[account_id]
+        name = name.lower()
         if sort == "name":
             return (0, name, number)
         return (0, number, name) if number else (1, "", name)
 
     def key(row):
-        path = []
-        account_id = row["account_id"]
-        while account_id in chart and len(path) < 32:
-            path.append(level(account_id))
-            account_id = chart[account_id][2]
-        return tuple(reversed(path)) or ((2, "", ""),)
+        path = tuple(level(a) for a in _chain(chart, row["account_id"]))
+        return path or ((2, "", ""),)
 
     return key
+
+
+def _account_words(chart: dict, account_id) -> tuple[str, str]:
+    """(path, label) for a report row: the path names a sub-account under
+    its parents ("Automobile: Insurance"), the label puts the number
+    first ("6310 - Automobile: Insurance"). A statement row read as the
+    bare leaf, so two "Insurance" rows and a "Fuel" with no Automobile
+    above it could not be told apart (2.23.4 gate, W-8)."""
+    chain = _chain(chart, account_id)
+    if not chain:
+        return "", ""
+    path = ": ".join(chart[a][1] for a in chain)
+    number = chart[account_id][0]
+    return path, (f"{number} - {path}" if number else path)
 
 
 def _totals_by_account(
@@ -107,17 +134,21 @@ def _totals_by_account(
     q = q.group_by(Account.id, Account.name, Account.account_number)
 
     rows = []
+    chart = _chart_index(db)
     for acct_id, name, number, dr, cr in q.all():
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
+        path, label = _account_words(chart, acct_id)
         rows.append(
             {
                 "account_id": acct_id,
                 "account_name": name,
                 "account_number": number,
+                "account_path": path or name,
+                "account_label": label or name,
                 "amount": float(amount),
             }
         )
-    rows.sort(key=_account_order(db, sort))
+    rows.sort(key=_account_order(db, sort, chart))
     return rows
 
 
@@ -210,6 +241,8 @@ def balance_sheet(
                 "account_id": None,
                 "account_name": f"{t('Net Income')} (current period)",
                 "account_number": None,
+                "account_path": f"{t('Net Income')} (current period)",
+                "account_label": f"{t('Net Income')} (current period)",
                 "amount": float(net_income),
             }
         ]
@@ -340,6 +373,10 @@ def general_ledger(
         a["total_credit"] += tl.credit
 
     accounts_list = list(entries_by_account.values())
+    # the statements' order: by number then name, the unnumbered last, a
+    # sub-account after its parent (ORDER BY account_number put the
+    # unnumbered first: 2.23.4 gate, W-7)
+    accounts_list.sort(key=_account_order(db))
     for a in accounts_list:
         a["closing_balance"] = float(a.pop("_running"))
         a["opening_balance"] = float(a["opening_balance"])
@@ -445,7 +482,6 @@ def trial_balance(
         .group_by(
             Account.id, Account.account_number, Account.name, Account.account_type
         )
-        .order_by(Account.account_number)
         .all()
     )
 
@@ -466,6 +502,9 @@ def trial_balance(
                 "net_balance": float(debit - credit),
             }
         )
+    # by number then name, the unnumbered last, a sub-account after its
+    # parent (ORDER BY account_number put the unnumbered first: W-7)
+    items.sort(key=_account_order(db))
 
     return {
         "start_date": start_date.isoformat(),
@@ -991,6 +1030,11 @@ def _money(value) -> str:
     return f"{sign}${abs(amount):,.2f}"
 
 
+def _row_words(item: dict) -> str:
+    """A statement row's words on the PDF: its number and path (W-8)."""
+    return item.get("account_label") or item["account_name"]
+
+
 def _pl_section(data: dict, t=None) -> dict:
     """P&L rows for the PDF; t (Terms) picks the company's words —
     "Statement of Activities" / "Revenue & Support" for a nonprofit. One
@@ -1004,9 +1048,7 @@ def _pl_section(data: dict, t=None) -> dict:
     ):
         rows.append({"cells": [label, ""], "style": "subtotal"})
         for item in data[key]:
-            rows.append(
-                {"cells": [f"  {item['account_name']}", _money(item["amount"])]}
-            )
+            rows.append({"cells": [f"  {_row_words(item)}", _money(item["amount"])]})
         rows.append(
             {"cells": [f"Total {label}", _money(data[total_key])], "style": "subtotal"}
         )
@@ -1015,7 +1057,7 @@ def _pl_section(data: dict, t=None) -> dict:
     )
     rows.append({"cells": ["Expenses", ""], "style": "subtotal"})
     for item in data["expenses"]:
-        rows.append({"cells": [f"  {item['account_name']}", _money(item["amount"])]})
+        rows.append({"cells": [f"  {_row_words(item)}", _money(item["amount"])]})
     rows.append(
         {
             "cells": ["Total Expenses", _money(data["total_expenses"])],
@@ -1139,9 +1181,7 @@ def _bs_section(data: dict, t=None) -> dict:
     ):
         rows.append({"cells": [label, ""], "style": "subtotal"})
         for item in data[key]:
-            rows.append(
-                {"cells": [f"  {item['account_name']}", _money(item["amount"])]}
-            )
+            rows.append({"cells": [f"  {_row_words(item)}", _money(item["amount"])]})
         rows.append(
             {"cells": [f"Total {label}", _money(data[total_key])], "style": "subtotal"}
         )
