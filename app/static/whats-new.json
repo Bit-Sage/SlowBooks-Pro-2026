@@ -2,7 +2,14 @@
   "2.23.5": {
     "title": "A bookkeeper's first hour",
     "items": [
-      "A SimpleFIN feed that reports every sign the other way round imports right: tick Reverse signs for that feed on Banking's bank-feed list."
+      "A SimpleFIN feed that reports every sign the other way round imports right: tick Reverse signs for that feed on Banking's bank-feed list.",
+      "A bank register you can type into: the register reads oldest to newest, and its last row takes the next entry; Enter posts it.",
+      "A register entry can be split across accounts, a loan payment's principal and interest in one entry.",
+      "Reconcile can show only the lines dated through a day you pick, for several statements worked back to back.",
+      "Account numbers are plainly optional, and the seeded chart's unused accounts can go in one step from the Chart of Accounts.",
+      "A report's drill-down saves as CSV and PDF, like the other reports.",
+      "Settings → Sidebar hides the menu items this company doesn't use.",
+      "Vendors: a search box on the list, and paid this year, all time and a payments CSV on a vendor's page."
     ]
   },
   "2.23.4": {

@@ -35,6 +35,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 ![Invoices with IRS Pub 583 Mock Data](../screenshots/invoices.png)
 
 ## Accounts Payable
+- **Vendors: search and paid-to-date** (v2.23.5) — the list filters as you type; a vendor's page shows paid this year and all time, with a payments CSV
 - **Purchase Orders** — Non-posting documents to vendors with auto-numbering, live line amounts and totals, View, Save PDF and Print, and a To Bill step that asks for an account on each line that has none. A new PO starts at no tax
 - **Bills** — Enter vendor bills (AP mirror of invoices). A posted bill can be edited the way an invoice can (v2.21.0): the header or the lines, re-posting its journal; not below what has been paid, not when voided, not into a closed period. Track payables with status progression (draft/unpaid/partial/paid/void). Each line posts to the account on the line, else the item's expense account, else the vendor's default — a line none of them names is refused (it used to fall back to 6000). Enter Bill has an Account column, fills a picked item's cost and account, takes the vendor's terms and due date, shows a running total and refuses $0.00. Save PDF and Print. Scan a vendor receipt to pre-fill the form (see Receipt scanning under Sales Receipts)
 - **Expenses** — A receipt that's already paid, by card, cash or check: DR the expense account, CR the bank, cash or credit-card account it was paid from, in one step with no bill to pay later. Scan Receipt fills it in. An expense takes a vendor or a payee, a reference, a class, a job and cost code, a nonprofit function, and can be marked billable. **An expense is not edited, unlike a bill**: a mistake is voided (a reversing entry; both stay in the register) and entered again. Voiding is refused once the expense is reconciled or when its date is in a closed period
@@ -46,6 +47,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **AP Aging Report** — Outstanding payables grouped by vendor with 30/60/90 day buckets past due, in home currency, with vendor credits and bill-payment money not yet applied netted, so the total equals account 2000. A bill with no due date ages from its date and terms
 
 ## Double-Entry Accounting
+- **Chart of accounts: numbers optional, seeded accounts removable** (v2.23.5) — the account form says the number is optional; "Remove unused seeded accounts…" takes every seeded account with no postings, sub-accounts, register or control role off the chart in one step, naming the ones that stay
 - **Manual Journal Entries** — Full CRUD for manual journal entries with dynamic line rows, running debit/credit totals, balance indicator, and void with reversing entries
 - **Auto Journal Entries** — Every invoice, payment, bill, and payroll run automatically creates balanced journal entries. Void creates reversing entries
 - **Chart of Accounts** — 39+ seeded accounts (Contractor template), 6 account types (asset, liability, equity, income, COGS, expense)
@@ -65,6 +67,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 Tax calculations are approximate — verify with a tax professional. Full module reference (models, routes, UI pages, pending items) lives at [docs/payroll-hr-module.md](payroll-hr-module.md).
 
 ## Banking
+- **A register you can type into** (v2.23.5) — a bank or card account's register reads oldest to newest with the running balance down the right, and its last row takes the next entry (date, payee, memo, ref, category, out or in); Enter posts it and the next row is ready. An entry can be **split across accounts** (a loan payment's principal and interest) from the dialog's "Split this entry…". **Reconcile** can show only the lines dated through a day you pick, for several statements worked back to back
 The register is the ledger account (v2.10, issue #114). Full guide: [docs/banking.md](banking.md).
 - **Bank and credit-card accounts** — chart accounts flagged `bank` / `credit_card`; every paid-from, deposit-to and pay-from picker lists exactly those
 - **Register** — every posting on the account with a running balance (a card shows the amount owed), payee, source link, cleared/reconciled marks; a register entry posts (DR category / CR account for money out, the reverse for money in)
@@ -86,6 +89,7 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 - **Reports from the customer and vendor pages** (v2.22.0) — a Reports row on the customer page (Statement PDF in business mode, Income by Customer, A/R Aging, Job Profitability for that customer's jobs) and on the vendor page (A/P Aging, 1099 Summary for 1099 vendors, the default expense account's register), each on this year to date with the customer's or vendor's row picked out; the pages have addresses (`#/customers/<id>`, `#/vendors/<id>`) so Back returns to them
 - **The drill-down** (v2.22.0) — sits on the period shell: change its dates, class or account in place, step Previous / Next through the accounts of the report it came from, save it as a report that reopens. It shows Payee, the cleared mark (✓ cleared, R reconciled), void lines struck through, the balance brought forward and a period total. Every posting in a register or drill-down links to its document — job cost entries, pay runs, credit memos, in-kind gifts, releases and allocations at their own addresses; PTO accruals, checks, inventory adjustments, sales-tax payments, IIF lines and asset postings at their journal entry
 - **QuickBooks-style period selector** — All reports support preset periods (This Month, This Quarter, This/Last Year, Year to Date, Custom Date) with live refresh
+- **Drill-down export** (v2.23.5) — an account's detail for a date range saves as CSV and PDF, the figures on the screen
 - **Profit & Loss** — Income vs expenses for any date range; accounts by number then name, the Trial Balance's order, or by name ("Sort by", v2.23.4), a sub-account under its parent either way and named by its path with its number
 - **Balance Sheet** — Assets, liabilities, and equity as of any date, in the same order
 - **Trial Balance** — Every account's debit or credit balance for the period, with totals that must agree
@@ -356,6 +360,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 - **Email Templates** — Customizable email templates for invoices, estimates, and statements
 
 ## UI
+- **Sidebar you can trim** (v2.23.5) — Settings → Sidebar hides the sections and links a company doesn't use; a hidden page still opens by its address
 - Authentic QB2003 "Default Blue" skin with navy/gold color palette (+ dark mode)
 - Splash screen with build info, what's new, and the license notice
 - Windows XP-era toolbar, sidebar navigator with icons, status bar

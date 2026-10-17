@@ -108,6 +108,11 @@ DEFAULT_SETTINGS = {
     # be reported under Uncategorized); "false" starts the picker on
     # Uncategorized and asks nothing.
     "class_warn_blank": "false",
+    # Sidebar items a company doesn't use, hidden from the menu (#334): a
+    # JSON list of nav-link pages ("payroll", "hr-onboarding", …) and nav
+    # sections ("section:Payroll & HR"). The pages stay reachable by
+    # address. Empty = everything shows.
+    "hidden_menu": "[]",
     # Phase 10: Late Fee Automation
     "late_fee_enabled": "false",
     "late_fee_rate": "1.5",

@@ -152,6 +152,84 @@ def general_ledger_csv(data: dict, company: str, words=None) -> str:
     return out.getvalue()
 
 
+def account_transactions_csv(data: dict, company: str, words) -> str:
+    """The drill-down (one account's lines for a date range, the balance
+    brought forward and the running balance) as the screen shows it
+    (#333): a bookkeeper hands a client what was spent on one account."""
+    out = io.StringIO()
+    w = _SafeWriter(out)
+    acct = data.get("account") or {}
+    head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
+    period = f"{data['start_date']} to {data['end_date']}"
+    if data.get("class_name"):
+        period += f" ({words('Class')}: {data['class_name']} only)"
+    if data.get("job_name"):
+        period += f" ({words('Job')}: {data['job_name']})"
+    _preamble(w, company, f"Account detail — {head}", period)
+    w.writerow(
+        [
+            "Date",
+            "Payee",
+            "Reference",
+            "Description",
+            "Source",
+            "Debit",
+            "Credit",
+            "Running balance",
+            "Cleared",
+        ]
+    )
+    w.writerow(
+        [
+            data["start_date"],
+            "",
+            "",
+            "Balance brought forward",
+            "",
+            "",
+            "",
+            _money(data.get("opening_balance", 0)),
+            "",
+        ]
+    )
+    for e in data.get("entries", []):
+        w.writerow(
+            [
+                e.get("date", ""),
+                e.get("payee") or "",
+                e.get("reference") or "",
+                (e.get("description") or "") + (" (void)" if e.get("voided") else ""),
+                e.get("source_type") or "",
+                _money(e["debit"]) if e.get("debit") else "",
+                _money(e["credit"]) if e.get("credit") else "",
+                _money(e.get("running_balance", 0)),
+                (
+                    "R"
+                    if e.get("reconciliation_id")
+                    else ("cleared" if e.get("cleared") else "")
+                ),
+            ]
+        )
+    entries = data.get("entries", [])
+    closing = (
+        entries[-1]["running_balance"] if entries else data.get("opening_balance", 0)
+    )
+    w.writerow(
+        [
+            "",
+            "",
+            "",
+            "Period total",
+            "",
+            _money(data.get("period_debit", 0)),
+            _money(data.get("period_credit", 0)),
+            _money(closing),
+            "",
+        ]
+    )
+    return out.getvalue()
+
+
 def profit_loss_csv(data: dict, company: str, words) -> str:
     out = io.StringIO()
     w = _SafeWriter(out)

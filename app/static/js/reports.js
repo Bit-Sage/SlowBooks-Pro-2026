@@ -629,7 +629,11 @@ const ReportsPage = {
             }).join('');
             const entries = data.entries || [];
             const closing = entries.length ? entries[entries.length - 1].running_balance : data.opening_balance;
+            // Save CSV / Save PDF, as the other reports have (#333): the
+            // account and range on the screen, the class and job with them
+            const exportQs = q.toString();
             return `<div id="drilldown-body" style="font-size:11px; color:var(--gray-500);">
+                ${ReportsPage._exportButtons('account-transactions', exportQs)}
                 <p style="margin-bottom:8px; color:var(--gray-500); font-size:12px;">
                     ${escapeHtml(data.account.number || '')} · ${escapeHtml(data.account.name)}
                     ${data.class_name ? `&middot; ${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong>` : ''}

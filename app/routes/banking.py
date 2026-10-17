@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.accounting import _q
 from app.routes._helpers import clamp_pagination
 from app.models.accounts import Account
 from app.models.banking import (
@@ -507,9 +508,52 @@ def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(g
     category makes it a transfer."""
     check_closing_date(db, data.date)
     account = _resolve_account(db, data.account_id, data.bank_account_id)
-    category = db.query(Account).filter(Account.id == data.category_account_id).first()
-    if not category:
-        raise HTTPException(status_code=404, detail="Category account not found")
+    splits = None
+    if data.splits:
+        # a split entry (#330): every line's account, the amounts adding up
+        # to the entry's with its sign, no bank or card account among them
+        # (a transfer is one line, never a split)
+        splits = []
+        for part in data.splits:
+            cat = (
+                db.query(Account).filter(Account.id == part.category_account_id).first()
+            )
+            if not cat:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Split account {part.category_account_id} not found",
+                )
+            if cat.bank_kind:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{cat.name}' is a bank or card account; a transfer is its own entry, not a split line",
+                )
+            if cat.id == account.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A split line cannot post to the account itself",
+                )
+            splits.append((cat, part.amount, part.description))
+        total = sum((amt for _, amt, _ in splits), Decimal("0"))
+        if _q(total) != _q(data.amount):
+            raise HTTPException(
+                status_code=400,
+                detail=f"The split lines come to {_q(total):,.2f} and the entry is {_q(data.amount):,.2f}; they must agree",
+            )
+        if any((amt > 0) != (data.amount > 0) for _, amt, _ in splits if amt != 0):
+            raise HTTPException(
+                status_code=400,
+                detail="Every split line takes the entry's sign (money out negative, money in positive)",
+            )
+        category = splits[0][0]
+    else:
+        if data.category_account_id is None:
+            raise HTTPException(status_code=422, detail="Category account is required")
+        category = (
+            db.query(Account).filter(Account.id == data.category_account_id).first()
+        )
+        if not category:
+            raise HTTPException(status_code=404, detail="Category account not found")
     txn = post_bank_entry(
         db,
         account,
@@ -521,6 +565,7 @@ def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(g
         reference=data.check_number,
         class_id=data.class_id,
         job_id=data.job_id,
+        splits=splits,
     )
     db.commit()
     db.refresh(txn)

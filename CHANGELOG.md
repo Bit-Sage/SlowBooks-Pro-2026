@@ -17,6 +17,50 @@ applied before the rows reach matching, rules and dedup. Claim and
 disconnect reset it. Lines already imported the wrong way round are not
 rewritten; they dedup by their SimpleFIN id on the next sync.
 
+**The bank register you can type into** (#329). A bank or card account's
+register reads oldest to newest, as a ledger does, with the running balance
+down the right, and its last row is an entry row: date, payee, memo, ref,
+category, the amount out or in; Enter or Post posts it through the same
+call as + Entry, and the next row is ready. The dialog stays for anyone
+who prefers it.
+
+**A register entry split across accounts** (#330). A check that pays several
+things, or a loan payment that is principal and interest, is one entry
+with several lines: "Split this entry…" on the dialog takes an account and
+amount per line, says what is left to place, and posts one entry. On the
+API, `splits` on `POST /api/banking/transactions`; the lines must add up
+to the amount, take its sign, and a bank or card account is a transfer,
+never a split line.
+
+**Reconcile shows only the lines through a day** (#331). Several statements
+reconciled back to back are started with the last statement's date; "Show
+only lines through that date" hides the later lines while a month is worked
+and says how many it hid. The session's figures are the session's; Mark
+through takes the same day.
+
+**Account numbers are plainly optional, and the seeded chart's unused
+accounts go in one step** (#332). The account form says the number is
+optional (it always was in the books). "Remove unused seeded accounts…" on
+the Chart of Accounts lists every seeded account with no postings, no
+sub-accounts, no register or setting naming it and no control role, and
+removes them together; the ones that stay are named with why.
+
+**The drill-down saves as CSV and PDF** (#333), the figures on the screen,
+the account and range in the file name: what a client asks for when they
+want to know what was spent on one account.
+
+**The sidebar hides what a company doesn't use** (#334). Settings → Sidebar
+lists every section and link; the ticked ones leave the menu. A hidden page
+still opens by its address, and the list is on the Settings page.
+
+**Vendors: a search box and paid-to-date** (#335). The Vendors list filters
+as you type (name, company, phone, email) and says how many of how many
+show. A vendor's page carries paid this year and all time, and Save CSV
+lists the payments with a total, for any date range on the API.
+
+No schema change. 561 API operations (the drill-down's CSV and PDF, the
+vendor's payments CSV, the seeded chart's dry run and removal).
+
 ### v2.23.4 — Every QuickBooks Desktop transaction, as journal entries
 
 **QuickBooks Desktop's Transaction Detail by Account imports.** The report a

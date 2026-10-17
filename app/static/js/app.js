@@ -843,6 +843,33 @@ const App = {
         }
     },
 
+    // The seeded chart stays beside an imported one; the seeded accounts
+    // nobody uses (no lines, no sub-accounts, not a control account, not
+    // named by a setting or a register) can go in one step (#332). A dry
+    // run lists them first; the result names what went and what stayed.
+    async showSeededCleanup() {
+        let preview;
+        try { preview = await API.get('/accounts/unused-seeded'); } catch (err) { toast(err.message, 'error'); return; }
+        const rows = preview.removable.map(a => `<li>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</li>`).join('');
+        const kept = preview.kept.map(a => `<li>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)} <span style="color:var(--gray-500);">— ${escapeHtml(a.reason)}</span></li>`).join('');
+        openModal('Remove unused seeded accounts', `
+            <p style="font-size:12px; margin-bottom:8px;">Every new company starts with a seeded chart of accounts. When a real chart is imported the seeded accounts stay beside it. These seeded accounts have never been used and can go now; any with postings, sub-accounts, a register or a job in the settings stay.</p>
+            ${preview.removable.length ? `<p style="font-size:12px; margin-bottom:4px;"><strong>${preview.removable.length} to remove:</strong></p><ul style="font-size:12px; columns:2; margin:0 0 8px 16px;">${rows}</ul>` : '<p style="font-size:12px;">Nothing to remove: every seeded account is in use or already gone.</p>'}
+            ${preview.kept.length ? `<details style="font-size:11px; margin-bottom:8px;"><summary>${preview.kept.length} seeded account(s) stay</summary><ul style="margin:4px 0 0 16px;">${kept}</ul></details>` : ''}
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                ${preview.removable.length ? `<button type="button" data-destructive class="btn btn-primary" onclick="App.runSeededCleanup()">Remove ${preview.removable.length} account${preview.removable.length === 1 ? '' : 's'}</button>` : ''}
+            </div>`);
+    },
+    async runSeededCleanup() {
+        try {
+            const res = await API.post('/accounts/unused-seeded/remove', {});
+            toast(`${res.removed.length} seeded account${res.removed.length === 1 ? '' : 's'} removed${res.kept.length ? `; ${res.kept.length} stayed` : ''}`);
+            closeModal();
+            App.navigate('#/accounts');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     async renderAccounts() {
         const accounts = await API.get('/accounts');
         const grouped = {};
@@ -867,6 +894,7 @@ const App = {
                     <span id="accounts-filter-note" role="status" style="font-size:11px; color:var(--gray-500);"></span>
                     ${inactiveCount ? `<button class="btn btn-sm btn-secondary" onclick="App.toggleInactiveAccounts()">${App._showInactiveAccounts ? 'Hide' : 'Show'} ${inactiveCount} inactive</button> ` : ''}
                     <button class="btn btn-secondary" data-write onclick="App.showChartImport()">Import…</button>
+                    <button class="btn btn-secondary" data-write onclick="App.showSeededCleanup()">Remove unused seeded accounts…</button>
                     <button class="btn btn-primary" onclick="App.showAccountForm()">New Account</button>
                 </div>
             </div>
@@ -912,10 +940,10 @@ const App = {
         // number and the type are fixed and the API refuses to change them (400).
         // Renaming is allowed and is the point — say so instead of hiding the form.
         const locked = !!acct.is_control;
-        // A number is required (digits; 6150.1 or 6150-01 for a sub-account),
-        // except on an account an importer brought in without one, which can
-        // still be renamed.
-        const numberRequired = !locked && (!id || !!acct.account_number);
+        // A number is optional (digits; 6150.1 or 6150-01 for a sub-account):
+        // many companies don't number their accounts, and the form read as
+        // if one were required (#332)
+        const numberRequired = false;
         const lockNote = locked
             ? `<div class="form-group full-width"><div class="hint hint--locked">
                    <strong>${escapeHtml(acct.account_number || '')} ${escapeHtml(acct.name)} is a control account.</strong>
@@ -928,10 +956,10 @@ const App = {
             <form onsubmit="App.saveAccount(event, ${id})">
                 <div class="form-grid">
                     ${lockNote}
-                    <div class="form-group"><label>Account Number${numberRequired ? ' *' : ''}</label>
+                    <div class="form-group"><label>Account Number <span style="font-weight:normal; color:var(--gray-500);">(optional)</span></label>
                         <input name="account_number" value="${escapeHtml(acct.account_number || '')}"${locked ? ' readonly disabled' : ''}
-                            ${numberRequired ? 'required' : ''} pattern="\\d+([.\\-]\\d+)*" maxlength="20" placeholder="e.g. 6150"
-                            title="Digits, like 6150. A sub-account can use 6150.1 or 6150-01."></div>
+                            ${numberRequired ? 'required' : ''} pattern="\\d+([.\\-]\\d+)*" maxlength="20" placeholder="e.g. 6150, or leave blank"
+                            title="Optional. Digits, like 6150; a sub-account can use 6150.1 or 6150-01."></div>
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
@@ -1394,8 +1422,47 @@ const App = {
     // shell shows it. Settings calls this after a save, so a rename shows at
     // once; it used to wait for the next start, and the Restore dialog
     // named the company by its old name meanwhile (2.18.0 gate, skytech N4).
+    // The sidebar without the items the company hid (#334): a nav-link's
+    // page, or a whole section ("section:Payroll & HR"), as the setting
+    // lists them. Hidden pages still open by address; a section whose
+    // links are all hidden goes with them. Run at start and after a save.
+    applyHiddenMenu(s) {
+        let hidden = [];
+        try { hidden = JSON.parse((s && s.hidden_menu) || '[]'); } catch (e) { hidden = []; }
+        if (!Array.isArray(hidden)) hidden = [];
+        const set = new Set(hidden.map(String));
+        let section = null;
+        let sectionHidden = false;
+        $$('#sidebar li').forEach(li => {
+            if (li.classList.contains('nav-section')) {
+                section = li;
+                sectionHidden = set.has(`section:${li.textContent.trim()}`);
+                li.hidden = sectionHidden;
+                li.dataset.hiddenByMenu = sectionHidden ? '1' : '';
+                return;
+            }
+            const link = li.querySelector('.nav-link[data-page]');
+            if (!link) return;
+            const hide = sectionHidden || set.has(link.dataset.page);
+            if (hide) { li.hidden = true; li.dataset.hiddenByMenu = '1'; }
+            else if (li.dataset.hiddenByMenu) { li.hidden = false; li.dataset.hiddenByMenu = ''; }
+        });
+        // a section with every link hidden hides too
+        const items = [...$$('#sidebar li')];
+        items.forEach((li, i) => {
+            if (!li.classList.contains('nav-section') || li.hidden) return;
+            let j = i + 1, any = false;
+            while (j < items.length && !items[j].classList.contains('nav-section')) {
+                if (!items[j].hidden) any = true;
+                j++;
+            }
+            if (!any) { li.hidden = true; li.dataset.hiddenByMenu = '1'; }
+        });
+    },
+
     showCompany(s) {
         App.settings = s || {};
+        App.applyHiddenMenu(App.settings);
         const name = App.settings.company_name;
         if (!name || name === 'My Company') return;
         const companyEl = $('#status-company');

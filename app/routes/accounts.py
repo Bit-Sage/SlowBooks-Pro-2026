@@ -103,6 +103,79 @@ def list_accounts(
     return _in_company_words(db, q.order_by(Account.account_number, Account.name).all())
 
 
+def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
+    """The seeded accounts nobody uses, and the seeded ones that stay and
+    why (#332): a control account, postings, sub-accounts, or a row that
+    names it (a register, an item, a setting)."""
+    removable, kept = [], []
+    seeded = (
+        db.query(Account)
+        .filter(Account.is_system.is_(True))
+        .order_by(Account.account_number, Account.name)
+        .all()
+    )
+    children = {
+        pid
+        for (pid,) in db.query(Account.parent_id).filter(Account.parent_id.isnot(None))
+    }
+    posted = {aid for (aid,) in db.query(TransactionLine.account_id).distinct()}
+    for a in seeded:
+        row = {"id": a.id, "account_number": a.account_number or "", "name": a.name}
+        if control_accounts.is_control_number(a.account_number):
+            kept.append({**row, "reason": "a control account"})
+        elif a.id in posted:
+            kept.append({**row, "reason": "has postings"})
+        elif a.id in children:
+            kept.append({**row, "reason": "has sub-accounts"})
+        else:
+            others = [
+                (t, n)
+                for t, n in _referencing_rows(db, a.id)
+                if t != "transaction lines"
+            ]
+            if others:
+                kept.append(
+                    {
+                        **row,
+                        "reason": "in use: "
+                        + ", ".join(f"{n} in {t}" for t, n in others),
+                    }
+                )
+            else:
+                removable.append(row)
+    return removable, kept
+
+
+@router.get("/unused-seeded")
+def unused_seeded(db: Session = Depends(get_db)):
+    """A dry run: the seeded accounts that can go, and the ones that stay."""
+    removable, kept = _seeded_unused(db)
+    return {"removable": removable, "kept": kept}
+
+
+@router.post("/unused-seeded/remove")
+def remove_unused_seeded(db: Session = Depends(get_db)):
+    """Remove every seeded account nobody uses, in one step; the result
+    names what went and what stayed (#332)."""
+    removable, kept = _seeded_unused(db)
+    removed = []
+    for row in removable:
+        acct = db.get(Account, row["id"])
+        if acct is None:
+            continue
+        sp = db.begin_nested()
+        try:
+            db.delete(acct)
+            db.flush()
+            sp.commit()
+            removed.append(row)
+        except IntegrityError:
+            sp.rollback()
+            kept.append({**row, "reason": "still referenced"})
+    db.commit()
+    return {"removed": removed, "kept": kept}
+
+
 @router.get("/{account_id}", response_model=AccountResponse)
 def get_account(account_id: int, db: Session = Depends(get_db)):
     return _in_company_words(db, [get_or_404(db, Account, account_id)])[0]

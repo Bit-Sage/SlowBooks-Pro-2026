@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -102,3 +105,57 @@ def delete_vendor(vendor_id: int, db: Session = Depends(get_db)):
     vendor.is_active = False
     db.commit()
     return {"message": "Vendor deactivated"}
+
+
+@router.get("/{vendor_id}/payments/csv")
+def vendor_payments_csv(
+    vendor_id: int,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The vendor's payments as a CSV, with a paid-to-date total (#335):
+    what a client asks for ("how much have we paid them this year")."""
+    import csv
+    import io
+
+    from fastapi.responses import Response
+
+    from app.models.bills import BillPayment
+
+    vendor = get_or_404(db, Vendor, vendor_id)
+    q = db.query(BillPayment).filter(BillPayment.vendor_id == vendor_id)
+    if start_date:
+        q = q.filter(BillPayment.date >= start_date)
+    if end_date:
+        q = q.filter(BillPayment.date <= end_date)
+    payments = q.order_by(BillPayment.date, BillPayment.id).all()
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(["Vendor", vendor.name])
+    w.writerow(["Period", f"{start_date or 'start'} to {end_date or 'today'}"])
+    w.writerow([])
+    w.writerow(["Date", "Method", "Check #", "Amount", "Paid from", "Notes", "Voided"])
+    total = Decimal("0")
+    for p in payments:
+        amount = Decimal(str(p.amount or 0))
+        if not p.is_voided:
+            total += amount
+        w.writerow(
+            [
+                p.date.isoformat(),
+                p.method or "",
+                p.check_number or "",
+                f"{amount:.2f}",
+                (p.pay_from_account.name if p.pay_from_account else ""),
+                (p.notes or "").replace("\n", " "),
+                "yes" if p.is_voided else "",
+            ]
+        )
+    w.writerow(["", "", "Total paid", f"{total:.2f}", "", "", ""])
+    slug = "".join(ch if ch.isalnum() else "_" for ch in vendor.name)[:40]
+    return Response(
+        out.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="Payments_{slug}.csv"'},
+    )

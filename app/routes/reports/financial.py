@@ -1473,6 +1473,118 @@ def general_ledger_csv_route(
     )
 
 
+def _account_transactions_section(data: dict, t) -> dict:
+    """The drill-down's rows for the PDF (#333)."""
+    acct = data.get("account") or {}
+    head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
+    rows = [
+        {
+            "cells": [
+                "",
+                "",
+                "Balance brought forward",
+                "",
+                "",
+                _money(data.get("opening_balance", 0)),
+            ],
+            "style": "subtotal",
+        }
+    ]
+    for e in data.get("entries", []):
+        rows.append(
+            {
+                "cells": [
+                    e.get("date", ""),
+                    (e.get("payee") or "")[:40],
+                    (
+                        (e.get("description") or "")
+                        + (" (void)" if e.get("voided") else "")
+                    )[:60],
+                    _money(e["debit"]) if e.get("debit") else "",
+                    _money(e["credit"]) if e.get("credit") else "",
+                    _money(e.get("running_balance", 0)),
+                ]
+            }
+        )
+    entries = data.get("entries", [])
+    closing = (
+        entries[-1]["running_balance"] if entries else data.get("opening_balance", 0)
+    )
+    rows.append(
+        {
+            "cells": [
+                "",
+                "",
+                "Period total",
+                _money(data.get("period_debit", 0)),
+                _money(data.get("period_credit", 0)),
+                _money(closing),
+            ],
+            "style": "subtotal",
+        }
+    )
+    period = f"{data['start_date']} — {data['end_date']}"
+    if data.get("class_name"):
+        period += f" · {t('Class')}: {data['class_name']} only"
+    if data.get("job_name"):
+        period += f" · {t('Job')}: {data['job_name']}"
+    return {
+        "title": f"Account detail — {head}",
+        "period": period,
+        "columns": ["Date", "Payee", "Description", "Debit", "Credit", "Running"],
+        "rows": rows,
+    }
+
+
+@router.get("/account-transactions/csv")
+def account_transactions_csv_route(
+    request: Request,
+    account_id: int = Query(...),
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    class_id: Optional[int] = Query(default=None),
+    job_id: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The drill-down as a CSV, the figures on the screen (#333)."""
+    from app.services.ledger_exports import account_transactions_csv
+
+    data = account_transactions(
+        account_id, start_date, end_date, db, class_id=class_id, job_id=job_id
+    )
+    t = terms_from_db(db)
+    acct = data.get("account") or {}
+    slug = t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
+    return _csv_download(
+        account_transactions_csv(data, _company_name(db), t),
+        f"AccountDetail_{slug}_{data['start_date']}_{data['end_date']}.csv",
+        request,
+    )
+
+
+@router.get("/account-transactions/pdf")
+def account_transactions_pdf_route(
+    account_id: int = Query(...),
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    class_id: Optional[int] = Query(default=None),
+    job_id: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The drill-down as a PDF (#333)."""
+    data = account_transactions(
+        account_id, start_date, end_date, db, class_id=class_id, job_id=job_id
+    )
+    t = terms_from_db(db)
+    acct = data.get("account") or {}
+    slug = t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
+    return _pdf_response(
+        [_account_transactions_section(data, t)],
+        db,
+        f"AccountDetail_{slug}_{data['start_date']}_{data['end_date']}.pdf",
+    )
+
+
 @router.get("/profit-loss/csv")
 def profit_loss_csv_route(
     request: Request,

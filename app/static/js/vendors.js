@@ -11,7 +11,12 @@ const VendorsPage = {
                 <h2>Vendors</h2>
                 <button class="btn btn-primary" onclick="VendorsPage.showForm()">+ New Vendor</button>
             </div>
-            <div class="toolbar">${ActiveLists.pickerHtml('vendors')}</div>`;
+            <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                ${ActiveLists.pickerHtml('vendors')}
+                <input type="search" id="vendors-filter" aria-label="Search vendors" placeholder="Search by name, company, phone or email"
+                    style="min-width:260px;" oninput="VendorsPage.filterRows(this.value)">
+                <span id="vendors-filter-note" role="status" style="font-size:11px; color:var(--gray-500);"></span>
+            </div>`;
 
         if (vendors.length === 0 && ActiveLists.emptyText('vendors')) {
             html += `<div class="empty-state"><p>${ActiveLists.emptyText('vendors')}</p></div>`;
@@ -30,7 +35,8 @@ const VendorsPage = {
                 const inactive = v.is_active === false;
                 // a row opens the vendor's page, as a customer's does (#223);
                 // the buttons on it keep to themselves
-                html += `<tr class="clickable vendor-row${inactive ? ' row--dim' : ''}" onclick="VendorsPage.showDetails(${v.id})">
+                const haystack = escapeHtml(`${v.name} ${v.company || ''} ${v.phone || ''} ${v.email || ''}`.toLowerCase());
+                html += `<tr class="clickable vendor-row${inactive ? ' row--dim' : ''}" data-vendor-row="${haystack}" onclick="VendorsPage.showDetails(${v.id})">
                     <td><strong>${escapeHtml(v.name)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${escapeHtml(v.company) || ''}</td>
                     <td>${escapeHtml(v.phone) || ''}</td>
@@ -45,6 +51,21 @@ const VendorsPage = {
             html += `</tbody></table></div>`;
         }
         return html;
+    },
+
+    // The search box narrows the list as you type (#335): name, company,
+    // phone or email; the note says how many of how many show.
+    filterRows(text) {
+        const needle = (text || '').trim().toLowerCase();
+        const rows = [...document.querySelectorAll('tr[data-vendor-row]')];
+        let shown = 0;
+        for (const row of rows) {
+            const hit = !needle || row.dataset.vendorRow.includes(needle);
+            row.style.display = hit ? '' : 'none';
+            if (hit) shown++;
+        }
+        const note = document.getElementById('vendors-filter-note');
+        if (note) note.textContent = needle ? `${shown} of ${rows.length} vendors` : '';
     },
 
     // -- Vendor details modal (#223) ----------------------------------------
@@ -100,6 +121,11 @@ const VendorsPage = {
             </tr>`).join('');
 
         // -- Credits the vendor owes us, not yet applied to a bill --
+        // paid to date (#335): this year and all time, voided payments aside
+        const thisYear = String(new Date().getFullYear());
+        const live = payments.filter(p => !p.is_voided);
+        const paidAllTime = live.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+        const paidThisYear = live.filter(p => String(p.date || '').startsWith(thisYear)).reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
         const open = credits.filter(c => c.status !== 'void' && parseFloat(c.balance_remaining) > 0);
         const creditsHtml = open.length === 0 ? '' : `
             <div style="margin-bottom:14px">
@@ -186,6 +212,8 @@ const VendorsPage = {
             <!-- recent payments -->
             <div>
                 <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Recent payments (${payments.length})</h4>
+                <p style="font-size:12px; margin:0 0 6px 0;">Paid this year: <strong>${formatCurrency(paidThisYear)}</strong> &middot; all time: <strong>${formatCurrency(paidAllTime)}</strong>
+                    <a class="btn btn-sm btn-secondary" style="margin-left:8px;" href="/api/vendors/${vendor.id}/payments/csv" download>Save CSV</a></p>
                 ${payments.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;margin:0">No payments yet</p>' :
                     `<table class="data-table" style="font-size:12px">
                         <thead><tr><th scope="col">Date</th><th scope="col">Method</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
