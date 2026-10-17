@@ -40,6 +40,20 @@ expense accounts, which the register flag then put on Banking as cards. A
 journal entry's view no longer prints "- " before an account with no
 number.
 
+**From the gate's third round** (Windows W-5, macOS NEW-127, both older):
+the lists IIF import matched an account by its leaf name alone, or by its
+number alone, whatever its type, and merged in silence: an income
+sub-account "Maintenance & Repairs" landed in the expense account of that
+name, "Retained Earnings" (3100 in the file) in the chart's 3100 Owner's
+Draw. An account is its whole path now, matched under the same parents and
+of the same type; a number alone never matches, and a number the chart
+already uses is dropped with a note; QuickBooks' own names the chart knows
+("Inventory Asset" is 1300 Inventory) still match, named in the result; an
+account of another type with the same name is created beside it, with a
+note. And a second upload of the same lists posted every opening balance
+again, doubling them all: a balance an earlier import posted is not posted
+again, and the result says how many were left alone.
+
 No schema change. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once
