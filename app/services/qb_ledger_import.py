@@ -137,8 +137,12 @@ def parse_ledger(rows: list[list[str]], header_at: int, cols: dict):
         try:
             debit, credit = _money(cell(row, "Debit")), _money(cell(row, "Credit"))
             day = _date(cell(row, "Date"))
-        except Exception as exc:
-            errors.append(f"Row {n}: {exc}")
+        except Exception:
+            # the cells as they read, never the exception's own words
+            errors.append(
+                f"Row {n}: the date ({cell(row, 'Date')!r}) or an amount "
+                f"({cell(row, 'Debit')!r} / {cell(row, 'Credit')!r}) could not be read"
+            )
             continue
         if debit == 0 and credit == 0:
             continue

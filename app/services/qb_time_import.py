@@ -139,8 +139,12 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
         try:
             hours = _hours(cell(row, "Duration"))
             day = _date(cell(row, "Date"))
-        except Exception as exc:
-            errors.append(f"Row {n}: {exc}")
+        except Exception:
+            # the cells as they read, never the exception's own words
+            errors.append(
+                f"Row {n}: the date ({cell(row, 'Date')!r}) or the duration "
+                f"({cell(row, 'Duration')!r}) could not be read"
+            )
             continue
         if hours == 0:
             continue
@@ -225,7 +229,9 @@ def _jobs(db: Session) -> dict:
 
 
 def _ref(fingerprint: str, nth: int) -> str:
-    return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:40] + f":{nth}"
+    """The row's fingerprint, a SHA-256 of its fields (notes and names among
+    them) cut to forty characters, and which repeat of it this is."""
+    return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:40] + f":{nth}"
 
 
 def import_time_report(
