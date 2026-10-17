@@ -139,10 +139,13 @@ const BankingPage = {
                         `<option value="${ba.id}" ${ba.id === mapped ? 'selected' : ''}>${escapeHtml(ba.name)}${ba.account_name ? ' → ' + escapeHtml(ba.account_name) : ''}</option>`))
                     .join('');
             };
+            const reversed = new Set(feed.reversed || []);
             const rows = feed.accounts.map(a => `<tr>
                     <td>${escapeHtml(a.name)}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.org || '')}</div></td>
                     <td class="amount">${escapeHtml(a.balance)} ${escapeHtml(a.currency)}</td>
                     <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map" data-write>${options(a.id)}</select></td>
+                    <td><label style="font-size:11px; white-space:nowrap;"><input type="checkbox" data-sfid="${escapeHtml(a.id)}" class="simplefin-reverse" data-write
+                        ${reversed.has(a.id) ? 'checked' : ''}> Reverse signs</label></td>
                 </tr>`).join('');
             body = `
                 <p style="font-size:12px; margin-bottom:8px;">
@@ -152,9 +155,11 @@ const BankingPage = {
                     ${feed.last_sync ? `Last sync: ${escapeHtml(feed.last_sync.replace('T', ' '))}` : 'Not synced yet.'}
                     The first sync brings in about the last three months; <em>Fetch older history</em> reaches
                     back as far as your SimpleFIN provider keeps.
+                    If a feed shows a bank account's balance as negative and its deposits as withdrawals,
+                    tick <em>Reverse signs</em> for it before syncing.
                 </p>
                 <div class="table-container"><table>
-                    <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th></tr></thead>
+                    <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th><th scope="col">Amounts</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>
                 <div class="form-actions" style="margin-top:12px;">
@@ -183,7 +188,9 @@ const BankingPage = {
         document.querySelectorAll('.simplefin-map').forEach(sel => {
             mapping[sel.dataset.sfid] = sel.value ? parseInt(sel.value, 10) : 0;
         });
-        await API.post('/simplefin/map', { mapping });
+        const reversed = [...document.querySelectorAll('.simplefin-reverse')]
+            .filter(box => box.checked).map(box => box.dataset.sfid);
+        await API.post('/simplefin/map', { mapping, reversed });
     },
 
     async syncSimpleFIN() {
