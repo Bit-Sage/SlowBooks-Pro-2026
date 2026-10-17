@@ -177,7 +177,7 @@ def test_a_second_import_posts_no_opening_balance_again(db_session, seed_account
     assert len(_openings(db_session)) == 1
     after = {a.id: Decimal(str(a.balance)) for a in db_session.query(Account).all()}
     assert after == before
-    assert any("were not posted again" in w for w in again["warnings"]), again[
+    assert any("none were posted this time" in w for w in again["warnings"]), again[
         "warnings"
     ]
     assert not any("Summing both OBAMOUNTs" in w for w in again["warnings"])
