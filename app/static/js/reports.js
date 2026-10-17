@@ -1221,18 +1221,18 @@ const ReportsPage = {
                 // one is. The onclick payload is built outside the template and
                 // HTML-escaped, as profitLoss does, so JSON.stringify's quotes
                 // can't break the attribute.
-                // each account's heading is its label, the number first and a
-                // sub-account under its parents ("8610 - Automobile: Fuel"),
+                // each account's heading: its number, then its path, a
+                // sub-account under its parents ("8610 — Automobile: Fuel"),
                 // as the statements' rows read (2.23.4 gate, W-12)
                 const drillCall = (acct) => escapeHtml(
-                    `ReportsPage.openDrillDown(${acct.account_id},${JSON.stringify(acct.account_label || acct.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},${data.class_id || null},${JSON.stringify(cls || null)},'general-ledger')`
+                    `ReportsPage.openDrillDown(${acct.account_id},${JSON.stringify(acct.account_path || acct.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},${data.class_id || null},${JSON.stringify(cls || null)},'general-ledger')`
                 );
                 for (const acct of data.accounts) {
-                    const words = acct.account_label || `${acct.account_number ? acct.account_number + ' - ' : ''}${acct.account_name}`;
+                    const words = acct.account_path || acct.account_name;
                     const name = acct.account_id
                         ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${drillCall(acct)}">${escapeHtml(words)}</a>`
                         : escapeHtml(words);
-                    html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${name}</h3>`;
+                    html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${escapeHtml(acct.account_number)} &mdash; ${name}</h3>`;
                     html += `<div class="table-container"><table>
                         <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col">Source</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Balance</th></tr></thead><tbody>`;
                     html += `<tr style="color:var(--gray-500);"><td></td><td colspan="6">Balance brought forward</td><td class="amount">${formatCurrency(acct.opening_balance)}</td></tr>`;

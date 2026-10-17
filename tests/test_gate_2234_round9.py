@@ -172,7 +172,7 @@ def test_the_trial_balance_and_general_ledger_name_a_sub_account_by_its_path(
     assert "Automobile: Fuel" in gl_csv and "Automobile: Insurance" in gl_csv
     js = (ROOT / "app/static/js/reports.js").read_text(encoding="utf-8")
     assert (
-        "acct.account_label || acct.account_name" in js
+        js.count("acct.account_path || acct.account_name") >= 2
     )  # the General Ledger's headings
     assert (
         js.count("i.account_path || i.account_name") >= 2
