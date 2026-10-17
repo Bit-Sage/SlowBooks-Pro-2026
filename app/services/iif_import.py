@@ -614,12 +614,11 @@ def import_accounts(db: Session, rows: list) -> dict:
             sp.rollback()
             errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
+    # Both lists whole, however long: the person works from them (they
+    # stopped at twelve, "and 15 more", and the rest appeared nowhere:
+    # 2.23.4 gate, W-6)
     if merged:
-        warnings.append(
-            "Matched to the chart by a name it knows: "
-            + "; ".join(merged[:12])
-            + (f"; and {len(merged) - 12} more" if len(merged) > 12 else "")
-        )
+        warnings.append("Matched to the chart by a name it knows: " + "; ".join(merged))
     if opened_before and (not_again or unposted):
         text = (
             "This company's opening balances came with an earlier import of the "
@@ -631,8 +630,7 @@ def import_accounts(db: Session, rows: list) -> dict:
             text += (
                 f"; {len(unposted)} account(s) created now carry a balance in the "
                 "file, not posted: "
-                + "; ".join(unposted[:12])
-                + (f"; and {len(unposted) - 12} more" if len(unposted) > 12 else "")
+                + "; ".join(unposted)
                 + ". Enter any that are real as an opening balance by hand"
             )
         warnings.append(text + ".")

@@ -16,6 +16,7 @@ QuickBooks for Mac's own sample lists (tests/fixtures/
 sample_qbmac_opening_balances.iif) carry every one of those cases.
 """
 
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -242,3 +243,52 @@ def test_lists_imported_after_an_earlier_import_post_no_balances(
         and "'CalOil Card' 1,403.99 credit" in note[0]
         and "keep the balance they have" in note[0]
     ), r2["warnings"]
+    # W-6: every account created with a balance in the file is named, as
+    # many as the sentence says (it stopped at twelve, "and 15 more")
+    said = re.search(
+        r"(\d+) account\(s\) created now carry a balance in the file, not posted: "
+        r"(.*)\. Enter any that are real as an opening balance by hand",
+        note[0],
+    )
+    assert said, note[0]
+    named = said.group(2).split("; ")
+    assert len(named) == int(said.group(1)) > 12, (said.group(1), len(named))
+    assert all(n.endswith((" debit", " credit")) for n in named), named
+    assert "; and " not in note[0] and " more" not in note[0]
+    assert any(  # an income account far down the file, with its credit
+        n.startswith("'Landscaping Services:Labor:Installation' 43,477.00")
+        for n in named
+    ), named[-5:]
+
+
+def test_the_known_name_matches_are_listed_whole(
+    db_session, seed_accounts, monkeypatch
+):
+    """W-6's other cut: the "Matched to the chart by a name it knows" note
+    stopped at twelve names too. Thirteen aliases of the chart's 1100 all
+    read in the note."""
+    from app.services import iif_import
+
+    aliases = [f"Receivables alias {n}" for n in range(1, 14)]
+    for alias in aliases:
+        monkeypatch.setitem(iif_import._WELL_KNOWN_ACCOUNTS, alias.lower(), "1100")
+    iif = "!ACCNT\tNAME\tACCNTTYPE\r\n" + "".join(
+        f"ACCNT\t{alias}\tAR\r\n" for alias in aliases
+    )
+    result = iif_import.import_all(db_session, iif)
+    db_session.commit()
+    assert not result["errors"], result["errors"]
+    note = [
+        w
+        for w in result["warnings"]
+        if w.startswith("Matched to the chart by a name it knows")
+    ]
+    assert len(note) == 1, result["warnings"]
+    assert all(f"'{alias}' is the chart's 1100" in note[0] for alias in aliases), note
+    assert "; and " not in note[0] and " more" not in note[0]
+    assert (
+        db_session.query(Account)
+        .filter(Account.name.like("Receivables alias%"))
+        .count()
+        == 0
+    )

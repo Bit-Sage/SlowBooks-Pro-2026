@@ -62,6 +62,15 @@ with a company's first import of the lists; a later import posts none, and
 names the accounts it created that carry a balance in the file, for the
 person to enter any that are real by hand.
 
+**From the gate's fifth round** (Windows W-6; macOS NEW-129, older): that
+note names every account it created with a balance in the file, however
+many (it stopped at twelve, "and 15 more", and the rest appeared nowhere);
+the list of accounts matched to the chart by a name it knows is whole too.
+On the dashboard's A/R Aging bar, the light theme's 31-60 slice printed its
+figure in black on a bright orange, which WCAG 2's arithmetic clears and
+the eye does not; the slice is a deeper orange now and its figure prints
+white.
+
 No schema change. 556 API operations.
 
 ### v2.23.3 — Voids that always post, and imported invoices paid once
