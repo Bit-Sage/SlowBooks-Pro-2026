@@ -581,7 +581,10 @@ const ReportsPage = {
             const accounts = await ReportsPage._drillAccounts(back, range, params.class_id);
             const data = await API.get(`/reports/account-transactions?${q.toString()}`);
             if (jobOn && !jobName) jobName = data.job_name;
-            $('#modal-title').textContent = title(data.account.name, data.class_name);
+            // the title reads as the row that opened it (a statement's row
+            // says "4000 - Service Income", W-8) while it shows that account;
+            // once the toolbar re-scopes it, the server's name
+            $('#modal-title').textContent = title(accountName && data.account.id === accountId ? accountName : data.account.name, data.class_name);
             // Rebuilt from the address, the class's name arrives now
             if (backToClass && !className && data.class_name) {
                 const btn = $('#modal-body [data-back-to="profit-loss-class"]');
@@ -1039,7 +1042,7 @@ const ReportsPage = {
             // HTML-escape the embedded double quotes from JSON.stringify().
             // Otherwise the inner " breaks the outer onclick="…" attribute.
             const drillCall = (i) => escapeHtml(
-                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},null,null,'profit-loss')`
+                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},null,null,'profit-loss')`
             );
             const section = (items) => {
                 if (!items.length) return `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
@@ -1097,7 +1100,7 @@ const ReportsPage = {
             const data = await API.get(`/reports/balance-sheet?as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
             const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
             const drillCall = (i) => escapeHtml(
-                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'balance-sheet')`
+                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'balance-sheet')`
             );
             const section = (items) => items.map(i =>
                 `<tr><td style="padding-left:24px;">
