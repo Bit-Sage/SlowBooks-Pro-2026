@@ -28,6 +28,8 @@ const ReportsPage = {
         'income-by-customer':   { label: () => T('Income by Customer'), open: (p) => ReportsPage.incomeByCustomer(p) },
         'trial-balance':        { label: 'Trial Balance',      open: (p) => ReportsPage.trialBalance(p) },
         'adjusting-entries':    { label: 'Adjusting Journal Entries', open: (p) => ReportsPage.adjustingEntries(p) },
+        'closing-date-exceptions': { label: 'Closing Date Exceptions', open: (p) => ReportsPage.closingDateExceptions(p) },
+        'accountants-package':  { label: "Accountant's Package", open: (p) => ReportsPage.accountantsPackage(p) },
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
@@ -354,6 +356,8 @@ const ReportsPage = {
                 ${card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF'))}
                 ${card('trial-balance', 'Trial Balance', 'Debits and credits by account')}
                 ${card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each')}
+                ${card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after')}
+                ${card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log')}
                 ${card('cash-flow', 'Cash Flow', 'Operating, investing, financing')}
                 ${card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing')}
                 ${card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis')}
@@ -1512,6 +1516,50 @@ const ReportsPage = {
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'adjusting_entries', view: 'adjusting-entries', prefill });
+    },
+
+    // What moved inside a closed period (#342): each use of the
+    // closing-date password, with the rows it changed before and after.
+    async closingDateExceptions(prefill) {
+        await ReportsPage.openPeriodModal("Closing Date Exceptions", "this_year_to_date", async (_period, range) => {
+            const qs = `start_date=${range.start}&end_date=${range.end}`;
+            const data = await API.get(`/reports/closing-date-exceptions?${qs}`);
+            const when = (iso) => iso ? `${formatDate(iso.slice(0, 10))} ${iso.slice(11, 16)}` : '';
+            const events = data.events.map(ev => {
+                const changes = ev.changes.map(c => {
+                    const record = `${c.action} ${c.record} ${c.record_id}${c.label ? ` (${escapeHtml(c.label)})` : ''}`;
+                    if (!c.fields.length) return `<tr><td style="padding-left:24px;">${record}</td><td></td><td></td><td></td></tr>`;
+                    return c.fields.map((f, i) =>
+                        `<tr><td style="padding-left:24px;">${i === 0 ? record : ''}</td>
+                             <td>${escapeHtml(f.field)}</td><td>${escapeHtml(f.before)}</td><td>${escapeHtml(f.after)}</td></tr>`).join('');
+                }).join('') || `<tr><td colspan="4" style="padding-left:24px; color:var(--gray-500);">The password was used; the rows it changed were not marked before 2.24.0.</td></tr>`;
+                return `<tr style="font-weight:600; background:var(--gray-50);">
+                        <td colspan="4">${when(ev.when)} · ${escapeHtml(ev.who)} · closing date ${formatDate(ev.closing_date)} · a ${formatDate(ev.transaction_date)} change</td>
+                    </tr>${changes}`;
+            }).join('');
+            return `${ReportsPage._exportButtons('closing-date-exceptions', qs)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'override' : 'overrides'}, ${data.changes} ${data.changes === 1 ? 'change' : 'changes'}${data.closing_date ? ` · closing date now ${formatDate(data.closing_date)}` : ' · no closing date set'}</p>
+                <div class="table-container"><table>
+                    <thead><tr><th scope="col">Change</th><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
+                    <tbody>${events || '<tr><td colspan="4" style="text-align:center; color:var(--gray-400);">Nothing was changed inside a closed period with the password in this period</td></tr>'}</tbody>
+                </table></div>`;
+        }, "Dates", false, { reportType: 'closing_date_exceptions', view: 'closing-date-exceptions', prefill });
+    },
+
+    // One zip for the accountant (#343): what the dialog lists, then the
+    // download. The zip is built once to list its files.
+    async accountantsPackage(prefill) {
+        await ReportsPage.openPeriodModal("Accountant's Package", "last_year", async (_period, range) => {
+            const qs = `start_date=${range.start}&end_date=${range.end}`;
+            const m = await API.get(`/reports/accountants-package/manifest?${qs}`);
+            const files = m.files.map(f => `<li style="font-family:var(--mono, monospace); font-size:12px;">${escapeHtml(f)}</li>`).join('');
+            const notes = (m.notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
+            return `<p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(m.start_date)} &mdash; ${formatDate(m.end_date)}${m.closing_date ? ` · closing date ${formatDate(m.closing_date)}` : ''}</p>
+                <p style="margin-bottom:8px;">Everything an outside reviewer asks for, in one file: the Financial Statements Pack, the General Ledger and Trial Balance, the A/R and A/P agings, each bank reconciliation completed in the period, the Adjusting Journal Entries and Closing Date Exceptions reports, and the audit log since the closing date. Each file is the same report run on its own.</p>
+                <ul style="margin:0 0 12px 18px;">${files}</ul>
+                ${notes ? `<ul style="margin:0 0 12px 18px; color:var(--gray-500);">${notes}</ul>` : ''}
+                <button class="btn btn-primary" onclick="window.open('/api/reports/accountants-package?${qs}','_blank')">Download the package (zip)</button>`;
+        }, "Dates", false, { view: 'accountants-package', prefill });
     },
 
     async cashFlow(prefill) {

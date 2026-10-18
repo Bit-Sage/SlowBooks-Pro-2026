@@ -109,6 +109,14 @@ _EXCLUDE_ADJUSTING = Query(
 )
 
 
+def _flag(value) -> bool:
+    """A query flag as a bool: other routes call these report functions
+    directly, and then the parameter holds its Query() default, not False
+    (the statements pack read every statement without its adjusting
+    entries until this was caught by the package test, #343)."""
+    return value is True
+
+
 def _totals_by_account(
     db,
     acct_type,
@@ -181,6 +189,7 @@ def profit_loss(
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
+    exclude_adjusting = _flag(exclude_adjusting)
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
@@ -485,6 +494,7 @@ def trial_balance(
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
     """Trial Balance: sum all debits/credits per account for a date range."""
+    exclude_adjusting = _flag(exclude_adjusting)
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
@@ -1867,4 +1877,57 @@ def adjusting_entries_pdf_route(
         [_adjusting_section(data)],
         db,
         f"adjusting-entries_{data['start_date']}_{data['end_date']}.pdf",
+    )
+
+
+# ── Closing Date Exceptions (#342) ───────────────────────────────────────
+
+
+@router.get("/closing-date-exceptions")
+def closing_date_exceptions_route(
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Every change made into a closed period with the closing-date
+    password, in the period the changes were made: when, who, the closing
+    date in force, and each row it touched with its fields before and
+    after. Ordinary posting after the closing date is not here."""
+    from app.services.closing_date_exceptions import closing_date_exceptions
+
+    start_date, end_date = _range_or_year(start_date, end_date)
+    return closing_date_exceptions(db, start_date, end_date)
+
+
+@router.get("/closing-date-exceptions/csv")
+def closing_date_exceptions_csv_route(
+    request: Request,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.closing_date_exceptions import exceptions_csv
+
+    data = closing_date_exceptions_route(start_date, end_date, db)
+    return _csv_download(
+        exceptions_csv(data, _company_name(db)),
+        f"closing-date-exceptions_{data['start_date']}_{data['end_date']}.csv",
+        request,
+    )
+
+
+@router.get("/closing-date-exceptions/pdf")
+def closing_date_exceptions_pdf_route(
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.services.closing_date_exceptions import exceptions_section
+
+    data = closing_date_exceptions_route(start_date, end_date, db)
+    return _pdf_response(
+        [exceptions_section(data)],
+        db,
+        f"closing-date-exceptions_{data['start_date']}_{data['end_date']}.pdf",
+        landscape=True,
     )

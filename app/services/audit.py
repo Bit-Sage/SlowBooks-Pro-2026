@@ -149,6 +149,14 @@ def audited_bulk_delete(db: Session, query) -> int:
 def _after_flush(session, flush_context):
     """SQLAlchemy after_flush event — captures all changes."""
     audit_entries = []
+    # A change made into a closed period with the closing-date password
+    # (#342): the override's own row is written by closing_date, and every
+    # row this request changes after it carries the same source, so the
+    # Closing Date Exceptions report can list what the override touched.
+    source = "api"
+    info = getattr(session, "info", None)
+    if isinstance(info, dict) and info.get("_closing_override_recorded"):
+        source = "closing_date_override"
 
     # New objects (INSERT)
     for obj in session.new:
@@ -167,7 +175,7 @@ def _after_flush(session, flush_context):
                 old_values=None,
                 new_values=new_vals,
                 changed_fields=list(new_vals.keys()),
-                source="api",
+                source=source,
                 username=_actor(session),
             )
         )
@@ -209,7 +217,7 @@ def _after_flush(session, flush_context):
                     old_values=old_vals,
                     new_values=new_vals,
                     changed_fields=changed,
-                    source="api",
+                    source=source,
                     username=_actor(session),
                 )
             )
@@ -231,7 +239,7 @@ def _after_flush(session, flush_context):
                 old_values=old_vals,
                 new_values=None,
                 changed_fields=None,
-                source="api",
+                source=source,
                 username=_actor(session),
             )
         )
