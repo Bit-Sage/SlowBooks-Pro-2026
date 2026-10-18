@@ -79,11 +79,35 @@ def test_the_drill_down_saves_as_pdf(client, db_session, seed_accounts):
 # ---------------------------------------------------------------- #332
 
 
-def test_the_account_form_says_the_number_is_optional():
+def test_the_account_form_says_the_number_is_optional(
+    client, db_session, seed_accounts
+):
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
     assert "const numberRequired = false;" in js
     assert "Account Number <span" in js and "(optional)" in js
     assert "Remove unused seeded accounts" in js
+    # and the books take an account with no number, as the schema always allowed
+    for number in (None, "", "  "):
+        r = client.post(
+            "/api/accounts",
+            json={
+                "name": f"No number {number!r}",
+                "account_type": "expense",
+                "account_number": number,
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["account_number"] is None
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Numbered", "account_type": "expense", "account_number": "7777"},
+    )
+    assert r.status_code == 201 and r.json()["account_number"] == "7777"
+    bad = client.post(
+        "/api/accounts",
+        json={"name": "Bad", "account_type": "expense", "account_number": "7x7"},
+    )
+    assert bad.status_code == 400
 
 
 def test_unused_seeded_accounts_go_in_one_step_and_the_used_ones_stay(

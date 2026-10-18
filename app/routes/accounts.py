@@ -45,14 +45,11 @@ _ACCOUNT_NUMBER_RE = re.compile(r"^\d+(?:[.-]\d+)*$")
 
 
 def _check_account_number(number) -> None:
+    """A number is optional (#332: many companies don't number their
+    accounts; the books never needed one). Given, it is digits, like 6150,
+    or 6150.1 / 6150-01 for a sub-account."""
     if not number:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Give the account a number, like 6150. A sub-account can use "
-                "6150.1 or 6150-01."
-            ),
-        )
+        return
     if len(number) > 20 or not _ACCOUNT_NUMBER_RE.match(number):
         raise HTTPException(
             status_code=400,
