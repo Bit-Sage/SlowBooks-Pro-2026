@@ -10,10 +10,13 @@ separate download, free either way.
 - One Windows PC hosts the books; everyone else uses a **browser** —
   nothing to install on the other computers.
 - **Users and roles**: admin (everything), bookkeeper (daily books, no
-  admin functions), read-only (reports and lookups). **HR and payroll are
+  admin functions), accountant (reads everything, the audit log included,
+  and posts journal entries only — an outside accountant's sign-in, see
+  [working-with-your-accountant.md](working-with-your-accountant.md)),
+  read-only (reports and lookups). **HR and payroll are
   admin functions** — pay runs, pay stubs, W-2/941 forms, direct-deposit
   accounts, portal tokens, benefits, garnishments, onboarding paperwork and
-  employee records are refused to the other two roles, reads included; the
+  employee records are refused to the other three roles, reads included; the
   employee list stays visible to them as a directory (names, activity,
   work state) with pay, tax elections and addresses blanked. Time entries
   and time off remain daily books.
@@ -75,9 +78,10 @@ trusted networks.
    second user exists, the login screen gains a username field and the
    header reads **SERVER EDITION**.
 3. Roles are enforced server-side: a read-only user physically cannot
-   post an entry; a bookkeeper cannot touch Settings, Users, backups, or
-   migrations. The last active admin can never be locked out — the app
-   refuses to demote or deactivate them.
+   post an entry; an accountant can post and void their own journal
+   entries and nothing else; a bookkeeper cannot touch Settings, Users,
+   backups, or migrations. The last active admin can never be locked out —
+   the app refuses to demote or deactivate them.
 
 ## Honest limits (current release)
 

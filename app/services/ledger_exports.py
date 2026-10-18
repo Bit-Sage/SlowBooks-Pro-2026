@@ -32,15 +32,23 @@ def _preamble(writer, company: str, report: str, period: str) -> None:
     writer.writerow([])
 
 
+def _range(data: dict) -> str:
+    """ "2026-01-01 to 2026-12-31", and when the statement was run without
+    the adjusting entries (#341) it says so, so the file is not mistaken for
+    the books as they stand."""
+    period = f"{data['start_date']} to {data['end_date']}"
+    if data.get("exclude_adjusting"):
+        period += " (adjusting entries left out)"
+    return period
+
+
 def trial_balance_csv(data: dict, company: str) -> str:
     """Account number | Account name | Type | Debit | Credit | Net, one row
     per account with activity, then a totals row where Debit equals Credit.
     Net is debit minus credit, as the screen shows it."""
     out = io.StringIO()
     w = _SafeWriter(out)
-    _preamble(
-        w, company, "Trial Balance", f"{data['start_date']} to {data['end_date']}"
-    )
+    _preamble(w, company, "Trial Balance", _range(data))
     w.writerow(["Account number", "Account name", "Type", "Debit", "Credit", "Net"])
     for i in data["items"]:
         w.writerow(
@@ -233,12 +241,7 @@ def account_transactions_csv(data: dict, company: str, words) -> str:
 def profit_loss_csv(data: dict, company: str, words) -> str:
     out = io.StringIO()
     w = _SafeWriter(out)
-    _preamble(
-        w,
-        company,
-        profit_loss_csv_class_line(data, words),
-        f"{data['start_date']} to {data['end_date']}",
-    )
+    _preamble(w, company, profit_loss_csv_class_line(data, words), _range(data))
     w.writerow(["Section", "Account number", "Account name", "Amount"])
     for label, key, total_key in (
         (words("Income"), "income", "total_income"),
@@ -408,3 +411,66 @@ def rows_of(text: str) -> list[list[str]]:
     """The table rows of an export, preamble skipped — for tests and for any
     reader that wants the data (group reporting, #180)."""
     return list(csv.reader(io.StringIO(text)))[4:]
+
+
+def adjusting_entries_csv(data: dict, company: str) -> str:
+    """The Adjusting Journal Entries report (#341): one row per line of each
+    adjusting entry, the entry's own words on every row (so a spreadsheet
+    sorts and filters by entry, date or poster), then the period's totals,
+    which tie to the General Ledger's adjusting lines."""
+    out = io.StringIO()
+    w = _SafeWriter(out)
+    _preamble(
+        w,
+        company,
+        "Adjusting Journal Entries",
+        f"{data['start_date']} to {data['end_date']}",
+    )
+    w.writerow(
+        [
+            "Entry",
+            "Date",
+            "Reference",
+            "Description",
+            "Posted by",
+            "Voided",
+            "Account number",
+            "Account name",
+            "Line memo",
+            "Debit",
+            "Credit",
+        ]
+    )
+    for e in data["entries"]:
+        for ln in e["lines"]:
+            w.writerow(
+                [
+                    e["id"],
+                    e["date"],
+                    e["reference"],
+                    e["description"],
+                    e["posted_by"],
+                    "yes" if e["voided"] else "",
+                    ln["account_number"],
+                    ln["account_name"],
+                    ln["description"],
+                    _money(ln["debit"]),
+                    _money(ln["credit"]),
+                ]
+            )
+    w.writerow(
+        [
+            "",
+            "",
+            "",
+            f"Total ({data['count']} entries)",
+            "",
+            "",
+            "",
+            "",
+            "",
+            _money(data["total_debit"]),
+            _money(data["total_credit"]),
+        ]
+    )
+    return out.getvalue()

@@ -838,6 +838,18 @@ _ADMIN_ONLY_EMPLOYEE_RE = _re.compile(
     r"^/api/employees/[^/]+/(portal-token|portal-access|everify|bank-accounts|documents|ytd)(/|$)"
 )
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
+# An outside accountant's sign-in (#340) writes journal entries only: it
+# posts them, voids its own (the journal router checks whose), and attaches
+# the support behind one. Everything else it reads, the audit log included:
+# seeing what moved is the job.
+_ACCOUNTANT_WRITE_RE = _re.compile(
+    r"^/api/(journal(/\d+/void)?|attachments/journal_entry/\d+)$"
+)
+ACCOUNTANT_REFUSAL = (
+    "An accountant's sign-in posts journal entries and reads everything "
+    "else; it cannot make this change. An administrator can change the "
+    "role under Settings → Users."
+)
 
 
 def _is_hr_sensitive(path: str) -> bool:
@@ -857,10 +869,20 @@ def _role_allows(role: str, method: str, path: str) -> bool:
         # (tax ids, addresses) — "read the books" shouldn't mean "read
         # every historical value of every field".
         return is_read and not path.startswith("/api/audit")
+    if role == "accountant":
+        return is_read or (method == "POST" and bool(_ACCOUNTANT_WRITE_RE.match(path)))
     # bookkeeper: full read, all daily-books writes, no admin writes
     if is_read:
         return True
     return not path.startswith(_ADMIN_WRITE_PREFIXES)
+
+
+def _role_refusal(role: str) -> str:
+    """The sentence a refused write gets: the accountant's says what the
+    role is for (#340); the others keep the one the pages pin."""
+    if role == "accountant":
+        return ACCOUNTANT_REFUSAL
+    return "Your role doesn't allow this action"
 
 
 @app.middleware("http")
@@ -925,7 +947,7 @@ async def require_session(request: Request, call_next):
     if not _role_allows(role, request.method, path):
         return JSONResponse(
             status_code=403,
-            content={"detail": "Your role doesn't allow this action"},
+            content={"detail": _role_refusal(role)},
         )
 
     # Idle session cap. Sliding window — every authenticated hit refreshes

@@ -182,6 +182,8 @@ def create_journal_entry(
     job_id: int = None,
     *,
     existing_transaction: Transaction = None,
+    is_adjusting: bool = False,
+    posted_by: str = None,
 ) -> Transaction:
     """Create a balanced journal entry.
 
@@ -253,6 +255,9 @@ def create_journal_entry(
         reference=reference,
         class_id=class_id,
         job_id=job_id,
+        # an accountant's adjustment, and who posted the entry (#340, #341)
+        is_adjusting=bool(is_adjusting),
+        posted_by=posted_by,
     )
     txn = existing_transaction
     if txn is None:

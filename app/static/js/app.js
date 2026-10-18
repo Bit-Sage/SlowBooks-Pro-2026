@@ -554,16 +554,37 @@ const App = {
     // create buttons are hidden and every form, a dialog's or a page's, is
     // shown locked, with a sentence saying why.
     role: 'admin',
+    username: '',
     READ_ONLY_MESSAGE: 'Your sign-in is read-only: you can look, but not save changes. '
         + 'An administrator can change your role under Settings → Users.',
+    // An outside accountant's sign-in (#340): the server lets it read
+    // everything (the audit log included) and post journal entries, and
+    // refuses every other write with its own sentence. Here it is treated
+    // as read-only everywhere but the Journal Entries page: the create
+    // buttons go, every form opens locked with this sentence, and the
+    // entry form, Void (on its own entries) and Attach stay.
+    ACCOUNTANT_MESSAGE: 'Your sign-in is an accountant\'s: you can read everything and post '
+        + 'journal entries, but not change documents, bank entries or settings. '
+        + 'An administrator can change your role under Settings → Users.',
+    ACCOUNTANT_ACTIONS: new Set(['JournalPage.showForm', 'JournalPage.save', 'JournalPage.void',
+        'JournalPage.uploadAttachment', 'JournalPage.addLine', 'JournalPage.removeLine']),
 
     isReadOnly() { return App.role === 'readonly'; },
 
+    isAccountant() { return App.role === 'accountant'; },
+
+    // read-only, or an accountant away from the journal: what is locked
+    isLocked() { return App.isReadOnly() || App.isAccountant(); },
+
+    lockedMessage() { return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE; },
+
     isAdmin() { return App.role === 'admin'; },
 
-    setRole(role) {
+    setRole(role, username) {
         App.role = role || 'admin';
+        if (username !== undefined) App.username = username || '';
         document.body.classList.toggle('role-readonly', App.isReadOnly());
+        document.body.classList.toggle('role-accountant', App.isAccountant());
         // the first page can open before the role is known
         const open = document.querySelector('#sidebar .nav-link.active');
         if (App.role !== 'admin' && open && App.ADMIN_ONLY_PAGES.includes(open.dataset.page)) {
@@ -571,13 +592,16 @@ const App = {
         }
         const page = document.getElementById('page-content');
         if (App.isAdmin() || !page) return;
-        if (App.isReadOnly()) {
+        if (App.isLocked()) {
             // the toolbar's shortcuts to new documents, and batch entry
             document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]')
                 .forEach(b => b.classList.add('hidden'));
-            // the sidebar's pages that only enter things (Batch Payments...),
-            // and the Audit Log, which the server refuses this role
+            // the sidebar's pages that only enter things (Batch Payments...)
             App.hideWriteControls(document.getElementById('sidebar'));
+        }
+        if (App.isReadOnly()) {
+            // the Audit Log, which the server refuses this role (an
+            // accountant's sign-in reads it: seeing what moved is the job)
             document.querySelectorAll('#sidebar a[href="#/audit"]').forEach(l => {
                 (l.closest('li') || l).classList.add('hidden');
             });
@@ -692,8 +716,10 @@ const App = {
     // sight, locked. A file chooser is only ever an upload: hidden (macbase1,
     // 2.18.0 round 4: the Attachments "Choose File" in an invoice's view).
     hideWriteControls(root) {
-        if (!root || !App.isReadOnly()) return;
+        if (!root || !App.isLocked()) return;
         root.querySelectorAll('button, a.btn, [data-write], input[type="file"]').forEach(el => {
+            // the accountant keeps the journal page's own controls (#340)
+            if (App.isAccountant() && (el.hasAttribute('data-accountant-ok') || el.closest('[data-accountant-ok]'))) return;
             if (el.getAttribute('data-write') !== null) {
                 if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) el.disabled = true;
                 else el.classList.add('hidden');
@@ -712,6 +738,7 @@ const App = {
             const editBesideView = label === 'Edit' && !!el.parentElement
                 && [...el.parentElement.querySelectorAll('button, a.btn')]
                     .some(b => (b.textContent || '').trim() === 'View');
+            if (App.isAccountant() && call && App.ACCOUNTANT_ACTIONS.has(call[1])) return;
             if (label.startsWith('+') || headerAction || editBesideView
                 || (call && App.WRITE_ACTIONS.has(call[1]))) {
                 el.classList.add('hidden');
@@ -726,8 +753,10 @@ const App = {
     // data-readonly-ok and stays usable; so does a button that only opens a
     // record inside a locked form (an email template, shown locked in turn).
     lockForms(root) {
-        if (!root || !App.isReadOnly()) return;
-        root.querySelectorAll('form:not([data-readonly-ok])').forEach(form => {
+        if (!root || !App.isLocked()) return;
+        // the accountant's own form: the journal entry's (data-accountant-ok)
+        const skip = App.isAccountant() ? ':not([data-accountant-ok])' : '';
+        root.querySelectorAll(`form:not([data-readonly-ok])${skip}`).forEach(form => {
             form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
             form.querySelectorAll('button').forEach(b => {
                 if (/closeModal\(/.test(b.getAttribute('onclick') || '')) return;
@@ -736,10 +765,10 @@ const App = {
                 b.style.opacity = '0.5';
                 b.style.cursor = 'not-allowed';
             });
-            form.onsubmit = (e) => { e.preventDefault(); toast(App.READ_ONLY_MESSAGE, 'error'); return false; };
+            form.onsubmit = (e) => { e.preventDefault(); toast(App.lockedMessage(), 'error'); return false; };
             if (!form.querySelector('.readonly-note')) {
                 form.insertAdjacentHTML('afterbegin',
-                    `<div class="hint hint--locked readonly-note" style="margin-bottom:10px;">${escapeHtml(App.READ_ONLY_MESSAGE)}</div>`);
+                    `<div class="hint hint--locked readonly-note" style="margin-bottom:10px;">${escapeHtml(App.lockedMessage())}</div>`);
             }
         });
     },
@@ -1680,7 +1709,7 @@ const App = {
             const auth = await fetch('/api/auth/status', { credentials: 'same-origin' });
             if (auth.ok) {
                 const a = await auth.json();
-                if (a.user) App.setRole(a.user.role);
+                if (a.user) App.setRole(a.user.role, a.user.username);
                 if (a.multi_user && a.user && a.user.role !== 'admin') {
                     // HR and payroll are admin functions; the server refuses
                     // them for other roles, so do not offer the pages.

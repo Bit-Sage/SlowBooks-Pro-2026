@@ -4,8 +4,9 @@
 # ============================================================================
 
 from decimal import Decimal
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import or_
 from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from app.database import get_db
 from app.models.transactions import Transaction
 from app.models.accounts import Account
 from app.models.qbo_mapping import QBOMapping
+from app.models.users import ROLE_ACCOUNTANT
+from app.routes._roles import current_role
 from app.schemas.journal import JournalEntryCreate, JournalEntryResponse
 from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.bank_posting import assert_not_reconciled, release_statement_links
@@ -42,9 +45,28 @@ def _line_dict(line, acct) -> dict:
     }
 
 
+def _acting(db: Session) -> str:
+    """The sign-in making this request, as the audit log names it."""
+    return db.info.get("acting_username") or "operator"
+
+
+def _role(request: Optional[Request]) -> str:
+    return current_role(request) if request is not None else "admin"
+
+
 @router.get("", response_model=list[JournalEntryResponse])
-def list_journal_entries(source_type: str = None, db: Session = Depends(get_db)):
+def list_journal_entries(
+    source_type: str = None,
+    adjusting: Optional[bool] = Query(
+        default=None,
+        description="true for adjusting entries only, false for the rest (#341); "
+        "omit for every entry",
+    ),
+    db: Session = Depends(get_db),
+):
     q = db.query(Transaction)
+    if adjusting is not None:
+        q = q.filter(Transaction.is_adjusting == adjusting)
     if source_type:
         q = q.filter(Transaction.source_type == source_type)
     else:
@@ -97,6 +119,8 @@ def list_journal_entries(source_type: str = None, db: Session = Depends(get_db))
                 description=txn.description or "",
                 reference=txn.reference or "",
                 source_type=txn.source_type or "",
+                is_adjusting=bool(txn.is_adjusting),
+                posted_by=txn.posted_by or "",
                 lines=lines_data,
                 total_debit=float(sum(line.debit for line in txn.lines)),
                 total_credit=float(sum(line.credit for line in txn.lines)),
@@ -123,6 +147,8 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
         description=txn.description or "",
         reference=txn.reference or "",
         source_type=txn.source_type or "",
+        is_adjusting=bool(txn.is_adjusting),
+        posted_by=txn.posted_by or "",
         lines=lines_data,
         total_debit=float(sum(line.debit for line in txn.lines)),
         total_credit=float(sum(line.credit for line in txn.lines)),
@@ -132,9 +158,16 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=JournalEntryResponse, status_code=201)
 def create_manual_journal_entry(
-    data: JournalEntryCreate, db: Session = Depends(get_db)
+    data: JournalEntryCreate, db: Session = Depends(get_db), request: Request = None
 ):
     check_closing_date(db, data.date)
+    # An accountant's entries are adjustments unless the box is cleared;
+    # everyone else's are ordinary unless it is ticked (#341).
+    is_adjusting = (
+        data.is_adjusting
+        if data.is_adjusting is not None
+        else _role(request) == ROLE_ACCOUNTANT
+    )
     lines = []
     for line in data.lines:
         if line.debit == 0 and line.credit == 0:
@@ -175,6 +208,8 @@ def create_manual_journal_entry(
             reference=data.reference or "",
             class_id=data.class_id,
             job_id=data.job_id,
+            is_adjusting=is_adjusting,
+            posted_by=_acting(db),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -185,12 +220,23 @@ def create_manual_journal_entry(
 
 
 @router.post("/{entry_id}/void", response_model=JournalEntryResponse)
-def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
+def void_journal_entry(
+    entry_id: int, db: Session = Depends(get_db), request: Request = None
+):
     txn = db.query(Transaction).filter(Transaction.id == entry_id).first()
     if not txn:
         raise HTTPException(status_code=404, detail="Journal entry not found")
     if txn.source_type and txn.source_type.endswith("_void"):
         raise HTTPException(status_code=400, detail="Cannot void a reversal entry")
+    acting = _acting(db)
+    if _role(request) == ROLE_ACCOUNTANT and (txn.posted_by or "") != acting:
+        # An accountant voids only what it posted (#340): the owner's
+        # entries, and a document's posting, are not its to reverse.
+        raise HTTPException(
+            status_code=403,
+            detail="An accountant's sign-in voids only the journal entries it "
+            "posted; this one was posted by " + (txn.posted_by or "someone else") + ".",
+        )
     from app.models.qbo_mapping import QBOMapping
     from app.services import qbo_documents
 
@@ -240,7 +286,9 @@ def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
             void_txn = create_journal_entry(
                 db,
                 txn.date,
-                f"VOID: {txn.description or ''}",
+                # the reversal of an adjustment says so, and is one (#341)
+                ("VOID adjusting entry: " if txn.is_adjusting else "VOID: ")
+                + (txn.description or ""),
                 reverse_lines,
                 # A QuickBooks Online import posting is reversed under its own
                 # name, so a later import knows it was voided here.
@@ -249,6 +297,8 @@ def void_journal_entry(entry_id: int, db: Session = Depends(get_db)):
                 reference=txn.reference,
                 class_id=txn.class_id,
                 job_id=txn.job_id,
+                is_adjusting=bool(txn.is_adjusting),
+                posted_by=acting,
             )
             release_statement_links(db, txn)
             if from_qbo:

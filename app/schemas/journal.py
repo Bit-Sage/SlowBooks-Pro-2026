@@ -49,6 +49,9 @@ class JournalEntryCreate(StrictModel):
     reference: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    # An adjusting entry (#341). Left out, an accountant's sign-in posts
+    # adjusting entries and every other sign-in posts ordinary ones.
+    is_adjusting: Optional[bool] = None
     lines: list[JournalLineCreate]
 
 
@@ -60,6 +63,10 @@ class JournalEntryResponse(BaseModel):
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     source_type: str = ""
+    # An accountant's adjustment, and the sign-in that posted the entry
+    # (#340, #341); documents' postings carry neither.
+    is_adjusting: bool = False
+    posted_by: str = ""
     lines: list[JournalLineResponse] = []
     total_debit: float = 0
     total_credit: float = 0

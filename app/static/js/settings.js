@@ -535,6 +535,7 @@ const SettingsPage = {
                         <div class="form-group"><label>Role</label>
                             <select id="user-new-role">
                                 <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                                <option value="accountant">Accountant — reads everything, posts journal entries</option>
                                 <option value="readonly">Read-only — reports and lookups</option>
                                 <option value="admin">Admin — everything</option>
                             </select></div>
@@ -566,6 +567,7 @@ const SettingsPage = {
                         <div class="form-group"><label>Role</label>
                             <select id="token-new-role">
                                 <option value="readonly">Read-only — reports and lookups</option>
+                                <option value="accountant">Accountant — reads everything, posts journal entries</option>
                                 <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
                                 <option value="admin">Admin — everything except identity management</option>
                             </select></div>
@@ -776,7 +778,7 @@ const SettingsPage = {
                 <td>${escapeHtml(u.display_name)}</td>
                 <td>
                     <select onchange="SettingsPage.updateUser(${u.id}, {role: this.value})">
-                        ${['admin', 'bookkeeper', 'readonly'].map(r =>
+                        ${['admin', 'bookkeeper', 'accountant', 'readonly'].map(r =>
                             `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
                     </select>
                 </td>

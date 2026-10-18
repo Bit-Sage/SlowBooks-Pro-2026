@@ -40,6 +40,7 @@ _ALLOWED_TYPES = {
     "ap_aging",
     "sales_tax",
     "general_ledger",
+    "adjusting_entries",  # the accountant's adjustments for a period (#341)
     "income_by_customer",
     "account_transactions",
     "cash_flow",

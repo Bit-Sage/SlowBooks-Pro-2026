@@ -2,32 +2,45 @@
  * Manual Journal Entries — Create, view, and void journal entries
  */
 const JournalPage = {
+    // 'adjusting' shows the accountant's adjusting entries alone (#341)
+    _show: 'all',
+
     async render() {
-        const entries = await API.get('/journal');
+        const entries = await API.get(JournalPage._show === 'adjusting' ? '/journal?adjusting=true' : '/journal');
+        // The accountant's sign-in keeps this page's own controls (#340):
+        // the server lets it post journal entries and void its own.
         let html = `
             <div class="page-header">
                 <h2>Journal Entries</h2>
-                <button class="btn btn-primary" onclick="JournalPage.showForm()">+ New Journal Entry</button>
+                <button class="btn btn-primary" data-accountant-ok onclick="JournalPage.showForm()">+ New Journal Entry</button>
+            </div>
+            <div class="form-group" style="max-width:260px; margin-bottom:12px;">
+                <label for="journal-show">Show</label>
+                <select id="journal-show" data-no-search data-readonly-ok onchange="JournalPage.setShow(this.value)">
+                    <option value="all" ${JournalPage._show === 'all' ? 'selected' : ''}>All entries</option>
+                    <option value="adjusting" ${JournalPage._show === 'adjusting' ? 'selected' : ''}>Adjusting entries only</option>
+                </select>
             </div>`;
 
         if (entries.length === 0) {
-            html += '<div class="empty-state"><p>No journal entries yet</p></div>';
+            html += `<div class="empty-state"><p>${JournalPage._show === 'adjusting' ? 'No adjusting entries' : 'No journal entries yet'}</p></div>`;
         } else {
             html += `<div class="table-container"><table>
-                <thead><tr><th scope="col">ID</th><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th>
+                <thead><tr><th scope="col">ID</th><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col">Posted by</th>
                 <th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col">Actions</th></tr></thead><tbody>`;
             for (const e of entries) {
                 html += `<tr>
                     <td>${e.id}</td>
                     <td>${formatDate(e.date)}</td>
-                    <td>${escapeHtml(e.description)}</td>
+                    <td>${escapeHtml(e.description)}${JournalPage.adjustingMark(e)}</td>
                     <td>${escapeHtml(e.reference || '')}</td>
+                    <td>${escapeHtml(e.posted_by || '')}</td>
                     <td class="amount">${formatCurrency(e.total_debit)}</td>
                     <td class="amount">${formatCurrency(e.total_credit)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="JournalPage.view(${e.id})">View</button>
                         ${e.voided ? '<span class="journal-voided" style="color:var(--danger);font-weight:700;">Voided</span>' : ''}
-                        ${JournalPage.canVoid(e) ? `<button data-destructive class="btn btn-sm btn-danger" onclick="JournalPage.void(${e.id})">Void</button>` : ''}
+                        ${JournalPage.canVoid(e) ? `<button data-destructive data-accountant-ok class="btn btn-sm btn-danger" onclick="JournalPage.void(${e.id})">Void</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -36,11 +49,25 @@ const JournalPage = {
         return html;
     },
 
+    setShow(value) {
+        JournalPage._show = value === 'adjusting' ? 'adjusting' : 'all';
+        App.navigate('#/journal');
+    },
+
+    // "Adjusting" beside an adjusting entry's description (#341)
+    adjustingMark(e) {
+        return e.is_adjusting ? ' <span class="badge" title="An adjusting entry" style="font-size:9px;">Adjusting</span>' : '';
+    },
+
     // A journal entry, or a posting the QuickBooks Online import made, voids
     // here with a reversing entry; a document's own posting (a bill payment,
-    // a deposit...) voids from its document, so its view offers no Void.
+    // a deposit...) voids from its document, so its view offers no Void. An
+    // accountant's sign-in voids only what it posted (#340): the server
+    // refuses the rest, so the button is not offered.
     canVoid(e) {
-        return !e.voided && ['manual', 'qbo_journal', 'qbo_ledger'].includes(e.source_type || '');
+        if (e.voided || !['manual', 'qbo_journal', 'qbo_ledger'].includes(e.source_type || '')) return false;
+        if (App.isAccountant && App.isAccountant()) return !!e.posted_by && e.posted_by === App.username;
+        return true;
     },
 
     async view(id) {
@@ -57,7 +84,8 @@ const JournalPage = {
                 <strong>Date:</strong> ${formatDate(entry.date)}<br>
                 <strong>Description:</strong> ${escapeHtml(entry.description)}<br>
                 ${entry.reference ? `<strong>Reference:</strong> ${escapeHtml(entry.reference)}<br>` : ''}
-                <strong>Type:</strong> ${escapeHtml(sourceWord(entry.source_type))}
+                <strong>Type:</strong> ${escapeHtml(sourceWord(entry.source_type))}${entry.is_adjusting ? ' · <strong>Adjusting entry</strong>' : ''}<br>
+                ${entry.posted_by ? `<strong>Posted by:</strong> ${escapeHtml(entry.posted_by)}` : ''}
                 ${entry.voided ? '<div class="journal-voided" style="color:var(--danger);font-weight:700;margin-top:6px;">Voided</div>' : ''}
             </div>
             <div class="table-container"><table>
@@ -68,7 +96,7 @@ const JournalPage = {
                 <div class="total-row"><span class="label">Total Debit</span><span class="value">${formatCurrency(entry.total_debit)}</span></div>
                 <div class="total-row"><span class="label">Total Credit</span><span class="value">${formatCurrency(entry.total_credit)}</span></div>
             </div>
-            <div style="margin-top:12px; border-top:1px solid var(--gray-300); padding-top:8px;">
+            <div data-accountant-ok style="margin-top:12px; border-top:1px solid var(--gray-300); padding-top:8px;">
                 <div style="font-weight:700; font-size:12px; margin-bottom:4px;">Attachments</div>
                 <div id="journal-attachments-list" style="margin-bottom:8px; font-size:11px;">Loading...</div>
                 <div style="display:flex; gap:6px; align-items:center;">
@@ -77,7 +105,7 @@ const JournalPage = {
                 </div>
             </div>
             <div class="form-actions">
-                ${JournalPage.canVoid(entry) ? `<button data-destructive class="btn btn-danger" onclick="JournalPage.void(${entry.id})">Void</button>` : ''}
+                ${JournalPage.canVoid(entry) ? `<button data-destructive data-accountant-ok class="btn btn-danger" onclick="JournalPage.void(${entry.id})">Void</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
         JournalPage.loadAttachments(entry.id);
@@ -145,7 +173,7 @@ const JournalPage = {
         ).join('');
 
         openModal('New Journal Entry', `
-            <form aria-labelledby="modal-title" data-skip-to="#je-lines" data-skip-text="Skip to the lines" onsubmit="JournalPage.save(event)">
+            <form aria-labelledby="modal-title" data-accountant-ok data-skip-to="#je-lines" data-skip-text="Skip to the lines" onsubmit="JournalPage.save(event)">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
@@ -154,6 +182,13 @@ const JournalPage = {
                     ${classGroup}${jobGroup}
                     <div class="form-group full-width"><label>Description *</label>
                         <input name="description" required></div>
+                    <div class="form-group full-width">
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+                            <input type="checkbox" name="is_adjusting" ${App.isAccountant && App.isAccountant() ? 'checked' : ''}>
+                            Adjusting entry
+                        </label>
+                        <div class="hint">An accountant's correction to the books: marked on the entry, listed by the Adjusting Journal Entries report, and left out of a statement on request.</div>
+                    </div>
                 </div>
                 <h3 style="margin:12px 0 8px; font-size:14px;">Lines</h3>
                 <table class="line-items-table">
@@ -284,9 +319,10 @@ const JournalPage = {
                 reference: form.reference.value || null,
                 class_id: classIdFromForm(form),
                 job_id: jobIdFromForm(form),
+                is_adjusting: !!(form.is_adjusting && form.is_adjusting.checked),
                 lines,
             });
-            toast('Journal entry created');
+            toast(form.is_adjusting && form.is_adjusting.checked ? 'Adjusting entry created' : 'Journal entry created');
             closeModal();
             App.navigate('#/journal');
         } catch (err) { toast(err.message, 'error'); }

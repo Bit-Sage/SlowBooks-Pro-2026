@@ -27,6 +27,7 @@ const ReportsPage = {
         'general-ledger':       { label: 'General Ledger',     open: (p) => ReportsPage.generalLedger(p), keep: ['class_id'] },
         'income-by-customer':   { label: () => T('Income by Customer'), open: (p) => ReportsPage.incomeByCustomer(p) },
         'trial-balance':        { label: 'Trial Balance',      open: (p) => ReportsPage.trialBalance(p) },
+        'adjusting-entries':    { label: 'Adjusting Journal Entries', open: (p) => ReportsPage.adjustingEntries(p) },
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
@@ -352,6 +353,7 @@ const ReportsPage = {
                 ${card('income-by-customer', T('Income by Customer'), Terms.isNonprofit() ? 'Contribution totals per donor' : 'Sales totals per customer')}
                 ${card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF'))}
                 ${card('trial-balance', 'Trial Balance', 'Debits and credits by account')}
+                ${card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each')}
                 ${card('cash-flow', 'Cash Flow', 'Operating, investing, financing')}
                 ${card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing')}
                 ${card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis')}
@@ -1074,7 +1076,7 @@ const ReportsPage = {
                         <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                     </tbody>
                 </table></div>`;
-        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, ...ReportsPage._sortOpts(prefill) });
+        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, ...ReportsPage._statementOpts(prefill) });
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -1096,7 +1098,29 @@ const ReportsPage = {
         return { params, toolbar };
     },
     _sortQs(params) {
-        return params && params.sort === 'name' ? '&sort=name' : '';
+        return (params && params.sort === 'name' ? '&sort=name' : '') + ReportsPage._adjQs(params);
+    },
+    // "Without adjusting entries" (#341): the statement before the
+    // accountant's corrections. Rides on the address and the exports.
+    _adjQs(params) {
+        return params && params.exclude_adjusting ? '&exclude_adjusting=true' : '';
+    },
+    _adjOpts(prefill) {
+        const on = !!(prefill && (prefill.exclude_adjusting === 'true' || prefill.exclude_adjusting === true || prefill.exclude_adjusting === '1'));
+        const params = on ? { exclude_adjusting: 'true' } : {};
+        const toolbar = `<div class="form-group">
+                    <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+                        <input type="checkbox" id="report-exclude-adjusting" ${on ? 'checked' : ''} onchange="ReportsPage.setParam('exclude_adjusting', this.checked ? 'true' : '')">
+                        Without adjusting entries
+                    </label>
+                </div>`;
+        return { params, toolbar };
+    },
+    // the two statements' toolbar: the sort choice and the adjusting box
+    _statementOpts(prefill) {
+        const sort = ReportsPage._sortOpts(prefill);
+        const adj = ReportsPage._adjOpts(prefill);
+        return { params: { ...sort.params, ...adj.params }, toolbar: sort.toolbar + adj.toolbar };
     },
 
     async balanceSheet(prefill) {
@@ -1425,8 +1449,8 @@ const ReportsPage = {
     },
 
     async trialBalance(prefill) {
-        await ReportsPage.openPeriodModal("Trial Balance", "this_year_to_date", async (_period, range) => {
-            const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}`);
+        await ReportsPage.openPeriodModal("Trial Balance", "this_year_to_date", async (_period, range, live) => {
+            const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}`);
             // An account's name opens its register for the report's dates
             // (R9), with "Back to Trial Balance"
             const drill = (i) => i.account_id
@@ -1449,13 +1473,45 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(data.total_credit)}</td>
                 <td class="amount" style="color:${diffColor}">${formatCurrency(data.difference)}</td>
             </tr>`;
-            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}`)}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
+            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}`)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Number</th><th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>`;
-        }, "Dates", false, { view: 'trial-balance', prefill });
+        }, "Dates", false, { view: 'trial-balance', prefill, ...ReportsPage._adjOpts(prefill) });
+    },
+
+    // The accountant's adjusting entries for a period (#341): each with its
+    // lines and who posted it; the totals tie to the General Ledger.
+    async adjustingEntries(prefill) {
+        await ReportsPage.openPeriodModal("Adjusting Journal Entries", "this_year_to_date", async (_period, range) => {
+            const qs = `start_date=${range.start}&end_date=${range.end}`;
+            const data = await API.get(`/reports/adjusting-entries?${qs}`);
+            const entries = data.entries.map(e => {
+                const lines = e.lines.map(l =>
+                    `<tr><td style="padding-left:24px;">${l.account_number ? `${escapeHtml(l.account_number)} ` : ''}${escapeHtml(l.account_name)}${l.description ? ` <span style="color:var(--gray-500);">— ${escapeHtml(l.description)}</span>` : ''}</td>
+                         <td class="amount">${l.debit > 0 ? formatCurrency(l.debit) : ''}</td>
+                         <td class="amount">${l.credit > 0 ? formatCurrency(l.credit) : ''}</td></tr>`).join('');
+                return `<tr style="font-weight:600; background:var(--gray-50);">
+                        <td><a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="JournalPage.view(${e.id})">#${e.id}</a>
+                            · ${formatDate(e.date)} · ${escapeHtml(e.description)}${e.reference ? ` (${escapeHtml(e.reference)})` : ''}
+                            ${e.posted_by ? `<span style="color:var(--gray-500); font-weight:400;"> · posted by ${escapeHtml(e.posted_by)}</span>` : ''}
+                            ${e.voided ? '<span class="journal-voided" style="color:var(--danger);"> · Voided</span>' : ''}
+                            ${e.is_reversal ? '<span style="color:var(--gray-500); font-weight:400;"> · reversal</span>' : ''}</td>
+                        <td class="amount">${formatCurrency(e.total_debit)}</td>
+                        <td class="amount">${formatCurrency(e.total_credit)}</td>
+                    </tr>${lines}`;
+            }).join('');
+            return `${ReportsPage._exportButtons('adjusting-entries', qs)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'entry' : 'entries'}</p>
+                <div class="table-container"><table>
+                    <thead><tr><th scope="col">Entry</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th></tr></thead>
+                    <tbody>${entries || '<tr><td colspan="3" style="text-align:center; color:var(--gray-400);">No adjusting entries in this period</td></tr>'}
+                    <tr style="font-weight:700; background:var(--gray-50);"><td>TOTALS</td><td class="amount">${formatCurrency(data.total_debit)}</td><td class="amount">${formatCurrency(data.total_credit)}</td></tr>
+                    </tbody>
+                </table></div>`;
+        }, "Dates", false, { reportType: 'adjusting_entries', view: 'adjusting-entries', prefill });
     },
 
     async cashFlow(prefill) {

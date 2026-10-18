@@ -21,7 +21,10 @@ def _utcnow() -> datetime:
 ROLE_ADMIN = "admin"
 ROLE_BOOKKEEPER = "bookkeeper"
 ROLE_READONLY = "readonly"
-VALID_ROLES = (ROLE_ADMIN, ROLE_BOOKKEEPER, ROLE_READONLY)
+# An outside accountant's sign-in (#340): reads everything, the audit log
+# included, and writes journal entries only (posts them, voids its own).
+ROLE_ACCOUNTANT = "accountant"
+VALID_ROLES = (ROLE_ADMIN, ROLE_BOOKKEEPER, ROLE_ACCOUNTANT, ROLE_READONLY)
 
 
 class User(Base):
