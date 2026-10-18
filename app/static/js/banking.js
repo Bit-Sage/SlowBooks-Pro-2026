@@ -18,9 +18,13 @@ const BankingPage = {
     // address bar, so the register used to keep #/banking and a refresh
     // lost it (exploratory 2.17.3, W-L6). Moving the hash renders through
     // the hashchange listener; the same hash re-renders in place.
+    // Go to a page and resolve once it is drawn: App.navigate renders the
+    // page and keeps the address (pushState, no hashchange), so a caller
+    // that awaits this can touch the new page. Setting location.hash and
+    // returning nothing let postQuickEntry focus the old row's Payee a
+    // moment before the redraw replaced it (2.23.5 round 3, W-17 / NEW-146).
     go(hash) {
-        if (location.hash === hash) App.navigate(hash);
-        else location.hash = hash;
+        return App.navigate(hash);
     },
     _cols(kind) { return kind === 'credit_card' ? ['Charge', 'Payment'] : ['Payment', 'Deposit']; },
 
@@ -764,9 +768,23 @@ const BankingPage = {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
             await BankingPage.go(`#/banking/${accountId}`);
-            const next = document.getElementById('qe-payee');
-            if (next) { next.focus(); next.scrollIntoView({ block: 'center' }); }
+            BankingPage._focusPayee();
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The cursor in the new row's Payee once the register is drawn, and
+    // kept there through any redraw that follows the post (the page can
+    // draw more than once as its lists arrive): tried every 50 ms for a
+    // second until the box has the focus (W-17 / NEW-146).
+    _focusPayee(tries = 20) {
+        const next = document.getElementById('qe-payee');
+        if (next && document.activeElement !== next) {
+            next.focus();
+            if (typeof next.scrollIntoView === 'function') next.scrollIntoView({ block: 'center' });
+        }
+        if (tries > 0 && (!next || document.activeElement !== next)) {
+            setTimeout(() => BankingPage._focusPayee(tries - 1), 50);
+        }
     },
 
     // ------------------------------------------------------------------

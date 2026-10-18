@@ -853,6 +853,9 @@ td.amount, th.amount {
     font-family: var(--font-mono);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
+    /* an amount is one piece: a negative balance in a narrowed column broke
+       after its minus sign and read as positive (2.23.5 round 3, NEW-147) */
+    white-space: nowrap;
 }
 
 /* ========================================================================
