@@ -910,7 +910,7 @@ const SettingsPage = {
                 <input type="checkbox" name="hide-menu:${escapeHtml(key)}" data-hide-menu="${escapeHtml(key)}" ${set.has(key) ? 'checked' : ''} style="width:auto; vertical-align:middle; margin-right:6px;">
                 ${escapeHtml(label)}</label>`;
         let html = '';
-        const items = typeof document.querySelectorAll === 'function' ? [...document.querySelectorAll('#sidebar li')] : [];
+        const items = (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') ? [...document.querySelectorAll('#sidebar li')] : [];
         items.forEach(li => {
             if (li.classList.contains('nav-section')) {
                 const name = li.textContent.trim();

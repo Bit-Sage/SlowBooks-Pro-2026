@@ -280,9 +280,10 @@ def test_the_views_the_links_open():
     )
     assert "paid ahead" not in gone["text"]
 
-    # a register line with no document of its own opens its journal entry
+    # a register line with no document of its own opens its journal entry;
+    # the register reads oldest to newest (2.23.5, #329)
     assert got["register"] == [
-        '<td><a href="#/journal/58">View entry</a></td>',
-        '<td><a href="#/journal/57">Sales tax payment</a></td>',
         '<td><a href="/#/deposits/31">Deposit to Checking</a></td>',
+        '<td><a href="#/journal/57">Sales tax payment</a></td>',
+        '<td><a href="#/journal/58">View entry</a></td>',
     ]

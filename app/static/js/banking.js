@@ -512,7 +512,7 @@ const BankingPage = {
             if (!filtered) html += `<div class="table-container"><table><thead><tr>
                     <th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">Ref</th><th scope="col">Category</th>
                     <th scope="col" class="amount">${outLabel}</th><th scope="col" class="amount">${inLabel}</th><th scope="col" class="amount">Balance</th><th scope="col"></th><th scope="col"></th>
-                </tr></thead><tbody>${quickRow}</tbody></table></div>`;
+                </tr></thead><tbody></tbody>${quickRow}</table></div>`;
         } else {
             const rows = reg.entries.slice().map(e => `
                 <tr style="${e.voided ? 'color:var(--gray-400); text-decoration:line-through;' : ''}">
@@ -526,7 +526,7 @@ const BankingPage = {
                     <td class="amount" style="font-weight:700;">${formatCurrency(e.balance)}</td>
                     <td style="text-align:center;">${e.reconciliation_id ? 'R' : (e.cleared ? '✓' : '')}</td>
                     <td>${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
-                </tr>`).join('') + quickRow;
+                </tr>`).join('');
             // newest first, so the balance brought forward (a start date's
             // doing) closes the table
             const opening = f.start_date ? `<tr style="color:var(--gray-500);" id="reg-opening"><td>${formatDate(f.start_date)}</td><td colspan="6">Balance brought forward${reg.class_name ? ` (${escapeHtml(reg.class_name)})` : ''}</td><td class="amount">${formatCurrency(reg.opening_balance)}</td><td></td><td></td></tr>` : '';
@@ -723,17 +723,21 @@ const BankingPage = {
             .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
             .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
         const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.postQuickEntry(${accountId}); }"`;
-        return `<tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
-                    <td><input type="date" id="qe-date" aria-label="Date" value="${todayISO()}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-payee" aria-label="Payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-memo" aria-label="Memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-ref" aria-label="Check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><select id="qe-category" aria-label="Category" data-no-search style="font-size:11px; padding:2px 4px; max-width:180px;"><option value="">Category…</option>${cats}</select></td>
-                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
-                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        // the row lives in its own <tfoot>, after the entries; every field is
+        // named for the new entry, apart from the page's other fields
+        return `<tfoot><tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
+                    <td><input type="date" id="qe-date" aria-label="New entry date" value="${today}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:180px;"><option value="">Category…</option>${cats}</select></td>
+                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
+                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td></td><td></td>
                     <td><button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.postQuickEntry(${accountId})">Post</button></td>
-                </tr>`;
+                </tr></tfoot>`;
     },
 
     // The quick row posts through the same call as + Entry (#329): money
