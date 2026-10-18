@@ -28,6 +28,9 @@ from app.services.qb_time_import import SOURCE
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "qb_desktop"
 BY_NAME = FIXTURES / "Time_by_Name_by_Job.xlsx"
 BY_JOB = FIXTURES / "Time_by_Job_by_Name.xlsx"
+# Time by Job by Name detail as QuickBooks writes it (a user's real file,
+# 2.23.5): the person is a Name column, the service item the inner heading
+BY_JOB_DETAIL = FIXTURES / "Time_by_Job_by_Name_detail.xlsx"
 LABELS = {
     "Northline Overhead",
     "Harbor Dist:Pier Survey",
@@ -234,3 +237,63 @@ def test_the_pages_list_and_count_them(client, db_session, seed_accounts):
     iif = (root / "app/static/js/iif.js").read_text(encoding="utf-8")
     assert "time_entries: 'Time entries'" in iif
     assert "(result.time_entries || 0)" in iif and "Time by Name by Job detail" in iif
+
+
+def test_the_real_by_job_by_name_detail_layout_reads_the_same(
+    client, db_session, seed_accounts
+):
+    """QuickBooks' own Time by Job by Name detail has no Item column: the
+    person is a Name column, the customer:job the outer heading and the
+    service item the inner one (a user's file, 2.23.5). The importer took
+    the by-Name layout with the groupings swapped and refused the real
+    thing as "Unrecognized report layout"."""
+    body = _upload(client, BY_JOB_DETAIL)
+    assert body["errors"] == [], body["errors"]
+    assert body["detected"] == "time"
+    assert body["report"] == "Time by Job by Name detail"
+    by_name = _upload(client, BY_NAME)
+    # the same entries: every one of them is already here
+    assert by_name["time_entries"] == 0
+    assert by_name["duplicates_skipped"] == body["time_entries"] > 0
+    rows = _imported(db_session)
+    assert len(rows) == body["time_entries"]
+    assert {e.customer_job for e in rows} == LABELS
+    assert all(e.service for e in rows)
+    pier = next(
+        e
+        for e in rows
+        if e.customer_job == "Harbor Dist:Pier Survey" and e.service == "Field Survey"
+    )
+    emp = db_session.get(Employee, pier.employee_id)
+    assert (emp.last_name, emp.first_name) == ("Alvarez", "M")
+    # a second upload posts nothing twice
+    again = _upload(client, BY_JOB_DETAIL)
+    assert again["time_entries"] == 0 and again["duplicates_skipped"] == len(rows)
+
+
+def test_a_by_job_detail_total_that_does_not_match_refuses_the_file_whole(
+    client, db_session, seed_accounts
+):
+    import openpyxl
+
+    book = openpyxl.load_workbook(BY_JOB_DETAIL)
+    sheet = book.active
+    # drop the first entry row: the item's total no longer adds up
+    for row in sheet.iter_rows(min_row=3):
+        if row[4].value:
+            sheet.delete_rows(row[0].row)
+            break
+    buf = io.BytesIO()
+    book.save(buf)
+    r = client.post(
+        "/api/csv/import/qb-report",
+        files={
+            "file": ("cut.xlsx", io.BytesIO(buf.getvalue()), "application/octet-stream")
+        },
+    )
+    body = r.json()
+    assert body["time_entries"] == 0
+    assert any("the file looks cut short or edited" in e for e in body["errors"]), body[
+        "errors"
+    ]
+    assert _imported(db_session) == []

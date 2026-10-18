@@ -304,18 +304,77 @@ def build(by_job: bool) -> list[list]:
     return rows
 
 
-def write(by_job: bool) -> Path:
+def build_by_job_detail() -> list[list]:
+    """Time by Job by Name detail as QuickBooks Desktop writes it (a user's
+    real file, 2.23.5): the customer:job is the outer heading, the service
+    item the inner one, and the person is a Name column in place of Item —
+    Date, Name, Billing Status, Duration, Notes. Totals under each item and
+    each customer:job, then TOTAL."""
+    groups: OrderedDict = OrderedDict()
+    for person, job, day, item, billing, hours, notes in ENTRIES:
+        groups.setdefault(job, OrderedDict()).setdefault(item, []).append(
+            (day, person, billing, hours, notes)
+        )
+    rows = [[""] * COLS, [" "] + [""] * (COLS - 1)]
+    rows[0][DATE : NOTES + 1] = ["Date", "Name", "Billing Status", "Duration", "Notes"]
+    grand = 0
+    for job, items in groups.items():
+        row = [""] * COLS
+        row[PERSON] = job  # the outer heading's column
+        rows.append(row)
+        job_total = 0
+        for item, lines in items.items():
+            row = [""] * COLS
+            row[JOB] = item  # the inner heading's column
+            rows.append(row)
+            item_total = 0
+            for day, person, billing, hours, notes in lines:
+                row = [""] * COLS
+                row[DATE] = datetime.strptime(day, "%m/%d/%Y")
+                row[ITEM], row[BILLING], row[HOURS], row[NOTES] = (
+                    person,
+                    billing,
+                    hours,
+                    notes,
+                )
+                rows.append(row)
+                item_total += hours
+            row = [""] * COLS
+            row[JOB], row[HOURS] = f"Total {item}", item_total
+            rows.append(row)
+            job_total += item_total
+        row = [""] * COLS
+        row[PERSON], row[HOURS] = f"Total {job}", job_total
+        rows.append(row)
+        grand += job_total
+    row = [""] * COLS
+    row[0], row[HOURS] = "TOTAL", grand
+    rows.append(row)
+    return rows
+
+
+def write(by_job: bool, detail: bool = False) -> Path:
     book = openpyxl.Workbook()
     sheet = book.active
     sheet.title = "Sheet1"
-    for row in build(by_job):
+    for row in build_by_job_detail() if detail else build(by_job):
         sheet.append([None if cell == "" else cell for cell in row])
-    name = "Time_by_Job_by_Name.xlsx" if by_job else "Time_by_Name_by_Job.xlsx"
+    if detail:
+        name = "Time_by_Job_by_Name_detail.xlsx"
+    else:
+        name = "Time_by_Job_by_Name.xlsx" if by_job else "Time_by_Name_by_Job.xlsx"
     path = Path(__file__).with_name(name)
     book.save(path)
     return path
 
 
 if __name__ == "__main__":
-    for by_job in (False, True) if "--both" in sys.argv else ("--by-job" in sys.argv,):
-        print(write(by_job))
+    if "--detail" in sys.argv or "--all" in sys.argv:
+        print(write(True, detail=True))
+    if "--detail" not in sys.argv:
+        for by_job in (
+            (False, True)
+            if "--both" in sys.argv or "--all" in sys.argv
+            else ("--by-job" in sys.argv,)
+        ):
+            print(write(by_job))

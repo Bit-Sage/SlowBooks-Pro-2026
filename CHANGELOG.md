@@ -58,6 +58,15 @@ as you type (name, company, phone, email) and says how many of how many
 show. A vendor's page carries paid this year and all time, and Save CSV
 lists the payments with a total, for any date range on the API.
 
+**Time by Job by Name detail imports as QuickBooks writes it.** 2.23.4's
+importer took that report with the by-Name layout's groupings swapped,
+which is not how QuickBooks Desktop lays it out: a user's real file has
+the customer:job as the outer heading, the service item as the inner one
+and the person as a Name column in place of Item. The importer read it as
+"Unrecognized report layout"; it reads both now, and the result names the
+report. (The fixture for it is invented timesheets in that exact layout;
+the real file stays private.)
+
 No schema change. 561 API operations (the drill-down's CSV and PDF, the
 vendor's payments CSV, the seeded chart's dry run and removal).
 

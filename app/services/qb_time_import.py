@@ -42,7 +42,12 @@ from app.models.payroll import Employee
 from app.models.time_entries import TimeEntry, TimeEntryStatus
 
 SOURCE = "qb_time_report"
-TIME_COLUMNS = ("Date", "Item", "Billing Status", "Duration")
+# The columns both reports share. Time by Name by Job detail carries the
+# service as an Item column under person and customer:job headings; the real
+# Time by Job by Name detail (a user's file, 2.23.5) carries the person as a
+# Name column under customer:job and service-item headings, with no Item
+# column at all. Either reads.
+TIME_COLUMNS = ("Date", "Billing Status", "Duration")
 _DATE_FORMATS = ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d")
 _HOW = (
     "Export it from QuickBooks Desktop as Reports > Jobs, Time & Mileage > "
@@ -59,7 +64,11 @@ _BILLING = {
 
 
 def is_time_header(cols: dict | None) -> bool:
-    return bool(cols) and all(c in cols for c in TIME_COLUMNS)
+    return (
+        bool(cols)
+        and all(c in cols for c in TIME_COLUMNS)
+        and ("Item" in cols or "Name" in cols)
+    )
 
 
 def _minutes(raw: str) -> int:
@@ -108,8 +117,13 @@ def _date(raw: str):
 def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
     """(entries, errors): each time row as {labels, date, item, billing,
     hours, notes, row}, its labels the two headings above it (outer, inner),
-    after the file's own totals are checked."""
+    after the file's own totals are checked. With a Name column and no Item
+    column (Time by Job by Name detail as QuickBooks writes it), the person
+    is the row's Name, the outer heading the customer:job and the inner one
+    the service item: the entry carries "person", and its item is the inner
+    heading."""
     first = cols["Date"]  # the label columns are the ones before Date
+    name_column = "Item" not in cols and "Name" in cols
     entries: list[dict] = []
     errors: list[str] = []
     stack: list[tuple[int, str]] = []
@@ -161,7 +175,7 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
                 stack.pop()
             stack.append((depth, text))
             continue
-        if len(stack) < 2:
+        if len(stack) < (1 if name_column else 2):
             errors.append(
                 "This report lists its time without the person and the customer "
                 "or job each entry belongs to above it, so it cannot be posted. " + _HOW
@@ -179,18 +193,22 @@ def parse_time_report(rows: list[list[str]], header_at: int, cols: dict):
             continue
         if minutes == 0:
             continue
-        entries.append(
-            {
-                "labels": tuple(name for _, name in stack[:2]),
-                "date": day,
-                "item": cell(row, "Item"),
-                "billing": cell(row, "Billing Status"),
-                "minutes": minutes,
-                "hours": _hours(minutes),
-                "notes": cell(row, "Notes"),
-                "row": n,
-            }
-        )
+        labels = tuple(name for _, name in stack[:2])
+        entry = {
+            "labels": labels if len(labels) == 2 else (labels[0], ""),
+            "date": day,
+            "item": (
+                stack[1][1] if name_column and len(stack) > 1 else cell(row, "Item")
+            ),
+            "billing": cell(row, "Billing Status"),
+            "minutes": minutes,
+            "hours": _hours(minutes),
+            "notes": cell(row, "Notes"),
+            "row": n,
+        }
+        if name_column:
+            entry["person"] = cell(row, "Name")
+        entries.append(entry)
     if errors:
         return [], errors
     # QuickBooks' own totals: a group's rows add up to what it printed, in
@@ -285,11 +303,16 @@ def import_time_report(
         return result
     employees = _employees(db)
     jobs = _jobs(db)
-    person_at = _person_level(entries, employees)
+    # the person: the row's Name column (Time by Job by Name detail as
+    # QuickBooks writes it), else the heading level that reads as names
+    name_column = all("person" in e for e in entries)
+    person_at = 0 if name_column else _person_level(entries, employees)
     # which report this is, for the result (W-10: the by-Job file said
     # "Time by Name by Job")
     result["report"] = (
-        "Time by Job by Name detail" if person_at == 1 else "Time by Name by Job detail"
+        "Time by Job by Name detail"
+        if name_column or person_at == 1
+        else "Time by Name by Job detail"
     )
     added: list[str] = []
     unlinked: OrderedDict = OrderedDict()
@@ -302,8 +325,11 @@ def import_time_report(
     seen: dict = {}
     now = datetime.now(timezone.utc)
     for entry in entries:
-        person = entry["labels"][person_at]
-        label = entry["labels"][1 - person_at]
+        if name_column:
+            person, label = entry["person"], entry["labels"][0]
+        else:
+            person = entry["labels"][person_at]
+            label = entry["labels"][1 - person_at]
         emp = employees.get(_key(person))
         if emp is None:
             first, last = _split_name(person)
