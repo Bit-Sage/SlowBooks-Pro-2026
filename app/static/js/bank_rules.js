@@ -64,7 +64,7 @@ const BankRulesPage = {
         const accounts = await API.get('/accounts');
         const acctOpts = accounts
             .filter(a => ['expense','income','asset','liability','cogs'].includes(a.account_type))
-            .map(a => `<option value="${a.id}" ${rule.account_id==a.id?'selected':''}>${escapeHtml(a.account_number)} - ${escapeHtml(a.name)}</option>`).join('');
+            .map(a => `<option value="${a.id}" ${rule.account_id==a.id?'selected':''}>${accountLabel(a)}</option>`).join('');
 
         openModal(id ? 'Edit Bank Rule' : 'New Bank Rule', `
             <form onsubmit="BankRulesPage.save(event, ${id})">

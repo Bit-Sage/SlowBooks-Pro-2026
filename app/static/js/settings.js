@@ -912,6 +912,9 @@ const SettingsPage = {
         let html = '';
         const items = (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') ? [...document.querySelectorAll('#sidebar li')] : [];
         items.forEach(li => {
+            // an item the company's kind hides (the nonprofit pages on a
+            // business company) is not on offer (2.23.5 round 2, NEW-145)
+            if (li.hidden || (typeof li.closest === 'function' && li.closest('[hidden]'))) return;
             if (li.classList.contains('nav-section')) {
                 const name = li.textContent.trim();
                 if (name) html += box(`section:${name}`, `${name} (the whole section)`, false);

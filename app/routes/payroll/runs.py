@@ -673,16 +673,34 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
                 }
             )
 
-    for amount, acct, desc in [
-        (total_fed, fed, "Federal income tax withheld"),
-        (total_state, state_wh, "State income tax withheld"),
-        (total_ss, ss_acct, "Social Security payable"),
-        (total_medicare, medicare_acct, "Medicare payable"),
-        (total_futa, futa_acct, "FUTA payable"),
-        (total_suta, suta_acct, "SUTA payable"),
-        (total_other, other_acct, "Other payroll deductions payable"),
-        (total_net, bank, "Net payroll"),
-    ]:
+    payables = [
+        (total_fed, fed, "Federal income tax withheld", "2310"),
+        (total_state, state_wh, "State income tax withheld", "2320"),
+        (total_ss, ss_acct, "Social Security payable", "2330"),
+        (total_medicare, medicare_acct, "Medicare payable", "2340"),
+        (total_futa, futa_acct, "FUTA payable", "2350"),
+        (total_suta, suta_acct, "SUTA payable", "2360"),
+        (total_other, other_acct, "Other payroll deductions payable", "2370"),
+        (total_net, bank, "Net payroll", "1000"),
+    ]
+    # A withholding with nowhere to post used to be left out, and the entry
+    # then failed to balance as a 500 (2.23.5 round 2, W-16 / NEW-139: the
+    # seeded cleanup had taken 2300 and 2310–2390). Say which account is
+    # missing instead.
+    missing = [
+        f"{number} ({desc})"
+        for amount, acct, desc, number in payables
+        if amount and amount > 0 and not acct
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="This pay run has nowhere to post "
+            + ", ".join(missing)
+            + ": add that account under Chart of Accounts (or 2300 Payroll "
+            "Liabilities, which stands in for any of them), then process again.",
+        )
+    for amount, acct, desc, _number in payables:
         if amount and amount > 0 and acct:
             lines.append(
                 {
@@ -694,14 +712,21 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
             )
 
     if lines:
-        txn = create_journal_entry(
-            db,
-            run.pay_date,
-            f"Payroll {run.period_start} - {run.period_end}",
-            lines,
-            source_type="payroll",
-            source_id=run.id,
-        )
+        try:
+            txn = create_journal_entry(
+                db,
+                run.pay_date,
+                f"Payroll {run.period_start} - {run.period_end}",
+                lines,
+                source_type="payroll",
+                source_id=run.id,
+            )
+        except ValueError as e:
+            # a journal the ledger refuses is a problem with the data, said
+            # in a sentence, never a bare 500
+            raise HTTPException(
+                status_code=400, detail="This pay run could not be posted: " + str(e)
+            )
         run.transaction_id = txn.id
 
     # Job costing seam: when the labor cost type distributes actual burden,

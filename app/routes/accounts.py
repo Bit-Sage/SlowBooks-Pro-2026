@@ -3,6 +3,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import nullslast
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -97,7 +98,31 @@ def list_accounts(
     # By number, and accounts without one (a chart imported from QuickBooks
     # Online, whose accounts carry none) by name, so a sub-account named
     # Parent:Child sits with its parent.
-    return _in_company_words(db, q.order_by(Account.account_number, Account.name).all())
+    return _in_company_words(
+        db, q.order_by(nullslast(Account.account_number), Account.name).all()
+    )
+
+
+# The seeded accounts a pay run, a PTO accrual or a benefits posting finds
+# by number, with nothing posted to them until the first run (2.23.5 round
+# 2, W-16 / NEW-139: the cleanup took them, and the next pay run either
+# failed with a 500 or posted wages to Advertising). They stay.
+_FOUND_BY_NUMBER = {
+    "6110": "payroll posts wages to it",
+    "6140": "payroll posts reimbursements to it",
+    "6160": "PTO accruals post to it",
+    "6950": "payroll's fallback for reimbursements",
+    "2300": "payroll liabilities post to it",
+    "2310": "payroll posts federal withholding to it",
+    "2320": "payroll posts state withholding to it",
+    "2330": "payroll posts Social Security to it",
+    "2340": "payroll posts Medicare to it",
+    "2350": "payroll posts FUTA to it",
+    "2360": "payroll posts SUTA to it",
+    "2370": "payroll posts other withholdings to it",
+    "2380": "benefits post to it",
+    "2390": "PTO accruals post to it",
+}
 
 
 def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
@@ -108,7 +133,7 @@ def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
     seeded = (
         db.query(Account)
         .filter(Account.is_system.is_(True))
-        .order_by(Account.account_number, Account.name)
+        .order_by(nullslast(Account.account_number), Account.name)
         .all()
     )
     children = {
@@ -120,6 +145,8 @@ def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
         row = {"id": a.id, "account_number": a.account_number or "", "name": a.name}
         if control_accounts.is_control_number(a.account_number):
             kept.append({**row, "reason": "a control account"})
+        elif a.account_number in _FOUND_BY_NUMBER:
+            kept.append({**row, "reason": _FOUND_BY_NUMBER[a.account_number]})
         elif a.id in posted:
             kept.append({**row, "reason": "has postings"})
         elif a.id in children:

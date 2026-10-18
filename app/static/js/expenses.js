@@ -68,7 +68,7 @@ const ExpensesPage = {
         // 5100 Materials Cost as often as against an expense (W-L18).
         const expenseAccts = PurchaseAccounts.filter(accounts);
         const paidFrom = ExpensesPage.paidFromAccounts(accounts);
-        const acctOpt = a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)}</option>`;
+        const acctOpt = a => `<option value="${a.id}">${accountLabel(a)}</option>`;
         const checking = paidFrom.find(a => /checking/i.test(a.name || '')) || paidFrom[0];
 
         openModal('Enter Expense', `

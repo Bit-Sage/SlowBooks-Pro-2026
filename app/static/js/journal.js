@@ -141,7 +141,7 @@ const JournalPage = {
         JournalPage._lineCount = 2;
 
         const acctOpts = accounts.map(a =>
-            `<option value="${a.id}">${escapeHtml(a.account_number)} - ${escapeHtml(a.name)}</option>`
+            `<option value="${a.id}">${accountLabel(a)}</option>`
         ).join('');
 
         openModal('New Journal Entry', `
@@ -194,7 +194,7 @@ const JournalPage = {
     addLine() {
         const idx = JournalPage._lineCount++;
         const acctOpts = JournalPage._accounts.map(a =>
-            `<option value="${a.id}">${escapeHtml(a.account_number)} - ${escapeHtml(a.name)}</option>`
+            `<option value="${a.id}">${accountLabel(a)}</option>`
         ).join('');
         $('#je-lines').insertAdjacentHTML('beforeend', `
             <tr data-jeline="${idx}">

@@ -229,10 +229,12 @@ def test_the_register_filters_by_dates_and_class(browser, company, books, classe
         q = _query(_hash(page))
         assert q["class_id"] == str(site["id"]) and q["start_date"] == SEPT[0]
         rows = page.evaluate(REG_ROWS)
+        # oldest first: the brought-forward balance opens the table (2.23.5
+        # round 2, NEW-142), the entry follows
         assert (
             len(rows) == 2
-            and "Site Prep fuel" in rows[0]
-            and "Balance brought forward (Site Prep)" in rows[1]
+            and "Balance brought forward (Site Prep)" in rows[0]
+            and "Site Prep fuel" in rows[1]
         ), rows
         note = page.inner_text("#reg-filter-note")
         assert "the account's whole balance is" in note

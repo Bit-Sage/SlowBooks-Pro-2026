@@ -268,7 +268,7 @@ const BankingPage = {
         ]);
         const taken = new Set(feeds.map(f => f.account_id));
         const free = bankAccts.filter(a => !taken.has(a.id));
-        const opts = free.map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)} (${BankingPage._kindLabel(a.bank_kind)})</option>`).join('');
+        const opts = free.map(a => `<option value="${a.id}">${accountLabel(a)} (${BankingPage._kindLabel(a.bank_kind)})</option>`).join('');
         openModal('New Bank Account', `
             <form onsubmit="BankingPage.saveAccount(event)">
                 <div class="form-grid">
@@ -527,15 +527,17 @@ const BankingPage = {
                     <td style="text-align:center;">${e.reconciliation_id ? 'R' : (e.cleared ? '✓' : '')}</td>
                     <td>${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
                 </tr>`).join('');
-            // newest first, so the balance brought forward (a start date's
-            // doing) closes the table
+            // oldest first, so the balance brought forward (a start date's
+            // doing) opens the table (2.23.5 round 2, NEW-142); the entry
+            // row follows the entries on a populated register as on an
+            // empty one (W-14, NEW-140), unless the register is filtered
             const opening = f.start_date ? `<tr style="color:var(--gray-500);" id="reg-opening"><td>${formatDate(f.start_date)}</td><td colspan="6">Balance brought forward${reg.class_name ? ` (${escapeHtml(reg.class_name)})` : ''}</td><td class="amount">${formatCurrency(reg.opening_balance)}</td><td></td><td></td></tr>` : '';
             html += `<div class="table-container"><table>
                 <thead><tr>
-                    <th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Description</th><th scope="col">Ref #</th><th scope="col">Type</th>
+                    <th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">Ref #</th><th scope="col">Type</th>
                     <th scope="col" class="amount">${outLabel}</th><th scope="col" class="amount">${inLabel}</th><th scope="col" class="amount">Balance</th>
                     <th scope="col" title="✓ cleared · R reconciled">✓</th><th scope="col"></th>
-                </tr></thead><tbody>${rows}${opening}</tbody></table></div>`;
+                </tr></thead><tbody>${opening}${rows}</tbody>${filtered ? '' : quickRow}</table></div>`;
         }
         return html;
     },
@@ -587,7 +589,7 @@ const BankingPage = {
         document.querySelectorAll('select.review-cat').forEach(sel => {
             const current = sel.dataset.current;
             sel.innerHTML = '<option value="">Pick a category…</option>' + usable.map(a =>
-                `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
+                `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${accountLabel(a)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
         });
     },
 
@@ -721,7 +723,7 @@ const BankingPage = {
     _quickEntryRow(accountId, kind, chart, outLabel, inLabel) {
         const cats = (chart || [])
             .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
-            .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
+            .map(a => `<option value="${a.id}">${accountLabel(a, a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
         const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.postQuickEntry(${accountId}); }"`;
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -776,7 +778,7 @@ const BankingPage = {
         const isCard = me.bank_kind === 'credit_card';
         const catOpts = accounts
             .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
-            .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
+            .map(a => `<option value="${a.id}">${accountLabel(a)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
         const classGroup = await classFormGroupHtml();
         openModal('New Register Entry', `
             <form onsubmit="BankingPage.saveEntry(event, ${accountId})">
@@ -795,7 +797,7 @@ const BankingPage = {
                     <div class="form-group full-width"><label>Memo</label>
                         <input name="description"></div>
                     ${classGroup}
-                    <div class="form-group full-width" id="entry-splits" hidden>
+                    <div class="form-group full-width" id="entry-splits" style="display:none;">
                         <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things)</span></label>
                         <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
                         <tbody id="entry-split-rows"></tbody></table>
@@ -819,13 +821,22 @@ const BankingPage = {
     // Splits (#330): the Category becomes the first line and more lines
     // take their share; the note says what is left to place. Posted as one
     // entry with several lines, as the API's `splits`.
+    // The table is shown and hidden by style, not the hidden attribute:
+    // .form-group's display:flex won over `hidden`, so the lines showed
+    // before "Split this entry…" and what was typed there did not count
+    // (2.23.5 round 2, NEW-141).
+    _splitsOpen() {
+        const box = document.getElementById('entry-splits');
+        return !!box && box.style.display !== 'none';
+    },
     toggleSplits() {
         const box = document.getElementById('entry-splits');
         if (!box) return;
-        box.hidden = !box.hidden;
+        const open = !BankingPage._splitsOpen();
+        box.style.display = open ? '' : 'none';
         const toggle = document.getElementById('entry-split-toggle');
-        if (toggle) toggle.textContent = box.hidden ? 'Split this entry…' : 'Not a split';
-        if (!box.hidden && !document.querySelectorAll('#entry-split-rows tr').length) { BankingPage.addSplitRow(); BankingPage.addSplitRow(); }
+        if (toggle) toggle.textContent = open ? 'Not a split' : 'Split this entry…';
+        if (open && !document.querySelectorAll('#entry-split-rows tr').length) { BankingPage.addSplitRow(); BankingPage.addSplitRow(); }
         BankingPage.splitNote();
     },
     addSplitRow() {
@@ -849,22 +860,35 @@ const BankingPage = {
         note.textContent = total ? (left === 0 ? `Every cent of ${formatCurrency(total)} is placed` : `${formatCurrency(left)} of ${formatCurrency(total)} still to place (each line takes the entry's sign)`) : 'Enter the amount first';
     },
 
+    // The split lines to post. A line with an amount but no account, or an
+    // account but no amount, is said so and nothing posts (2.23.5 round 2,
+    // W-13: a −120.00 line with no account was dropped without a word and
+    // the entry posted short). A line with neither is an empty row and is
+    // skipped.
     _splitLines(form) {
-        const box = document.getElementById('entry-splits');
-        if (!box || box.hidden) return null;
+        if (!BankingPage._splitsOpen()) return null;
         const rows = [...form.querySelectorAll('#entry-split-rows tr')];
-        const splits = rows.map(r => ({
-            category_account_id: parseInt(r.querySelector('.split-cat').value, 10),
-            amount: r.querySelector('.split-amt').value,
-            description: r.querySelector('.split-memo').value || null,
-        })).filter(sp => sp.amount !== '' && !Number.isNaN(sp.category_account_id));
+        const splits = [];
+        rows.forEach((r, i) => {
+            const account = r.querySelector('.split-cat').value;
+            const amount = r.querySelector('.split-amt').value;
+            if (!account && amount === '') return;
+            if (!account) throw new Error(`Split line ${i + 1} has an amount but no account. Choose the account, or remove the line.`);
+            if (amount === '') throw new Error(`Split line ${i + 1} has an account but no amount. Enter its share, or remove the line.`);
+            splits.push({
+                category_account_id: parseInt(account, 10),
+                amount,
+                description: r.querySelector('.split-memo').value || null,
+            });
+        });
         return splits.length ? splits : null;
     },
 
     async saveEntry(e, accountId) {
         e.preventDefault();
         const form = e.target;
-        const splits = BankingPage._splitLines(form);
+        let splits;
+        try { splits = BankingPage._splitLines(form); } catch (err) { toast(err.message, 'error'); return; }
         if (!splits && !form.category_account_id.value) { toast('Choose a category, or split the entry', 'error'); return; }
         const data = {
             account_id: accountId,
@@ -888,7 +912,7 @@ const BankingPage = {
 
     async showTransferForm(fromId = null) {
         const accounts = await API.get('/accounts?bank=1&active_only=true');
-        const opt = (a, sel) => `<option value="${a.id}" ${sel ? 'selected' : ''}>${escapeHtml(a.account_number || '')} - ${escapeHtml(a.name)} (${BankingPage._kindLabel(a.bank_kind).toLowerCase()})</option>`;
+        const opt = (a, sel) => `<option value="${a.id}" ${sel ? 'selected' : ''}>${accountLabel(a)} (${BankingPage._kindLabel(a.bank_kind).toLowerCase()})</option>`;
         const fromOpts = accounts.map(a => opt(a, a.id === fromId)).join('');
         const firstCard = accounts.find(a => a.bank_kind === 'credit_card' && a.id !== fromId);
         const toOpts = accounts.map(a => opt(a, firstCard ? a.id === firstCard.id : a.id !== fromId)).join('');
@@ -1009,13 +1033,24 @@ const BankingPage = {
     // lines hidden. The session's figures are the session's; the hidden
     // lines are counted under the table and Mark through takes the same day.
     _reconThrough: {},
+    _reconDay: {},
     reconShowThrough(reconId, value) {
         BankingPage._reconThrough[reconId] = value || '';
         BankingPage.showReconcileView(reconId);
     },
+    // The day box: a new day re-filters the list while the box is ticked,
+    // and is kept either way, so Mark through that date and the list agree
+    // (2.23.5 round 2, W-15 / NEW-143: the list stayed on the old day and
+    // Mark through marked the hidden lines).
+    reconDayChanged(reconId, value) {
+        BankingPage._reconDay[reconId] = value || '';
+        const only = document.getElementById('recon-only-through');
+        if (only && only.checked) BankingPage.reconShowThrough(reconId, value);
+    },
     async showReconcileView(reconId) {
         const data = await API.get(`/banking/reconciliations/${reconId}/transactions`);
         const through = BankingPage._reconThrough[reconId] || '';
+        const day = through || BankingPage._reconDay[reconId] || data.statement_date;
         const shown = through ? data.transactions.filter(t => t.date <= through) : data.transactions;
         const hidden = data.transactions.length - shown.length;
         const rows = shown.map(t => {
@@ -1057,8 +1092,8 @@ const BankingPage = {
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;" data-write>
                 <button class="btn btn-sm btn-secondary" onclick="BankingPage.markAll(${reconId}, true)">Mark all</button>
                 <label for="recon-through" style="font-size:11px;">Through</label>
-                <input type="date" id="recon-through" value="${escapeHtml(through || data.statement_date)}" max="${data.statement_date}" style="font-size:11px; padding:2px 6px;"
-                    aria-describedby="recon-through-note">
+                <input type="date" id="recon-through" value="${escapeHtml(day)}" max="${data.statement_date}" style="font-size:11px; padding:2px 6px;"
+                    aria-describedby="recon-through-note" onchange="BankingPage.reconDayChanged(${reconId}, this.value)">
                 <label style="font-size:11px; font-weight:normal;"><input type="checkbox" id="recon-only-through" ${through ? 'checked' : ''} style="width:auto; vertical-align:middle;"
                     onchange="BankingPage.reconShowThrough(${reconId}, this.checked ? document.getElementById('recon-through').value : '')"> Show only lines through that date</label>
                 <button class="btn btn-sm btn-secondary" onclick="BankingPage.markAll(${reconId}, true, document.getElementById('recon-through').value)">Mark through that date</button>

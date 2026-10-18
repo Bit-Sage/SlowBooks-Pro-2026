@@ -124,6 +124,16 @@ function reversedRangeRefused(start, end, kept) {
     return true;
 }
 
+// An account's words in a picker or a list: "1000 - Checking", and for an
+// account with no number (optional since 2.23.5) its name alone, not
+// "- Checking" at the top of the list (2.23.5 round 2, NEW-144). `name`
+// overrides the name shown (a path, say).
+function accountLabel(a, name = null) {
+    const shown = name !== null ? name : (a.name || '');
+    const number = a.account_number || '';
+    return number ? `${escapeHtml(number)} - ${escapeHtml(shown)}` : escapeHtml(shown);
+}
+
 function todayISO() {
     const d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');

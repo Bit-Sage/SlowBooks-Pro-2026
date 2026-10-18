@@ -115,11 +115,15 @@ def test_unused_seeded_accounts_go_in_one_step_and_the_used_ones_stay(
 ):
     from app.services import control_accounts
 
+    from app.routes.accounts import _FOUND_BY_NUMBER
+
     control = {n for n in seed_accounts if control_accounts.is_control_number(n)}
     free = sorted(
         n
         for n, a in seed_accounts.items()
-        if n not in control and a.account_type == AccountType.EXPENSE
+        if n not in control
+        and n not in _FOUND_BY_NUMBER  # payroll's stay for their own reason
+        and a.account_type == AccountType.EXPENSE
     )
     posted_no, parent_no = free[0], free[1]
     # one seeded account with a posting, one with a sub-account: both stay
