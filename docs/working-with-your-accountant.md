@@ -57,12 +57,17 @@ report like anyone else's.
 
 ## 3. They insist on QuickBooks Desktop
 
-Interoperability → **Export to IIF** carries your lists, invoices, payments,
-sales receipts, bills and deposits into QuickBooks Desktop
+Interoperability → **Export to IIF** carries the whole ledger into
+QuickBooks Desktop: the lists, invoices, sales receipts, payments, bills,
+deposits, checks, card charges, transfers, bill payments and journal entries
 ([migrate-from-quickbooks.md](migrate-from-quickbooks.md) describes the
-file). That route is one-way and partial today: checks, expenses and journal
-entries don't go across, and their changes come back by hand, as journal
-entries you enter. Completing the round trip is on the 2.24.0 list.
+file). Their adjustments come back two ways: an IIF with GENERAL JOURNAL
+blocks imports them as journal entries (tick *This is an accountant's file*
+to mark them adjusting), and QuickBooks Desktop's Transaction Detail by
+Account report, filtered to Transaction Type = Journal, imports under
+**Adjusting entries only**, which refuses the file whole if it holds anything
+else, so a whole-ledger upload can never double the books. A second upload
+of either posts nothing twice.
 
 ## What this page will grow into
 

@@ -95,7 +95,12 @@ def _books(client, accounts):
                 "bill_number": "RENT-3",
                 "date": "2026-03-01",
                 "lines": [
-                    {"description": "March rent", "amount": 500, "account_id": ins}
+                    {
+                        "description": "March rent",
+                        "quantity": 1,
+                        "rate": 500,
+                        "account_id": ins,
+                    }
                 ],
             },
         )
@@ -156,7 +161,10 @@ def test_every_posted_type_exports(client, db_session, seed_accounts):
     ):
         assert t in types, (t, types)
     assert "TRNS\tCHECK\t03/05/2026\tChecking\tPrint shop\t-25.00\t1041" in text
-    assert "SPL\tCHECK\t03/05/2026\tAdvertising\tPrint shop\t25.00\t1041" in text
+    assert (
+        "SPL\tCHECK\t03/05/2026\tAdvertising & Marketing\tPrint shop\t25.00\t1041"
+        in text
+    )
     assert "TRNS\tCREDIT CARD\t03/07/2026\tCredit Card\tCloud host\t-40.00" in text
     assert "TRNS\tTRANSFER\t03/08/2026\tChecking\t\t-40.00" in text
     assert "SPL\tTRANSFER\t03/08/2026\tCredit Card\t\t40.00" in text
@@ -200,10 +208,13 @@ def test_the_round_trip_gives_a_fresh_company_the_same_trial_balance(
         assert result["unsupported"] == 0
         assert result["ledger_entries"] >= 5 and result["journal_entries"] == 1
         away = trial_balance(None, None, other)
-        by = lambda tb: {
-            i["account_number"]: (i["total_debit"], i["total_credit"])
-            for i in tb["items"]
-        }  # noqa: E731
+
+        def by(tb):
+            return {
+                i["account_number"]: (i["total_debit"], i["total_credit"])
+                for i in tb["items"]
+            }
+
         assert by(away) == by(home)
         assert away["total_debit"] == home["total_debit"]
         # a second import of the same file posts nothing

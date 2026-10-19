@@ -1038,6 +1038,7 @@ def import_transactions(
     errors = []
     warnings = []
     unsupported = []
+    seen: dict = {}  # blocks alike within this file (#344)
 
     for i, block in enumerate(blocks):
         sp = db.begin_nested()
@@ -1102,7 +1103,7 @@ def import_transactions(
                     counts["duplicates_skipped"] += 1
             elif trns_type in _LEDGER_BLOCK_SOURCES:
                 result = _import_ledger_block(
-                    db, trns_type, trns, spls, warnings, adjusting, posted_by
+                    db, trns_type, trns, spls, warnings, adjusting, posted_by, seen
                 )
                 if result is not None:
                     counts["ledger_entries"] += 1
@@ -1111,7 +1112,7 @@ def import_transactions(
                 else:
                     counts["duplicates_skipped"] += 1
             elif trns_type == "DEPOSIT":
-                result = _import_deposit(db, trns, spls, warnings)
+                result = _import_deposit(db, trns, spls, warnings, seen)
                 if result:
                     counts["deposits"] += 1
                 else:
@@ -1351,25 +1352,41 @@ def _import_bill(db: Session, trns: dict, spls: list, warnings=None) -> Bill:
     return bill
 
 
-def _same_entry_exists(
-    db: Session, entry_date, lines: list, reference: str = ""
-) -> bool:
-    """Is there already an entry on this day with exactly these lines
-    (account and amounts, any source)? A file exported here and brought
-    back, or uploaded twice, posts nothing twice (#344); a DOCNUM, when
-    the block has one, must match too."""
+def _same_entries(db: Session, entry_date, lines: list, reference: str = "") -> int:
+    """How many entries already on this day have exactly these lines
+    (account and amounts, any source). A file exported here and brought
+    back, or uploaded twice, posts nothing twice (#344); a DOCNUM, when the
+    block has one, must match the entry's reference, except that an entry
+    with no reference of its own counts (a bill payment's posting keeps its
+    check number on the payment, not on the journal)."""
     wanted = sorted(
         (ln["account_id"], _q(ln["debit"]), _q(ln["credit"])) for ln in lines
     )
+    found = 0
     for txn in db.query(Transaction).filter(Transaction.date == entry_date).all():
-        if reference and (txn.reference or "") != reference:
+        if reference and (txn.reference or "") not in ("", reference):
             continue
         have = sorted(
             (ln.account_id, _q(ln.debit or 0), _q(ln.credit or 0)) for ln in txn.lines
         )
         if have == wanted:
-            return True
-    return False
+            found += 1
+    return found
+
+
+def _block_key(entry_date, lines: list, reference: str = "") -> tuple:
+    """What tells one block from another within a file: two genuinely
+    identical blocks (two checks alike on one day) both post, because the
+    second is the second of its kind and only one is here yet."""
+    return (
+        entry_date,
+        reference or "",
+        tuple(
+            sorted(
+                (ln["account_id"], _q(ln["debit"]), _q(ln["credit"])) for ln in lines
+            )
+        ),
+    )
 
 
 def _import_ledger_block(
@@ -1380,6 +1397,7 @@ def _import_ledger_block(
     warnings=None,
     adjusting: bool = False,
     posted_by: str = None,
+    seen: dict = None,
 ) -> Transaction:
     """A GENERAL JOURNAL, CHECK, CREDIT CARD, TRANSFER or BILLPMT block as
     the journal-only transaction it is here (#344): the TRNS row and each
@@ -1426,7 +1444,11 @@ def _import_ledger_block(
         )
     if len(lines) < 2:
         raise DataProblem(f"{label}: an entry needs two lines or more")
-    if _same_entry_exists(db, entry_date, lines, doc_num):
+    key = _block_key(entry_date, lines, doc_num)
+    nth = (seen or {}).get(key, 0) + 1
+    if seen is not None:
+        seen[key] = nth
+    if _same_entries(db, entry_date, lines, doc_num) >= nth:
         return None
     source_type = _LEDGER_BLOCK_SOURCES[trns_type]
     if trns_type == "BILLPMT" and warnings is not None:
@@ -1454,7 +1476,9 @@ def _import_ledger_block(
     return txn
 
 
-def _import_deposit(db: Session, trns: dict, spls: list, warnings=None) -> Transaction:
+def _import_deposit(
+    db: Session, trns: dict, spls: list, warnings=None, seen: dict = None
+) -> Transaction:
     """Create a deposit (journal-only Transaction) from IIF TRNS/SPL.
 
     QB IIF DEPOSIT convention: TRNS.AMOUNT positive on the bank account,
@@ -1545,8 +1569,13 @@ def _import_deposit(db: Session, trns: dict, spls: list, warnings=None) -> Trans
 
     # without a DOCNUM, a deposit already here with these lines (a register
     # deposit exported from these books, #344) posts nothing twice
-    if not doc_num and _same_entry_exists(db, deposit_date, journal_lines):
-        return None
+    if not doc_num:
+        key = _block_key(deposit_date, journal_lines)
+        nth = (seen or {}).get(key, 0) + 1
+        if seen is not None:
+            seen[key] = nth
+        if _same_entries(db, deposit_date, journal_lines) >= nth:
+            return None
     txn = create_journal_entry(
         db,
         deposit_date,

@@ -1230,8 +1230,9 @@ def export_register_entries(
         else:
             trnstype = "DEPOSIT"
         cls = _class_name(db, txn.class_id)
-        # the register stores the payee as the entry's description
-        name = txn.description or ""
+        # the register stores the payee as the entry's description; a card
+        # charge's posting prefixes it
+        name = (txn.description or "").removeprefix("CC Charge: ").strip()
         memo = _memo_text(side.description or txn.description)
         lines += _iif_line(
             [

@@ -101,6 +101,24 @@ lists again later (to pick up new customers or vendors, say) posts none; the
 result names any account it created that carries a balance in the file, so
 you can enter the real ones by hand.
 
+An IIF that carries transaction blocks imports those too (a file another
+program wrote, or SlowBooks' own export brought back): invoices, payments,
+sales receipts, estimates, bills and deposits as documents, and since 2.24.0
+checks, card charges, transfers, bill payments and general journal entries
+as the journal-only entries they are here (a BILLPMT lands on the bank
+account and Accounts Payable with the vendor named; the bills it paid stay
+open, since the file does not say which they were). A block already in the
+books, same day and same lines, posts nothing twice, and two genuinely
+identical blocks in one file both post. Tick **This is an accountant's
+file** to post the GENERAL JOURNAL blocks as adjusting entries.
+
+Going the other way, **Interoperability → Export to IIF** writes the whole
+ledger since 2.24.0: the lists, invoices, sales receipts, payments, bills and
+deposits as before, and now checks and register deposits, card charges,
+transfers, bill payments and journal entries, each in the block QuickBooks
+keeps it in. Exported from one company and imported into a fresh one, the
+two trial balances match.
+
 ### Transactions: the Transaction Detail by Account report
 
 The simplest way to bring every transaction across: in QuickBooks Desktop,
