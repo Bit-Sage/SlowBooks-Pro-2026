@@ -1557,7 +1557,7 @@ const ReportsPage = {
             const files = m.files.map(f => `<li style="font-family:var(--mono, monospace); font-size:12px;">${escapeHtml(f)}</li>`).join('');
             const notes = (m.notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
             return `<p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(m.start_date)} &mdash; ${formatDate(m.end_date)}${m.closing_date ? ` · closing date ${formatDate(m.closing_date)}` : ''}</p>
-                <p style="margin-bottom:8px;">Everything an outside reviewer asks for, in one file: the Financial Statements Pack, the General Ledger and Trial Balance, the A/R and A/P agings, each bank reconciliation completed in the period, the Adjusting Journal Entries and Closing Date Exceptions reports, and the audit log since the closing date. Each file is the same report run on its own.</p>
+                <p style="margin-bottom:8px;">${Terms.text('Everything an outside reviewer asks for, in one file: the Financial Statements Pack, the General Ledger and Trial Balance, the A/R and A/P agings, each bank reconciliation completed in the period, the Adjusting Journal Entries and Closing Date Exceptions reports, and the audit log since the closing date. Each file is the same report run on its own.')}</p>
                 <ul style="margin:0 0 12px 18px;">${files}</ul>
                 ${notes ? `<ul style="margin:0 0 12px 18px; color:var(--gray-500);">${notes}</ul>` : ''}
                 <button class="btn btn-primary" onclick="window.open('/api/reports/accountants-package?${qs}','_blank')">Download the package (zip)</button>`;

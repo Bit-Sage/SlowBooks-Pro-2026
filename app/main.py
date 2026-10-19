@@ -812,6 +812,10 @@ _ADMIN_WRITE_PREFIXES = (
     # Turning company-file encryption on or off is an administrator's
     # decision (#290); the route asks for the company's name as well.
     "/api/company-file",
+    # Sending the books to an accountant, opening a copy and applying the
+    # changes back are an administrator's (#346); the copy's own Send
+    # changes back is a read
+    "/api/accountants-copy",
     "/api/companies",
     "/api/migration",
     # Staff records carry SSN, pay rate and W-4 elections: creating or

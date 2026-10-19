@@ -55,21 +55,24 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.23 — Both ways with QuickBooks.** Invoices come in from a QuickBooks
-Desktop Transaction Detail report saved as CSV, with their lines, jobs and
-numbers, open or paid by the report's Open Balance column (#291); the IIF
-export carries an invoice's job, items and quantities the way Intuit's own
-sample files do, so a round trip keeps them (#199); the IIF import names
-the transaction types it doesn't take and counts them (#288). A payment or
-bill payment recorded with an Idempotency-Key is booked once however many
-times the request arrives (#292); editing a posted bill's or invoice's
-lines leaves a DELETE event for every old line (#289); the invoice form
-says that creating one posts it (#293); and the AI guide, the README and
-the docs say what stays on your machine and what a cloud model sees
-(#294). Line quantities keep four decimal places, so an imported 2.125
-stays 2.125 instead of reading 2.12 and losing cents on the next edit.
+**v2.24 — Working with your accountant.** An Accountant role that reads
+everything and posts journal entries only, invited with a one-time
+password and an end date (#340, #345); adjusting entries marked with who
+posted them, reported, and left out of a statement on request (#341); a
+Closing Date Exceptions report of every change made into a closed period
+with the password (#342); the Accountant's Package, one zip of statements,
+ledger, agings, reconciliations, adjustments, exceptions and the audit log
+(#343); the IIF round trip both ways, checks, card charges, transfers, bill
+payments and journal entries included (#344); and SlowBooks' own
+Accountant's Copy: send an encrypted copy with a dividing date, the
+accountant works in their own SlowBooks Pro, and their entries come back
+once as adjusting entries (#346). Also a categorized bank sheet that
+imports as posted transactions (#328), Reclassify Transactions for moving
+many lines at once (#337), the session's open screens at the top of the
+sidebar (#336), and company file encryption on the desktop, with a
+recovery key and an administrator's sign-in to unlock (#290).
 
-Patch releases and everything before 2.23 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.24 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -84,7 +87,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (561 operations in v2.23.5) — built for Claude
+self-documenting local REST API (585 operations in v2.24.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
@@ -232,6 +235,7 @@ Production checklist: **[docs/release-checklist.md](docs/release-checklist.md)**
 | [docs/release-checklist.md](docs/release-checklist.md) | Production deployment checklist |
 | [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md) | Real certs in front of Slowbooks (Caddy, nginx, Traefik) |
 | [docs/cloud-hosting.md](docs/cloud-hosting.md) | Your own books on a cloud server: VPS, Docker, Caddy, backups off the box, what it does and does not give you |
+| [docs/working-with-your-accountant.md](docs/working-with-your-accountant.md) | The Accountant role, adjusting entries, the package, the IIF round trip and the Accountant's Copy |
 | [docs/security-hardening.md](docs/security-hardening.md) | Security pass — what changed, why, how it's tested |
 | [docs/company-file-encryption.md](docs/company-file-encryption.md) | Encrypting the company file: the recovery key, who unlocks it, backups and restores |
 | [docs/hipaa-compliance.md](docs/hipaa-compliance.md) | HIPAA mapping — honest gap list included |

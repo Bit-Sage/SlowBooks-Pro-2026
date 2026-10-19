@@ -48,8 +48,9 @@ def test_a_refused_upload_shows_the_servers_sentence(client):
 
     shown = _shown({"status": 422, "body": real.json()})
     # the journal entry's attachment joined in 2.22.3; the QuickBooks Online
-    # connector's two cases left with it in 2.23.2
-    assert len(shown) == 19
+    # connector's two cases left with it in 2.23.2; the Accountant's Copy's
+    # two (the copy opened, the changes file previewed) joined in 2.24.0
+    assert len(shown) == 21
     for path, message in shown.items():
         assert message == "File is required.", path
 

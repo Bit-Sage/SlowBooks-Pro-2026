@@ -35,7 +35,8 @@ const CompaniesPage = {
     async render() {
         const companies = await API.get('/companies');
         let ac = { is_copy: false, copy: null, sent: [], can_make: false };
-        try { ac = await API.get('/accountants-copy/status'); } catch (e) { /* an older server */ }
+        try { ac = { ...ac, ...((await API.get('/accountants-copy/status')) || {}) }; } catch (e) { /* an older server */ }
+        if (!Array.isArray(ac.sent)) ac.sent = [];
         CompaniesPage._ac = ac;
         let html = `
             <div class="page-header">
@@ -43,9 +44,9 @@ const CompaniesPage = {
                 <div>
                     ${CompaniesPage._isDesktop() ? '<button class="btn btn-secondary" onclick="CompaniesPage.switchCompany()">Switch company…</button> ' : ''}
                     ${ac.is_copy ? '<button class="btn btn-primary" data-accountant-ok onclick="CompaniesPage.sendChanges()">Send changes back…</button> ' : ''}
-                    ${!ac.is_copy && ac.can_make ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showSendToAccountant()">Send to accountant…</button> ' : ''}
-                    ${!ac.is_copy ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showApplyChanges()">Apply accountant\'s changes…</button> ' : ''}
-                    ${CompaniesPage._isDesktop() && !ac.is_copy ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showOpenCopy()">Open accountant\'s copy…</button> ' : ''}
+                    ${!ac.is_copy && ac.can_make ? '<button class="btn btn-secondary" data-admin data-write onclick="CompaniesPage.showSendToAccountant()">Send to accountant…</button> ' : ''}
+                    ${!ac.is_copy ? '<button class="btn btn-secondary" data-admin data-write onclick="CompaniesPage.showApplyChanges()">Apply accountant\'s changes…</button> ' : ''}
+                    ${CompaniesPage._isDesktop() && !ac.is_copy ? '<button class="btn btn-secondary" data-admin data-write onclick="CompaniesPage.showOpenCopy()">Open accountant\'s copy…</button> ' : ''}
                     <button class="btn btn-primary" data-admin onclick="CompaniesPage.showCreate()">+ New Company</button>
                 </div>
             </div>
@@ -142,7 +143,7 @@ const CompaniesPage = {
         fd.append('passphrase', form.passphrase.value);
         try {
             const res = await fetch('/api/accountants-copy/open', { method: 'POST', body: fd });
-            if (!res.ok) throw new Error(await API.responseError(res, 'The copy could not be opened'));
+            if (!res.ok) throw new Error(await API.responseError(res, 'Opening the copy failed'));
             const r = await res.json();
             toast(`${r.name} is on the picker. Switch company… opens it.`);
             closeModal();
@@ -175,7 +176,7 @@ const CompaniesPage = {
         const fd = new FormData();
         fd.append('file', form.file.files[0]);
         const res = await fetch(path, { method: 'POST', body: fd });
-        if (!res.ok) throw new Error(await API.responseError(res, 'The changes file was refused'));
+        if (!res.ok) throw new Error(await API.responseError(res, 'Reading the changes file failed'));
         return res.json();
     },
 

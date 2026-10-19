@@ -827,8 +827,7 @@ const SettingsPage = {
 
     async copyRecoveryKey() {
         const words = ($('#recovery-key-words') || {}).textContent || '';
-        try { await navigator.clipboard.writeText(words); toast('Copied.'); }
-        catch (e) { toast('Select the key and copy it.', 'error'); }
+        await copyToClipboard(words, 'Recovery key');
     },
 
     async saveRecoveryKey() {

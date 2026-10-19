@@ -5,6 +5,109 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.24.0 — Working with your accountant
+
+**An Accountant role** (#340). Settings → Users offers Accountant: a sign-in
+that reads everything, the reports, every list and the audit log included,
+posts journal entries, voids the ones it posted and attaches the support
+behind one, and nothing else; every other write is refused with a sentence
+that says what the role is for. Payroll and HR stay the administrator's.
+Settings → Users also **invites** an accountant (#345): a one-time password
+shown once with the address, an end date if the engagement has one, and
+their own password set at the first sign-in; an ended sign-in is refused
+with the date, and the Users list shows each person's last sign-in.
+
+**Adjusting entries, marked and reported** (#341). A journal entry can be
+marked as an adjusting entry (the accountant's are, always), carries who
+posted it, and the Journal Entries list filters to them. Reports →
+Adjusting Journal Entries lists them for a period as PDF or CSV, and the
+Profit & Loss and Trial Balance run without them on request, so a
+before-and-after is one checkbox.
+
+**Closing Date Exceptions** (#342). Every change made into a closed period
+with the closing-date password is written to the audit log as such, and
+Reports → Closing Date Exceptions lists each use: who, when, the closing
+date at the time, and every row it changed before and after, as PDF or CSV.
+
+**The Accountant's Package** (#343). Reports → Accountant's Package is one
+zip for the period: the Financial Statements Pack, the General Ledger and
+Trial Balance as CSV, the A/R and A/P agings, each bank reconciliation
+completed in the period, the Adjusting Journal Entries and Closing Date
+Exceptions reports, and the audit log since the closing date; the dialog
+lists the files before the download.
+
+**The QuickBooks Desktop round trip, both ways** (#344). The IIF export
+carries checks, card charges, transfers, bill payments and journal entries
+(CHECK, CREDIT CARD, TRANSFER, BILLPMT, GENERAL JOURNAL), so the whole
+ledger reaches QuickBooks Desktop; the IIF import takes the same five
+blocks back as journal entries, a block already in the books posting
+nothing twice, and GENERAL JOURNAL blocks post as adjusting entries on
+request (tick *This is an accountant's file*). The Transaction Detail by
+Account import takes an *Adjusting entries only* mode that refuses the
+file whole if it holds anything but journal entries.
+
+**SlowBooks' own Accountant's Copy** (#346). Companies → Send to accountant
+writes an encrypted copy of the books (a passphrase shown once, your
+sign-ins and secrets left out) with a dividing date. The accountant opens
+it in their own SlowBooks Pro, where it takes journal entries dated on or
+before that date and nothing else, a banner on every page saying so, and
+sends one signed change file back. Apply accountant's changes shows every
+entry first, posts the new ones as adjusting entries in the accountant's
+name, once, and refuses a file from another company or altered on the way.
+The guide is docs/working-with-your-accountant.md.
+
+**A categorized bank sheet imports as posted transactions** (#328). The
+Transaction Pro / SaasAnt layout (Bank Account, Transaction Date, Memo,
+Payee, Account, Amount, by name in any order, the bank named in the
+header or per row) imports under Interoperability's report upload: each
+row the register entry it is, rows sharing the date, payee and memo one
+split entry, a transfer when the account is another bank or card account;
+the file is checked whole first, a row already in the books posts nothing
+twice, and payees not on the lists are added. A switch takes sheets that
+write money out as positive.
+
+**Reclassify Transactions** (#337). Reports → Reclassify Transactions: pick
+an account and a period, tick the lines to move, choose the account they
+belong on and a class, preview, then post the move as one audited change
+naming every line. A bill's own line follows its posting; the bank side of
+an entry and a document's item lines stay put and say why; a move dated
+into a closed period takes the closing-date password and shows on the
+Closing Date Exceptions report. The accountant role may use it.
+
+**Open screens** (#336). The pages, registers, documents and dialog reports
+opened in a session are listed under Open at the top of the sidebar, each
+a link back and each closable: a report with its period, a register by its
+account, a document by its title. The one showing is marked, closing it
+goes to the one before, a reload keeps the list and Close all empties it.
+
+**Company file encryption on the desktop** (#290). Settings → Company File
+Encryption → Turn on (or the box on first-run setup) makes a recovery key,
+shown once with Copy and Save as a text file, encrypts the company file
+under it, and wraps the key for your password in a keyring beside the
+file. The company picker then unlocks the books with an administrator's
+sign-in, or the recovery key; every other administrator unlocks after
+their next sign-in, and one removed, demoted or reset no longer does. New
+recovery key re-keys the file and retires the old one. The recovery key
+opens the file and every backup of it on any machine: a restore of a
+backup made under another key asks for the recovery key it was made under.
+Server Edition keeps COMPANY_FILE_ENCRYPTION_SECRET; the guide is
+docs/company-file-encryption.md.
+
+**Also.** The Companies page on a server install says how a company is
+switched there rather than offering the desktop's picker (#352, Docker);
+an imported journal entry (the lists IIF's opening balances, a Transaction
+Detail by Account journal, a migration's) voids from the page like a
+hand-typed one (#355); and the IIF import's unsupported-type note names
+the types it takes now.
+
+Schema: migration `c2d3e4f5a6b7` (an entry's adjusting flag and who posted
+it, a user's one-time-password flag and end date, the accountants_copies
+table). 585 API operations (the Adjusting Journal Entries, Closing Date
+Exceptions and Accountant's Package reports with their files, the four IIF
+exports, `POST /api/users/invite`, `POST /api/auth/password`, the seven
+`/api/accountants-copy/*` calls, `/api/reclassify/lines` and `POST
+/api/reclassify`, and `POST /api/company-file/encryption/recovery-key`).
+
 ### v2.23.5 — A bookkeeper's first hour
 
 **A SimpleFIN feed that reports every sign the other way round imports

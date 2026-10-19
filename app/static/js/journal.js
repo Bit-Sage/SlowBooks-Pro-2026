@@ -69,7 +69,14 @@ const JournalPage = {
     // no way out. An accountant's sign-in voids only what it posted (#340):
     // the server refuses the rest, so the button is not offered.
     canVoid(e) {
-        if (App.isAccountant && App.isAccountant() && !(e.posted_by && e.posted_by === App.username)) return false;
+        if (typeof App !== 'undefined' && App.isAccountant && App.isAccountant() && !(e.posted_by && e.posted_by === App.username)) return false;
+        if (e.voidable === undefined) {
+            // an entry from a server that does not say (before 2.23.5): a
+            // journal of its own, by its source, and not a reversal
+            const source = e.source_type || '';
+            return !source.endsWith('_void') && !e.voided
+                && ['manual', 'qbo_journal', 'qbo_ledger', 'iif_import', 'qb_ledger_import', 'opening_balance'].includes(source);
+        }
         return !!e.voidable && !e.voided;
     },
 
