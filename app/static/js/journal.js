@@ -59,15 +59,19 @@ const JournalPage = {
         return e.is_adjusting ? ' <span class="badge" title="An adjusting entry" style="font-size:9px;">Adjusting</span>' : '';
     },
 
-    // A journal entry, or a posting the QuickBooks Online import made, voids
-    // here with a reversing entry; a document's own posting (a bill payment,
-    // a deposit...) voids from its document, so its view offers no Void. An
-    // accountant's sign-in voids only what it posted (#340): the server
-    // refuses the rest, so the button is not offered.
+    // A journal entry voids here with a reversing entry: hand-typed, or an
+    // import's (the lists IIF's opening balances, a Transaction Detail by
+    // Account journal, a migration's), or a posting the QuickBooks Online
+    // import made. A document's own posting (a bill payment, a deposit...)
+    // voids from its document, so its view offers no Void. The server says
+    // which is which (voidable); the page used to allow hand-typed and
+    // QuickBooks Online entries only, so a wrong opening-balance import had
+    // no way out. An accountant's sign-in voids only what it posted (#340):
+    // the server refuses the rest, so the button is not offered.
     canVoid(e) {
-        if (e.voided || !['manual', 'qbo_journal', 'qbo_ledger'].includes(e.source_type || '')) return false;
-        if (App.isAccountant && App.isAccountant()) return !!e.posted_by && e.posted_by === App.username;
-        return true;
+        if (App.isAccountant && App.isAccountant() && !(e.posted_by && e.posted_by === App.username)) return false;
+        return !!e.voidable && !e.voided;
+    },
     },
 
     async view(id) {

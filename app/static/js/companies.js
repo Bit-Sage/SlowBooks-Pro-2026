@@ -6,8 +6,10 @@
  * QuickBooks company file). "Switch company…" signs this company out and
  * asks the launcher for its picker (pywebview.api.show_picker); the page
  * cannot switch a browser session, so the button only appears under the
- * desktop shell. On server (PostgreSQL) installs each company is a separate
- * database configured at deploy time.
+ * desktop shell. On server (PostgreSQL, Docker) installs each company is a
+ * separate database, and a server serves the one its DATABASE_URL names:
+ * a second company is opened by a second server pointed at its database
+ * (docs/operations.md, "Several companies on a server").
  */
 const CompaniesPage = {
     _isDesktop() {
@@ -44,7 +46,7 @@ const CompaniesPage = {
                 Each company is stored in its own separate database.
                 ${CompaniesPage._isDesktop()
                     ? 'Switch company takes you back to the company picker; this company is signed out.'
-                    : 'On Server Edition the served company is chosen on the host PC.'}
+                    : 'A server serves one database, the one its DATABASE_URL names. A new company is created as its own database, ready to serve: run a second server pointed at it (on Docker, a second service in docker-compose.yml on another port), or point this one at it and restart. The sign-in page names the company a server serves; it never lists them. See docs/operations.md, "Several companies on a server".'}
             </p>
             <!-- Creating one is the administrator's (POST /api/companies) -->
             <p class="hidden" data-admin-note style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">New company files are created by an administrator.</p>`;
@@ -104,7 +106,7 @@ const CompaniesPage = {
             await API.post('/companies', data);
             toast(CompaniesPage._isDesktop()
                 ? 'Company created. Switch company… opens it.'
-                : 'Company created. The company this server serves is chosen on the host PC.');
+                : `Company created as its own database${data.database_name ? ` (${data.database_name})` : ''}. To open it, run a second server pointed at that database, or point this one at it and restart (docs/operations.md, "Several companies on a server").`);
             closeModal();
             App.navigate('#/companies');
         } catch (err) {
