@@ -36,11 +36,16 @@ const JournalPage = {
         return html;
     },
 
-    // A journal entry, or a posting the QuickBooks Online import made, voids
-    // here with a reversing entry; a document's own posting (a bill payment,
-    // a deposit...) voids from its document, so its view offers no Void.
+    // A journal entry voids here with a reversing entry: hand-typed, or an
+    // import's (the lists IIF's opening balances, a Transaction Detail by
+    // Account journal, a migration's), or a posting the QuickBooks Online
+    // import made. A document's own posting (a bill payment, a deposit...)
+    // voids from its document, so its view offers no Void. The server says
+    // which is which (voidable); the page used to allow hand-typed and
+    // QuickBooks Online entries only, so a wrong opening-balance import had
+    // no way out.
     canVoid(e) {
-        return !e.voided && ['manual', 'qbo_journal', 'qbo_ledger'].includes(e.source_type || '');
+        return !!e.voidable && !e.voided;
     },
 
     async view(id) {

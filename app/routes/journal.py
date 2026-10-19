@@ -23,6 +23,38 @@ from app.services.safe_errors import safe_message
 router = APIRouter(prefix="/api/journal", tags=["journal"])
 
 
+def _journal_sources() -> list[str]:
+    """The source types the page lists: entries that are journals in their
+    own right, with no document behind them. Hand-typed ones, the
+    QuickBooks Online import's journals, the lists IIF's opening balances
+    (and its GENERAL JOURNAL blocks), the Transaction Detail by Account
+    import, Migrate Data's sources, and the Opening Balances page's."""
+    from app.routes.migration import SOURCES
+    from app.services.qb_ledger_import import SOURCE_TYPE as QB_LEDGER
+
+    return [
+        "manual",
+        "qbo_journal",
+        "iif_import",
+        QB_LEDGER,
+        "opening_balance",
+        *[source_type for _, _, source_type in SOURCES.values()],
+    ]
+
+
+def _voidable(txn, voided: bool) -> bool:
+    """Whether the page may offer Void (the route decides for real): a
+    journal of its own that is not a reversal and not voided already. An
+    imported entry (the lists IIF's opening balances, a Transaction Detail
+    by Account journal, a migration's) is one; until now the page offered
+    Void on hand-typed and QuickBooks Online entries only, so a wrong
+    opening-balance import had no way out but the API (a CPA on X, 2.23.5)."""
+    source = txn.source_type or ""
+    if voided or source.endswith("_void"):
+        return False
+    return source in _journal_sources() or source == "qbo_ledger"
+
+
 def _line_dict(line, acct) -> dict:
     """One posted line with its account and every dimension, for the
     list and single-entry responses alike."""
@@ -61,16 +93,11 @@ def list_journal_entries(source_type: str = None, db: Session = Depends(get_db))
         )
         # The journals a migration posted (Migrate Data's sources, the IIF
         # opening balances) are journal entries too, and list here (2.23.2,
-        # NEW-118); their Type names the source.
-        from app.routes.migration import SOURCES
-        from app.services.qb_ledger_import import SOURCE_TYPE as QB_LEDGER
-
-        imported = [source_type for _, _, source_type in SOURCES.values()]
+        # NEW-118); their Type names the source. So do the Opening Balances
+        # page's.
         q = q.filter(
             or_(
-                Transaction.source_type.in_(
-                    ["manual", "qbo_journal", "iif_import", QB_LEDGER, *imported]
-                ),
+                Transaction.source_type.in_(_journal_sources()),
                 (Transaction.source_type == "qbo_ledger")
                 & Transaction.id.in_(report_journals),
             )
@@ -101,6 +128,7 @@ def list_journal_entries(source_type: str = None, db: Session = Depends(get_db))
                 total_debit=float(sum(line.debit for line in txn.lines)),
                 total_credit=float(sum(line.credit for line in txn.lines)),
                 voided=txn.id in voided,
+                voidable=_voidable(txn, txn.id in voided),
             )
         )
     return results
@@ -127,6 +155,7 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
         total_debit=float(sum(line.debit for line in txn.lines)),
         total_credit=float(sum(line.credit for line in txn.lines)),
         voided=reversed_already(db, txn),
+        voidable=_voidable(txn, reversed_already(db, txn)),
     )
 
 

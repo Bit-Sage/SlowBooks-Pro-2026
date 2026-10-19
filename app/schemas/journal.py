@@ -66,3 +66,6 @@ class JournalEntryResponse(BaseModel):
     # A reversing entry stands against it (its own void, or its document's):
     # the page shows "Voided" instead of offering Void again.
     voided: bool = False
+    # The page may offer Void: a journal of its own (hand-typed, imported,
+    # the opening balances), not a reversal, not voided. The route decides.
+    voidable: bool = False
