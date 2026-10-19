@@ -454,14 +454,25 @@ def _server_already_running(port: int) -> bool:
         return False
 
 
+class LockedCompany(RuntimeError):
+    """An encrypted company file whose key is in its keyring (#290): the
+    picker unlocks it with an administrator's sign-in or the recovery key.
+    ``str(exc)`` is the sentence to show."""
+
+
 def launch_company(
     filename: str,
     port: int,
     output=None,
     bind_host: str = "127.0.0.1",
     persist: bool = True,
+    key: bytes | None = None,
 ) -> subprocess.Popen:
     """Point the app at a company file, migrate it, and start the server.
+
+    ``key`` is the company file's key when the picker unlocked it (#290:
+    an administrator's sign-in or the recovery key); otherwise the key is
+    resolved from the environment as before.
 
     ``persist`` records the choice as the desktop app's state (.env
     DATABASE_URL + last-opened) — right for the windowed picker, wrong for
@@ -479,10 +490,16 @@ def launch_company(
     # already-running probe, before the migrations, before the server
     # child, which takes it from the environment start_server() builds. An
     # encrypted file with no key stops here, with one sentence.
-    key = company_file.resolve_key()
+    if key is None:
+        key = company_file.resolve_key()
     company_file.sweep_stale_conversions(db_path)
     if company_file.is_encrypted_file(db_path):
         if key is None:
+            from app.services import company_keyring
+
+            if company_keyring.exists(db_path):
+                # the desktop's own key: the picker asks for a sign-in
+                raise LockedCompany(company_keyring.LOCKED_MESSAGE)
             raise RuntimeError(company_file.NO_KEY_MESSAGE)
         # A wrong key is refused before the migration opens the file
         # writable, so it writes nothing (NEW-109).
@@ -552,6 +569,19 @@ PICKER_HTML = """<!DOCTYPE html>
   #status { margin-top: 16px; font-size: 13px; color: #556; min-height: 18px; }
   #status.error { color: #c0392b; }
   .empty { color: #778; font-size: 13px; margin-bottom: 8px; }
+  #unlock { margin-top: 16px; background: #fff; border: 1px solid #d8dee4; border-radius: 8px; padding: 16px; }
+  #unlock h2 { font-size: 15px; margin: 0 0 4px; color: #1a2b3c; }
+  #unlock p { font-size: 12px; color: #556; margin: 0 0 10px; line-height: 1.5; }
+  #unlock label { display: block; font-size: 12px; color: #334; margin: 8px 0 3px; }
+  #unlock input { width: 100%; box-sizing: border-box; padding: 8px 10px;
+                  border: 1px solid #c6ccd4; border-radius: 6px; font-size: 14px; }
+  #unlock .row { display: flex; gap: 8px; margin-top: 12px; }
+  #unlock button { flex: 1; padding: 9px; border: 0; border-radius: 6px; background: #2f6fed;
+                   color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+  #unlock button.alt { background: #e8ecf1; color: #1a2b3c; }
+  #unlock button:disabled { background: #a9bce0; cursor: default; }
+  #unlock .switch { font-size: 12px; color: #2f6fed; cursor: pointer; background: none; border: 0;
+                    padding: 0; margin-top: 10px; text-decoration: underline; flex: none; font-weight: 400; }
 </style>
 </head>
 <body>
@@ -563,9 +593,74 @@ PICKER_HTML = """<!DOCTYPE html>
     <input id="newname" placeholder="New company name (e.g. Acme Consulting)">
     <button id="createbtn" onclick="createCompany()">+ Create New Company</button>
   </div>
+  <div id="unlock" hidden>
+    <h2 id="unlock-title">Unlock the company file</h2>
+    <p>This company file is encrypted. Sign in as an administrator to open it, or enter its recovery key.</p>
+    <div id="unlock-signin">
+      <label for="unlock-user">Username</label>
+      <input id="unlock-user" autocomplete="username" list="unlock-admins">
+      <datalist id="unlock-admins"></datalist>
+      <label for="unlock-pass">Password</label>
+      <input id="unlock-pass" type="password" autocomplete="current-password">
+    </div>
+    <div id="unlock-recovery" hidden>
+      <label for="unlock-key">Recovery key</label>
+      <input id="unlock-key" autocomplete="off" placeholder="ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567" spellcheck="false">
+    </div>
+    <div class="row">
+      <button id="unlock-btn" onclick="unlock()">Unlock and open</button>
+      <button class="alt" onclick="hideUnlock()">Cancel</button>
+    </div>
+    <button class="switch" id="unlock-switch" onclick="switchUnlock()">Use the recovery key instead</button>
+  </div>
   <div id="status"></div>
 </div>
 <script>
+var unlocking = null;  // the file waiting for its key
+function showUnlock(file, name, admins) {
+  unlocking = file;
+  document.getElementById('unlock-title').textContent = 'Unlock ' + (name || 'the company file');
+  document.getElementById('unlock-admins').innerHTML = (admins || []).map(function (a) { return '<option value="' + esc(a) + '">'; }).join('');
+  if ((admins || []).length === 1) document.getElementById('unlock-user').value = admins[0];
+  document.getElementById('unlock-pass').value = '';
+  document.getElementById('unlock-key').value = '';
+  document.getElementById('unlock').hidden = false;
+  setStatus('');
+  (document.getElementById('unlock-user').value ? document.getElementById('unlock-pass') : document.getElementById('unlock-user')).focus();
+}
+function hideUnlock() {
+  unlocking = null;
+  document.getElementById('unlock').hidden = true;
+  setBusy(false);
+}
+function switchUnlock() {
+  var signin = document.getElementById('unlock-signin'), recovery = document.getElementById('unlock-recovery');
+  var toRecovery = recovery.hidden;
+  signin.hidden = toRecovery; recovery.hidden = !toRecovery;
+  document.getElementById('unlock-switch').textContent = toRecovery ? 'Sign in as an administrator instead' : 'Use the recovery key instead';
+  (toRecovery ? document.getElementById('unlock-key') : document.getElementById('unlock-user')).focus();
+}
+async function unlock() {
+  if (!unlocking) return;
+  var recovery = document.getElementById('unlock-recovery').hidden ? '' : document.getElementById('unlock-key').value;
+  var user = document.getElementById('unlock-user').value, pass = document.getElementById('unlock-pass').value;
+  if (!recovery && !(user && pass)) { setStatus('Enter the username and password, or the recovery key.', true); return; }
+  var btn = document.getElementById('unlock-btn');
+  btn.disabled = true;
+  setStatus('Unlocking… this takes a moment.');
+  var result = await window.pywebview.api.unlock_company(unlocking, user, pass, recovery);
+  if (result && result.success) {
+    window.location.href = result.url;
+    return;
+  }
+  setStatus((result && result.error) || 'Could not unlock the company file.', true);
+  btn.disabled = false;
+  document.getElementById('unlock-pass').value = '';
+  (recovery ? document.getElementById('unlock-key') : document.getElementById('unlock-pass')).focus();
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !document.getElementById('unlock').hidden && e.target.closest('#unlock')) unlock();
+});
 function setStatus(msg, isError) {
   const el = document.getElementById('status');
   el.textContent = msg || '';
@@ -621,6 +716,10 @@ async function openCompany(file, name) {
     // page, throwing 'window.pywebview._returnValuesCallbacks... is
     // not a function' in a background thread.
     window.location.href = result.url;
+  } else if (result && result.locked) {
+    // the desktop's own key (#290): an administrator's sign-in, or the
+    // recovery key, unlocks it here
+    showUnlock(file, name, result.admins);
   } else {
     setStatus((result && result.error) || 'Could not open company.', true);
     setBusy(false);
@@ -1311,6 +1410,51 @@ class PickerApi:
         """
         try:
             self._server = launch_company(filename, self._port, output=self._log_fh)
+        except LockedCompany as exc:
+            # the desktop's own key (#290): the picker asks for an
+            # administrator's sign-in, or the recovery key
+            from app.services import company_keyring, company_service
+
+            ring = company_keyring.load(company_service.company_db_path(filename))
+            return {
+                "success": False,
+                "locked": True,
+                "error": str(exc),
+                "admins": company_keyring.admins(ring),
+            }
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        return {"success": True, "url": f"http://127.0.0.1:{self._port}"}
+
+    def unlock_company(
+        self,
+        filename: str,
+        username: str = "",
+        password: str = "",
+        recovery_key: str = "",
+    ) -> dict:
+        """Unlock an encrypted company file with an administrator's sign-in
+        or its recovery key (#290), then launch it. The key goes to the
+        server child through its environment, as a launcher-resolved key
+        does; nothing is written anywhere."""
+        from app.services import company_keyring, company_service
+
+        db_path = company_service.company_db_path(filename)
+        if db_path is None:
+            return {
+                "success": False,
+                "error": f"Invalid company file name: {filename!r}",
+            }
+        try:
+            key = company_keyring.unlock(
+                db_path, username=username, password=password, recovery_key=recovery_key
+            )
+        except company_keyring.Locked as exc:
+            return {"success": False, "locked": True, "error": str(exc)}
+        try:
+            self._server = launch_company(
+                filename, self._port, output=self._log_fh, key=key
+            )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
         return {"success": True, "url": f"http://127.0.0.1:{self._port}"}
@@ -1677,6 +1821,11 @@ def _start_default_company(
         return launch_company(
             filename, port, bind_host=bind_host, persist=False, output=output
         )
+    except LockedCompany:
+        from app.services import company_keyring
+
+        print(f"ERROR: {company_keyring.HEADLESS_MESSAGE}")
+        return None
     except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"ERROR: {exc}")
         return None

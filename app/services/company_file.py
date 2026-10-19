@@ -24,6 +24,12 @@
 #      derived from it the way app/services/encryption.py derives the
 #      payroll key (PBKDF2-HMAC-SHA256, 480,000 rounds), under this file's
 #      own salt, so the two secrets never share a key.
+#   3. The key this process was given at runtime (set_runtime_key): the
+#      desktop's own, derived from a recovery key and wrapped for each
+#      administrator's password in a keyring beside the file
+#      (app/services/company_keyring.py). The launcher unlocks it at the
+#      picker and hands it on as (1); the switch that turns encryption on
+#      in a running process keeps it here.
 #
 # The key reaches SQLCipher as a raw key (x'…'), which skips SQLCipher's own
 # 256,000-round KDF on every connection: the derivation above is paid once,
@@ -188,16 +194,41 @@ def _env_key() -> bytes | None:
     return key
 
 
+# The key this process was handed at runtime (#290): the desktop's, from
+# the keyring, kept for the process and never written anywhere.
+_runtime_key: bytes | None = None
+
+
+def set_runtime_key(key: bytes | None) -> None:
+    global _runtime_key
+    if key is not None and len(key) != KEY_BYTES:
+        raise ValueError(f"a company file key is {KEY_BYTES} bytes")
+    _runtime_key = key
+
+
+def _has_keyring() -> bool:
+    try:
+        from app.services import company_keyring
+
+        return company_keyring.exists(active_path())
+    except Exception:
+        return False
+
+
 def key_source() -> str | None:
     """Where the key comes from, as the person set it up: "secret"
-    (COMPANY_FILE_ENCRYPTION_SECRET, wherever SlowBooks Pro starts), or
-    "launcher" (a raw key the launcher handed this process from somewhere
-    else), or None. The launcher derives its key from the secret and hands
-    it over, so with the secret set the answer is the secret, not the
-    launcher (2.23.2 gate, W-2 / NEW-108)."""
+    (COMPANY_FILE_ENCRYPTION_SECRET, wherever SlowBooks Pro starts),
+    "keyring" (the desktop's own: a recovery key, wrapped for each
+    administrator's sign-in beside the file), "launcher" (a raw key the
+    launcher handed this process from somewhere else), or None. The
+    launcher derives its key from the secret and hands it over, so with
+    the secret set the answer is the secret, not the launcher (2.23.2
+    gate, W-2 / NEW-108); with a keyring beside the file, the keyring."""
     if _secret():
         return "secret"
-    if _env_key() is not None:
+    if _has_keyring():
+        return "keyring"
+    if _env_key() is not None or _runtime_key is not None:
         return "launcher"
     return None
 
@@ -212,7 +243,7 @@ def resolve_key() -> bytes | None:
     secret = _secret()
     if secret:
         return derive_key(secret)
-    return None
+    return _runtime_key
 
 
 def _key_pragma(key: bytes) -> str:
@@ -351,7 +382,11 @@ def create_sqlite_engine(url: str, key: KeyLike = None, **engine_kwargs):
             return
         if mod is None:
             raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
-        if "key" not in resolved:
+        # looked up once it is found; a file that was plain when the
+        # engine was made and is encrypted now (the switch, #290) resolves
+        # on its first encrypted connection, and a key handed to the
+        # process later is found then, not refused for good
+        if resolved.get("key") is None:
             resolved["key"] = _resolve(key)
         if resolved["key"] is None:
             raise CompanyFileLocked(NO_KEY_MESSAGE)
@@ -443,6 +478,31 @@ def convert(path: Path, key: bytes | None, *, encrypt: bool) -> None:
     logger.info(
         "company file %s is now %s", path.name, "encrypted" if encrypt else "plain"
     )
+
+
+def rekey(path: Path, old_key: bytes, new_key: bytes) -> None:
+    """Re-encrypt a company file in place under another key (a new recovery
+    key, #290): SQLCipher's own ``PRAGMA rekey`` rewrites every page. The
+    caller disposes any engine pool on the file first, as for convert."""
+    path = Path(path)
+    if not is_encrypted_file(path):
+        raise CompanyFileLocked(NO_KEY_MESSAGE)
+    mod = _sqlcipher()
+    if mod is None:
+        raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
+    conn = mod.connect(str(path), isolation_level=None)
+    try:
+        conn.execute("PRAGMA cipher_log_level = NONE")
+        conn.execute(_key_pragma(old_key))
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except Exception as exc:
+            raise CompanyFileLocked(WRONG_KEY_MESSAGE) from exc
+        conn.execute(f"PRAGMA rekey = \"x'{new_key.hex()}'\"")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    finally:
+        conn.close()
+    logger.info("company file %s re-keyed", path.name)
 
 
 def sweep_stale_conversions(path: Path | str | None) -> list[str]:

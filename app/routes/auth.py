@@ -71,6 +71,9 @@ class SetupPayload(StrictModel):
     falls back to the DEFAULT_SETTINGS values if blank."""
 
     password: str = Field(..., min_length=1, max_length=512)
+    # Encrypt this company file now (#290): a desktop makes a recovery key,
+    # shown once in the answer, and wraps the key for this password
+    encrypt: bool = False
 
     # Company
     company_name: Optional[str] = Field(None, max_length=200)
@@ -262,6 +265,7 @@ def set_own_password(
     user.must_change_password = False
     db.commit()
     request.session["must_change_password"] = False
+    _keep_keyring_current(user, payload.new_password, force=True)
     return {"status": "ok"}
 
 
@@ -332,7 +336,88 @@ def setup(
     remember_this_start(request.session)
     remember_this_company(request.session)
     _stash_user(request, admin)
-    return {"status": "ok", "authenticated": True}
+    out = {"status": "ok", "authenticated": True}
+    if payload.encrypt:
+        out.update(_encrypt_at_setup(db, admin, payload.password, payload.company_name))
+    return out
+
+
+def _encrypt_at_setup(db: Session, admin, password: str, company_name) -> dict:
+    """The wizard's "encrypt this company file" (#290): on a desktop, a
+    recovery key is made and shown once; with an operator secret set, the
+    file is encrypted under it; where neither is possible, the books are
+    set up plain and the answer says so, rather than refusing the setup
+    that was just saved."""
+    from app.routes.company_file import turn_on_with_recovery_key
+    from app.services import company_file
+
+    state = company_file.status()
+    if not state["supported"] or state["encrypted"]:
+        return {"encrypted": state["encrypted"], "encryption_note": None}
+    path = company_file.active_path()
+    try:
+        if state["key_source"] in ("secret", "launcher"):
+            key = company_file.resolve_key()
+            import app.database as db_module
+
+            db.close()
+            db_module.engine.dispose()
+            try:
+                company_file.convert(path, key, encrypt=True)
+            finally:
+                db_module.engine.dispose()
+            return {"encrypted": True, "encryption_note": None}
+        if os.environ.get("SLOWBOOKS_DESKTOP") != "1":
+            return {
+                "encrypted": False,
+                "encryption_note": (
+                    "The books are set up plain: set COMPANY_FILE_ENCRYPTION_SECRET "
+                    "where SlowBooks Pro starts, then turn encryption on under "
+                    "Settings."
+                ),
+            }
+        from app.services import company_keyring
+
+        recovery = turn_on_with_recovery_key(
+            db,
+            path,
+            username=admin.username,
+            password=password,
+            company_name=company_name or "",
+        )
+        return {
+            "encrypted": True,
+            "recovery_key": recovery,
+            "recovery_file": company_keyring.recovery_file_text(
+                company_name or "", recovery
+            ),
+        }
+    except HTTPException as exc:
+        return {"encrypted": False, "encryption_note": str(exc.detail)}
+
+
+def _keep_keyring_current(user, password: str, *, force: bool = False) -> None:
+    """An administrator's sign-in, or new password, keeps their wrapping of
+    the company file's key current (#290): the running process has the key;
+    a one-time password is never wrapped (it is replaced in a moment)."""
+    from app.models.users import ROLE_ADMIN
+    from app.services import company_file, company_keyring
+
+    if (
+        user is None
+        or user.role != ROLE_ADMIN
+        or getattr(user, "must_change_password", False)
+    ):
+        return
+    path = company_file.active_path()
+    if path is None or not company_keyring.exists(path):
+        return
+    try:
+        company_keyring.ensure_wrapped(path, user.username, password, force=force)
+    except Exception:  # pragma: no cover - never let the keyring break a sign-in
+        import logging
+
+        logging.getLogger(__name__).exception("could not update the keyring")
 
 
 def _stash_user(request: Request, user) -> None:
@@ -401,6 +486,7 @@ def login(
     remember_this_start(request.session)
     remember_this_company(request.session)
     _stash_user(request, user)
+    _keep_keyring_current(user, payload.password)
     return {"status": "ok", "authenticated": True}
 
 

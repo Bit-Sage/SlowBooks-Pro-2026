@@ -406,6 +406,16 @@
                 minlength: MIN_PASSWORD_LEN,
                 autocomplete: "new-password",
             }) +
+            // Encrypt the company file from the first day (#290): shown on
+            // the desktop, where the key is the person's own; a server
+            // keys the file from its operator secret, under Settings.
+            (desktopWindow
+                ? '<label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;font-size:13px;color:#333;line-height:1.5;">' +
+                  '<input type="checkbox" id="auth-encrypt" style="margin-top:3px;">' +
+                  '<span><strong>Encrypt this company file.</strong> Nothing readable is written to disk; your sign-in unlocks the books, ' +
+                  'and a recovery key shown once opens them if every password is lost. Recommended where the customer list is private ' +
+                  '(a clinic, a law office).</span></label>'
+                : '') +
             '<div style="height:18px"></div>' +
             '<button type="submit" id="auth-submit" style="' +
             primaryButtonStyle() +
@@ -431,6 +441,8 @@
         const out = {
             password: overlay.querySelector("#auth-password").value,
         };
+        const encrypt = overlay.querySelector("#auth-encrypt");
+        if (encrypt && encrypt.checked) out.encrypt = true;
         ids.forEach(function (id) {
             const el = overlay.querySelector("#" + id);
             if (el && el.value.trim() !== "") {
@@ -467,7 +479,13 @@
             btn.disabled = true;
             btn.textContent = "...";
             try {
-                await postJSON(AUTH_SETUP_URL, collectSetupPayload(overlay));
+                const done = await postJSON(AUTH_SETUP_URL, collectSetupPayload(overlay));
+                if (done && done.recovery_key) {
+                    // the wizard's last page: the recovery key, shown once
+                    showRecoveryKey(overlay, done, onSuccess);
+                    return;
+                }
+                if (done && done.encryption_note) window.alert(done.encryption_note);
                 removeOverlay();
                 if (onSuccess) onSuccess();
                 else window.location.reload();
@@ -488,6 +506,49 @@
                 btn.textContent = "Set up & continue";
             }
         });
+    }
+
+    // The recovery key, shown once after setup encrypted the file (#290):
+    // copy it, or save it as a text file, then go on into the books.
+    function showRecoveryKey(overlay, done, onSuccess) {
+        const form = overlay.querySelector("#auth-form");
+        if (!form) return;
+        form.innerHTML =
+            '<h2 style="margin:0 0 6px;font-size:22px;">Your recovery key</h2>' +
+            '<p style="margin:0 0 10px;color:#333;font-size:13px;line-height:1.5;">The company file is encrypted. ' +
+            "<strong>This recovery key is shown once.</strong> It opens the file, and every backup of it, if every " +
+            "administrator's password is lost. Anyone holding it can read the books, so keep it where the backups are not: " +
+            "a safe, a password manager, a sealed envelope.</p>" +
+            '<p id="auth-recovery-key" style="margin:0 0 12px;font-family:monospace;font-size:16px;letter-spacing:0.04em;' +
+            'text-align:center;padding:10px;border:1px solid #c6ccd4;border-radius:6px;user-select:all;">' +
+            escapeText(done.recovery_key) + "</p>" +
+            '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+            '<button type="button" id="auth-copy-key" style="flex:1;padding:8px;border:1px solid #c6ccd4;border-radius:6px;background:#f4f6f8;cursor:pointer;">Copy</button>' +
+            '<button type="button" id="auth-save-key" style="flex:1;padding:8px;border:1px solid #c6ccd4;border-radius:6px;background:#f4f6f8;cursor:pointer;">Save as a text file</button>' +
+            "</div>" +
+            '<button type="button" id="auth-kept-key" style="' + primaryButtonStyle() + '">I have kept it, open the books</button>';
+        const text = done.recovery_file || done.recovery_key;
+        form.querySelector("#auth-copy-key").addEventListener("click", async function () {
+            try { await navigator.clipboard.writeText(done.recovery_key); this.textContent = "Copied"; }
+            catch (e) { this.textContent = "Select the key and copy it"; }
+        });
+        form.querySelector("#auth-save-key").addEventListener("click", async function () {
+            const name = ((existingCompany.name || "company").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "company") + " recovery key.txt";
+            const blob = new Blob([text], { type: "text/plain" });
+            if (window.SlowbooksDesktop && (await window.SlowbooksDesktop.saveFile(blob, name))) { this.textContent = "Saved"; return; }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+            this.textContent = "Saved";
+        });
+        form.querySelector("#auth-kept-key").addEventListener("click", function () {
+            removeOverlay();
+            if (onSuccess) onSuccess();
+            else window.location.reload();
+        });
+        form.querySelector("#auth-kept-key").focus();
     }
 
     // ----- view orchestration ---------------------------------------------

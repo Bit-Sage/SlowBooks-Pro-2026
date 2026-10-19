@@ -186,8 +186,47 @@ def _create_sqlite_backup(
     return {"success": True, "filename": filename, "file_size": file_size}
 
 
-def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
-    """Copy a backup .db over the active company's database file."""
+OTHER_KEY_MESSAGE = (
+    "This backup was made under another key (another recovery key, or "
+    "another install's secret). Enter the recovery key it was made under "
+    "to restore it."
+)
+
+
+def backup_key_problem(filename: str, recovery_key: str | None = None) -> dict | None:
+    """Whether a backup can be opened here: None when it can (plain, or
+    encrypted under this company's key, or under the recovery key given),
+    else {"code", "message"}. Asked before anything is written."""
+    from app.services import company_keyring
+
+    path = backup_path(filename)
+    if path is None or not company_file.is_encrypted_file(path):
+        return None
+    key = company_file.resolve_key()
+    if key is not None:
+        try:
+            company_file.verify_key(path, key)
+            return None
+        except company_file.CompanyFileLocked:
+            pass
+    if (recovery_key or "").strip():
+        try:
+            company_keyring.unlock_with_recovery(path, recovery_key)
+            return None
+        except company_file.CompanyFileLocked:
+            return {
+                "code": "wrong_recovery_key",
+                "message": company_keyring.WRONG_RECOVERY_MESSAGE,
+            }
+    return {"code": "other_key", "message": OTHER_KEY_MESSAGE}
+
+
+def _restore_sqlite_backup(
+    filepath: Path, safe_name: str, recovery_key: str | None = None
+) -> dict:
+    """Copy a backup .db over the active company's database file. A backup
+    encrypted under another key is opened with the recovery key it was made
+    under (#290) and re-keyed, on a staged copy, to this company's key."""
     dest = _sqlite_db_path()
     if dest is None:
         return {
@@ -206,12 +245,39 @@ def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
     key = None
     if live_encrypted or backup_encrypted:
         key = company_file.resolve_key()
-        if key is None:
+        if key is None and live_encrypted:
             return {"success": False, "error": company_file.NO_KEY_MESSAGE}
     staged = None
     try:
         source_path = filepath
+        if backup_encrypted:
+            problem = backup_key_problem(filepath.name, recovery_key)
+            if problem is not None:
+                return {"success": False, "error": problem["message"], **problem}
+            opens_here = key is not None
+            if opens_here:
+                try:
+                    company_file.verify_key(filepath, key)
+                except company_file.CompanyFileLocked:
+                    opens_here = False
+            if not opens_here:
+                # another key: a staged copy is brought to this company's
+                # key (or made plain, for a plain company); the backup file
+                # itself is never changed
+                from app.services import company_keyring
+
+                other = company_keyring.key_from_recovery(recovery_key or "")
+                staged = BACKUP_DIR / (filepath.name + ".restoring")
+                shutil.copy2(filepath, staged)
+                if live_encrypted:
+                    company_file.rekey(staged, other, key)
+                else:
+                    company_file.convert(staged, other, encrypt=False)
+                source_path = staged
+                backup_encrypted = live_encrypted
         if backup_encrypted != live_encrypted:
+            if key is None:
+                return {"success": False, "error": company_file.NO_KEY_MESSAGE}
             # The books stay in the state they are in: a plain backup
             # restored into an encrypted company arrives encrypted, and
             # the other way around. The backup file itself is never
@@ -297,7 +363,7 @@ def create_backup(
         }
 
 
-def restore_backup(db: Session, filename: str) -> dict:
+def restore_backup(db: Session, filename: str, recovery_key: str | None = None) -> dict:
     """Restore a database from a backup file."""
     # Trust boundary: validate filename as a safe basename BEFORE using it
     # to construct any filesystem path. is_relative_to is the
@@ -317,7 +383,7 @@ def restore_backup(db: Session, filename: str) -> dict:
         return {"success": False, "error": f"Backup file not found: {safe_name}"}
 
     if _is_sqlite():
-        return _restore_sqlite_backup(filepath, safe_name)
+        return _restore_sqlite_backup(filepath, safe_name, recovery_key)
 
     params = _parse_db_url(DATABASE_URL)
     env = {"PGPASSWORD": params["password"]}

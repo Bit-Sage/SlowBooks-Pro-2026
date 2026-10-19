@@ -175,6 +175,15 @@ def update_user(
     if "expires_on" in payload.model_fields_set:
         user.expires_on = payload.expires_on
     db.commit()
+    # an administrator removed, demoted or reset no longer unlocks the
+    # company file (#290); a reset one is wrapped again once they set a
+    # password of their own
+    if demoting or deactivating or payload.password:
+        from app.services import company_file, company_keyring
+
+        path = company_file.active_path()
+        if path is not None and company_keyring.exists(path):
+            company_keyring.forget(path, user.username)
     return _user_out(user)
 
 

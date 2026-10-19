@@ -698,21 +698,32 @@ const SettingsPage = {
         } else if (!st.supported) {
             status.textContent = 'This build cannot encrypt the company file.';
         } else if (st.encrypted) {
+            const ring = st.keyring;
+            let keyWords;
+            if (st.key_source === 'secret') keyWords = 'The key comes from COMPANY_FILE_ENCRYPTION_SECRET.';
+            else if (ring) {
+                const who = ring.admins.length ? ring.admins.map(escapeHtml).join(', ') : 'nobody yet';
+                keyWords = `An administrator's sign-in unlocks it (${who}${ring.stale.length ? `; ${ring.stale.map(escapeHtml).join(', ')} at their next sign-in` : ''}), `
+                    + `and so does the recovery key${ring.recovery_made_at ? ` made ${SettingsPage._when(ring.recovery_made_at)}` : ''}. `
+                    + 'Keep the recovery key where the backups are not: it opens the file, and every backup of it, if every administrator\'s password is lost.';
+            } else keyWords = 'The key comes from the launcher.';
             status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}), `
-                + 'and so is every backup of it. The key comes from '
-                + (st.key_source === 'secret' ? 'COMPANY_FILE_ENCRYPTION_SECRET' : 'the launcher') + '.';
-            actions.innerHTML = '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
+                + 'and so is every backup of it. ' + keyWords;
+            actions.innerHTML = (ring ? '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmRecoveryKey()">New recovery key…</button> ' : '')
+                + '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
         } else {
             status.innerHTML = `<strong>Off.</strong> ${escapeHtml(st.file)} is a plain SQLite file: anyone with the file can read the books. `
-                + (st.key_source
-                    ? 'A key is set, so encryption can be turned on.'
+                + (st.can_turn_on
+                    ? (st.desktop_key
+                        ? 'Turning it on makes a recovery key, shown once, and your sign-in unlocks the books from then on.'
+                        : 'A key is set, so encryption can be turned on.')
                     : 'To turn it on, set COMPANY_FILE_ENCRYPTION_SECRET where SlowBooks Pro starts, then start it again.');
-            actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.key_source ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
+            actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.can_turn_on ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
         }
         section.hidden = false;
     },
 
-    async confirmEncryption(enable) {
+    async _companyNameNow() {
         // The company as it is now, not the shell's copy from when the
         // window opened (a rename since would name it wrong).
         let company = (App.settings && App.settings.company_name) || '';
@@ -720,22 +731,52 @@ const SettingsPage = {
             const now = await API.get('/settings');
             if (now && now.company_name) company = now.company_name;
         } catch (e) { /* the shell's copy will do */ }
+        return company;
+    },
+
+    _nameConfirmField(company) {
+        return `<div class="form-group">
+                    <label for="encryption-company-name">Company name</label>
+                    <input type="text" id="encryption-company-name" name="company_name" autocomplete="off" required
+                        placeholder="${escapeHtml(company)}"
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                </div>`;
+    },
+
+    // Submit opens once the name matches and, where the form asks for it,
+    // the password is typed.
+    _encryptionFormCheck(form) {
+        const named = form.company_name.value.trim().toLowerCase() === SettingsPage._encryptionName;
+        const pw = form.querySelector('[name=password]');
+        form.querySelector('button[type=submit]').disabled = !(named && (!pw || pw.value.length > 0));
+    },
+
+    async confirmEncryption(enable) {
+        const company = await SettingsPage._companyNameNow();
         SettingsPage._encryptionName = company.trim().toLowerCase();
+        const st = SettingsPage._companyFile || {};
+        const desktopKey = enable && st.desktop_key;
         const what = enable
             ? `<p style="margin:0 0 8px;"><strong>This rewrites the company file encrypted.</strong> From then on the file, and every backup
                 of it, opens only with the key; without the key the books are unreadable, including to SlowBooks Pro.</p>`
+              + (desktopKey
+                ? `<p style="margin:0 0 8px;">SlowBooks Pro makes a <strong>recovery key</strong> and shows it once: write it down or save the file,
+                    and keep it where the backups are not. Your sign-in unlocks the books from then on; every other administrator's does
+                    after their next sign-in.</p>`
+                : '')
             : `<p style="margin:0 0 8px;"><strong>This rewrites the company file as plain SQLite.</strong> Anyone with the file can read
-                the books again.</p>`;
+                the books again${st.keyring ? ', and the recovery key is retired' : ''}.</p>`;
         openModal(enable ? 'Turn on company file encryption' : 'Turn off company file encryption', `
             <form id="encryption-form" onsubmit="SettingsPage.changeEncryption(event, ${enable})">
                 ${what}
                 <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name to confirm.</p>
-                <div class="form-group">
-                    <label for="encryption-company-name">Company name</label>
-                    <input type="text" id="encryption-company-name" name="company_name" autocomplete="off" required
-                        placeholder="${escapeHtml(company)}"
-                        oninput="this.form.querySelector('button[type=submit]').disabled = this.value.trim().toLowerCase() !== SettingsPage._encryptionName">
-                </div>
+                ${SettingsPage._nameConfirmField(company)}
+                ${desktopKey ? `<div class="form-group">
+                    <label for="encryption-password">Your password</label>
+                    <input type="password" id="encryption-password" name="password" autocomplete="current-password" required
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">The key is wrapped for it, so your sign-in unlocks the books.</div>
+                </div>` : ''}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn ${enable ? 'btn-primary' : 'btn-danger'}" disabled>${enable ? 'Encrypt the company file' : 'Remove the encryption'}</button>
@@ -750,10 +791,91 @@ const SettingsPage = {
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = enable ? 'Encrypting…' : 'Rewriting…';
+        const body = { enabled: enable, company_name: form.company_name.value };
+        if (form.password) body.password = form.password.value;
         try {
-            const result = await API.post('/company-file/encryption', { enabled: enable, company_name: form.company_name.value });
+            const result = await API.post('/company-file/encryption', body);
             closeModal();
-            toast(result.encrypted ? 'The company file is encrypted.' : 'The company file is plain SQLite again.');
+            if (result.recovery_key) SettingsPage.showRecoveryKey(result, 'The company file is encrypted.');
+            else toast(result.encrypted ? 'The company file is encrypted.' : 'The company file is plain SQLite again.');
+            SettingsPage.loadCompanyFile();
+        } catch (err) {
+            toast(err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = label;
+        }
+    },
+
+    // The recovery key, the one time it is shown (#290): copied, or saved
+    // as a text file (through the desktop bridge where there is one).
+    showRecoveryKey(result, lead) {
+        SettingsPage._recoveryFile = result.recovery_file || result.recovery_key;
+        openModal('Your recovery key', `
+            <p style="margin:0 0 8px;">${escapeHtml(lead)} <strong>This recovery key is shown once.</strong> It opens the company file,
+                and every backup of it, if every administrator's password is lost. Anyone holding it can read the books, so keep it
+                where the backups are not: a safe, a password manager, a sealed envelope.</p>
+            <p style="margin:0 0 12px; font-family:var(--mono, monospace); font-size:16px; letter-spacing:0.04em; text-align:center;
+                padding:10px; border:1px solid var(--gray-200); border-radius:4px; user-select:all;" id="recovery-key-words">${escapeHtml(result.recovery_key)}</p>
+            <div class="form-actions" style="justify-content:space-between;">
+                <div>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.copyRecoveryKey()">Copy</button>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.saveRecoveryKey()">Save as a text file</button>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="closeModal()">I have kept it</button>
+            </div>`);
+    },
+
+    async copyRecoveryKey() {
+        const words = ($('#recovery-key-words') || {}).textContent || '';
+        try { await navigator.clipboard.writeText(words); toast('Copied.'); }
+        catch (e) { toast('Select the key and copy it.', 'error'); }
+    },
+
+    async saveRecoveryKey() {
+        const company = ((App.settings && App.settings.company_name) || 'company').replace(/[^A-Za-z0-9 _-]+/g, '').trim() || 'company';
+        const name = `${company} recovery key.txt`;
+        const blob = new Blob([SettingsPage._recoveryFile || ''], { type: 'text/plain' });
+        if (window.SlowbooksDesktop && await window.SlowbooksDesktop.saveFile(blob, name)) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+    },
+
+    async confirmRecoveryKey() {
+        const company = await SettingsPage._companyNameNow();
+        SettingsPage._encryptionName = company.trim().toLowerCase();
+        openModal('Make a new recovery key', `
+            <form id="encryption-form" onsubmit="SettingsPage.newRecoveryKey(event)">
+                <p style="margin:0 0 8px;"><strong>This retires the recovery key you have.</strong> The company file is re-keyed under the
+                    new one and shown once; your sign-in unlocks it at once, every other administrator's after their next sign-in.
+                    Backups made before today open with the old recovery key only.</p>
+                <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name and your password to confirm.</p>
+                ${SettingsPage._nameConfirmField(company)}
+                <div class="form-group">
+                    <label for="encryption-password">Your password</label>
+                    <input type="password" id="encryption-password" name="password" autocomplete="current-password" required
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" disabled>Make a new recovery key</button>
+                </div>
+            </form>`);
+    },
+
+    async newRecoveryKey(e) {
+        e.preventDefault();
+        const form = e.target;
+        const btn = form.querySelector('button[type=submit]');
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Re-keying…';
+        try {
+            const result = await API.post('/company-file/encryption/recovery-key', { company_name: form.company_name.value, password: form.password.value });
+            closeModal();
+            SettingsPage.showRecoveryKey(result, 'The company file is re-keyed.');
             SettingsPage.loadCompanyFile();
         } catch (err) {
             toast(err.message, 'error');
@@ -1362,21 +1484,39 @@ const SettingsPage = {
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Restoring…';
-        const send = allowOther => API.post('/backups/restore',
-            allowOther ? { filename, allow_other_company: true } : { filename });
+        const body = { filename };
+        const send = () => API.post('/backups/restore', body);
         try {
             let result;
-            try {
-                result = await send(false);
-            } catch (err) {
-                // Another company's backup: say whose, and ask a second time.
-                if (!(err.status === 409 && err.detail && err.detail.code === 'other_company')) throw err;
-                if (!confirm(`${err.message}\n\nRestore it over this company anyway?`)) {
-                    btn.disabled = false;
-                    btn.textContent = label;
-                    return;
+            // Another company's backup: say whose, and ask a second time. A
+            // backup encrypted under another key (#290): ask for the
+            // recovery key it was made under, and send again with it.
+            for (;;) {
+                try {
+                    result = await send();
+                    break;
+                } catch (err) {
+                    if (err.status === 409 && err.detail && err.detail.code === 'other_company') {
+                        if (!confirm(`${err.message}\n\nRestore it over this company anyway?`)) {
+                            btn.disabled = false;
+                            btn.textContent = label;
+                            return;
+                        }
+                        body.allow_other_company = true;
+                        continue;
+                    }
+                    if (err.status === 409 && err.detail && (err.detail.code === 'other_key' || err.detail.code === 'wrong_recovery_key')) {
+                        const typed = prompt(`${err.message}\n\nRecovery key:`, '');
+                        if (!typed) {
+                            btn.disabled = false;
+                            btn.textContent = label;
+                            return;
+                        }
+                        body.recovery_key = typed.trim();
+                        continue;
+                    }
+                    throw err;
                 }
-                result = await send(true);
             }
             closeModal();
             SettingsPage._leaving = true;  // the books were replaced; nothing here to keep
