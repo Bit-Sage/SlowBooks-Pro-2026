@@ -620,7 +620,10 @@ def apply(db: Session, content: bytes, *, posted_by: str = "") -> dict:
             e["description"] or "Accountant's adjustment",
             lines,
             source_type=SOURCE_TYPE,
-            reference=f"AC:{seen['copy_id'][:8]}:{e['ref']}",
+            # the accountant's own numbering when they gave one (AJE-7),
+            # else the copy and the entry it came from
+            reference=(e.get("reference") or "").strip()
+            or f"AC:{seen['copy_id'][:8]}:{e['ref']}",
             is_adjusting=True,
             posted_by=f"accountant:{who}"[:100],
         )

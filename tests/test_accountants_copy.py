@@ -276,3 +276,18 @@ def test_the_pages_offer_the_copy_and_say_when_they_are_one():
     app = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
     assert "if (a.accountants_copy && !document.getElementById('ac-banner'))" in app
     assert "Send changes back</a> when they are in." in app
+
+
+def test_an_applied_entry_is_a_journal_of_its_own_and_keeps_the_accountants_reference():
+    """The owner's Journal Entries page lists what came back from the copy
+    (it lists journals by their source, and the copy's is one), and an entry
+    the accountant numbered (AJE-7) keeps that number when applied; one
+    without a reference carries the copy and the entry it came from."""
+    import inspect
+
+    from app.routes.journal import _journal_sources
+
+    assert svc.SOURCE_TYPE in _journal_sources()
+    source = inspect.getsource(svc.apply)
+    assert 'reference=(e.get("reference") or "").strip()' in source
+    assert "AC:{seen['copy_id'][:8]}:{e['ref']}" in source

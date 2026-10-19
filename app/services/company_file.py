@@ -197,13 +197,18 @@ def _env_key() -> bytes | None:
 # The key this process was handed at runtime (#290): the desktop's, from
 # the keyring, kept for the process and never written anywhere.
 _runtime_key: bytes | None = None
+# Bumped whenever the runtime key changes (a new recovery key re-keys the
+# file under another key): an engine that cached the key it resolved looks
+# again, rather than keying its next connection with the old one.
+_key_generation = 0
 
 
 def set_runtime_key(key: bytes | None) -> None:
-    global _runtime_key
+    global _runtime_key, _key_generation
     if key is not None and len(key) != KEY_BYTES:
         raise ValueError(f"a company file key is {KEY_BYTES} bytes")
     _runtime_key = key
+    _key_generation += 1
 
 
 def _has_keyring() -> bool:
@@ -386,8 +391,9 @@ def create_sqlite_engine(url: str, key: KeyLike = None, **engine_kwargs):
         # engine was made and is encrypted now (the switch, #290) resolves
         # on its first encrypted connection, and a key handed to the
         # process later is found then, not refused for good
-        if resolved.get("key") is None:
+        if resolved.get("key") is None or resolved.get("generation") != _key_generation:
             resolved["key"] = _resolve(key)
+            resolved["generation"] = _key_generation
         if resolved["key"] is None:
             raise CompanyFileLocked(NO_KEY_MESSAGE)
         _apply_key(dbapi_conn, resolved["key"])

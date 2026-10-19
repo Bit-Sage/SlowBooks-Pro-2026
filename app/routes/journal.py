@@ -35,12 +35,17 @@ def _journal_sources() -> list[str]:
     from app.routes.migration import SOURCES
     from app.services.qb_ledger_import import SOURCE_TYPE as QB_LEDGER
 
+    from app.services.accountants_copy import SOURCE_TYPE as ACCOUNTANTS_COPY
+
     return [
         "manual",
         "qbo_journal",
         "iif_import",
         QB_LEDGER,
         "opening_balance",
+        # an accountant's entry applied from their copy (#346): a journal
+        # of its own on the page, voidable like any other
+        ACCOUNTANTS_COPY,
         *[source_type for _, _, source_type in SOURCES.values()],
     ]
 
