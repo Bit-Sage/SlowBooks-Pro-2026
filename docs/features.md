@@ -352,7 +352,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 ## System & Administration
 - **Dark Mode** — Toggle between QB2003 Blue theme and dark mode (Alt+D or toolbar button). Persists in localStorage
 - **Backup/Restore** — Create, download and restore backups from Settings. Backups are named for their company and listed per company; a restore takes a safety copy first, asks twice for another company's backup, and refuses a newer version's
-- **Multi-Company** — Support for multiple company databases, switchable from UI
+- **Multi-Company** — Each company is its own database. The desktop apps switch between company files from the Companies page; a server (Docker / PostgreSQL) serves one database per server, and a second company is a second server pointed at its database (see [operations.md](operations.md), "Several companies on a server")
 - **Global Search** — Unified server-side search across customers, vendors, items, invoices, estimates, and payments
 - **Attachments** — Upload files (PDF, images) to invoices, bills, expenses, estimates, purchase orders, vendor credits, vendors, customers and (v2.22.3, #281) journal entries — the receipt behind a manual entry, such as an owner paying a business expense personally — with MIME type and extension validation
 - **Bank Rules** — Auto-categorize imported bank transactions with pattern-matching rules
