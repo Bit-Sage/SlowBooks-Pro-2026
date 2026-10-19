@@ -185,6 +185,7 @@ const App = {
         App._marking = true;
         setTimeout(() => { App._marking = false; }, 0);
         App.addressShown();
+        App.screenShown(null);  // the dialog's own screen, with its title (#336)
     },
     editingDialog() {
         const overlay = $('#modal-overlay'), m = $('#modal');
@@ -344,6 +345,151 @@ const App = {
     // the view was pushed onto becomes the page it opened over, and a
     // refresh (App.navigate(location.hash) after a save), a reload or
     // Back cannot bring the closed view back (NEW-23).
+    // ---- Open screens (#336) -------------------------------------------------
+    // Working a close means moving between a Profit & Loss, a bank register
+    // and a payroll register over and over, each move a scroll through the
+    // whole sidebar. The screens opened in this browser session (pages,
+    // registers, documents, and the dialog reports with their dates) are
+    // listed under "Open" at the top of the sidebar, each a link back and
+    // each closable; sessionStorage keeps the list for the session, by
+    // address, so a reload keeps it and a new window starts clean.
+    OPEN_TABS_KEY: 'slowbooks-open-screens',
+    OPEN_TABS_MAX: 12,
+    _openTabs: null,
+
+    openTabs() {
+        if (App._openTabs) return App._openTabs;
+        let list = [];
+        try { list = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || '[]'); } catch (e) { list = []; }
+        if (!Array.isArray(list)) list = [];
+        App._openTabs = list.filter(t => t && typeof t.key === 'string' && typeof t.label === 'string');
+        return App._openTabs;
+    },
+
+    _saveOpenTabs() {
+        try { sessionStorage.setItem(App.OPEN_TABS_KEY, JSON.stringify(App.openTabs())); } catch (e) { /* no storage: the list lives for the page */ }
+    },
+
+    // The address a screen is listed by: the hash without its '#', the
+    // query included (a report with its dates is its own screen).
+    _screenKey() { return (location.hash || '#/').replace(/^#/, '') || '/'; },
+
+    // Words for a report's period, from its address: the period's name, or
+    // the dates of a custom range, or an as-of date.
+    _periodWords(query) {
+        const names = {
+            this_month: 'this month', this_quarter: 'this quarter', this_year: 'this year',
+            this_year_to_date: 'this year to date', last_month: 'last month',
+            last_quarter: 'last quarter', last_year: 'last year', last_year_to_date: 'last year to date',
+        };
+        if (query.period && names[query.period]) return names[query.period];
+        if (query.as_of_date) return `as of ${formatDate(query.as_of_date)}`;
+        if (query.start_date && query.end_date) return `${formatDate(query.start_date)} – ${formatDate(query.end_date)}`;
+        if (query.year) return String(query.year);
+        return '';
+    },
+
+    // The screen's own name: an open dialog's title (a report, a document)
+    // with its period, else the page's heading, else the route's label.
+    _screenLabel(route) {
+        const { query } = App.parseHash(location.hash || '#/');
+        const overlay = $('#modal-overlay'), modal = $('#modal');
+        const dialog = overlay && modal && !overlay.classList.contains('hidden')
+            && modal.dataset.address === (location.hash || '#/');
+        let label = '';
+        if (dialog) {
+            label = ($('#modal-title') || {}).textContent || '';
+            const when = App._periodWords(query);
+            if (when) label = `${label} · ${when}`;
+        } else {
+            const h2 = $('#page-content h2');
+            const own = h2 && [...h2.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+            if (own) label = own.textContent;
+        }
+        label = (label || (route && route.label) || '').replace(/\s+/g, ' ').trim();
+        return label.length > 48 ? `${label.slice(0, 47)}…` : label;
+    },
+
+    // A screen shown: listed (or its label refreshed) and the list redrawn.
+    // The Dashboard and the Report Center are one click away already.
+    screenShown(route) {
+        const key = App._screenKey();
+        if (key === '/' || key === '/reports') { App.renderOpenTabs(); return; }
+        const label = App._screenLabel(route);
+        if (!label) { App.renderOpenTabs(); return; }
+        const tabs = App.openTabs();
+        // the history entry's own number (App.entryState): a screen whose
+        // address was replaced on the same entry (a report view over the
+        // Report Center it opened on, a period change in the open report)
+        // is the same screen under its new address, not a second one
+        const n = history.state && typeof history.state.n === 'number' ? history.state.n : null;
+        const found = tabs.find(t => t.key === key) || (n !== null ? tabs.find(t => t.n === n) : null);
+        if (found) { found.key = key; found.label = label; found.n = n; }
+        else {
+            tabs.push({ key, label, n });
+            while (tabs.length > App.OPEN_TABS_MAX) tabs.shift();
+        }
+        App._saveOpenTabs();
+        App.renderOpenTabs();
+    },
+
+    closeTab(key) {
+        const tabs = App.openTabs();
+        const i = tabs.findIndex(t => t.key === key);
+        if (i < 0) return;
+        tabs.splice(i, 1);
+        App._saveOpenTabs();
+        if (App._screenKey() === key) {
+            // the screen closed is the one showing: the one before it in
+            // the list, else the Dashboard
+            const next = tabs[i - 1] || tabs[i] || null;
+            const overlay = $('#modal-overlay');
+            if (overlay && !overlay.classList.contains('hidden')) closeModal({ keepAddress: true });
+            App.navigate(next ? `#${next.key}` : '#/');
+            return;
+        }
+        App.renderOpenTabs();
+    },
+
+    closeAllTabs() {
+        App._openTabs = [];
+        App._saveOpenTabs();
+        App.renderOpenTabs();
+    },
+
+    renderOpenTabs() {
+        const list = $('#sidebar .nav-links');
+        if (!list) return;
+        let group = $('#open-screens');
+        const tabs = App.openTabs();
+        if (!tabs.length) { if (group) group.remove(); return; }
+        if (!group) {
+            group = document.createElement('li');
+            group.id = 'open-screens';
+            group.className = 'open-screens';
+            list.insertBefore(group, list.firstElementChild);
+        }
+        const here = App._screenKey();
+        const focused = document.activeElement && document.activeElement.closest('#open-screens');
+        const keep = focused ? focused.dataset.key : null;
+        group.innerHTML = `
+            <div class="nav-section open-screens__head"><span id="open-screens-label">Open</span>
+                ${tabs.length > 1 ? `<button type="button" class="open-screens__clear" onclick="App.closeAllTabs()" aria-label="Close every open screen">Close all</button>` : ''}
+            </div>
+            <ul class="open-screens__list" aria-labelledby="open-screens-label">${tabs.map(t => `
+                <li class="open-screens__item${t.key === here ? ' open-screens__item--here' : ''}">
+                    <a href="#${escapeHtml(t.key)}" class="nav-link open-screens__link${t.key === here ? ' active' : ''}" data-key="${escapeHtml(t.key)}"${t.key === here ? ' aria-current="page"' : ''}
+                        title="${escapeHtml(t.label)}">${escapeHtml(t.label)}</a>
+                    <button type="button" class="open-screens__close" data-key="${escapeHtml(t.key)}" onclick="App.closeTab(this.dataset.key)"
+                        aria-label="Close ${escapeHtml(t.label)}">&times;</button>
+                </li>`).join('')}
+            </ul>`;
+        if (keep) {
+            const again = group.querySelector(`.open-screens__close[data-key="${CSS.escape(keep)}"]`) || group.querySelector('.open-screens__link');
+            if (again) again.focus();
+        }
+    },
+
     dialogClosed() {
         const under = App._dialogUnder;
         App._dialogUnder = null;
@@ -352,6 +498,7 @@ const App = {
         // is still behind it, so the toolbar's Back follows (NEW-30)
         history.replaceState(history.state, '', under);
         App.addressShown();
+        App.renderOpenTabs();
     },
 
     // The page a document's or a view's address opens over: the list route
@@ -489,6 +636,7 @@ const App = {
             if (adminOnly()) return showAdminOnly();
             $('#page-content').innerHTML = html;
             App.setStatus(`${route.label} — Ready`);
+            App.screenShown(route);  // listed under Open (#336)
             if (route.mount) App._pageCleanup = route.mount();
             // Back to a page left by one of its own rows (the chart's
             // account links to a register or a drill-down): the keyboard
@@ -1706,6 +1854,7 @@ const App = {
         // on a donor's screen). loadCompanySettings never rejects.
         App.loadCompanySettings().then(() => {
             App.applyTerminology();
+            App.renderOpenTabs();  // the session's open screens (#336)
             App.navigate(location.hash || '#/');
         });
     },

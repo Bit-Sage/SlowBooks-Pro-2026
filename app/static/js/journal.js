@@ -72,7 +72,6 @@ const JournalPage = {
         if (App.isAccountant && App.isAccountant() && !(e.posted_by && e.posted_by === App.username)) return false;
         return !!e.voidable && !e.voided;
     },
-    },
 
     async view(id) {
         const entry = await API.get(`/journal/${id}`);

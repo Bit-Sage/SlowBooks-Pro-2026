@@ -2134,7 +2134,8 @@ def test_a_sidebar_link_draws_the_ring_on_all_four_sides_as_painted(
     try:
         _no_splash(page)
         _sidebar(page, handled, "#/customers")
-        page.focus('#sidebar a[href="#/customers"]')
+        # the menu's own Customers link, not the Open group's (#336) above it
+        page.focus('#sidebar .nav-link[data-page="customers"]')
         page.keyboard.press("Shift+Tab")
         for href in ("#/", "#/customers", "#/jobs"):
             at = page.evaluate("() => document.activeElement.getAttribute('href')")
@@ -3398,7 +3399,9 @@ def test_every_report_center_card_is_reached_and_opened_by_the_keyboard(
         _no_splash(page)
         _visit(page, handled, "#/reports")
         cards = page.evaluate(CARD_LIST)
-        assert len(cards) == 19, cards
+        assert (
+            len(cards) == 23
+        ), cards  # 2.24.0: four accountant's cards (#341–#343, #337)
         for c in cards:
             view = c["key"].split(":", 1)[1]
             assert c["href"] == f"#/reports/{view}", c

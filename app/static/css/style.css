@@ -526,6 +526,27 @@ body {
     border-left-color: var(--focus-halo);
 }
 
+/* Open screens (#336): the session's working set, at the top of the menu.
+   Each row is a link back and an × that closes it; the one showing is
+   marked as the active page link is. */
+.open-screens { list-style: none; }
+.open-screens__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-right: 10px; }
+/* full colour, no opacity: the sidebar's text colour meets AA on the navy
+   and a faded × did not (4.1:1) */
+.open-screens__clear {
+    background: none; border: 0; padding: 0 2px; font: inherit; font-size: 9px; letter-spacing: 0.04em;
+    text-transform: none; color: var(--text-on-navy); cursor: pointer;
+}
+.open-screens__clear:hover { text-decoration: underline; }
+.open-screens__list { list-style: none; margin: 0; padding: 0; }
+.open-screens__item { display: flex; align-items: stretch; }
+.open-screens__link { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; padding-right: 4px; }
+.open-screens__close {
+    flex: 0 0 auto; width: 22px; margin-right: 6px; background: none; border: 0; border-radius: 3px;
+    color: var(--text-on-navy); font-size: 14px; line-height: 1; cursor: pointer;
+}
+.open-screens__close:hover { color: #ffffff; background: rgba(255,255,255,0.12); }
+
 .nav-icon {
     width: 16px;
     text-align: center;

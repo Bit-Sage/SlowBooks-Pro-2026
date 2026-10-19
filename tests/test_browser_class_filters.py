@@ -125,7 +125,9 @@ def test_the_ledger_shows_the_class_column_and_its_pickers_filter_it(
         assert len(exports) == 2 and all(f"class_id={site['id']}" in e for e in exports)
 
         # the account picker too; both on the address
-        page.get_by_label("Account").select_option(str(accounts["6000"]["id"]))
+        page.get_by_label("Account", exact=True).select_option(
+            str(accounts["6000"]["id"])
+        )
         settle(page, handled)
         page.wait_for_function(
             "() => document.querySelectorAll('#report-content h3').length === 1"
@@ -698,13 +700,13 @@ def test_the_warn_setting_starts_the_deposit_picker_blank_and_asks(
             page.check(box)
             deposited_before = len(_ok(company.get("/api/deposits?limit=50")))
             # Cancel: nothing is deposited and the page stays
-            page.get_by_role("button", name="Make Deposit").click()
+            page.get_by_role("button", name="Make Deposit", exact=True).click()
             settle(page, handled)
             assert len(dialogs) == 1 and "reported under Uncategorized" in dialogs[0]
             assert len(_ok(company.get("/api/deposits?limit=50"))) == deposited_before
             assert page.is_checked(box)
             # OK: deposited, under Uncategorized
-            page.get_by_role("button", name="Make Deposit").click()
+            page.get_by_role("button", name="Make Deposit", exact=True).click()
             settle(page, handled)
             page.wait_for_function(
                 f'() => !document.querySelector("{box}")', timeout=5000
