@@ -207,7 +207,7 @@ def test_the_page_counts_the_journal_entries():
     )
     assert "journals: 'Journal entries'" in js
     assert (
-        "'checks', 'journals', 'time_entries']" in js
+        "'checks', 'journals', 'time_entries', 'posted', 'splits']" in js
     )  # time joined the count in 2.23.4
 
 

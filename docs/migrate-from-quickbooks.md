@@ -155,6 +155,30 @@ as QuickBooks', and a pay run never picks it up. The whole file is checked
 against QuickBooks' own Total rows before anything is written, and refused
 whole if it does not add up; a second upload posts nothing twice.
 
+### A categorized bank sheet (the Transaction Pro / SaasAnt layout)
+
+A bookkeeper catching up a client's books often cleans the bank export in a
+spreadsheet, adds the account each line belongs to, and bulk-posts the sheet
+with a paid importer. The sheet is the finished work, and **Interoperability →
+Import from Report CSV** takes it as it is. Its columns, in any order:
+
+| Column | Meaning |
+|---|---|
+| Bank Account | the bank or card account the money moved through: named in the header itself ("Bank Account BofA 9959", the cells left empty), or on each row; the whole name, part of it, or the digits a statement shows |
+| Transaction Date | the date |
+| Memo | the line's memo |
+| Payee | who was paid, or who paid |
+| Account | the other side: the expense, income or other account, by number, name or Parent:Child path; another bank or card account makes the row a transfer |
+| Amount | money out negative, money in positive; tick *In this sheet money out is positive* when yours is the other way round |
+
+Each row posts as the register entry it is. Rows that share the bank account,
+date, payee and memo post as one entry split across their accounts (a loan
+payment's principal and interest). The whole file is checked first and refused
+whole with the reasons if a bank account or an account is not found or a date
+or amount cannot be read. A row already in the books posts nothing twice.
+Payees not on the Vendors (money out) or Customers (money in) list are added
+and named in the result. CSV or Excel.
+
 ### What does not come across yet
 
 Payroll history (pay stubs and liabilities), estimates and purchase orders

@@ -198,6 +198,7 @@ async def csv_import_accounts(
 async def csv_import_qb_report(
     file: UploadFile = File(...),
     adjusting_only: bool = Form(False),
+    outflow_positive: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     """Import a QuickBooks Desktop report CSV — the documented fallback
@@ -218,9 +219,12 @@ async def csv_import_qb_report(
     # ``adjusting_only`` (#344): the report is an accountant's General
     # Journal entries; anything else in it is refused whole, and what posts
     # is marked adjusting in the sign-in's name
+    # ``outflow_positive`` (#328): a categorized bank sheet whose amounts
+    # read money out as positive
     return import_qb_report(
         db,
         content,
         adjusting_only=adjusting_only,
         posted_by=db.info.get("acting_username"),
+        outflow_positive=outflow_positive,
     )

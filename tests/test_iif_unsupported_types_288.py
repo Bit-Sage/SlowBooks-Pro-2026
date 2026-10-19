@@ -1,9 +1,10 @@
 """An IIF block of a type the importer doesn't take is named, not dropped
 (#288). The dispatch covers INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and
-DEPOSIT; a GENERAL JOURNAL block used to be skipped without a word, so a
-mixed file imported its invoices and lost the rest silently. Validate names
-the type and the blocks; the import counts them with their identity, and
-every parsed block is accounted for.
+DEPOSIT, and since 2.24.0 CHECK, CREDIT CARD, TRANSFER, BILLPMT and GENERAL
+JOURNAL (#344); a block of any other type (a CREDIT MEMO, a PURCHORD) used
+to be skipped without a word, so a mixed file imported its invoices and lost
+the rest silently. Validate names the type and the blocks; the import counts
+them with their identity, and every parsed block is accounted for.
 """
 
 from pathlib import Path
@@ -22,14 +23,14 @@ INVOICE = (
     "SPL\t\tINVOICE\t03/10/2026\tService Income\tAcme Corp\t-500.00\t1001\t\n"
     "ENDTRNS\n"
 )
-JOURNAL = (
-    "TRNS\t\tGENERAL JOURNAL\t03/12/2026\tChecking\t\t-48.00\tGJ-7\tOwner paid hosting\n"
-    "SPL\t\tGENERAL JOURNAL\t03/12/2026\tAdvertising & Marketing\t\t48.00\tGJ-7\t\n"
+JOURNAL = (  # a CREDIT MEMO: a type the importer does not take
+    "TRNS\t\tCREDIT MEMO\t03/12/2026\tAccounts Receivable\tAcme Corp\t-48.00\tGJ-7\tReturned part\n"
+    "SPL\t\tCREDIT MEMO\t03/12/2026\tService Income\tAcme Corp\t48.00\tGJ-7\t\n"
     "ENDTRNS\n"
 )
-CHECK = (
-    "TRNS\t\tCHECK\t03/13/2026\tChecking\tCorner Hardware\t-120.00\t2041\t\n"
-    "SPL\t\tCHECK\t03/13/2026\tAuto & Truck Expense\tCorner Hardware\t120.00\t2041\t\n"
+CHECK = (  # a PURCHORD: another
+    "TRNS\t\tPURCHORD\t03/13/2026\tPurchase Orders\tCorner Hardware\t-120.00\t2041\t\n"
+    "SPL\t\tPURCHORD\t03/13/2026\tAuto & Truck Expense\tCorner Hardware\t120.00\t2041\t\n"
     "ENDTRNS\n"
 )
 
@@ -44,33 +45,36 @@ def test_the_dispatch_and_the_supported_set_agree():
     for ttype in ("INVOICE", "PAYMENT", "ESTIMATE", "BILL", "DEPOSIT"):
         assert f'trns_type == "{ttype}"' in src and ttype in SUPPORTED_TRNS_TYPES
     assert {"CASH SALE", "CASHSALE", "SALES RECEIPT"} <= SUPPORTED_TRNS_TYPES
-    assert "GENERAL JOURNAL" not in SUPPORTED_TRNS_TYPES
+    # the ledger blocks (#344) dispatch as one family
+    from app.services.iif_import import _LEDGER_BLOCK_SOURCES
+
+    for ttype in ("GENERAL JOURNAL", "CHECK", "CREDIT CARD", "TRANSFER", "BILLPMT"):
+        assert ttype in _LEDGER_BLOCK_SOURCES and ttype in SUPPORTED_TRNS_TYPES
+    assert "CREDIT MEMO" not in SUPPORTED_TRNS_TYPES
+    assert "PURCHORD" not in SUPPORTED_TRNS_TYPES
 
 
 def test_validate_names_the_unsupported_blocks_and_stays_valid():
     report = validate_iif(HEADER + INVOICE + JOURNAL + CHECK + JOURNAL)
     assert report["valid"] is True
     assert report["record_counts"]["TRNS"] == 4
-    assert report["unsupported_counts"] == {"GENERAL JOURNAL": 2, "CHECK": 1}
+    assert report["unsupported_counts"] == {"CREDIT MEMO": 2, "PURCHORD": 1}
     assert [(u["block"], u["type"], u["docnum"]) for u in report["unsupported"]] == [
-        (2, "GENERAL JOURNAL", "GJ-7"),
-        (3, "CHECK", "2041"),
-        (4, "GENERAL JOURNAL", "GJ-7"),
+        (2, "CREDIT MEMO", "GJ-7"),
+        (3, "PURCHORD", "2041"),
+        (4, "CREDIT MEMO", "GJ-7"),
     ]
     assert report["unsupported"][1]["name"] == "Corner Hardware"
     assert report["unsupported"][0]["date"] == "03/12/2026"
     gj = [
         w
         for w in report["warnings"]
-        if w.startswith("2 GENERAL JOURNAL blocks not imported")
+        if w.startswith("2 CREDIT MEMO blocks not imported")
     ]
-    assert (
-        gj
-        and "(blocks 2, 4)" in gj[0]
-        and "INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and DEPOSIT" in gj[0]
-    )
+    assert gj and "(blocks 2, 4)" in gj[0] and "BILLPMT and GENERAL JOURNAL" in gj[0]
     assert any(
-        w.startswith("1 CHECK block not imported (block 3)") for w in report["warnings"]
+        w.startswith("1 PURCHORD block not imported (block 3)")
+        for w in report["warnings"]
     )
 
 
@@ -83,8 +87,8 @@ def test_a_mixed_file_imports_what_it_can_and_accounts_for_the_rest(
     assert result["transaction_blocks"] == 3
     assert result["unsupported"] == 2
     assert [(u["block"], u["type"]) for u in result["unsupported_blocks"]] == [
-        (2, "GENERAL JOURNAL"),
-        (3, "CHECK"),
+        (2, "CREDIT MEMO"),
+        (3, "PURCHORD"),
     ]
     assert result["errors"] == []
     assert result["duplicates_skipped"] == 0
@@ -95,7 +99,7 @@ def test_a_mixed_file_imports_what_it_can_and_accounts_for_the_rest(
         + len(result["errors"])
         == result["transaction_blocks"]
     )
-    assert any("GENERAL JOURNAL block not imported" in w for w in result["warnings"])
+    assert any("CREDIT MEMO block not imported" in w for w in result["warnings"])
     # nothing of the journal or the check landed
     from app.models.transactions import Transaction
 

@@ -1321,11 +1321,19 @@ def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
 
     if is_time_header(_find_header_for(rows, TIME_COLUMNS)[1]):
         return "time"
+    from app.services.categorized_import import is_categorized
+
+    if is_categorized(rows):
+        return "categorized"
     return None
 
 
 def import_qb_report(
-    db: Session, csv_text: str, adjusting_only: bool = False, posted_by: str = None
+    db: Session,
+    csv_text: str,
+    adjusting_only: bool = False,
+    posted_by: str = None,
+    outflow_positive: bool = False,
 ) -> dict:
     """Import any supported QB report CSV, auto-detected by its columns.
 
@@ -1347,6 +1355,8 @@ def import_qb_report(
         "checks": 0,
         "journals": 0,
         "time_entries": 0,
+        "posted": 0,
+        "splits": 0,
         "report": None,
         "duplicates_skipped": 0,
         "errors": [],
@@ -1357,7 +1367,9 @@ def import_qb_report(
             "Unrecognized report layout. Supported exports: Transaction "
             "Detail (filtered to Sales Receipt or Invoice), Deposit Detail, "
             "Check Detail, Transaction Detail by Account and Time by Name by "
-            "Job detail — keep the report's default columns."
+            "Job detail — keep the report's default columns — or a categorized "
+            "bank sheet (Bank Account, Transaction Date, Memo, Payee, Account, "
+            "Amount)."
         )
         return base
     if adjusting_only and kind != "ledger":
@@ -1403,6 +1415,15 @@ def import_qb_report(
         )
         base["journals"] = sub.pop("journals", 0)
         base["adjusting"] = sub.pop("adjusting", False)
+    elif kind == "categorized":
+        # a categorized bank sheet (#328): posted transactions, not a feed
+        from app.services.categorized_import import import_sheet
+
+        sub = import_sheet(db, _csv_rows(csv_text), outflow_positive=outflow_positive)
+        base["posted"] = sub.pop("posted", 0)
+        base["splits"] = sub.pop("splits", 0)
+        base["report"] = sub.pop("report", None)
+        base["payees_added"] = sub.pop("payees_added", [])
     elif kind == "time":
         from app.services.qb_time_import import TIME_COLUMNS, import_time_report
 

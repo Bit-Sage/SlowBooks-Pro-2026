@@ -130,7 +130,12 @@ const IIFPage = {
                         by Account</strong> with the dates set to All (every transaction of every type
                         as a journal entry; import the lists IIF first); or, for timesheets, <strong>Time by Name by Job detail</strong> or <strong>Time by Job by Name detail</strong> (Reports > Jobs, Time &amp; Mileage), saved as CSV or Excel: every entry becomes an approved time entry under its employee, marked as QuickBooks' so no pay run picks it up. Keep the report's default
                         columns. Safe to re-upload — what is already here is skipped.
+                        <strong>A categorized bank sheet</strong> (the Transaction Pro / SaasAnt layout: Bank Account, Transaction Date, Memo, Payee, Account, Amount) posts each row as the register entry it is, rows sharing the date, payee and memo as one split entry; payees not on the lists are added.
                     </p>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="qbcsv-outflow-positive">
+                        In this sheet money out is positive (the usual way round is money out negative)
+                    </label>
                     <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report file (CSV or Excel)" accept=".csv,.xlsx" style="font-size:11px; margin-bottom:8px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
                         <input type="checkbox" id="qbcsv-adjusting-only">
@@ -165,18 +170,19 @@ const IIFPage = {
         const formData = new FormData();
         formData.append('file', input.files[0]);
         formData.append('adjusting_only', $('#qbcsv-adjusting-only')?.checked ? 'true' : 'false');
+        formData.append('outflow_positive', $('#qbcsv-outflow-positive')?.checked ? 'true' : 'false');
         try {
             App.setStatus('Importing QuickBooks report CSV...');
             const res = await fetch('/api/csv/import/qb-report', { method: 'POST', body: formData });
             if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
             const result = await res.json();
 
-            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries', time: 'Time by Name by Job detail', time_entries: 'Time entries' };
+            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries', time: 'Time by Name by Job detail', time_entries: 'Time entries', categorized: 'Categorized bank sheet', posted: 'Register entries', splits: 'Split entries' };
             let html = '<div class="iif-results"><h4>Results</h4>';
             if (result.detected) {
                 html += `<div class="result-row"><span>Detected report</span><span class="result-count">${escapeHtml(result.report || kindLabel[result.detected] || result.detected)}</span></div>`;
             }
-            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries']) {
+            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries', 'posted', 'splits']) {
                 if (result[key] > 0) {
                     const how = key === 'journals' && result.adjusting ? ' imported as adjusting entries' : ' imported';
                     html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]}${how}</span></div>`;
