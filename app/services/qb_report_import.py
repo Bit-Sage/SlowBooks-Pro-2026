@@ -1324,7 +1324,9 @@ def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
     return None
 
 
-def import_qb_report(db: Session, csv_text: str) -> dict:
+def import_qb_report(
+    db: Session, csv_text: str, adjusting_only: bool = False, posted_by: str = None
+) -> dict:
     """Import any supported QB report CSV, auto-detected by its columns.
 
     Detection order (receipts, checks, deposits) is cosmetic: the three
@@ -1358,6 +1360,15 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
             "Job detail — keep the report's default columns."
         )
         return base
+    if adjusting_only and kind != "ledger":
+        # an accountant's adjustments come on Transaction Detail by Account
+        # filtered to journal entries (#344); any other report is not that
+        base["errors"].append(
+            "The adjusting-entries import takes QuickBooks Desktop's Transaction "
+            "Detail by Account report filtered to Transaction Type = Journal; this "
+            "file is a different report. Nothing was posted."
+        )
+        return base
     if kind in ("sales_receipts", "invoices", "sales_and_invoices"):
         sub = {"duplicates_skipped": 0, "errors": [], "warnings": []}
         if kind != "invoices":
@@ -1382,8 +1393,16 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
 
         rows = _csv_rows(csv_text)
         header_at, cols = _find_header_for(rows, LEDGER_COLUMNS)
-        sub = import_ledger_report(db, rows, header_at, cols)
+        sub = import_ledger_report(
+            db,
+            rows,
+            header_at,
+            cols,
+            adjusting_only=adjusting_only,
+            posted_by=posted_by,
+        )
         base["journals"] = sub.pop("journals", 0)
+        base["adjusting"] = sub.pop("adjusting", False)
     elif kind == "time":
         from app.services.qb_time_import import TIME_COLUMNS, import_time_report
 

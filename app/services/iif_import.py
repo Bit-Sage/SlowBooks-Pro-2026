@@ -956,11 +956,27 @@ SUPPORTED_TRNS_TYPES = frozenset(
         "ESTIMATE",
         "BILL",
         "DEPOSIT",
+        # the rest of the ledger (#344), as journal-only transactions
+        "GENERAL JOURNAL",
+        "CHECK",
+        "CREDIT CARD",
+        "TRANSFER",
+        "BILLPMT",
     }
 )
 SUPPORTED_TRNS_TYPES_SENTENCE = (
-    "INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL and DEPOSIT"
+    "INVOICE, PAYMENT, CASH SALE, ESTIMATE, BILL, DEPOSIT, CHECK, CREDIT CARD, "
+    "TRANSFER, BILLPMT and GENERAL JOURNAL"
 )
+# What each ledger block becomes here (#344): the source type the register
+# and the Journal Entries page know it by.
+_LEDGER_BLOCK_SOURCES = {
+    "GENERAL JOURNAL": "iif_import",
+    "CHECK": "bank_entry",
+    "CREDIT CARD": "cc_charge",
+    "TRANSFER": "transfer",
+    "BILLPMT": "iif_import",
+}
 
 
 def _block_identity(i: int, trns: dict) -> dict:
@@ -994,7 +1010,9 @@ def _unsupported_warnings(unsupported: list) -> list:
     return out
 
 
-def import_transactions(db: Session, blocks: list) -> dict:
+def import_transactions(
+    db: Session, blocks: list, adjusting: bool = False, posted_by: str = None
+) -> dict:
     """Import transaction blocks (TRNS/SPL/ENDTRNS) from IIF.
 
     Routes by TRNSTYPE: INVOICE, PAYMENT, ESTIMATE, BILL, DEPOSIT,
@@ -1010,6 +1028,10 @@ def import_transactions(db: Session, blocks: list) -> dict:
         "estimates": 0,
         "bills": 0,
         "deposits": 0,
+        # checks, card charges, transfers, bill payments and journal entries
+        # (#344); journal_entries counts the GENERAL JOURNAL ones of those
+        "ledger_entries": 0,
+        "journal_entries": 0,
         "duplicates_skipped": 0,
         "unsupported": 0,
     }
@@ -1077,6 +1099,16 @@ def import_transactions(db: Session, blocks: list) -> dict:
                 else:
                     # None = (vendor, bill_number) already imported —
                     # a deliberate dedup hit, not a silent drop.
+                    counts["duplicates_skipped"] += 1
+            elif trns_type in _LEDGER_BLOCK_SOURCES:
+                result = _import_ledger_block(
+                    db, trns_type, trns, spls, warnings, adjusting, posted_by
+                )
+                if result is not None:
+                    counts["ledger_entries"] += 1
+                    if trns_type == "GENERAL JOURNAL":
+                        counts["journal_entries"] += 1
+                else:
                     counts["duplicates_skipped"] += 1
             elif trns_type == "DEPOSIT":
                 result = _import_deposit(db, trns, spls, warnings)
@@ -1319,6 +1351,109 @@ def _import_bill(db: Session, trns: dict, spls: list, warnings=None) -> Bill:
     return bill
 
 
+def _same_entry_exists(
+    db: Session, entry_date, lines: list, reference: str = ""
+) -> bool:
+    """Is there already an entry on this day with exactly these lines
+    (account and amounts, any source)? A file exported here and brought
+    back, or uploaded twice, posts nothing twice (#344); a DOCNUM, when
+    the block has one, must match too."""
+    wanted = sorted(
+        (ln["account_id"], _q(ln["debit"]), _q(ln["credit"])) for ln in lines
+    )
+    for txn in db.query(Transaction).filter(Transaction.date == entry_date).all():
+        if reference and (txn.reference or "") != reference:
+            continue
+        have = sorted(
+            (ln.account_id, _q(ln.debit or 0), _q(ln.credit or 0)) for ln in txn.lines
+        )
+        if have == wanted:
+            return True
+    return False
+
+
+def _import_ledger_block(
+    db: Session,
+    trns_type: str,
+    trns: dict,
+    spls: list,
+    warnings=None,
+    adjusting: bool = False,
+    posted_by: str = None,
+) -> Transaction:
+    """A GENERAL JOURNAL, CHECK, CREDIT CARD, TRANSFER or BILLPMT block as
+    the journal-only transaction it is here (#344): the TRNS row and each
+    SPL row one line each, a positive AMOUNT a debit and a negative one a
+    credit; the block must sum to zero. DOCNUM is the entry's reference.
+    A block already here (same day, same lines) posts nothing twice.
+
+    A BILLPMT comes in as a journal entry on the bank and Accounts Payable
+    with the vendor named: the bills it paid stay open here, since the
+    file does not say which they were (the warning says so)."""
+    _validate_block_balance(trns_type, trns, spls)
+    rows = [trns] + list(spls)
+    entry_date = _parse_iif_date(trns.get("DATE", "")) or date.today()
+    doc_num = trns.get("DOCNUM", "").strip()
+    label = f"{trns_type} {doc_num or entry_date.isoformat()}"
+    resolved = []
+    for row in rows:
+        acct_name = row.get("ACCNT", "").strip()
+        if not acct_name:
+            raise DataProblem(f"{label}: a line has no ACCNT")
+        acct = _find_account(db, acct_name)
+        if not acct:
+            raise DataProblem(
+                f"{label}: account '{acct_name}' not found. Add the account in "
+                "the chart of accounts first."
+            )
+        resolved.append((row, acct, _parse_decimal(row.get("AMOUNT", ""))))
+    block_class_id, line_classes = _block_classes(db, trns, spls, warnings)
+    memo = trns.get("MEMO", "").strip()
+    name = trns.get("NAME", "").strip()
+    description = memo or name or trns_type.title()
+    lines = []
+    for i, (row, acct, amount) in enumerate(resolved):
+        if amount == 0:
+            continue
+        lines.append(
+            {
+                "account_id": acct.id,
+                "debit": _q(amount) if amount > 0 else Decimal("0"),
+                "credit": _q(-amount) if amount < 0 else Decimal("0"),
+                "description": row.get("MEMO", "").strip() or description,
+                "class_id": block_class_id if i == 0 else line_classes[i - 1],
+            }
+        )
+    if len(lines) < 2:
+        raise DataProblem(f"{label}: an entry needs two lines or more")
+    if _same_entry_exists(db, entry_date, lines, doc_num):
+        return None
+    source_type = _LEDGER_BLOCK_SOURCES[trns_type]
+    if trns_type == "BILLPMT" and warnings is not None:
+        warnings.append(
+            f"{label}{' to ' + name if name else ''}: posted as a journal entry "
+            "on the bank account and Accounts Payable; the bills it paid stay "
+            "open here, since an IIF bill payment does not say which they were."
+        )
+    txn = create_journal_entry(
+        db,
+        entry_date,
+        (
+            (f"{name} — " if name and memo else "") + description
+            if trns_type != "GENERAL JOURNAL"
+            else f"IIF Import — {description}"
+        ),
+        lines,
+        source_type=source_type,
+        reference=doc_num or None,
+        class_id=block_class_id,
+        is_adjusting=adjusting and trns_type == "GENERAL JOURNAL",
+        posted_by=posted_by,
+    )
+    db.flush()
+    return txn
+
+
 def _import_deposit(db: Session, trns: dict, spls: list, warnings=None) -> Transaction:
     """Create a deposit (journal-only Transaction) from IIF TRNS/SPL.
 
@@ -1408,6 +1543,10 @@ def _import_deposit(db: Session, trns: dict, spls: list, warnings=None) -> Trans
             }
         )
 
+    # without a DOCNUM, a deposit already here with these lines (a register
+    # deposit exported from these books, #344) posts nothing twice
+    if not doc_num and _same_entry_exists(db, deposit_date, journal_lines):
+        return None
     txn = create_journal_entry(
         db,
         deposit_date,
@@ -2139,7 +2278,13 @@ def validate_iif(content: str) -> dict:
 # ============================================================================
 
 
-def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
+def import_all(
+    db: Session,
+    content: str,
+    retitle_names: bool = False,
+    adjusting: bool = False,
+    posted_by: str = None,
+) -> dict:
     """Import an entire IIF file into Slowbooks.
 
     Processes in dependency order: classes -> accounts -> customers ->
@@ -2162,6 +2307,8 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
         "estimates": 0,
         "bills": 0,
         "deposits": 0,
+        "ledger_entries": 0,
+        "journal_entries": 0,
         "names_changed": 0,
         "errors": [],
         "warnings": [],
@@ -2210,7 +2357,7 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
 
     # Import transactions
     if parsed["TRNS"]:
-        r = import_transactions(db, parsed["TRNS"])
+        r = import_transactions(db, parsed["TRNS"], adjusting, posted_by)
         counts = r["imported"]
         result["invoices"] = counts.get("invoices", 0)
         result["payments"] = counts.get("payments", 0)
@@ -2218,6 +2365,8 @@ def import_all(db: Session, content: str, retitle_names: bool = False) -> dict:
         result["estimates"] = counts.get("estimates", 0)
         result["bills"] = counts.get("bills", 0)
         result["deposits"] = counts.get("deposits", 0)
+        result["ledger_entries"] = counts.get("ledger_entries", 0)
+        result["journal_entries"] = counts.get("journal_entries", 0)
         result["duplicates_skipped"] = counts.get("duplicates_skipped", 0)
         # every parsed block accounted for: imported + duplicates +
         # unsupported + failed = transaction_blocks (#288)

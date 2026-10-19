@@ -5,7 +5,16 @@
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -187,7 +196,9 @@ async def csv_import_accounts(
 
 @router.post("/import/qb-report")
 async def csv_import_qb_report(
-    file: UploadFile = File(...), db: Session = Depends(get_db)
+    file: UploadFile = File(...),
+    adjusting_only: bool = Form(False),
+    db: Session = Depends(get_db),
 ):
     """Import a QuickBooks Desktop report CSV — the documented fallback
     for Desktop, which can't export transactions to IIF. Auto-detects the
@@ -204,4 +215,12 @@ async def csv_import_qb_report(
         content = _sheet_as_csv(raw, computed=True)
     else:
         content = _decode_csv_upload(raw)
-    return import_qb_report(db, content)
+    # ``adjusting_only`` (#344): the report is an accountant's General
+    # Journal entries; anything else in it is refused whole, and what posts
+    # is marked adjusting in the sign-in's name
+    return import_qb_report(
+        db,
+        content,
+        adjusting_only=adjusting_only,
+        posted_by=db.info.get("acting_username"),
+    )

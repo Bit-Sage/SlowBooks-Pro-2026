@@ -13,6 +13,10 @@ class IIFImportResult(BaseModel):
     estimates: int = 0
     bills: int = 0
     deposits: int = 0
+    # checks, card charges, transfers, bill payments and journal entries
+    # (#344), and the GENERAL JOURNAL ones of those
+    ledger_entries: int = 0
+    journal_entries: int = 0
     duplicates_skipped: int = 0
     # #288: a mixed file reconciles — parsed blocks = imported + duplicates
     # + unsupported + failed; the unsupported ones are named

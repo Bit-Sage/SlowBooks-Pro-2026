@@ -40,6 +40,8 @@ from app.models.transactions import Transaction
 from app.services.accounting import create_journal_entry
 
 SOURCE_TYPE = "qb_ledger_import"
+# QuickBooks' Type for a journal entry on this report
+GENERAL_JOURNAL_TYPES = frozenset({"General Journal", "Journal", "Journal Entry"})
 LEDGER_COLUMNS = ("Type", "Date", "Num", "Name", "Memo", "Split", "Debit", "Credit")
 _DATE_FORMATS = ("%m/%d/%Y", "%m/%d/%y")
 _HOW = (
@@ -246,11 +248,26 @@ def _reference(journal: list[dict], seen: dict) -> str:
 
 
 def import_ledger_report(
-    db: Session, rows: list[list[str]], header_at: int, cols: dict
+    db: Session,
+    rows: list[list[str]],
+    header_at: int,
+    cols: dict,
+    adjusting_only: bool = False,
+    posted_by: str = None,
 ) -> dict:
+    """``adjusting_only`` (#344): the report is an accountant's adjustments
+    — General Journal rows only, refused whole when it holds anything
+    else, so a whole-ledger upload can never double the books — and what
+    posts is marked adjusting (#341), in ``posted_by``'s name."""
     from app.services.iif_import import _find_account
 
-    result = {"journals": 0, "duplicates_skipped": 0, "errors": [], "warnings": []}
+    result = {
+        "journals": 0,
+        "duplicates_skipped": 0,
+        "errors": [],
+        "warnings": [],
+        "adjusting": bool(adjusting_only),
+    }
     lines, errors, notes = parse_ledger(rows, header_at, cols)
     result["warnings"].extend(notes)
     if errors:
@@ -259,6 +276,23 @@ def import_ledger_report(
     if not lines:
         result["errors"].append("The report has no transactions in it. " + _HOW)
         return result
+    if adjusting_only:
+        others: dict[str, int] = {}
+        for ln in lines:
+            if ln["type"] not in GENERAL_JOURNAL_TYPES:
+                others[ln["type"]] = others.get(ln["type"], 0) + 1
+        if others:
+            named = ", ".join(
+                f"{n} {t} row{'s' if n != 1 else ''}" for t, n in others.items()
+            )
+            result["errors"].append(
+                "The adjusting-entries import takes General Journal rows only, and "
+                f"this report also holds {named}. Nothing was posted. In QuickBooks, "
+                "filter the report to Transaction Type = Journal (Customize Report > "
+                "Filters) and export it again, or untick the box to import the whole "
+                "report as ordinary journal entries."
+            )
+            return result
     accounts = {}
     missing = []
     for path in OrderedDict.fromkeys(ln["path"] for ln in lines):
@@ -326,6 +360,8 @@ def import_ledger_report(
             posted,
             source_type=SOURCE_TYPE,
             reference=ref,
+            is_adjusting=bool(adjusting_only),
+            posted_by=posted_by,
         )
         have.add(ref)
         result["journals"] += 1

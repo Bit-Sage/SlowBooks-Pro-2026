@@ -64,6 +64,12 @@ const IIFPage = {
                             <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('bills')">Bills</button>
                             <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('deposits')">Deposits</button>
                         </div>
+                        <div style="display:flex; gap:6px; margin-top:6px;">
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('register-entries')">Checks &amp; Card Charges</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('transfers')">Transfers</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('bill-payments')">Bill Payments</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('journal-entries')">Journal Entries</button>
+                        </div>
                     </div>
                 </div>
 
@@ -72,8 +78,16 @@ const IIFPage = {
                     <h3>&#9650; Import from IIF</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
                         Upload .iif files exported from QuickBooks Desktop
-                        via File &gt; Utilities &gt; Export &gt; Lists to IIF Files.
+                        via File &gt; Utilities &gt; Export &gt; Lists to IIF Files. Transaction
+                        blocks come in too: invoices, payments, sales receipts, estimates, bills,
+                        deposits, checks, card charges, transfers, bill payments (as journal
+                        entries on the bank and Accounts Payable) and general journal entries.
+                        A block already here posts nothing twice.
                     </p>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="iif-adjusting">
+                        This is an accountant's file: post its GENERAL JOURNAL blocks as adjusting entries
+                    </label>
 
                     <div id="iif-dropzone" class="iif-dropzone"
                          onclick="document.getElementById('iif-file-input').click()"
@@ -118,6 +132,10 @@ const IIFPage = {
                         columns. Safe to re-upload — what is already here is skipped.
                     </p>
                     <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report file (CSV or Excel)" accept=".csv,.xlsx" style="font-size:11px; margin-bottom:8px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="qbcsv-adjusting-only">
+                        Adjusting entries only: an accountant's Transaction Detail by Account filtered to journal entries. Anything else in the file is refused, and what posts is marked adjusting.
+                    </label>
                     <div>
                         <button class="btn btn-primary" onclick="IIFPage.importQbReportCsv()">Import Report CSV</button>
                     </div>
@@ -146,6 +164,7 @@ const IIFPage = {
         if (!input?.files[0]) { toast('Choose a file first', 'error'); return; }
         const formData = new FormData();
         formData.append('file', input.files[0]);
+        formData.append('adjusting_only', $('#qbcsv-adjusting-only')?.checked ? 'true' : 'false');
         try {
             App.setStatus('Importing QuickBooks report CSV...');
             const res = await fetch('/api/csv/import/qb-report', { method: 'POST', body: formData });
@@ -159,7 +178,8 @@ const IIFPage = {
             }
             for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries']) {
                 if (result[key] > 0) {
-                    html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]} imported</span></div>`;
+                    const how = key === 'journals' && result.adjusting ? ' imported as adjusting entries' : ' imported';
+                    html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]}${how}</span></div>`;
                 }
             }
             if (result.invoices > 0) {
@@ -202,7 +222,7 @@ const IIFPage = {
     exportSection(section) {
         let url = `/api/iif/export/${section}`;
         // Add date range for invoices/payments
-        if (['invoices', 'payments', 'sales-receipts', 'bills', 'deposits'].includes(section)) {
+        if (['invoices', 'payments', 'sales-receipts', 'bills', 'deposits', 'register-entries', 'transfers', 'bill-payments', 'journal-entries'].includes(section)) {
             const from = $('#iif-date-from')?.value;
             const to = $('#iif-date-to')?.value;
             const params = [];
@@ -420,6 +440,7 @@ const IIFPage = {
         const formData = new FormData();
         formData.append('file', IIFPage._selectedFile);
         formData.append('retitle_names', $('#iif-retitle-names')?.checked ? 'true' : 'false');
+        formData.append('adjusting', $('#iif-adjusting')?.checked ? 'true' : 'false');
 
         try {
             App.setStatus('Importing IIF file...');
@@ -446,7 +467,8 @@ const IIFPage = {
     // Transactions the import took, every type together.
     _transactionsImported(result) {
         return (result.invoices || 0) + (result.payments || 0) + (result.sales_receipts || 0)
-            + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0);
+            + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0)
+            + (result.ledger_entries || 0);
     },
 
     // What the IIF import brought in, in the panel's own terms (2.23.1 gate,
@@ -484,6 +506,8 @@ const IIFPage = {
             ['Estimates', result.estimates],
             ['Bills', result.bills],
             ['Deposits', result.deposits],
+            ['Checks, card charges, transfers and bill payments', (result.ledger_entries || 0) - (result.journal_entries || 0)],
+            ['Journal entries', result.journal_entries],
         ];
 
         let html = '<div class="iif-results"><h4>Import Results</h4>';
