@@ -97,7 +97,7 @@ def test_the_keyring_file_holds_nothing_secret_and_knows_a_stale_wrapping(tmp_pa
     company_keyring.set_admin(ring, "Alice", PW, key)
     company_keyring.save(db, ring)
     assert company_keyring.exists(db)
-    text = company_keyring.keyring_path(db).read_text()
+    text = company_keyring.keyring_path(db).read_text(encoding="utf-8")
     assert key.hex() not in text and PW not in text
     loaded = company_keyring.load(db)
     assert company_keyring.admins(loaded) == ["alice"]
@@ -579,19 +579,19 @@ def test_setup_without_the_box_leaves_the_file_plain(unauthed_client, company):
 
 
 def test_the_pages_offer_the_key_and_the_docs_explain_it():
-    settings = (ROOT / "app/static/js/settings.js").read_text()
+    settings = (ROOT / "app/static/js/settings.js").read_text(encoding="utf-8")
     assert "New recovery key…" in settings and "showRecoveryKey(" in settings
     assert (
         "Save as a text file" in settings
         and "/company-file/encryption/recovery-key" in settings
     )
     assert "other_key" in settings and "recovery_key = typed.trim()" in settings
-    auth = (ROOT / "app/static/js/auth.js").read_text()
+    auth = (ROOT / "app/static/js/auth.js").read_text(encoding="utf-8")
     assert (
         'id="auth-encrypt"' in auth
         and "showRecoveryKey(overlay, done, onSuccess)" in auth
     )
-    doc = (ROOT / "docs/company-file-encryption.md").read_text()
+    doc = (ROOT / "docs/company-file-encryption.md").read_text(encoding="utf-8")
     for words in (
         "recovery key",
         "keyring",
@@ -599,8 +599,10 @@ def test_the_pages_offer_the_key_and_the_docs_explain_it():
         "COMPANY_FILE_ENCRYPTION_SECRET",
     ):
         assert words in doc
-    assert "company-file-encryption.md" in (ROOT / "README.md").read_text()
-    hardening = (ROOT / "docs/security-hardening.md").read_text()
+    assert "company-file-encryption.md" in (ROOT / "README.md").read_text(
+        encoding="utf-8"
+    )
+    hardening = (ROOT / "docs/security-hardening.md").read_text(encoding="utf-8")
     assert (
         "slowbooks-company-recovery-v1" in hardening
         and "Not yet"

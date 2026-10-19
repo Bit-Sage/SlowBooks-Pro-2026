@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_the_hooks_and_the_list_are_in_place():
-    src = (ROOT / "app/static/js/app.js").read_text()
+    src = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
     # kept for the session, by address
     assert "OPEN_TABS_KEY: 'slowbooks-open-screens'" in src
     assert "sessionStorage.getItem(App.OPEN_TABS_KEY)" in src
@@ -29,12 +29,12 @@ def test_the_hooks_and_the_list_are_in_place():
 
 
 def test_the_styles_cover_both_themes():
-    light = (ROOT / "app/static/css/style.css").read_text()
-    dark = (ROOT / "app/static/css/dark.css").read_text()
+    light = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
+    dark = (ROOT / "app/static/css/dark.css").read_text(encoding="utf-8")
     assert ".open-screens__close" in light and ".open-screens__clear" in light
     assert ".open-screens__close" in dark
 
 
 def test_the_feature_is_documented():
-    features = (ROOT / "docs/features.md").read_text()
+    features = (ROOT / "docs/features.md").read_text(encoding="utf-8")
     assert "Open screens" in features or "open screens" in features

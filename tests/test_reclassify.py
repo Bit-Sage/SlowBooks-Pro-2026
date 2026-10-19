@@ -370,7 +370,7 @@ def test_the_accountant_may_move_lines_and_read_only_may_not(
 def test_the_report_center_offers_the_tool_and_the_page_keeps_it_open_to_the_accountant():
     from pathlib import Path
 
-    src = Path("app/static/js/reports.js").read_text()
+    src = Path("app/static/js/reports.js").read_text(encoding="utf-8")
     assert "card('reclassify'" in src
     assert "'reclassify':" in src and "ReportsPage.reclassify(p)" in src
     # the move controls stay usable for the accountant and hidden from

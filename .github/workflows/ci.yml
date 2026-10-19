@@ -154,7 +154,9 @@ jobs:
           # its Windows counterpart runs here (W-7).
           # 2.23.1: +1 the bill form's browser measurement (W-5), one more
           # playwright module, skipped here as its sixteen siblings are.
-          MAX_SKIPS: "118"
+          # 119 since 2.24.0: tests/test_browser_open_tabs.py joins the browser
+          # modules that skip here without playwright's Chromium
+          MAX_SKIPS: "119"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
