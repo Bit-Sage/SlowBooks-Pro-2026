@@ -8,16 +8,17 @@
 # ============================================================================
 
 import re
+import secrets
 from typing import Optional
 
-from datetime import timezone
+from datetime import date, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field
 from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.users import ROLE_ADMIN, VALID_ROLES, User
+from app.models.users import ROLE_ACCOUNTANT, ROLE_ADMIN, VALID_ROLES, User
 from app.services.auth import MIN_PASSWORD_LEN, hash_password
 
 
@@ -52,6 +53,11 @@ def _user_out(u: User) -> dict:
         "is_active": u.is_active,
         "created_at": _utc_iso(u.created_at),
         "last_login_at": _utc_iso(u.last_login_at),
+        # an invited sign-in (#345): the day it ends, and whether its
+        # one-time password is still the one it has
+        "expires_on": u.expires_on.isoformat() if u.expires_on else None,
+        "ended": bool(u.expires_on and date.today() > u.expires_on),
+        "must_change_password": bool(u.must_change_password),
     }
 
 
@@ -76,6 +82,19 @@ class UserUpdate(StrictModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, max_length=512)
+    # the day a sign-in ends (#345); sent as null, it no longer ends
+    expires_on: Optional[date] = None
+
+
+class InvitePayload(StrictModel):
+    """Invite your accountant (#345): a sign-in with a one-time password,
+    the Accountant role unless another is asked for, and an end date if
+    the engagement has one."""
+
+    username: str = Field(..., min_length=3, max_length=50)
+    display_name: str = Field("", max_length=200)
+    role: str = ROLE_ACCOUNTANT
+    expires_on: Optional[date] = None
 
 
 @router.get("")
@@ -151,5 +170,51 @@ def update_user(
                 detail=f"Password must be at least {MIN_PASSWORD_LEN} characters",
             )
         user.password_hash = hash_password(payload.password)
+        # an administrator's reset is a one-time password too
+        user.must_change_password = True
+    if "expires_on" in payload.model_fields_set:
+        user.expires_on = payload.expires_on
     db.commit()
     return _user_out(user)
+
+
+@router.post("/invite", status_code=201)
+def invite_user(
+    payload: InvitePayload, request: Request, db: Session = Depends(get_db)
+):
+    """Invite your accountant (#345): creates the sign-in with a one-time
+    password, shown once in the answer with the address to send; the person
+    sets their own password at the first sign-in, and the sign-in stops on
+    the end date if one is given."""
+    _require_admin(request)
+    username = payload.username.strip().lower()
+    if not _USERNAME_RE.match(username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-50 characters: letters, digits, . _ -",
+        )
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    if payload.expires_on is not None and payload.expires_on < date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="The end date is already past; pick a day from today on.",
+        )
+    if db.query(User).filter(User.username == username).first():
+        raise HTTPException(status_code=409, detail="Username already exists")
+    one_time = secrets.token_urlsafe(12)
+    user = User(
+        username=username,
+        display_name=payload.display_name.strip() or username.title(),
+        password_hash=hash_password(one_time),
+        role=payload.role,
+        is_active=True,
+        must_change_password=True,
+        expires_on=payload.expires_on,
+    )
+    db.add(user)
+    db.commit()
+    out = _user_out(user)
+    out["password"] = one_time  # shown once; never stored or logged
+    out["address"] = str(request.base_url).rstrip("/")
+    return out

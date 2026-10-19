@@ -14,8 +14,11 @@ its own way. There are three routes, from the most direct down.
 ## 1. Your accountant signs in (Server Edition)
 
 Server Edition is the same download, running as a server so everyone uses a
-browser ([server-edition.md](server-edition.md)). Add your accountant under
-**Settings → Users** with the **Accountant** role:
+browser ([server-edition.md](server-edition.md)). **Invite your accountant**
+under **Settings → Users**: the sign-in gets the **Accountant** role, a
+one-time password you send once with the address, and an end date if the
+engagement has one; they choose their own password at the first sign-in.
+What the role can do:
 
 - they read everything, the reports, every list and the **Audit Log**
   included, so they can see exactly what moved and who moved it;

@@ -82,6 +82,14 @@ trusted networks.
    entries and nothing else; a bookkeeper cannot touch Settings, Users,
    backups, or migrations. The last active admin can never be locked out —
    the app refuses to demote or deactivate them.
+4. **Invite your accountant** (Settings → Users) makes a sign-in with a
+   one-time password and shows what to send: the address, the username and
+   the password, once. They choose their own password at the first sign-in
+   and nothing else opens until they do. Give the sign-in an end date if the
+   engagement has one: past that day the sign-in is refused with the date,
+   and you can extend it from the Users list, which also shows each
+   person's last sign-in. An administrator's password reset works the same
+   way: the new password is for one use.
 
 ## Honest limits (current release)
 

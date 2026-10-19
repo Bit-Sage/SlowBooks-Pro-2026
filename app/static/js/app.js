@@ -404,6 +404,13 @@ const App = {
         // the way back to the entry a declined move left (App.stayPut):
         // the page is still that entry's, nothing to render
         if (App._stay) { App._stay = false; App.addressShown(); return; }
+        // an invited sign-in with its one-time password sets its own
+        // before any page (#345); the server refuses everything else
+        if (App.mustChangePassword) {
+            $('#page-content').innerHTML = App._passwordChangeHtml();
+            App.setStatus('Set your password');
+            return;
+        }
         if (App._pageCleanup) { App._pageCleanup(); App._pageCleanup = null; }
         // A dialog open over the page left (a report, a document) does not
         // stay over the page gone to: browser Back from an open report
@@ -544,6 +551,33 @@ const App = {
                 <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
             </p>
         </div>`;
+    },
+
+    // ---- An invited sign-in sets its own password (#345) ------------------
+    mustChangePassword: false,
+
+    _passwordChangeHtml() {
+        return `<div class="page-header"><h2>Set your password</h2></div>
+            <p style="max-width:520px; margin-bottom:12px;">The password you signed in with was for one use. Choose your own to continue; nothing else opens until you do.</p>
+            <form onsubmit="App.savePassword(event)" style="max-width:420px;" data-readonly-ok>
+                <div class="form-group"><label>New password <span style="font-weight:normal; color:var(--gray-500);">(at least 8 characters)</span></label>
+                    <input name="new_password" type="password" required minlength="8" autocomplete="new-password" autofocus></div>
+                <div class="form-group"><label>Again</label>
+                    <input name="again" type="password" required minlength="8" autocomplete="new-password"></div>
+                <div class="form-actions"><button type="submit" class="btn btn-primary">Save password</button></div>
+            </form>`;
+    },
+
+    async savePassword(e) {
+        e.preventDefault();
+        const form = e.target;
+        if (form.new_password.value !== form.again.value) { toast('The two passwords differ', 'error'); return; }
+        try {
+            await API.post('/auth/password', { new_password: form.new_password.value });
+            App.mustChangePassword = false;
+            toast('Password saved');
+            App.navigate('#/');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // ---- Read-only sign-ins (Server Edition) -------------------------------
@@ -1710,6 +1744,10 @@ const App = {
             if (auth.ok) {
                 const a = await auth.json();
                 if (a.user) App.setRole(a.user.role, a.user.username);
+                if (a.user && a.user.must_change_password) {
+                    App.mustChangePassword = true;
+                    App.navigate(location.hash || '#/');
+                }
                 if (a.multi_user && a.user && a.user.role !== 'admin') {
                     // HR and payroll are admin functions; the server refuses
                     // them for other roles, so do not offer the pages.

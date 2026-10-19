@@ -949,6 +949,17 @@ async def require_session(request: Request, call_next):
             status_code=403,
             content={"detail": _role_refusal(role)},
         )
+    if token_principal is None and request.session.get("must_change_password"):
+        # an invited sign-in with its one-time password (#345): the only
+        # thing it can do is set a password of its own (the auth routes
+        # are exempt above)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Set a password of your own first: the one you signed "
+                "in with was for one use."
+            },
+        )
 
     # Idle session cap. Sliding window — every authenticated hit refreshes
     # `last_activity`, so a session that's actively in use never trips this.

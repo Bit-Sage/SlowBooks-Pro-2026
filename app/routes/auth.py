@@ -11,6 +11,7 @@
 # ============================================================================
 
 import ipaddress
+from datetime import date
 import os
 from typing import Optional
 
@@ -206,8 +207,55 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
             "username": request.session.get("username"),
             "display_name": request.session.get("display_name") or "",
             "role": request.session.get("role") or "admin",
+            "must_change_password": bool(request.session.get("must_change_password")),
         }
     return out
+
+
+class NewPasswordPayload(StrictModel):
+    new_password: str = Field(..., min_length=1, max_length=512)
+    # the password in use; not asked of a sign-in that must replace its
+    # one-time password, which proved it moments ago
+    current_password: Optional[str] = Field(None, max_length=512)
+
+
+@router.post("/password")
+@limiter.limit("5/minute")
+def set_own_password(
+    request: Request, payload: NewPasswordPayload, db: Session = Depends(get_db)
+):
+    """The signed-in person sets their own password (#345): an invited
+    accountant replacing the one-time password at the first sign-in, or
+    anyone changing theirs, with the current one to prove it."""
+    from app.models.users import User
+    from app.services.auth import MIN_PASSWORD_LEN, hash_password, verify_password
+
+    user_id = request.session.get("user_id")
+    user = db.get(User, user_id) if user_id else None
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sign in with a username to set a password of your own.",
+        )
+    if len(payload.new_password) < MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {MIN_PASSWORD_LEN} characters",
+        )
+    must_change = bool(request.session.get("must_change_password"))
+    if not must_change:
+        if not payload.current_password or not verify_password(
+            payload.current_password, user.password_hash
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The current password is not right.",
+            )
+    user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
+    db.commit()
+    request.session["must_change_password"] = False
+    return {"status": "ok"}
 
 
 @router.post("/setup")
@@ -288,6 +336,10 @@ def _stash_user(request: Request, user) -> None:
     request.session["username"] = user.username
     request.session["display_name"] = user.display_name
     request.session["role"] = user.role
+    # a one-time password must be replaced before anything else (#345)
+    request.session["must_change_password"] = bool(
+        getattr(user, "must_change_password", False)
+    )
 
 
 @router.post("/login")
@@ -323,6 +375,16 @@ def login(
                 "Incorrect username or password"
                 if is_multi_user(db)
                 else "Incorrect password"
+            ),
+        )
+    if user.expires_on is not None and date.today() > user.expires_on:
+        # an invited sign-in past its end date (#345): refused with the day
+        _record_login_attempt(db, request, success=False)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"This sign-in ended on {user.expires_on:%B %d, %Y}. An "
+                "administrator can extend it under Settings → Users."
             ),
         )
     _record_login_attempt(db, request, success=True)

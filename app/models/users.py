@@ -9,7 +9,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Date, Boolean, Column, DateTime, Integer, String
 
 from app.database import Base
 
@@ -39,3 +39,9 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     last_login_at = Column(DateTime, nullable=True)
+    # An invited sign-in (#345): the one-time password must be replaced at
+    # the first sign-in, and the sign-in can end on a day.
+    must_change_password = Column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    expires_on = Column(Date, nullable=True)

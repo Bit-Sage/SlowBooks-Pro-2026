@@ -1,4 +1,8 @@
-"""adjusting entries, and who posted a journal entry
+"""adjusting entries, who posted a journal entry, and an invited sign-in
+
+Also (#345): an invited accountant signs in once with a one-time password
+and must set their own (users.must_change_password), and a sign-in can be
+given an end date after which it is refused (users.expires_on).
 
 An outside accountant's adjustments (#341) are journal entries like any
 other, so the owner could not tell them from their own. Two nullable-safe
@@ -35,22 +39,43 @@ COLUMNS = (
 )
 
 
+USER_COLUMNS = (
+    sa.Column(
+        "must_change_password",
+        sa.Boolean(),
+        nullable=False,
+        server_default=sa.text("0"),
+    ),
+    sa.Column("expires_on", sa.Date(), nullable=True),
+)
+
+
+def _add(insp, table, columns):
+    if table not in insp.get_table_names():
+        return
+    present = {c["name"] for c in insp.get_columns(table)}
+    for column in columns:
+        if column.name not in present:
+            op.add_column(table, column.copy())
+
+
+def _drop(insp, table, columns):
+    if table not in insp.get_table_names():
+        return
+    present = {c["name"] for c in insp.get_columns(table)}
+    with op.batch_alter_table(table) as batch:
+        for column in columns:
+            if column.name in present:
+                batch.drop_column(column.name)
+
+
 def upgrade() -> None:
     insp = sa.inspect(op.get_bind())
-    if "transactions" not in insp.get_table_names():
-        return
-    present = {c["name"] for c in insp.get_columns("transactions")}
-    for column in COLUMNS:
-        if column.name not in present:
-            op.add_column("transactions", column.copy())
+    _add(insp, "transactions", COLUMNS)
+    _add(insp, "users", USER_COLUMNS)
 
 
 def downgrade() -> None:
     insp = sa.inspect(op.get_bind())
-    if "transactions" not in insp.get_table_names():
-        return
-    present = {c["name"] for c in insp.get_columns("transactions")}
-    with op.batch_alter_table("transactions") as batch:
-        for column in COLUMNS:
-            if column.name in present:
-                batch.drop_column(column.name)
+    _drop(insp, "users", USER_COLUMNS)
+    _drop(insp, "transactions", COLUMNS)

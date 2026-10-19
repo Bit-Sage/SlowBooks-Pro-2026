@@ -541,6 +541,7 @@ const SettingsPage = {
                             </select></div>
                     </div>
                     <button type="button" class="btn btn-primary" onclick="SettingsPage.createUser()">Add User</button>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.showInvite()">Invite your accountant…</button>
                 </div>
 
                 <div class="settings-section" id="settings-api-tokens" data-admin style="display:none;" role="group" aria-labelledby="settings-h-api-tokens-agents-integrations">
@@ -782,7 +783,9 @@ const SettingsPage = {
                             `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
                     </select>
                 </td>
-                <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}</td>
+                <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}${u.must_change_password ? '<div style="font-size:10px; color:var(--gray-500);">one-time password, not yet replaced</div>' : ''}</td>
+                <td><input type="date" value="${escapeHtml(u.expires_on || '')}" aria-label="Day ${escapeHtml(u.username)}'s sign-in ends" style="font-size:11px; padding:2px 4px;"
+                        onchange="SettingsPage.updateUser(${u.id}, {expires_on: this.value || null})">${u.ended ? '<div style="font-size:10px; color:var(--danger);">ended</div>' : ''}</td>
                 <td>${u.is_active
                     ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: false})">Deactivate</button>`
                     : `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: true})">Reactivate</button>`}
@@ -790,7 +793,7 @@ const SettingsPage = {
                 </td>
             </tr>`).join('');
             $('#users-list').innerHTML = `<div class="table-container"><table>
-                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
+                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col">Ends</th><th scope="col"></th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
         } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
     },
@@ -877,6 +880,50 @@ const SettingsPage = {
             $('#user-new-username').value = '';
             $('#user-new-display').value = '';
             $('#user-new-password').value = '';
+            SettingsPage.loadUsers();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Invite your accountant (#345): a sign-in with a one-time password
+    // and, if the engagement has one, an end date; the answer is shown
+    // once, with the address to send.
+    showInvite() {
+        openModal('Invite your accountant', `
+            <form onsubmit="SettingsPage.sendInvite(event)">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">The sign-in gets a one-time password, shown once; the person chooses their own at the first sign-in. Leave the end date empty for a sign-in with no end.</p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Username *</label><input name="username" required autocomplete="off"></div>
+                    <div class="form-group"><label>Display name</label><input name="display_name" autocomplete="off"></div>
+                    <div class="form-group"><label>Role</label>
+                        <select name="role" data-no-search>
+                            <option value="accountant">Accountant — reads everything, posts journal entries</option>
+                            <option value="readonly">Read-only — reports and lookups</option>
+                            <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                        </select></div>
+                    <div class="form-group"><label>Sign-in ends on</label><input name="expires_on" type="date"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create the invitation</button>
+                </div>
+            </form>`);
+    },
+
+    async sendInvite(e) {
+        e.preventDefault();
+        const form = e.target;
+        try {
+            const r = await API.post('/users/invite', {
+                username: form.username.value.trim(),
+                display_name: form.display_name.value.trim(),
+                role: form.role.value,
+                expires_on: form.expires_on.value || null,
+            });
+            const note = `Address: ${r.address}\nUsername: ${r.username}\nOne-time password: ${r.password}${r.expires_on ? `\nThe sign-in ends on ${r.expires_on}.` : ''}\n\nSign in once with this password; you will be asked to choose your own.`;
+            openModal('Send this to your accountant', `
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The one-time password is shown here once. Copy it now; it is not stored anywhere readable.</p>
+                <textarea readonly rows="7" style="width:100%; font-family:var(--font-mono); font-size:12px;" onclick="this.select()">${escapeHtml(note)}</textarea>
+                <div class="form-actions"><button type="button" class="btn btn-primary" onclick="closeModal()">Done</button></div>`);
             SettingsPage.loadUsers();
         } catch (err) { toast(err.message, 'error'); }
     },
