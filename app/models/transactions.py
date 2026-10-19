@@ -20,6 +20,7 @@ from sqlalchemy import (
     CheckConstraint,
     func,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -43,7 +44,9 @@ class Transaction(Base):
     # An adjusting entry (#341): an accountant's correction, marked so the
     # owner can tell it from the daily books, listed by the Adjusting
     # Journal Entries report and left out of a statement on request.
-    is_adjusting = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_adjusting = Column(
+        Boolean, nullable=False, default=False, server_default=sa_false()
+    )
     # The sign-in that posted a journal entry (#340): shown on the entry,
     # and what lets an accountant void only what it posted. Documents'
     # postings leave it empty; the audit log names their author.

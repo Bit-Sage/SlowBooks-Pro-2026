@@ -38,7 +38,7 @@ COLUMNS = (
         "is_adjusting",
         sa.Boolean(),
         nullable=False,
-        server_default=sa.text("0"),
+        server_default=sa.false(),
     ),
     sa.Column("posted_by", sa.String(length=100), nullable=True),
 )
@@ -49,7 +49,7 @@ USER_COLUMNS = (
         "must_change_password",
         sa.Boolean(),
         nullable=False,
-        server_default=sa.text("0"),
+        server_default=sa.false(),
     ),
     sa.Column("expires_on", sa.Date(), nullable=True),
 )

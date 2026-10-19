@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Date, Boolean, Column, DateTime, Integer, String
 
+from sqlalchemy import false as sa_false
 from app.database import Base
 
 
@@ -42,6 +43,6 @@ class User(Base):
     # An invited sign-in (#345): the one-time password must be replaced at
     # the first sign-in, and the sign-in can end on a day.
     must_change_password = Column(
-        Boolean, nullable=False, default=False, server_default="0"
+        Boolean, nullable=False, default=False, server_default=sa_false()
     )
     expires_on = Column(Date, nullable=True)
