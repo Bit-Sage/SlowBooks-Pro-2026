@@ -68,7 +68,9 @@ def test_the_role_exists_and_is_offered(client, db_session):
     assert r.status_code in (200, 201), r.text
     assert r.json()["role"] == "accountant"
     settings_js = (ROOT / "app/static/js/settings.js").read_text(encoding="utf-8")
-    assert settings_js.count('<option value="accountant">') == 3  # users, tokens, the invitation
+    assert (
+        settings_js.count('<option value="accountant">') == 3
+    )  # users, tokens, the invitation
     assert "['admin', 'bookkeeper', 'accountant', 'readonly']" in settings_js
 
 

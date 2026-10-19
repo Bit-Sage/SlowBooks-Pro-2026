@@ -34,14 +34,23 @@ const CompaniesPage = {
 
     async render() {
         const companies = await API.get('/companies');
+        let ac = { is_copy: false, copy: null, sent: [], can_make: false };
+        try { ac = await API.get('/accountants-copy/status'); } catch (e) { /* an older server */ }
+        CompaniesPage._ac = ac;
         let html = `
             <div class="page-header">
                 <h2>Company Files</h2>
                 <div>
                     ${CompaniesPage._isDesktop() ? '<button class="btn btn-secondary" onclick="CompaniesPage.switchCompany()">Switch company…</button> ' : ''}
+                    ${ac.is_copy ? '<button class="btn btn-primary" data-accountant-ok onclick="CompaniesPage.sendChanges()">Send changes back…</button> ' : ''}
+                    ${!ac.is_copy && ac.can_make ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showSendToAccountant()">Send to accountant…</button> ' : ''}
+                    ${!ac.is_copy ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showApplyChanges()">Apply accountant\'s changes…</button> ' : ''}
+                    ${CompaniesPage._isDesktop() && !ac.is_copy ? '<button class="btn btn-secondary" data-admin onclick="CompaniesPage.showOpenCopy()">Open accountant\'s copy…</button> ' : ''}
                     <button class="btn btn-primary" data-admin onclick="CompaniesPage.showCreate()">+ New Company</button>
                 </div>
             </div>
+            ${ac.is_copy ? `<div class="hint" style="margin-bottom:12px;">This is an accountant's copy of <strong>${escapeHtml(ac.copy.company_name)}</strong>, made ${escapeHtml((ac.copy.made_at || '').slice(0, 10))}. It takes journal entries dated on or before <strong>${escapeHtml(ac.copy.dividing_date)}</strong> and nothing else. When the adjustments are in, Send changes back writes the file to return.</div>` : ''}
+            ${!ac.is_copy && ac.sent.length ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Copies sent to an accountant: ${ac.sent.map(s => `${escapeHtml(s.dividing_date)} (${s.applied} entr${s.applied === 1 ? 'y' : 'ies'} applied back)`).join(' · ')}</div>` : ''}
             <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
                 Each company is stored in its own separate database.
                 ${CompaniesPage._isDesktop()
@@ -67,6 +76,138 @@ const CompaniesPage = {
             html += '</div>';
         }
         return html;
+    },
+
+    // ---- SlowBooks' own Accountant's Copy (#346) --------------------------
+    showSendToAccountant() {
+        openModal('Send to accountant', `
+            <form onsubmit="CompaniesPage.sendToAccountant(event)">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">A copy of these books, encrypted under a passphrase shown once, for your accountant to open in their own SlowBooks Pro. They work on or before the dividing date; you keep working after it. Their changes come back as one small file you apply here.</p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Dividing date *</label><input name="dividing_date" type="date" required value="${todayISO()}"></div>
+                    <div class="form-group"><label>Type the company's name to confirm *</label><input name="company_name" required autocomplete="off"></div>
+                </div>
+                <div id="ac-make-status" role="status" aria-live="polite" style="font-size:11px; color:var(--text-muted); min-height:14px; margin-top:6px;"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Make the copy</button>
+                </div>
+            </form>`);
+    },
+
+    async sendToAccountant(e) {
+        e.preventDefault();
+        const form = e.target;
+        const btn = form.querySelector('button[type="submit"]');
+        const status = form.querySelector('#ac-make-status');
+        if (btn) { btn.disabled = true; btn.textContent = 'Making the copy…'; }
+        if (status) status.textContent = 'Copying the books and encrypting the copy; this takes a few seconds.';
+        try {
+            const r = await API.post('/accountants-copy/make', { dividing_date: form.dividing_date.value, company_name: form.company_name.value });
+            const note = `File: ${r.file_name}\nPassphrase: ${r.passphrase}\nDividing date: ${r.dividing_date}\n\nOpen it in SlowBooks Pro: Companies → Open accountant's copy…, with this passphrase. Post the adjustments dated on or before the dividing date, then Companies → Send changes back and return that file.`;
+            openModal('Send these two things to your accountant', `
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The passphrase is shown here once and kept nowhere. Send the file one way and the passphrase another.</p>
+                <textarea readonly rows="8" style="width:100%; font-family:var(--font-mono); font-size:12px;" onclick="this.select()">${escapeHtml(note)}</textarea>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-primary" onclick="window.open('/api/accountants-copy/download/${encodeURIComponent(r.copy_id)}','_blank')">Download the copy</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal(); App.navigate('#/companies');">Done</button>
+                </div>`);
+        } catch (err) {
+            toast(err.message, 'error');
+            if (btn) { btn.disabled = false; btn.textContent = 'Make the copy'; }
+            if (status) status.textContent = '';
+        }
+    },
+
+    showOpenCopy() {
+        openModal("Open accountant's copy", `
+            <form onsubmit="CompaniesPage.openCopy(event)">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">The .sbacopy file your client sent, and the passphrase they sent separately. It becomes a company file of its own here, opened with a password you choose.</p>
+                <div class="form-grid">
+                    <div class="form-group full-width"><label>Copy file *</label><input name="file" type="file" accept=".sbacopy,.zip" required data-accountant-ok></div>
+                    <div class="form-group full-width"><label>Passphrase *</label><input name="passphrase" type="password" required autocomplete="off"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Open the copy</button>
+                </div>
+            </form>`);
+    },
+
+    async openCopy(e) {
+        e.preventDefault();
+        const form = e.target;
+        const fd = new FormData();
+        fd.append('file', form.file.files[0]);
+        fd.append('passphrase', form.passphrase.value);
+        try {
+            const res = await fetch('/api/accountants-copy/open', { method: 'POST', body: fd });
+            if (!res.ok) throw new Error(await API.responseError(res, 'The copy could not be opened'));
+            const r = await res.json();
+            toast(`${r.name} is on the picker. Switch company… opens it.`);
+            closeModal();
+            App.navigate('#/companies');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    sendChanges() {
+        IIFPage && typeof IIFPage._download === 'function'
+            ? IIFPage._download('/api/accountants-copy/changes', 'accountants-changes.sbchanges')
+            : window.open('/api/accountants-copy/changes', '_blank');
+    },
+
+    showApplyChanges() {
+        openModal("Apply accountant's changes", `
+            <form onsubmit="CompaniesPage.previewChanges(event)">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">The .sbchanges file your accountant sent back. You see every entry before anything posts; the new ones post as adjusting entries in their name, and a file applied twice posts nothing twice.</p>
+                <div class="form-group"><label>Changes file *</label><input name="file" type="file" accept=".sbchanges,.json" required></div>
+                <div id="ac-preview"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-secondary">Preview</button>
+                    <button type="button" class="btn btn-primary hidden" id="ac-apply-btn" onclick="CompaniesPage.applyChanges()">Apply</button>
+                </div>
+            </form>`);
+    },
+
+    async _postChanges(path) {
+        const form = document.querySelector('#modal-body form');
+        const fd = new FormData();
+        fd.append('file', form.file.files[0]);
+        const res = await fetch(path, { method: 'POST', body: fd });
+        if (!res.ok) throw new Error(await API.responseError(res, 'The changes file was refused'));
+        return res.json();
+    },
+
+    _previewHtml(seen) {
+        const word = { new: 'new', applied: 'already posted', skipped: 'skipped', refused: 'refused', posted: 'posted' };
+        const rows = seen.entries.map(e => `<tr>
+                <td>${formatDate(e.date)}</td><td>${escapeHtml(e.description)}${e.reference ? ` (${escapeHtml(e.reference)})` : ''}</td>
+                <td class="amount">${formatCurrency(e.total)}</td>
+                <td>${word[e.status] || e.status}${e.why ? `<div style="font-size:10px; color:var(--gray-500);">${escapeHtml(e.why)}</div>` : ''}</td>
+            </tr>`).join('');
+        return `<p style="font-size:11px; color:var(--text-muted); margin:8px 0;">From ${escapeHtml(seen.accountant || 'the accountant')}, copy of ${escapeHtml(seen.company_name)}, dividing date ${formatDate(seen.dividing_date)}: ${seen.counts.new} new, ${seen.counts.applied} already posted, ${seen.counts.skipped} skipped, ${seen.counts.refused} refused.</p>
+            <div class="table-container"><table><thead><tr><th scope="col">Date</th><th scope="col">Entry</th><th scope="col" class="amount">Amount</th><th scope="col">Status</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No entries in the file</td></tr>'}</tbody></table></div>`;
+    },
+
+    async previewChanges(e) {
+        e.preventDefault();
+        try {
+            const seen = await CompaniesPage._postChanges('/api/accountants-copy/changes/preview');
+            document.getElementById('ac-preview').innerHTML = CompaniesPage._previewHtml(seen);
+            const apply = document.getElementById('ac-apply-btn');
+            if (apply) apply.classList.toggle('hidden', !seen.counts.new);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async applyChanges() {
+        try {
+            const done = await CompaniesPage._postChanges('/api/accountants-copy/changes/apply');
+            document.getElementById('ac-preview').innerHTML = CompaniesPage._previewHtml(done);
+            const apply = document.getElementById('ac-apply-btn');
+            if (apply) apply.classList.add('hidden');
+            toast(`${done.counts.posted} entr${done.counts.posted === 1 ? 'y' : 'ies'} posted as adjusting entries`);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     showCreate() {

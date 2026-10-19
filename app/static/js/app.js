@@ -1748,6 +1748,16 @@ const App = {
                     App.mustChangePassword = true;
                     App.navigate(location.hash || '#/');
                 }
+                if (a.accountants_copy && !document.getElementById('ac-banner')) {
+                    // an accountant's copy says so on every page (#346)
+                    const banner = document.createElement('div');
+                    banner.id = 'ac-banner';
+                    banner.setAttribute('role', 'status');
+                    banner.style.cssText = 'background:var(--primary-light); border-bottom:1px solid var(--gray-300); padding:6px 16px; font-size:12px;';
+                    banner.innerHTML = `Accountant's copy of <strong>${escapeHtml(a.accountants_copy.company_name)}</strong>: journal entries dated on or before <strong>${escapeHtml(a.accountants_copy.dividing_date)}</strong> only. <a href="#/companies">Send changes back</a> when they are in.`;
+                    const main = document.getElementById('page-content');
+                    if (main && main.parentElement) main.parentElement.insertBefore(banner, main);
+                }
                 if (a.multi_user && a.user && a.user.role !== 'admin') {
                     // HR and payroll are admin functions; the server refuses
                     // them for other roles, so do not offer the pages.

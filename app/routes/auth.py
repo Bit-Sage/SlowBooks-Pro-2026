@@ -197,6 +197,13 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
     # New Company dialog (F3) nor silently renames a file that already holds
     # a company's books (2.9.0 gate).
     out["company_name"] = _company_name(db)
+    # an accountant's copy says so on every page (#346)
+    from app.services.accountants_copy import mode_of
+
+    copy = mode_of(db)
+    out["accountants_copy"] = (
+        {k: v for k, v in copy.items() if k != "token"} if copy else None
+    )
     out["desktop"] = _desktop_window(request)
     if setup_needed:
         from app.models.transactions import Transaction

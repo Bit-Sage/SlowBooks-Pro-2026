@@ -72,10 +72,33 @@ Account report, filtered to Transaction Type = Journal, imports under
 else, so a whole-ledger upload can never double the books. A second upload
 of either posts nothing twice.
 
-## What this page will grow into
+## 4. SlowBooks' own Accountant's Copy (no server at all)
 
-The rest of the accountant review this release started on: a Closing Date
-Exceptions report, a one-click accountant's package, the full QuickBooks
-Desktop round trip, inviting an accountant with an end date, and SlowBooks'
-own send-adjust-apply Accountant's Copy with no server at all. Each lands
-here as it ships.
+The most direct answer to "send the QBX, apply the QBY". SlowBooks is free,
+so your accountant simply installs it.
+
+1. **Send to accountant** (Companies, an administrator): pick a dividing
+   date and type the company's name to confirm. SlowBooks copies the books
+   into a file encrypted under a passphrase it shows once, with your
+   sign-ins and secrets left out. Send the file one way and the passphrase
+   another.
+2. **Open accountant's copy** (your accountant, their own SlowBooks Pro,
+   Companies): the file and the passphrase. The copy becomes a company file
+   of its own on their picker, opened with a password they choose, and it
+   takes journal entries dated on or before the dividing date and nothing
+   else; a banner on every page says so.
+3. **Send changes back** (the copy, Companies): one small file holding just
+   the entries they posted, signed by the copy.
+4. **Apply accountant's changes** (you, Companies): every entry is shown
+   first, then the new ones post as adjusting entries in the accountant's
+   name, on the Adjusting Journal Entries report like any other. A file
+   applied twice posts nothing twice; a file from another company, or
+   altered on the way, is refused whole; an entry dated after the dividing
+   date, or on an account you don't have, is refused with the reason.
+
+You keep working after the dividing date the whole time. The reports and
+the Accountant's Package above still work beside it, and an accountant who
+would rather sign in than open a copy gets the Accountant role.
+
+A server install on PostgreSQL cannot make a copy (the copy is made from a
+company file); it offers the sign-in and the package instead.

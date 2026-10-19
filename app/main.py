@@ -68,6 +68,7 @@ from app.routes import uploads
 # Phase 5: Advanced Integration
 from app.routes import bank_import, simplefin, tax, backups
 from app.routes import company_file as company_file_routes
+from app.routes import accountants_copy as accountants_copy_routes
 from app.routes import users as users_routes
 from app.routes import api_tokens as api_tokens_routes
 from app.routes import classes as classes_routes
@@ -949,6 +950,19 @@ async def require_session(request: Request, call_next):
             status_code=403,
             content={"detail": _role_refusal(role)},
         )
+    # An accountant's copy (#346) takes journal entries and nothing else,
+    # whoever is signed in: the one permission the copy has.
+    if not path.startswith("/api/auth/"):
+        from app.services import accountants_copy as _ac
+
+        copy = _ac.mode()
+        if copy and not _ac.copy_gate(request.method, path):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": _ac.COPY_MODE_MESSAGE.format(day=copy["dividing_date"])
+                },
+            )
     if token_principal is None and request.session.get("must_change_password"):
         # an invited sign-in with its one-time password (#345): the only
         # thing it can do is set a password of its own (the auth routes
@@ -1093,6 +1107,7 @@ app.include_router(api_tokens_routes.router)
 app.include_router(tax.router)
 app.include_router(backups.router)
 app.include_router(company_file_routes.router)
+app.include_router(accountants_copy_routes.router)
 app.include_router(system_routes.router)
 # Phase 6: Ambitious
 app.include_router(companies.router)

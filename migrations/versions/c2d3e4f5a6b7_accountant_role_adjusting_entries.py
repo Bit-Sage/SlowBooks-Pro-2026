@@ -4,6 +4,11 @@ Also (#345): an invited accountant signs in once with a one-time password
 and must set their own (users.must_change_password), and a sign-in can be
 given an end date after which it is refused (users.expires_on).
 
+And (#346) the accountants_copies table: the copies of these books sent
+out to an accountant (their identity, the secret their change file is
+signed with, the dividing date, and which of their entries were posted
+here), so changes come back once and only from a copy these books made.
+
 An outside accountant's adjustments (#341) are journal entries like any
 other, so the owner could not tell them from their own. Two nullable-safe
 columns on transactions: is_adjusting (the Adjusting entry box on New
@@ -73,9 +78,27 @@ def upgrade() -> None:
     insp = sa.inspect(op.get_bind())
     _add(insp, "transactions", COLUMNS)
     _add(insp, "users", USER_COLUMNS)
+    if "accountants_copies" not in insp.get_table_names():
+        op.create_table(
+            "accountants_copies",
+            sa.Column("copy_id", sa.String(length=36), primary_key=True),
+            sa.Column("token", sa.String(length=64), nullable=False),
+            sa.Column(
+                "company_name", sa.String(length=200), nullable=False, server_default=""
+            ),
+            sa.Column("dividing_date", sa.Date(), nullable=False),
+            sa.Column(
+                "made_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+            ),
+            sa.Column("applied", sa.JSON(), nullable=False, server_default="[]"),
+        )
 
 
 def downgrade() -> None:
     insp = sa.inspect(op.get_bind())
+    if "accountants_copies" in insp.get_table_names():
+        op.drop_table("accountants_copies")
     _drop(insp, "users", USER_COLUMNS)
     _drop(insp, "transactions", COLUMNS)

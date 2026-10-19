@@ -190,6 +190,11 @@ def create_manual_journal_entry(
     data: JournalEntryCreate, db: Session = Depends(get_db), request: Request = None
 ):
     check_closing_date(db, data.date)
+    # in an accountant's copy, the entry must be on or before the dividing
+    # date (#346)
+    from app.services.accountants_copy import check_entry_date
+
+    check_entry_date(db, data.date)
     # An accountant's entries are adjustments unless the box is cleared;
     # everyone else's are ordinary unless it is ticked (#341).
     is_adjusting = (
