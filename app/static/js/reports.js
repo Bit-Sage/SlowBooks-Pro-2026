@@ -30,6 +30,7 @@ const ReportsPage = {
         'adjusting-entries':    { label: 'Adjusting Journal Entries', open: (p) => ReportsPage.adjustingEntries(p) },
         'closing-date-exceptions': { label: 'Closing Date Exceptions', open: (p) => ReportsPage.closingDateExceptions(p) },
         'accountants-package':  { label: "Accountant's Package", open: (p) => ReportsPage.accountantsPackage(p) },
+        'reclassify':           { label: 'Reclassify Transactions', open: (p) => ReportsPage.reclassify(p) },
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
@@ -358,6 +359,7 @@ const ReportsPage = {
                 ${card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each')}
                 ${card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after')}
                 ${card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log')}
+                ${card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change')}
                 ${card('cash-flow', 'Cash Flow', 'Operating, investing, financing')}
                 ${card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing')}
                 ${card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis')}
@@ -1560,6 +1562,168 @@ const ReportsPage = {
                 ${notes ? `<ul style="margin:0 0 12px 18px; color:var(--gray-500);">${notes}</ul>` : ''}
                 <button class="btn btn-primary" onclick="window.open('/api/reports/accountants-package?${qs}','_blank')">Download the package (zip)</button>`;
         }, "Dates", false, { view: 'accountants-package', prefill });
+    },
+
+    // Reclassify (#337): an account's lines for a period, the ticked ones
+    // moved to another account and/or class as one audited change. The
+    // account rides on the address (params.account_id), so Back and a
+    // saved address reopen the same list. Ticks are kept across redraws by
+    // line id; the move sends only the ticked lines still listed.
+    async reclassify(prefill) {
+        const p = prefill || {};
+        const params = {};
+        if (/^\d+$/.test(p.account_id || '')) params.account_id = p.account_id;
+        ReportsPage._rc = { lists: null, lines: [], ticked: new Set(), plan: null, range: null };
+        await ReportsPage.openPeriodModal('Reclassify Transactions', 'this_year_to_date', async (_period, range, prm) => {
+            const rc = ReportsPage._rc;
+            rc.range = range;
+            rc.plan = null;
+            if (!rc.lists) {
+                const [accounts, classes] = await Promise.all([
+                    API.get('/accounts').catch(() => []),
+                    API.get('/classes').catch(() => []),
+                ]);
+                rc.lists = { accounts, classes };
+            }
+            const accountId = String(prm.account_id || '');
+            const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`;
+            const picker = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+                    <label for="rc-account" style="font-size:11px;">Lines on</label>
+                    <select id="rc-account" data-no-search style="max-width:300px;" onchange="ReportsPage.setParam('account_id', this.value)"><option value="">Choose an account…</option>${rc.lists.accounts.map(a => acctOpt(a, accountId)).join('')}</select>
+                </div>`;
+            if (!accountId) {
+                rc.lines = [];
+                return `${picker}<p style="color:var(--gray-500);">Pick the account the lines are parked on: a holding account, or one chosen by mistake. Tick the lines to move, choose where they belong, preview the move, then post it as one change. Every moved line is listed in the result and in the audit log.</p>`;
+            }
+            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}`);
+            rc.lines = data.lines;
+            const listed = new Set(data.lines.map(l => l.id));
+            rc.ticked.forEach(id => { if (!listed.has(id)) rc.ticked.delete(id); });
+            const rows = data.lines.map(l => {
+                const tick = l.movable
+                    ? `<input type="checkbox" class="rc-tick" data-line="${l.id}" ${rc.ticked.has(l.id) ? 'checked' : ''} aria-label="Move the ${escapeHtml(l.source_label.toLowerCase())} of ${formatDate(l.date)}, ${escapeHtml(l.description || 'no memo')}" onchange="ReportsPage.rcTick(${l.id}, this.checked)">`
+                    : `<span class="sr-only">Stays: </span>`;
+                const what = l.document ? escapeHtml(l.document) : (l.reference ? escapeHtml(l.reference) : '');
+                const muted = l.movable ? '' : ' style="color:var(--gray-400);"';
+                return `<tr${muted}>
+                        <td style="width:28px;">${tick}</td>
+                        <td>${formatDate(l.date)}</td>
+                        <td>${escapeHtml(l.source_label)}${what ? ` <span style="color:var(--gray-500);">${what}</span>` : ''}</td>
+                        <td>${escapeHtml(l.description || '')}${l.movable ? '' : ` <span style="font-size:11px;">(stays: ${escapeHtml(l.reason)})</span>`}</td>
+                        <td>${escapeHtml(l.class_name || '')}</td>
+                        <td class="amount">${formatCurrency(l.amount)}</td>
+                    </tr>`;
+            }).join('');
+            const targets = rc.lists.accounts.filter(a => a.is_active !== false && !a.bank_kind && !a.is_control && String(a.id) !== accountId);
+            const classOpts = rc.lists.classes.filter(c => !c.is_archived).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+            const empty = `<tr><td colspan="6" style="text-align:center; color:var(--gray-400);">No lines on ${escapeHtml(data.account.label)} in this period</td></tr>`;
+            return `${picker}
+                <p style="margin-bottom:8px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'line' : 'lines'}, ${data.movable} can move${data.count ? ` · lines that can move total ${formatCurrency(data.movable_total)}` : ''}</p>
+                <div class="table-container"><table id="rc-table">
+                    <thead><tr>
+                        <th scope="col" style="width:28px;">${data.movable ? `<input type="checkbox" id="rc-all" aria-label="Tick every line that can move" onchange="ReportsPage.rcTickAll(this.checked)">` : ''}</th>
+                        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
+                    </tr></thead>
+                    <tbody>${rows || empty}</tbody>
+                </table></div>
+                <div id="rc-move" data-accountant-ok style="margin-top:12px; padding:10px; border:1px solid var(--gray-200); border-radius:4px;">
+                    <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                        <div class="form-group" style="margin:0;">
+                            <label for="rc-to-account" style="font-size:11px;">Move the ticked lines to</label>
+                            <select id="rc-to-account" data-no-search data-write style="max-width:300px;"><option value="">Leave the account as it is</option>${targets.map(a => acctOpt(a, '')).join('')}</select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label for="rc-to-class" style="font-size:11px;">${T('Class')}</label>
+                            <select id="rc-to-class" data-no-search data-write style="max-width:220px;"><option value="">Leave as it is</option><option value="none">No ${T('class').toLowerCase()}</option>${classOpts}</select>
+                        </div>
+                        <button type="button" class="btn btn-secondary" data-write onclick="ReportsPage.rcPreview()">Preview the move</button>
+                    </div>
+                    <div id="rc-plan" style="margin-top:8px;" aria-live="polite"></div>
+                </div>`;
+        }, 'Dates', false, { view: 'reclassify', prefill, params });
+    },
+
+    rcTick(id, on) {
+        const rc = ReportsPage._rc;
+        if (on) rc.ticked.add(id); else rc.ticked.delete(id);
+        const all = $('#rc-all');
+        if (all) all.checked = rc.lines.filter(l => l.movable).every(l => rc.ticked.has(l.id));
+        const plan = $('#rc-plan');
+        if (plan && rc.plan) { rc.plan = null; plan.innerHTML = '<p style="color:var(--gray-500);">The ticks changed; preview the move again.</p>'; }
+    },
+
+    rcTickAll(on) {
+        const rc = ReportsPage._rc;
+        rc.lines.filter(l => l.movable).forEach(l => { if (on) rc.ticked.add(l.id); else rc.ticked.delete(l.id); });
+        $$('#rc-table .rc-tick').forEach(cb => { cb.checked = on; });
+        ReportsPage.rcTick(null, false);
+    },
+
+    _rcRequest(dryRun) {
+        const rc = ReportsPage._rc;
+        const ids = rc.lines.filter(l => l.movable && rc.ticked.has(l.id)).map(l => l.id);
+        const toAccount = ($('#rc-to-account') || {}).value || '';
+        const toClass = ($('#rc-to-class') || {}).value || '';
+        const body = { line_ids: ids, dry_run: dryRun };
+        if (toAccount) body.account_id = parseInt(toAccount, 10);
+        if (toClass === 'none') body.clear_class = true;
+        else if (toClass) body.class_id = parseInt(toClass, 10);
+        return body;
+    },
+
+    _rcPlanHtml(r, done) {
+        const where = [
+            r.to_account ? `to <strong>${escapeHtml(r.to_account.label)}</strong>` : '',
+            r.clear_class ? `with no ${T('class').toLowerCase()}` : (r.to_class ? `under ${T('class').toLowerCase()} <strong>${escapeHtml(r.to_class.name)}</strong>` : ''),
+        ].filter(Boolean).join(', ');
+        const rows = r.moved.map(m => `<tr>
+                <td>${formatDate(m.date)}</td>
+                <td>${escapeHtml(m.source_label)}${m.document ? ` <span style="color:var(--gray-500);">${escapeHtml(m.document)}</span>` : (m.reference ? ` <span style="color:var(--gray-500);">${escapeHtml(m.reference)}</span>` : '')}</td>
+                <td>${escapeHtml(m.description || '')}</td>
+                <td>${escapeHtml(m.from_account ? m.from_account.label : '')} → ${escapeHtml(m.to_account ? m.to_account.label : '')}</td>
+                <td>${escapeHtml(m.from_class ? m.from_class.name : '')} → ${escapeHtml(m.to_class ? m.to_class.name : '')}</td>
+                <td class="amount">${formatCurrency(m.amount)}</td>
+            </tr>`).join('');
+        const skipped = r.skipped.length ? `<p style="font-size:11px; color:var(--gray-500);">${r.skipped.length} ${r.skipped.length === 1 ? 'line stays' : 'lines stay'}: ${r.skipped.map(s => escapeHtml(s.reason)).filter((v, i, a) => a.indexOf(v) === i).join('; ')}.</p>` : '';
+        const verb = done ? 'Moved' : 'This moves';
+        return `<p style="margin:0 0 6px;"><strong>${verb} ${r.count} ${r.count === 1 ? 'line' : 'lines'}</strong> ${where}.${done ? ' Each is in the audit log.' : ''}</p>
+            ${skipped}
+            ${r.count ? `<div class="table-container"><table><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Memo</th><th scope="col">Account</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+            ${(!done && r.count) ? `<div style="margin-top:8px;"><button type="button" class="btn btn-primary" data-write onclick="ReportsPage.rcMove()">Move ${r.count} ${r.count === 1 ? 'line' : 'lines'}</button></div>` : ''}`;
+    },
+
+    async rcPreview() {
+        const body = ReportsPage._rcRequest(true);
+        const plan = $('#rc-plan');
+        if (!body.line_ids.length) { plan.innerHTML = '<p style="color:var(--gray-500);">Tick the lines to move first.</p>'; return; }
+        if (!body.account_id && !body.class_id && !body.clear_class) { plan.innerHTML = `<p style="color:var(--gray-500);">Choose the account to move them to, or a ${T('class').toLowerCase()}.</p>`; return; }
+        try {
+            const r = await API.post('/reclassify', body);
+            ReportsPage._rc.plan = r;
+            plan.innerHTML = ReportsPage._rcPlanHtml(r, false);
+        } catch (err) {
+            plan.innerHTML = `<p style="color:var(--danger);">${escapeHtml(err.message)}</p>`;
+        }
+    },
+
+    async rcMove() {
+        const body = ReportsPage._rcRequest(false);
+        const plan = $('#rc-plan');
+        const btn = plan.querySelector('button');
+        if (btn) { btn.disabled = true; btn.textContent = 'Moving…'; }
+        try {
+            const r = await API.post('/reclassify', body);
+            ReportsPage._rc.ticked.clear();
+            toast(`Moved ${r.count} ${r.count === 1 ? 'line' : 'lines'}.`);
+            // the list redraws without the moved lines; the result stays
+            // under it until the next preview
+            const live = ReportsPage._live;
+            if (live && live.render) await live.render();
+            const after = $('#rc-plan');
+            if (after) after.innerHTML = ReportsPage._rcPlanHtml(r, true);
+        } catch (err) {
+            plan.innerHTML = `<p style="color:var(--danger);">${escapeHtml(err.message)}</p>`;
+        }
     },
 
     async cashFlow(prefill) {

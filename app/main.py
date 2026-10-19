@@ -69,6 +69,7 @@ from app.routes import uploads
 from app.routes import bank_import, simplefin, tax, backups
 from app.routes import company_file as company_file_routes
 from app.routes import accountants_copy as accountants_copy_routes
+from app.routes import reclassify as reclassify_routes
 from app.routes import users as users_routes
 from app.routes import api_tokens as api_tokens_routes
 from app.routes import classes as classes_routes
@@ -843,8 +844,11 @@ _READ_METHODS = ("GET", "HEAD", "OPTIONS")
 # posts them, voids its own (the journal router checks whose), and attaches
 # the support behind one. Everything else it reads, the audit log included:
 # seeing what moved is the job.
+# ... and moves lines between accounts with the reclassify tool (#337),
+# the accountant's own job: nothing new is posted, and the audit log
+# names every line.
 _ACCOUNTANT_WRITE_RE = _re.compile(
-    r"^/api/(journal(/\d+/void)?|attachments/journal_entry/\d+)$"
+    r"^/api/(journal(/\d+/void)?|attachments/journal_entry/\d+|reclassify)$"
 )
 ACCOUNTANT_REFUSAL = (
     "An accountant's sign-in posts journal entries and reads everything "
@@ -1108,6 +1112,7 @@ app.include_router(tax.router)
 app.include_router(backups.router)
 app.include_router(company_file_routes.router)
 app.include_router(accountants_copy_routes.router)
+app.include_router(reclassify_routes.router)
 app.include_router(system_routes.router)
 # Phase 6: Ambitious
 app.include_router(companies.router)

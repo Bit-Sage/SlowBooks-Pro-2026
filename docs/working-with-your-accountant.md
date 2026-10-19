@@ -22,9 +22,12 @@ What the role can do:
 
 - they read everything, the reports, every list and the **Audit Log**
   included, so they can see exactly what moved and who moved it;
-- they post **journal entries** and void the ones they posted, and nothing
-  else: an invoice, a bill, a payment, a bank entry, a setting or a user is
-  refused to them with a sentence that says so;
+- they post **journal entries** and void the ones they posted, and move
+  lines between accounts with Reports → **Reclassify Transactions** (the
+  lines parked on an account for a period, ticked and moved to the account
+  they belong on, and a class, as one audited change naming every line),
+  and nothing else: an invoice, a bill, a payment, a bank entry, a setting
+  or a user is refused to them with a sentence that says so;
 - payroll and HR stay the administrator's, reads included, as they are for
   every role but admin.
 
