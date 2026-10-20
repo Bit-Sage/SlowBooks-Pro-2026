@@ -59,13 +59,27 @@ def is_ledger_header(cols: dict | None) -> bool:
 
 
 def has_account_sections(rows: list[list[str]], header_at: int, cols: dict) -> bool:
-    """Recognize ledger grouping even when an added Account column masks it."""
+    """Recognize ledger grouping even when an added Account column masks it.
+
+    The section headings sit left of the report's own columns, so they are
+    looked for left of the first of those; the added Account column is left
+    out of that reach and of the heading read, wherever it was inserted (as
+    column A ahead of the headings, 2.24.1 gate W-27, or anywhere else)."""
     heading = None
-    first = min(cols.values())
+    own = [v for k, v in cols.items() if k != "Account"]
+    first = min(own) if own else 0
+    skip = cols.get("Account")
     for row in rows[header_at + 1 :]:
         ttype = row[cols["Type"]].strip() if cols["Type"] < len(row) else ""
         if not ttype:
-            label = next((c.strip() for c in row[:first] if c.strip()), "")
+            label = next(
+                (
+                    c.strip()
+                    for i, c in enumerate(row[:first])
+                    if i != skip and c.strip()
+                ),
+                "",
+            )
             if label:
                 heading = (
                     None if label.startswith("Total ") or label == "TOTAL" else label

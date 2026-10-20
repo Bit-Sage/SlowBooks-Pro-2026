@@ -823,7 +823,10 @@ def _given_folder(folder: str) -> str:
 def _folder_for(filename: str) -> str:
     """The folder for a PDF: Documents for a document someone is sent,
     Reports for everything else."""
-    kind = str(filename or "").split("_", 1)[0].replace("-", "").lower()
+    # the kind is the name's first word, read off the stem: "Check.pdf" (a
+    # check with no number) is a check too (2.24.1 gate, NEW-168)
+    stem = Path(str(filename or "")).stem
+    kind = stem.split("_", 1)[0].replace("-", "").lower()
     return "Documents" if kind in _DOCUMENT_KINDS else "Reports"
 
 
