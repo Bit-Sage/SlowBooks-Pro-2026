@@ -707,8 +707,14 @@ const SettingsPage = {
                     + `and so does the recovery key${ring.recovery_made_at ? ` made ${SettingsPage._when(ring.recovery_made_at)}` : ''}. `
                     + 'Keep the recovery key where the backups are not: it opens the file, and every backup of it, if every administrator\'s password is lost.';
             } else keyWords = 'The key comes from the launcher.';
-            status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}), `
-                + 'and so is every backup of it. ' + keyWords;
+            // backups made before Turn on stay plain SQLite in the same list
+            // (NEW-158): say so, and how many
+            const plain = (SettingsPage._backups || []).filter(b => b.encrypted === false).length;
+            const backupWords = plain
+                ? `Backups made while it is on are encrypted; ${plain} backup${plain === 1 ? '' : 's'} in the list below ${plain === 1 ? 'was' : 'were'} made before and ${plain === 1 ? 'is' : 'are'} plain SQLite, readable with no key: delete ${plain === 1 ? 'it' : 'them'} once a newer backup exists. `
+                : 'Backups made while it is on are encrypted. ';
+            status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}). `
+                + backupWords + keyWords;
             actions.innerHTML = (ring ? '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmRecoveryKey()">New recovery key…</button> ' : '')
                 + '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
         } else {
@@ -756,6 +762,10 @@ const SettingsPage = {
         SettingsPage._encryptionName = company.trim().toLowerCase();
         const st = SettingsPage._companyFile || {};
         const desktopKey = enable && st.desktop_key;
+        // Turn off proves the administrator the way Turn on does (the
+        // agents' question, round 1): the password is asked when a person
+        // is signed in
+        const asksPassword = desktopKey || (!enable && App.username);
         const what = enable
             ? `<p style="margin:0 0 8px;"><strong>This rewrites the company file encrypted.</strong> From then on the file, and every backup
                 of it, opens only with the key; without the key the books are unreadable, including to SlowBooks Pro.</p>`
@@ -766,16 +776,20 @@ const SettingsPage = {
                 : '')
             : `<p style="margin:0 0 8px;"><strong>This rewrites the company file as plain SQLite.</strong> Anyone with the file can read
                 the books again${st.keyring ? ', and the recovery key is retired' : ''}.</p>`;
+        if (enable && desktopKey) {
+            // where the text file lands: a Save panel on the desktop, else the
+            // browser's download; never a synced Documents folder unasked
+        }
         openModal(enable ? 'Turn on company file encryption' : 'Turn off company file encryption', `
             <form id="encryption-form" onsubmit="SettingsPage.changeEncryption(event, ${enable})">
                 ${what}
                 <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name to confirm.</p>
                 ${SettingsPage._nameConfirmField(company)}
-                ${desktopKey ? `<div class="form-group">
+                ${asksPassword ? `<div class="form-group">
                     <label for="encryption-password">Your password</label>
                     <input type="password" id="encryption-password" name="password" autocomplete="current-password" required
                         oninput="SettingsPage._encryptionFormCheck(this.form)">
-                    <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">The key is wrapped for it, so your sign-in unlocks the books.</div>
+                    ${desktopKey ? '<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">The key is wrapped for it, so your sign-in unlocks the books.</div>' : ''}
                 </div>` : ''}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -833,7 +847,20 @@ const SettingsPage = {
     async saveRecoveryKey() {
         const company = ((App.settings && App.settings.company_name) || 'company').replace(/[^A-Za-z0-9 _-]+/g, '').trim() || 'company';
         const name = `${company} recovery key.txt`;
-        const blob = new Blob([SettingsPage._recoveryFile || ''], { type: 'text/plain' });
+        const text = SettingsPage._recoveryFile || '';
+        // On the desktop the file goes where the person chooses, through a
+        // Save panel: the Reports folder every export lands in is synced to
+        // a cloud on many machines, and a recovery key should not be
+        // (macbase1 and skytech, round 1).
+        const api = window.pywebview && window.pywebview.api;
+        if (api && api.save_secret_file) {
+            const r = await api.save_secret_file(name, text);
+            if (r && r.success) toast(`Saved to ${r.path}`);
+            else if (r && r.cancelled) toast('Not saved: the key is still on screen.');
+            else toast(`Could not save the file: ${(r && r.error) || 'unknown error'}`, 'error');
+            return;
+        }
+        const blob = new Blob([text], { type: 'text/plain' });
         if (window.SlowbooksDesktop && await window.SlowbooksDesktop.saveFile(blob, name)) return;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -905,8 +932,11 @@ const SettingsPage = {
                     </select>
                 </td>
                 <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}${u.must_change_password ? '<div style="font-size:10px; color:var(--gray-500);">one-time password, not yet replaced</div>' : ''}</td>
-                <td><input type="date" value="${escapeHtml(u.expires_on || '')}" aria-label="Day ${escapeHtml(u.username)}'s sign-in ends" style="font-size:11px; padding:2px 4px;"
-                        onchange="SettingsPage.updateUser(${u.id}, {expires_on: this.value || null})">${u.ended ? '<div style="font-size:10px; color:var(--danger);">ended</div>' : ''}</td>
+                <td>${u.expires_on
+                    ? `<input type="date" value="${escapeHtml(u.expires_on)}" aria-label="Day ${escapeHtml(u.username)}'s sign-in ends" style="font-size:11px; padding:2px 4px;"
+                        onchange="SettingsPage.updateUser(${u.id}, {expires_on: this.value || null})">${u.ended ? '<div style="font-size:10px; color:var(--danger);">ended</div>' : ''}`
+                    : `<span style="color:var(--text-muted);">none</span> <button type="button" class="btn btn-sm btn-secondary" aria-label="Set a day ${escapeHtml(u.username)}'s sign-in ends"
+                        onclick="SettingsPage.askEndDate(${u.id}, '${escapeHtml(u.username)}')">Set…</button>`}</td>
                 <td>${u.is_active
                     ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: false})">Deactivate</button>`
                     : `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: true})">Reactivate</button>`}
@@ -1021,11 +1051,27 @@ const SettingsPage = {
                             <option value="readonly">Read-only — reports and lookups</option>
                             <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
                         </select></div>
-                    <div class="form-group"><label>Sign-in ends on</label><input name="expires_on" type="date"></div>
+                    <div class="form-group"><label>Sign-in ends on <span style="font-weight:normal; color:var(--text-muted);">(optional)</span></label><input name="expires_on" type="date">
+                        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Leave it empty for a sign-in with no end date.</div></div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create the invitation</button>
+                </div>
+            </form>`);
+    },
+
+    // An empty date box is drawn by WebKit with today's date greyed in, which
+    // read as "ends today" (NEW-151): a sign-in with no end date shows
+    // "none", and the box appears on request.
+    askEndDate(id, username) {
+        openModal(`When does ${username}'s sign-in end?`, `
+            <form onsubmit="event.preventDefault(); SettingsPage.updateUser(${id}, {expires_on: this.expires_on.value || null}); closeModal();">
+                <div class="form-group"><label for="user-end-date">Sign-in ends on</label>
+                    <input id="user-end-date" name="expires_on" type="date" required></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Set the end date</button>
                 </div>
             </form>`);
     },

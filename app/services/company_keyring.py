@@ -91,9 +91,15 @@ def new_recovery_key() -> str:
     return "-".join(raw[i : i + _GROUP] for i in range(0, len(raw), _GROUP))
 
 
+# Base32 has no 0, 1 or 8: a key typed with them meant O, I and B
+# (2.24.0 gate, NEW-160).
+_LOOKALIKES = str.maketrans({"0": "O", "1": "I", "8": "B"})
+
+
 def normalize_recovery_key(text: str) -> str:
-    """The key as typed: case, spaces and dashes do not matter."""
-    return re.sub(r"[^A-Z2-7]", "", (text or "").upper())
+    """The key as typed: case, spaces and dashes do not matter, and 0, 1
+    and 8 read as the letters they look like."""
+    return re.sub(r"[^A-Z2-7]", "", (text or "").upper().translate(_LOOKALIKES))
 
 
 def is_recovery_key(text: str) -> bool:
@@ -129,7 +135,7 @@ def recovery_file_text(company_name: str, recovery_key: str) -> str:
         f"copy; an administrator can make a new one under Settings, which\n"
         f"retires this one.\n"
         f"\n"
-        f"Made {datetime.now(timezone.utc):%B %d, %Y}.\n"
+        f"Made {datetime.now():%B %d, %Y}.\n"
     )
 
 

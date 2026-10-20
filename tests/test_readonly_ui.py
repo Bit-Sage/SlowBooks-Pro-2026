@@ -60,8 +60,9 @@ def test_every_dialog_form_is_locked_except_a_document_picker():
     # the sentence is the read-only one for a read-only sign-in (and the
     # accountant's for an accountant, #340)
     assert "App.lockedMessage()" in body
+    assert "if (App.inCopy) return App.COPY_MESSAGE();" in app
     assert (
-        "lockedMessage() { return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE; }"
+        "return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE;"
         in app
     )
     utils = _js("utils.js")

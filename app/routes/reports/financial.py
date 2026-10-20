@@ -1887,16 +1887,20 @@ def adjusting_entries_pdf_route(
 def closing_date_exceptions_route(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    tz_offset: int = Query(default=0, ge=-900, le=900),
     db: Session = Depends(get_db),
 ):
     """Every change made into a closed period with the closing-date
     password, in the period the changes were made: when, who, the closing
     date in force, and each row it touched with its fields before and
-    after. Ordinary posting after the closing date is not here."""
+    after. Ordinary posting after the closing date is not here.
+    ``tz_offset`` is the page's clock offset from UTC in minutes (what
+    JavaScript's getTimezoneOffset gives): the period's days and every
+    time shown are the person's own."""
     from app.services.closing_date_exceptions import closing_date_exceptions
 
     start_date, end_date = _range_or_year(start_date, end_date)
-    return closing_date_exceptions(db, start_date, end_date)
+    return closing_date_exceptions(db, start_date, end_date, tz_offset)
 
 
 @router.get("/closing-date-exceptions/csv")
@@ -1904,11 +1908,12 @@ def closing_date_exceptions_csv_route(
     request: Request,
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    tz_offset: int = Query(default=0, ge=-900, le=900),
     db: Session = Depends(get_db),
 ):
     from app.services.closing_date_exceptions import exceptions_csv
 
-    data = closing_date_exceptions_route(start_date, end_date, db)
+    data = closing_date_exceptions_route(start_date, end_date, tz_offset, db)
     return _csv_download(
         exceptions_csv(data, _company_name(db)),
         f"closing-date-exceptions_{data['start_date']}_{data['end_date']}.csv",
@@ -1920,11 +1925,12 @@ def closing_date_exceptions_csv_route(
 def closing_date_exceptions_pdf_route(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    tz_offset: int = Query(default=0, ge=-900, le=900),
     db: Session = Depends(get_db),
 ):
     from app.services.closing_date_exceptions import exceptions_section
 
-    data = closing_date_exceptions_route(start_date, end_date, db)
+    data = closing_date_exceptions_route(start_date, end_date, tz_offset, db)
     return _pdf_response(
         [exceptions_section(data)],
         db,

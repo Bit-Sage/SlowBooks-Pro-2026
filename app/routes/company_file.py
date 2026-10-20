@@ -198,6 +198,10 @@ def change_encryption(
     key = company_file.resolve_key()
     if key is None:
         raise HTTPException(status_code=409, detail=NO_KEY_SOURCE_MESSAGE)
+    if not data.enabled and request.session.get("user_id"):
+        # the same proof Turn on and New recovery key ask for (2.24.0 gate,
+        # the agents' question on round 1): the administrator's own password
+        _signed_in_admin(request, db, data.password)
 
     def work():
         company_file.convert(path, key, encrypt=data.enabled)

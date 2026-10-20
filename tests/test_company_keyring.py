@@ -363,7 +363,9 @@ def test_turning_on_makes_a_recovery_key_and_wraps_the_administrator(
     assert company_keyring.unlock(company, recovery_key=again) == new_key
 
     # off again: plain, no keyring, no key held
-    r = client.post(URL, json={"enabled": False, "company_name": COMPANY})
+    r = client.post(
+        URL, json={"enabled": False, "company_name": COMPANY, "password": pw}
+    )
     assert r.status_code == 200, r.text
     assert r.json()["encrypted"] is False
     assert _rows(company) == [1, 2, 3]

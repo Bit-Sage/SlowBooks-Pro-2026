@@ -79,7 +79,20 @@ def _iif_text(value) -> str:
 
 # Letters with no Windows-1252 form and no accent to drop (NFKD leaves
 # them whole), spelled the way a person would type them without the key.
-_ANSI_PLAIN = {"Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "ı": "i", "Ħ": "H", "ħ": "h"}
+_ANSI_PLAIN = {
+    "Ł": "L",
+    "ł": "l",
+    "Đ": "D",
+    "đ": "d",
+    "ı": "i",
+    "Ħ": "H",
+    "ħ": "h",
+    # the app's own transfer memo ("Savings → Checking") and the like
+    "→": "->",
+    "←": "<-",
+    "↔": "<->",
+    "⇒": "=>",
+}
 
 
 def _ansi_char(ch: str) -> str:

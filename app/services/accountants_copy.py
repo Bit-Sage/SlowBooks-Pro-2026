@@ -31,7 +31,6 @@ import json
 import logging
 import secrets
 import shutil
-import sqlite3
 import tempfile
 import time
 import uuid
@@ -160,15 +159,20 @@ def check_entry_date(db: Session, day: date) -> None:
 # ---------------------------------------------------------------------------
 
 
+# No look-alikes (0/O, 1/l/I): the passphrase is read out or typed from a
+# note (2.24.0 gate, NEW-155). 55 characters, 24 of them: ~139 bits.
+_PASSPHRASE_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
 def _passphrase() -> str:
-    # 24 URL-safe characters: typed once, by the accountant, from a note
-    return secrets.token_urlsafe(18)
+    # 24 characters: typed once, by the accountant, from a note
+    return "".join(secrets.choice(_PASSPHRASE_ALPHABET) for _ in range(24))
 
 
 def _strip_owner(plain_db: Path, copy: dict) -> None:
     """In the plain copy: the owner's sign-ins and secrets out, the copy's
     own identity and name in."""
-    conn = sqlite3.connect(str(plain_db))
+    conn = company_file.sqlite_module().connect(str(plain_db))
     try:
         cur = conn.cursor()
         tables = {
@@ -192,6 +196,32 @@ def _strip_owner(plain_db: Path, copy: dict) -> None:
         }
         for key in gone:
             cur.execute("DELETE FROM settings WHERE key = ?", (key,))
+        # the audit log stays (seeing what moved is the job), its snapshots
+        # of the owner's hashes and secret settings redacted (NEW-148)
+        if "audit_log" in tables:
+            from app.services.audit_redaction import redact_values
+
+            rows = cur.execute(
+                "SELECT id, table_name, old_values, new_values FROM audit_log "
+                "WHERE table_name IN ('users', 'settings', 'api_tokens', "
+                "'employee_bank_accounts', 'portal_accesses')"
+            ).fetchall()
+            for row_id, table, old_raw, new_raw in rows:
+                new_pair = []
+                for raw in (old_raw, new_raw):
+                    if raw is None:
+                        new_pair.append(None)
+                        continue
+                    try:
+                        values = json.loads(raw) if isinstance(raw, str) else raw
+                    except ValueError:
+                        new_pair.append(raw)
+                        continue
+                    new_pair.append(json.dumps(redact_values(table, values)))
+                cur.execute(
+                    "UPDATE audit_log SET old_values = ?, new_values = ? WHERE id = ?",
+                    (new_pair[0], new_pair[1], row_id),
+                )
         # the copy names itself
         for key, value in (
             (KEY_ID, copy["copy_id"]),
@@ -254,7 +284,7 @@ def make_copy(
             Path(path), key if company_file.is_encrypted_file(path) else None
         )
         try:
-            dst = sqlite3.connect(str(plain))
+            dst = company_file.sqlite_module().connect(str(plain))
             try:
                 src.backup(dst)
             finally:

@@ -225,5 +225,38 @@ def invite_user(
     db.commit()
     out = _user_out(user)
     out["password"] = one_time  # shown once; never stored or logged
-    out["address"] = str(request.base_url).rstrip("/")
+    out["address"] = _invite_address(request)
     return out
+
+
+def _invite_address(request: Request) -> str:
+    """The address the accountant signs in at: the one this request came
+    to, by its Host header. On a desktop that is loopback, which only this
+    computer reaches (2.24.0 gate, NEW-150), so the machine's own LAN
+    address stands in for it; a server's host name is kept as typed."""
+    import ipaddress
+    import socket
+
+    host = (request.headers.get("host") or request.url.netloc or "").strip()
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    name, _, port = host.partition(":")
+    loopback = name in ("localhost", "")
+    if not loopback:
+        try:
+            loopback = ipaddress.ip_address(name).is_loopback
+        except ValueError:
+            loopback = False
+    if loopback:
+        lan = None
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                lan = s.getsockname()[0]
+            finally:
+                s.close()
+        except OSError:
+            lan = None
+        if lan and not ipaddress.ip_address(lan).is_loopback:
+            name = lan
+    return f"{scheme}://{name}{':' + port if port else ''}"

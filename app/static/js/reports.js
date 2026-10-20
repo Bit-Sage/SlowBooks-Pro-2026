@@ -1524,9 +1524,12 @@ const ReportsPage = {
     // closing-date password, with the rows it changed before and after.
     async closingDateExceptions(prefill) {
         await ReportsPage.openPeriodModal("Closing Date Exceptions", "this_year_to_date", async (_period, range) => {
-            const qs = `start_date=${range.start}&end_date=${range.end}`;
+            // the period's days and every time shown are the page's clock's:
+            // the log keeps UTC, and an evening override was dated tomorrow
+            // and missing from "this year to date" (NEW-152 / W-19)
+            const qs = `start_date=${range.start}&end_date=${range.end}&tz_offset=${new Date().getTimezoneOffset()}`;
             const data = await API.get(`/reports/closing-date-exceptions?${qs}`);
-            const when = (iso) => iso ? `${formatDate(iso.slice(0, 10))} ${iso.slice(11, 16)}` : '';
+            const when = (ev) => ev.when_local ? `${formatDate(ev.when_local.slice(0, 10))} ${ev.when_local.slice(11, 16)}` : (ev.when ? `${formatDate(ev.when.slice(0, 10))} ${ev.when.slice(11, 16)}` : '');
             const events = data.events.map(ev => {
                 const changes = ev.changes.map(c => {
                     const record = `${c.action} ${c.record} ${c.record_id}${c.label ? ` (${escapeHtml(c.label)})` : ''}`;
@@ -1536,11 +1539,11 @@ const ReportsPage = {
                              <td>${escapeHtml(f.field)}</td><td>${escapeHtml(f.before)}</td><td>${escapeHtml(f.after)}</td></tr>`).join('');
                 }).join('') || `<tr><td colspan="4" style="padding-left:24px; color:var(--gray-500);">The password was used; the rows it changed were not marked before 2.24.0.</td></tr>`;
                 return `<tr style="font-weight:600; background:var(--gray-50);">
-                        <td colspan="4">${when(ev.when)} · ${escapeHtml(ev.who)} · closing date ${formatDate(ev.closing_date)} · a ${formatDate(ev.transaction_date)} change</td>
+                        <td colspan="4">${when(ev)} · ${escapeHtml(ev.who)} · closing date ${formatDate(ev.closing_date)} · a ${formatDate(ev.transaction_date)} change</td>
                     </tr>${changes}`;
             }).join('');
             return `${ReportsPage._exportButtons('closing-date-exceptions', qs)}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'override' : 'overrides'}, ${data.changes} ${data.changes === 1 ? 'change' : 'changes'}${data.closing_date ? ` · closing date now ${formatDate(data.closing_date)}` : ' · no closing date set'}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'override' : 'overrides'}, ${data.changes} ${data.changes === 1 ? 'change' : 'changes'}${data.closing_date ? ` · closing date now ${formatDate(data.closing_date)}` : ' · no closing date set'}${data.timezone ? ` · times in ${escapeHtml(data.timezone)}` : ''}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Change</th><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
                     <tbody>${events || '<tr><td colspan="4" style="text-align:center; color:var(--gray-400);">Nothing was changed inside a closed period with the password in this period</td></tr>'}</tbody>
@@ -1552,7 +1555,7 @@ const ReportsPage = {
     // download. The zip is built once to list its files.
     async accountantsPackage(prefill) {
         await ReportsPage.openPeriodModal("Accountant's Package", "last_year", async (_period, range) => {
-            const qs = `start_date=${range.start}&end_date=${range.end}`;
+            const qs = `start_date=${range.start}&end_date=${range.end}&tz_offset=${new Date().getTimezoneOffset()}`;
             const m = await API.get(`/reports/accountants-package/manifest?${qs}`);
             const files = m.files.map(f => `<li style="font-family:var(--mono, monospace); font-size:12px;">${escapeHtml(f)}</li>`).join('');
             const notes = (m.notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
@@ -1601,14 +1604,16 @@ const ReportsPage = {
             rc.ticked.forEach(id => { if (!listed.has(id)) rc.ticked.delete(id); });
             const rows = data.lines.map(l => {
                 const tick = l.movable
-                    ? `<input type="checkbox" class="rc-tick" data-line="${l.id}" ${rc.ticked.has(l.id) ? 'checked' : ''} aria-label="Move the ${escapeHtml(l.source_label.toLowerCase())} of ${formatDate(l.date)}, ${escapeHtml(l.description || 'no memo')}" onchange="ReportsPage.rcTick(${l.id}, this.checked)">`
+                    ? `<input type="checkbox" class="rc-tick" data-write data-line="${l.id}" ${rc.ticked.has(l.id) ? 'checked' : ''} aria-label="Move the ${escapeHtml(l.source_label.toLowerCase())} of ${formatDate(l.date)}, ${escapeHtml(l.description || 'no memo')}" onchange="ReportsPage.rcTick(${l.id}, this.checked)">`
                     : `<span class="sr-only">Stays: </span>`;
-                const what = l.document ? escapeHtml(l.document) : (l.reference ? escapeHtml(l.reference) : '');
+                // a document names itself ("Bill UT-20"), the rest by their
+                // type and reference ("Bill Bill UT-20" read the type twice: NEW-163)
+                const what = l.document ? escapeHtml(l.document) : `${escapeHtml(l.source_label)}${l.reference ? ` <span style="color:var(--gray-500);">${escapeHtml(l.reference)}</span>` : ''}`;
                 const muted = l.movable ? '' : ' style="color:var(--gray-400);"';
                 return `<tr${muted}>
                         <td style="width:28px;">${tick}</td>
                         <td>${formatDate(l.date)}</td>
-                        <td>${escapeHtml(l.source_label)}${what ? ` <span style="color:var(--gray-500);">${what}</span>` : ''}</td>
+                        <td>${what}</td>
                         <td>${escapeHtml(l.description || '')}${l.movable ? '' : ` <span style="font-size:11px;">(stays: ${escapeHtml(l.reason)})</span>`}</td>
                         <td>${escapeHtml(l.class_name || '')}</td>
                         <td class="amount">${formatCurrency(l.amount)}</td>
@@ -1621,12 +1626,12 @@ const ReportsPage = {
                 <p style="margin-bottom:8px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'line' : 'lines'}, ${data.movable} can move${data.count ? ` · lines that can move total ${formatCurrency(data.movable_total)}` : ''}</p>
                 <div class="table-container"><table id="rc-table">
                     <thead><tr>
-                        <th scope="col" style="width:28px;">${data.movable ? `<input type="checkbox" id="rc-all" aria-label="Tick every line that can move" onchange="ReportsPage.rcTickAll(this.checked)">` : ''}</th>
+                        <th scope="col" style="width:28px;">${data.movable ? `<input type="checkbox" id="rc-all" data-write aria-label="Tick every line that can move" onchange="ReportsPage.rcTickAll(this.checked)">` : ''}</th>
                         <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
                     </tr></thead>
                     <tbody>${rows || empty}</tbody>
                 </table></div>
-                <div id="rc-move" data-accountant-ok style="margin-top:12px; padding:10px; border:1px solid var(--gray-200); border-radius:4px;">
+                <div id="rc-move" data-accountant-ok data-write style="margin-top:12px; padding:10px; border:1px solid var(--gray-200); border-radius:4px;">
                     <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
                         <div class="form-group" style="margin:0;">
                             <label for="rc-to-account" style="font-size:11px;">Move the ticked lines to</label>
@@ -1678,7 +1683,7 @@ const ReportsPage = {
         ].filter(Boolean).join(', ');
         const rows = r.moved.map(m => `<tr>
                 <td>${formatDate(m.date)}</td>
-                <td>${escapeHtml(m.source_label)}${m.document ? ` <span style="color:var(--gray-500);">${escapeHtml(m.document)}</span>` : (m.reference ? ` <span style="color:var(--gray-500);">${escapeHtml(m.reference)}</span>` : '')}</td>
+                <td>${m.document ? escapeHtml(m.document) : `${escapeHtml(m.source_label)}${m.reference ? ` <span style="color:var(--gray-500);">${escapeHtml(m.reference)}</span>` : ''}`}</td>
                 <td>${escapeHtml(m.description || '')}</td>
                 <td>${escapeHtml(m.from_account ? m.from_account.label : '')} → ${escapeHtml(m.to_account ? m.to_account.label : '')}</td>
                 <td>${escapeHtml(m.from_class ? m.from_class.name : '')} → ${escapeHtml(m.to_class ? m.to_class.name : '')}</td>

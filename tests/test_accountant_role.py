@@ -225,7 +225,9 @@ def test_an_api_token_can_wear_the_role(client, db_session, seed_accounts):
 
 def test_the_page_treats_the_accountant_as_locked_but_for_the_journal():
     app_js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
-    assert "isAccountant() { return App.role === 'accountant'; }" in app_js
+    assert (
+        "isAccountant() { return App.role === 'accountant' || App.inCopy; }" in app_js
+    )
     assert "isLocked() { return App.isReadOnly() || App.isAccountant(); }" in app_js
     assert "ACCOUNTANT_MESSAGE:" in app_js and "ACCOUNTANT_ACTIONS: new Set([" in app_js
     # the locks run for the accountant too, and skip what it keeps

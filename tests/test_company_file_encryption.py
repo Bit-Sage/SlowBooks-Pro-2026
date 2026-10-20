@@ -498,7 +498,15 @@ def test_the_switch_rewrites_the_file_in_place(client, company, db_session):
     r = client.post(URL, json={"enabled": True, "company_name": COMPANY})
     assert r.status_code == 200 and r.json()["changed"] is False
 
-    r = client.post(URL, json={"enabled": False, "company_name": COMPANY})
+    # Turn off proves the administrator too (2.24.0 round 2)
+    r = client.post(
+        URL,
+        json={
+            "enabled": False,
+            "company_name": COMPANY,
+            "password": "test-password-123",
+        },
+    )
     assert r.status_code == 200, r.text
     assert r.json()["encrypted"] is False
     assert not company_file.is_encrypted_file(company)

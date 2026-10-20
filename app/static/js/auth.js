@@ -534,6 +534,13 @@
         });
         form.querySelector("#auth-save-key").addEventListener("click", async function () {
             const name = ((existingCompany.name || "company").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "company") + " recovery key.txt";
+            const api = window.pywebview && window.pywebview.api;
+            if (api && api.save_secret_file) {
+                // a Save panel on the desktop: never the synced Reports folder unasked
+                const r = await api.save_secret_file(name, text);
+                this.textContent = r && r.success ? "Saved" : (r && r.cancelled ? "Not saved" : "Could not save");
+                return;
+            }
             const blob = new Blob([text], { type: "text/plain" });
             if (window.SlowbooksDesktop && (await window.SlowbooksDesktop.saveFile(blob, name))) { this.textContent = "Saved"; return; }
             const url = URL.createObjectURL(blob);

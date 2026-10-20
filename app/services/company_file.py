@@ -241,14 +241,22 @@ def key_source() -> str | None:
 def resolve_key() -> bytes | None:
     """The key in hand, or None. Derivation from the secret costs about half
     a second; callers that may not need it pass this function itself to
-    ``create_sqlite_engine`` and it runs only for an encrypted file."""
+    ``create_sqlite_engine`` and it runs only for an encrypted file.
+
+    A key set at runtime comes first: it is the newest knowledge. A new
+    recovery key re-keys the file and sets it, while the key the launcher
+    handed this process in its environment is the retired one; preferring
+    the environment left every connection after a re-key on the old key
+    until a restart (2.24.0 gate, NEW-157)."""
+    if _runtime_key is not None:
+        return _runtime_key
     key = _env_key()
     if key is not None:
         return key
     secret = _secret()
     if secret:
         return derive_key(secret)
-    return _runtime_key
+    return None
 
 
 def _key_pragma(key: bytes) -> str:
@@ -325,14 +333,31 @@ def _apply_key(dbapi_conn, key: bytes) -> None:
         cur.close()
 
 
+def sqlite_module():
+    """The one SQLite library this process opens company files with: the
+    sqlcipher3 module when it is installed (the engine's), else the
+    standard sqlite3. Never both on one file (2.24.0 gate, NEW-156): the
+    engine kept every plain company file open through sqlcipher3 while a
+    backup, or the copy for an accountant, read it through the standard
+    module. Two SQLite libraries in one process do not see each other's
+    connections, so the second one, closing, took itself for the last
+    connection, checkpointed the WAL and deleted it under the engine, and
+    everything the engine wrote from then on went when the server exited
+    (sqlite.org, "How To Corrupt", 2.2). Every release from 2.23.2 to
+    2.23.5 had it on a plain file; an encrypted file was never affected,
+    both of its connections being sqlcipher3's."""
+    return _sqlcipher() or sqlite3
+
+
 def connect_raw(path: Path, key: bytes | None = None, *, readonly: bool = False):
     """A DB-API connection to a company file, keyed when ``key`` is given.
 
     With a key, the connection is SQLCipher's and the file is read or
     written encrypted (a file that does not exist yet is created encrypted).
-    Without one, it is the standard sqlite3 module's — unless the file is
-    encrypted, which raises CompanyFileLocked rather than open ciphertext as
-    a database.
+    Without one, the file is read or written plain, through the same
+    library the engine uses (sqlite_module) — unless the file is encrypted,
+    which raises CompanyFileLocked rather than open ciphertext as a
+    database.
 
     ``readonly`` opens the file as it lies (``mode=ro&immutable=1``): no lock,
     no sidecar files, the way backup facts are read."""
@@ -344,7 +369,7 @@ def connect_raw(path: Path, key: bytes | None = None, *, readonly: bool = False)
         if mod is None:
             raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
     else:
-        mod = sqlite3
+        mod = sqlite_module()
     if readonly:
         target = path.resolve().as_uri() + "?mode=ro&immutable=1"
         conn = mod.connect(target, uri=True)

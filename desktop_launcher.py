@@ -1284,6 +1284,42 @@ class PickerApi:
             result["note"] = note
         return result
 
+    def save_secret_file(self, name: str, text: str) -> dict:
+        """Save a text the person must keep (the company file's recovery
+        key, #290) where they choose, through a native Save panel. Not
+        save_document_file: that lands in Documents/SlowBooks Pro/Reports
+        with every export, which iCloud or OneDrive sync on many machines
+        (2.24.0 gate: both agents saw the key go to a cloud folder).
+        Returns {"success", "path"}, {"cancelled": True} when the panel is
+        dismissed, or {"success": False, "error"}."""
+        try:
+            import webview
+
+            window = self._window
+            if window is None:
+                return {"success": False, "error": "no window"}
+            safe = _safe_temp_filename(
+                Path(str(name or "recovery key.txt")).stem, ".txt"
+            )
+            chosen = window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                directory=str(Path.home()),
+                save_filename=safe,
+            )
+            if not chosen:
+                return {"success": False, "cancelled": True}
+            dest = Path(chosen[0] if isinstance(chosen, (list, tuple)) else chosen)
+            if not dest.suffix:
+                dest = dest.with_suffix(".txt")
+            dest.write_text(str(text or ""), encoding="utf-8")
+            try:
+                os.chmod(dest, 0o600)
+            except OSError:
+                pass
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        return {"success": True, "path": str(dest)}
+
     def reveal_path(self, path: str) -> dict:
         """Open the folder that holds a file this app saved (Explorer /
         Finder / the desktop's file manager). Only paths under the app's

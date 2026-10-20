@@ -9,6 +9,7 @@ from sqlalchemy import LargeBinary, event, inspect
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
+from app.services.audit_redaction import REDACTED, is_secret_column, redact_values
 from app.services.request_context import acting_username
 
 
@@ -44,6 +45,9 @@ _SKIP_TABLES = {
 
 # Column values that must never be snapshotted into audit JSON — the users
 # table is audited (who created/changed accounts matters), its hashes are not.
+# The one list, for every action and for settings rows, is
+# app/services/audit_redaction.py (2.24.0 gate, NEW-148: an UPDATE copied the
+# hash before and after, and a settings row carried its secret value).
 _REDACT_COLUMNS = {"password_hash"}
 
 
@@ -86,12 +90,12 @@ def _get_instance_dict(instance):
         key = col.key
         if _is_file_content(col):
             continue
-        if key in _REDACT_COLUMNS:
-            result[key] = "***"
+        if key in _REDACT_COLUMNS or is_secret_column(key):
+            result[key] = REDACTED
             continue
         val = getattr(instance, key, None)
         result[key] = _serialize_value(val)
-    return result
+    return redact_values(getattr(instance, "__tablename__", ""), result)
 
 
 def log_event(
@@ -207,6 +211,18 @@ def _after_flush(session, flush_context):
                 old_vals[key] = _serialize_value(old_val)
                 new_vals[key] = _serialize_value(new_val)
                 changed.append(key)
+        # a secret moved is noted as moved, never as what it was
+        old_vals = redact_values(table, old_vals) or old_vals
+        new_vals = redact_values(table, new_vals) or new_vals
+        if table == "settings":
+            # the row's key is what tells a secret setting from the rest
+            key_now = getattr(obj, "key", None)
+            from app.services.audit_redaction import sensitive_setting_keys
+
+            if key_now in sensitive_setting_keys():
+                for vals in (old_vals, new_vals):
+                    if vals.get("value") not in (None, ""):
+                        vals["value"] = REDACTED
 
         if changed:
             audit_entries.append(

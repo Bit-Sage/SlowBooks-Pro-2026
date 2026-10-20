@@ -71,6 +71,8 @@ const CreditMemosPage = {
                 ${cm.status !== 'void' ? `<button data-destructive class="btn btn-danger" onclick="CreditMemosPage.void(${cm.id})">Void</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
+        if (App.documentAddress) App.documentAddress(`#/credit-memos/${Number(id)}`);
     },
 
     async void(id) {

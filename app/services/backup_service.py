@@ -435,6 +435,9 @@ def list_backup_files() -> list[dict]:
                 "filename": f.name,
                 "file_size": f.stat().st_size,
                 "created": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                # a backup made before encryption was turned on is plain
+                # SQLite (2.24.0 gate, NEW-158): the page says which
+                "encrypted": company_file.is_encrypted_file(f),
             }
         )
     return files

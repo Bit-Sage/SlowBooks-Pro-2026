@@ -1103,6 +1103,17 @@ input:is([type="checkbox"], [type="radio"], [type="file"]):focus-visible {
     padding-top: 40px;
     z-index: 200;
 }
+/* A dialog with an address of its own (a report view, a document) is a
+   screen, not a form: the sidebar stays above its overlay, so the Open
+   group's links and × buttons, and the menu, work over it (W-22 /
+   NEW-159). A plain form's overlay still covers everything. */
+body.dialog-addressed #sidebar {
+    position: relative;
+    z-index: 201;
+}
+/* The class is set only while the dialog sits clear of the sidebar (App.syncBack
+   measures it): a wide grid that reaches over the sidebar keeps the overlay
+   whole, so the raised sidebar never covers the dialog's edge. */
 
 
 /* A bare <a> had no rule anywhere, so the user agent picked the colour and

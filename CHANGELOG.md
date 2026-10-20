@@ -100,6 +100,19 @@ Detail by Account journal, a migration's) voids from the page like a
 hand-typed one (#355); and the IIF import's unsupported-type note names
 the types it takes now.
 
+**Fixed.** On macOS and Linux, a plain (unencrypted) company file lost the
+entries made after Create Backup, or after Send to accountant, when the
+app quit or switched company: the backup read the file through a second
+SQLite library, which deleted the write-ahead log under the one the app
+writes with. Every release from 2.23.2 to 2.23.5 had it; an encrypted
+file never did. Every read of a company file goes through the one library
+now. The audit log no longer records a password hash or a secret setting's
+value (an UPDATE copied them before and after), and the Audit Log page,
+the Accountant's Package and the Accountant's Copy redact what earlier
+releases wrote. Closing Date Exceptions works on the page's clock, so an
+evening override is in the day it was made and times show in local time
+with the zone named; accounts on it are named, not numbered.
+
 Schema: migration `c2d3e4f5a6b7` (an entry's adjusting flag and who posted
 it, a user's one-time-password flag and end date, the accountants_copies
 table). 585 API operations (the Adjusting Journal Entries, Closing Date

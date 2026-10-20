@@ -100,6 +100,8 @@ const BillsPage = {
                 <button class="btn btn-secondary" onclick="window.open('/api/bills/${bill.id}/print-preview','_blank')">Print</button>
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
+        if (App.documentAddress) App.documentAddress(`#/bills/${Number(id)}`);
         BillsPage.loadAttachments(bill.id);
     },
 

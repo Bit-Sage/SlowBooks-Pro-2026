@@ -70,17 +70,28 @@ def test_the_screens_opened_are_listed_linked_marked_and_closable(
         # the Report Center it opened over is not listed as a screen of its own
         assert "Reports" not in labels
 
-        # a link back: the dialog is closed first (the sidebar sits under
-        # it, as under every dialog), then the register page; the mark moves
-        page.keyboard.press("Escape")
-        page.wait_for_function("() => !(%s)()" % MODAL_SHOWN)
-        assert [t["here"] for t in _tabs(page)] == [False, False, False]
+        # a link back, clicked while the report is showing: a view's overlay
+        # leaves the sidebar usable (W-22 / NEW-159), so the register page
+        # opens, the dialog goes and the mark moves
+        assert page.evaluate(
+            "() => document.body.classList.contains('dialog-addressed')"
+        )
+        hit = page.evaluate(
+            """() => { const a = document.querySelector('#open-screens .open-screens__link[data-key="/banking/%d"]');
+                       const r = a.getBoundingClientRect();
+                       return document.elementFromPoint(r.left + 4, r.top + r.height / 2) === a; }"""
+            % checking
+        )
+        assert hit, "the Open link is under the overlay"
         page.click(
             '#open-screens .open-screens__link[data-key="/banking/%d"]' % checking
         )
         settle(page, handled)
         assert _hash(page) == f"#/banking/{checking}"
         assert not page.evaluate(MODAL_SHOWN)
+        assert not page.evaluate(
+            "() => document.body.classList.contains('dialog-addressed')"
+        )
         tabs = _tabs(page)
         assert len(tabs) == 3 and [t["here"] for t in tabs] == [False, True, False]
 
@@ -118,10 +129,10 @@ def test_the_screens_opened_are_listed_linked_marked_and_closable(
         # Close all
         page.click("#open-screens .open-screens__clear")
         assert not page.evaluate(GROUP)
-        assert (
-            page.evaluate("() => sessionStorage.getItem('slowbooks-open-screens')")
-            == "[]"
+        stored = page.evaluate(
+            "() => JSON.parse(sessionStorage.getItem('slowbooks-open-screens'))"
         )
+        assert stored["tabs"] == [] and stored["owner"].startswith("admin|")
     finally:
         page.close()
 
@@ -136,5 +147,36 @@ def test_a_document_lists_with_its_title(browser, company, books):
         assert len(tabs) == 1 and tabs[0]["key"] == f"/invoices/{inv['id']}"
         assert tabs[0]["label"] == page.evaluate(TITLE).strip()
         assert tabs[0]["here"]
+        # View on the list opens the same document by its address (NEW-164)
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => !(%s)()" % MODAL_SHOWN)
+        page.evaluate("async (id) => { await InvoicesPage.view(id); }", inv["id"])
+        settle(page, handled)
+        assert _hash(page) == f"#/invoices/{inv['id']}"
+        tabs = _tabs(page)
+        assert len(tabs) == 1 and tabs[0]["here"]
+    finally:
+        page.close()
+
+
+def test_the_list_belongs_to_one_sign_in(browser, company, books):
+    """Another sign-in on the same window starts with its own list (NEW-164)."""
+    page, handled = _open_at(browser, company, "#/customers")
+    try:
+        assert len(_tabs(page)) == 1
+        # a stored list of another owner is dropped once the sign-in is known
+        page.evaluate(
+            """() => { const s = JSON.parse(sessionStorage.getItem('slowbooks-open-screens'));
+                       s.owner = 'someone-else|Another Co'; s.tabs.push({ key: '/vendors', label: 'Vendors', n: 1, load: 'old' });
+                       sessionStorage.setItem('slowbooks-open-screens', JSON.stringify(s)); }"""
+        )
+        page.reload()
+        page.wait_for_function("window.App && document.readyState === 'complete'")
+        page.evaluate(
+            "() => { const s = document.getElementById('splash'); if (s) s.classList.add('hidden'); }"
+        )
+        settle(page, handled)
+        tabs = _tabs(page)
+        assert [t["key"] for t in tabs] == ["/customers"]
     finally:
         page.close()

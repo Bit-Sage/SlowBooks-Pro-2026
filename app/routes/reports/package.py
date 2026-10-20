@@ -20,7 +20,6 @@ from datetime import date, datetime, timezone
 
 from fastapi import Depends, Query, Request
 from fastapi.responses import Response
-from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import __version__
@@ -107,14 +106,29 @@ def sections_csv(sections: list[dict], company: str) -> str:
     return out.getvalue()
 
 
-def audit_csv(rows: list, company: str, since: str, until: str) -> str:
-    """The audit log's rows since the closing date: when, who, the record,
-    the action and the fields it moved, before and after."""
-    from app.services.closing_date_exceptions import fields_of, label_of, record_word
+def audit_csv(
+    rows: list,
+    company: str,
+    since: str,
+    until: str,
+    names: dict | None = None,
+    tz_offset: int = 0,
+) -> str:
+    """The audit log's rows since the closing date: when (on the person's
+    clock), who, the record, the action and the fields it moved, before and
+    after; secrets redacted, accounts and classes by name."""
+    from app.services.closing_date_exceptions import (
+        fields_of,
+        label_of,
+        local_words,
+        record_word,
+        zone_words,
+    )
 
     out = io.StringIO()
     w = _SafeWriter(out)
     _preamble(w, company, "Audit log", f"{since} to {until}")
+    w.writerow(["Times in", zone_words(tz_offset)])
     w.writerow(["When", "Who", "Record", "Action", "Field", "Before", "After"])
     for row in rows:
         values = row.new_values if row.action != "DELETE" else row.old_values
@@ -122,8 +136,8 @@ def audit_csv(rows: list, company: str, since: str, until: str) -> str:
         label = label_of(values)
         if label:
             record += f" ({label})"
-        when = row.timestamp.isoformat() if row.timestamp else ""
-        fields = fields_of(row)
+        when = local_words(row.timestamp, tz_offset)
+        fields = fields_of(row, names)
         if not fields:
             w.writerow(
                 [when, row.username or "", record, row.action.lower(), "", "", ""]
@@ -143,7 +157,9 @@ def audit_csv(rows: list, company: str, since: str, until: str) -> str:
     return out.getvalue()
 
 
-def build_package(db: Session, start_date: date, end_date: date) -> tuple[bytes, dict]:
+def build_package(
+    db: Session, start_date: date, end_date: date, tz_offset: int = 0
+) -> tuple[bytes, dict]:
     """The zip and its manifest (what went in, what did not and why)."""
     from app.routes.reports.financial import (
         _bs_section,
@@ -276,7 +292,7 @@ def build_package(db: Session, start_date: date, end_date: date) -> tuple[bytes,
             f"Adjusting Journal Entries: {adj['count']} in the period",
         )
     )
-    exc_data = closing_date_exceptions(db, start_date, end_date)
+    exc_data = closing_date_exceptions(db, start_date, end_date, tz_offset)
     files.append(
         (
             f"closing-date-exceptions_{s}_{e}.csv",
@@ -287,20 +303,23 @@ def build_package(db: Session, start_date: date, end_date: date) -> tuple[bytes,
 
     # 6. the audit log since the closing date (or the period, with none set)
     closing = get_closing_date(db)
-    since = closing if closing and closing >= start_date else start_date
+    # from the closing date when it falls inside the period, else the
+    # period itself (a closing date after the period named an empty,
+    # reversed range: 2.24.0 gate, NEW-154)
+    since = closing if closing and start_date <= closing <= end_date else start_date
+    from app.services.closing_date_exceptions import record_names, utc_bounds
+
+    since_utc, until_utc = utc_bounds(since, end_date, tz_offset)
     rows = (
         db.query(AuditLog)
-        .filter(
-            sqlfunc.date(AuditLog.timestamp) >= since,
-            sqlfunc.date(AuditLog.timestamp) <= end_date,
-        )
+        .filter(AuditLog.timestamp >= since_utc, AuditLog.timestamp < until_utc)
         .order_by(AuditLog.id)
         .all()
     )
     files.append(
         (
             f"audit-log_{since.isoformat()}_{e}.csv",
-            audit_csv(rows, company, since.isoformat(), e),
+            audit_csv(rows, company, since.isoformat(), e, record_names(db), tz_offset),
             f"the audit log from {since.isoformat()} ({len(rows)} changes): who changed what, and when"
             + (" (the closing date)" if closing and since == closing else ""),
         )
@@ -348,6 +367,7 @@ def accountants_package(
     request: Request,
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    tz_offset: int = Query(default=0, ge=-900, le=900),
     db: Session = Depends(get_db),
 ):
     """One zip for the period (#343): the statements pack, the General
@@ -359,7 +379,7 @@ def accountants_package(
     from app.routes.reports.financial import _company_name, _range_or_year
 
     start_date, end_date = _range_or_year(start_date, end_date)
-    content, manifest = build_package(db, start_date, end_date)
+    content, manifest = build_package(db, start_date, end_date, tz_offset)
     name = f"accountants-package_{_slug(_company_name(db))}_{manifest['start_date']}_{manifest['end_date']}.zip"
     disposition = "inline" if request.headers.get(_DESKTOP_HEADER) else "attachment"
     return Response(
@@ -376,6 +396,7 @@ def accountants_package(
 def accountants_package_manifest(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    tz_offset: int = Query(default=0, ge=-900, le=900),
     db: Session = Depends(get_db),
 ):
     """What the package for these dates would hold, for the page to say
@@ -383,5 +404,5 @@ def accountants_package_manifest(
     from app.routes.reports.financial import _range_or_year
 
     start_date, end_date = _range_or_year(start_date, end_date)
-    _, manifest = build_package(db, start_date, end_date)
+    _, manifest = build_package(db, start_date, end_date, tz_offset)
     return manifest

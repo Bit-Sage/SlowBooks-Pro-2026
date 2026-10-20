@@ -92,6 +92,8 @@ const PaymentsPage = {
                 ${!p.is_voided ? `<button data-destructive class="btn btn-danger" onclick="PaymentsPage.void(${p.id})">Void Payment</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
+        if (App.documentAddress) App.documentAddress(`#/payments/${Number(id)}`);
     },
 
     async void(id) {

@@ -178,6 +178,9 @@ const App = {
     dialogAddressed() {
         const m = $('#modal');
         if (m) m.dataset.address = location.hash || '#/';
+        // the sidebar stays usable over a report or a document (a view,
+        // not a form): the Open group's links and × reach it (W-22 /
+        // NEW-159); syncBack sets and clears the class
         // An opener that puts its address on the bar first and opens next
         // (the statement picker, the 1099 summary: ReportsPage.setAddress,
         // then openModal): its mark survives the open for this task
@@ -307,6 +310,20 @@ const App = {
     // The toolbar's Back follows the entry shown: after every push, stamp
     // and history move.
     syncBack() {
+        const overlay = $('#modal-overlay'), m = $('#modal');
+        const addressed = !!(overlay && m && !overlay.classList.contains('hidden')
+            && m.dataset.address === (location.hash || '#/'));
+        // the sidebar is raised over a view's overlay (W-22) only while the
+        // dialog sits clear of it: a wide grid reaching over the sidebar
+        // keeps the overlay whole, or the sidebar would cover its edge
+        const sidebar = $('#sidebar');
+        const clear = addressed && sidebar && m
+            && m.getBoundingClientRect().left >= sidebar.getBoundingClientRect().right - 1;
+        if (document.body && document.body.classList) document.body.classList.toggle('dialog-addressed', !!clear);
+        if (addressed && !App._resizeSync) {
+            App._resizeSync = true;
+            window.addEventListener('resize', () => App.syncBack());
+        }
         const btn = $('#back-btn');
         if (!btn) return;
         btn.disabled = !App.canGoBack();
@@ -356,18 +373,48 @@ const App = {
     OPEN_TABS_KEY: 'slowbooks-open-screens',
     OPEN_TABS_MAX: 12,
     _openTabs: null,
+    // this page load: a history entry's number (entryState) means
+    // something only within one load, so a tab remembers which load
+    // numbered it (NEW-164: a stored number matched a fresh entry's)
+    _loadId: String(Date.now()) + Math.random().toString(36).slice(2, 8),
+    // whose list it is: the sign-in and the company (NEW-164: it carried
+    // over to another user, and to another company on the same window)
+    _tabsOwner: '',
+
+    _ownerOf(status) {
+        const user = status && status.user ? status.user.username : '';
+        const company = status ? (status.company_name || '') : '';
+        return `${user}|${company}`;
+    },
+    // called once the sign-in and the company are known: another owner's
+    // list is dropped
+    _tabsOwnerChanged(status) {
+        const owner = App._ownerOf(status);
+        if (owner === App._tabsOwner) return;
+        App._tabsOwner = owner;
+        let stored = null;
+        try { stored = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || 'null'); } catch (e) { stored = null; }
+        if (stored && !Array.isArray(stored) && stored.owner !== owner) {
+            App._openTabs = [];
+            App._saveOpenTabs();
+            App.renderOpenTabs();
+        }
+    },
 
     openTabs() {
         if (App._openTabs) return App._openTabs;
-        let list = [];
-        try { list = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || '[]'); } catch (e) { list = []; }
-        if (!Array.isArray(list)) list = [];
+        let stored = null;
+        try { stored = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || 'null'); } catch (e) { stored = null; }
+        const list = Array.isArray(stored) ? [] : ((stored && Array.isArray(stored.tabs)) ? stored.tabs : []);
+        if (stored && !Array.isArray(stored) && typeof stored.owner === 'string' && !App._tabsOwner) App._tabsOwner = stored.owner;
         App._openTabs = list.filter(t => t && typeof t.key === 'string' && typeof t.label === 'string');
         return App._openTabs;
     },
 
     _saveOpenTabs() {
-        try { sessionStorage.setItem(App.OPEN_TABS_KEY, JSON.stringify(App.openTabs())); } catch (e) { /* no storage: the list lives for the page */ }
+        try {
+            sessionStorage.setItem(App.OPEN_TABS_KEY, JSON.stringify({ owner: App._tabsOwner, tabs: App.openTabs() }));
+        } catch (e) { /* no storage: the list lives for the page */ }
     },
 
     // The address a screen is listed by: the hash without its '#', the
@@ -392,12 +439,22 @@ const App = {
     // The screen's own name: an open dialog's title (a report, a document)
     // with its period, else the page's heading, else the route's label.
     _screenLabel(route) {
-        const { query } = App.parseHash(location.hash || '#/');
+        const { path, query } = App.parseHash(location.hash || '#/');
         const overlay = $('#modal-overlay'), modal = $('#modal');
         const dialog = overlay && modal && !overlay.classList.contains('hidden')
             && modal.dataset.address === (location.hash || '#/');
         let label = '';
-        if (dialog) {
+        // a report view's address names the view: its own name, with its
+        // period, whether or not its dialog is up yet (a "Reports" entry
+        // for the Report Center under it: W-22's note)
+        const view = /^\/reports\/([a-z0-9-]+)$/.exec(path);
+        const known = view && typeof ReportsPage !== 'undefined' && ReportsPage._VIEWS && ReportsPage._VIEWS[view[1]];
+        if (known) {
+            label = typeof known.label === 'function' ? known.label() : known.label;
+            if (dialog) label = ($('#modal-title') || {}).textContent || label;
+            const when = App._periodWords(query);
+            if (when) label = `${label} · ${when}`;
+        } else if (dialog) {
             label = ($('#modal-title') || {}).textContent || '';
             const when = App._periodWords(query);
             if (when) label = `${label} · ${when}`;
@@ -423,10 +480,11 @@ const App = {
         // Report Center it opened on, a period change in the open report)
         // is the same screen under its new address, not a second one
         const n = history.state && typeof history.state.n === 'number' ? history.state.n : null;
-        const found = tabs.find(t => t.key === key) || (n !== null ? tabs.find(t => t.n === n) : null);
-        if (found) { found.key = key; found.label = label; found.n = n; }
+        const found = tabs.find(t => t.key === key)
+            || (n !== null ? tabs.find(t => t.n === n && t.load === App._loadId) : null);
+        if (found) { found.key = key; found.label = label; found.n = n; found.load = App._loadId; }
         else {
-            tabs.push({ key, label, n });
+            tabs.push({ key, label, n, load: App._loadId });
             while (tabs.length > App.OPEN_TABS_MAX) tabs.shift();
         }
         App._saveOpenTabs();
@@ -753,12 +811,23 @@ const App = {
 
     isReadOnly() { return App.role === 'readonly'; },
 
-    isAccountant() { return App.role === 'accountant'; },
+    // the role, or the books: an accountant's copy (#346) takes journal
+    // entries and nothing else, whoever is signed in to it (W-20)
+    inCopy: false,
+    copyDividingDate: '',
+    COPY_MESSAGE() {
+        return `This is an accountant's copy: it takes journal entries dated on or before ${App.copyDividingDate || 'the dividing date'} and nothing else. Send changes back from Companies when they are in.`;
+    },
+
+    isAccountant() { return App.role === 'accountant' || App.inCopy; },
 
     // read-only, or an accountant away from the journal: what is locked
     isLocked() { return App.isReadOnly() || App.isAccountant(); },
 
-    lockedMessage() { return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE; },
+    lockedMessage() {
+        if (App.inCopy) return App.COPY_MESSAGE();
+        return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE;
+    },
 
     isAdmin() { return App.role === 'admin'; },
 
@@ -773,7 +842,7 @@ const App = {
             App.navigate(location.hash);
         }
         const page = document.getElementById('page-content');
-        if (App.isAdmin() || !page) return;
+        if ((App.isAdmin() && !App.inCopy) || !page) return;
         if (App.isLocked()) {
             // the toolbar's shortcuts to new documents, and batch entry
             document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]')
@@ -1869,8 +1938,11 @@ const App = {
     async initSystemInfo() {
         try {
             let res = await fetch('/api/system', { credentials: 'same-origin' });
-            if (!res.ok) return;
-            const info = await res.json();
+            // A refused /api/system (a sign-in that must set its password
+            // first, before 2.24.0 round 2) used to end here, before the
+            // sign-in's own state was read, so the password page never
+            // drew (W-18 / NEW-149): the version is skipped, the rest goes on.
+            const info = res.ok ? await res.json() : {};
             const label = info.version
                 ? (info.server_mode ? `v${info.version} · Server` : `v${info.version}`)
                 : null;
@@ -1897,6 +1969,13 @@ const App = {
                     App.mustChangePassword = true;
                     App.navigate(location.hash || '#/');
                 }
+                // the copy itself takes journal entries and nothing else:
+                // the pages are locked the way the Accountant role's are
+                // (W-20), and the list of open screens is this company's
+                App.inCopy = !!a.accountants_copy;
+                App.copyDividingDate = a.accountants_copy ? a.accountants_copy.dividing_date : '';
+                if (App.inCopy) { App.setRole(App.role, App.username); }
+                App._tabsOwnerChanged(a);
                 if (a.accountants_copy && !document.getElementById('ac-banner')) {
                     // an accountant's copy says so on every page (#346)
                     const banner = document.createElement('div');

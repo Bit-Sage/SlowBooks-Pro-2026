@@ -879,6 +879,11 @@ def _role_allows(role: str, method: str, path: str) -> bool:
         # every historical value of every field".
         return is_read and not path.startswith("/api/audit")
     if role == "accountant":
+        # an outside role: the employee directory (pay rates, filing status,
+        # the last four of a Social Security number) is HR's, not the
+        # books' (2.24.0 gate, macbase1's question on round 1)
+        if path.startswith("/api/employees"):
+            return False
         return is_read or (method == "POST" and bool(_ACCOUNTANT_WRITE_RE.match(path)))
     # bookkeeper: full read, all daily-books writes, no admin writes
     if is_read:
@@ -971,7 +976,16 @@ async def require_session(request: Request, call_next):
                     "detail": _ac.COPY_MODE_MESSAGE.format(day=copy["dividing_date"])
                 },
             )
-    if token_principal is None and request.session.get("must_change_password"):
+    if (
+        token_principal is None
+        and request.session.get("must_change_password")
+        # the shell's own reads, which the page that sets the password is
+        # drawn from: the version and the company's words (2.24.0 gate,
+        # W-18 / NEW-149: refused, the shell stopped before the form)
+        and not (
+            request.method in _READ_METHODS and path in ("/api/system", "/api/settings")
+        )
+    ):
         # an invited sign-in with its one-time password (#345): the only
         # thing it can do is set a password of its own (the auth routes
         # are exempt above)
