@@ -58,6 +58,34 @@ def is_ledger_header(cols: dict | None) -> bool:
     )
 
 
+def has_account_sections(rows: list[list[str]], header_at: int, cols: dict) -> bool:
+    """Recognize ledger grouping even when an added Account column masks it."""
+    heading = None
+    first = min(cols.values())
+    for row in rows[header_at + 1 :]:
+        ttype = row[cols["Type"]].strip() if cols["Type"] < len(row) else ""
+        if not ttype:
+            label = next((c.strip() for c in row[:first] if c.strip()), "")
+            if label:
+                heading = (
+                    None if label.startswith("Total ") or label == "TOTAL" else label
+                )
+            continue
+        account = row[cols["Account"]].strip() if cols["Account"] < len(row) else ""
+        # Sub-account sections carry a leaf name; Account may carry the full path.
+        if (
+            heading
+            and account
+            and heading.casefold()
+            in (
+                account.casefold(),
+                account.rsplit(":", 1)[-1].strip().casefold(),
+            )
+        ):
+            return True
+    return False
+
+
 def _money(raw: str) -> Decimal:
     raw = (raw or "").replace(",", "").replace("$", "").strip()
     if not raw:
