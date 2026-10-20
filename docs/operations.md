@@ -132,9 +132,12 @@ into your SIEM, or just `tail -f` them for small deployments:
 
 ## Several companies on a server
 
-A server serves exactly one database, the one its `DATABASE_URL` names. On a
-desktop install each company is a file and the app's own picker switches
-between them; on a server (Docker, or a native install on PostgreSQL) there is
+A PostgreSQL server serves exactly one database, the one its `DATABASE_URL`
+names. On a desktop install each company is a file and the app's own picker
+switches between them. Server Edition on Windows (company files, `--serve-lan`)
+serves every company in its list, chosen at the sign-in screen: see
+[server-edition.md](server-edition.md), "Several companies on one server". On a
+PostgreSQL server (Docker, or a native install on PostgreSQL) there is
 no picker to switch to, and the sign-in page never lists companies: it names
 the company the server serves.
 

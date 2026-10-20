@@ -34,6 +34,10 @@ const CompaniesPage = {
 
     async render() {
         const companies = await API.get('/companies');
+        // a Server Edition host serving several company files (#358)
+        let served = [];
+        try { served = (await API.get('/auth/status')).companies || []; } catch (e) { /* an older server */ }
+        const serves = served.length > 1;
         let ac = { is_copy: false, copy: null, sent: [], can_make: false };
         try { ac = { ...ac, ...((await API.get('/accountants-copy/status')) || {}) }; } catch (e) { /* an older server */ }
         if (!Array.isArray(ac.sent)) ac.sent = [];
@@ -56,6 +60,8 @@ const CompaniesPage = {
                 Each company is stored in its own separate database.
                 ${CompaniesPage._isDesktop()
                     ? 'Switch company takes you back to the company picker; this company is signed out.'
+                    : serves
+                    ? 'This server serves every company in this list. Open one here or choose it on the sign-in screen: each has its own users and roles, and a company this sign-in is not a user of asks for its own password. A new company is set up by the administrator who opens it first.'
                     : 'A server serves one database, the one its DATABASE_URL names. A new company is created as its own database, ready to serve: run a second server pointed at it (on Docker, a second service in docker-compose.yml on another port), or point this one at it and restart. The sign-in page names the company a server serves; it never lists them. See docs/operations.md, "Several companies on a server".'}
             </p>
             <!-- Creating one is the administrator's (POST /api/companies) -->
@@ -72,6 +78,7 @@ const CompaniesPage = {
                     <div style="font-size:10px;color:var(--text-muted);">${escapeHtml(fileLabel)}</div>
                     ${c.description ? `<div style="font-size:11px;margin-top:4px;">${escapeHtml(c.description)}</div>` : ''}
                     ${c.last_accessed ? `<div style="font-size:9px;color:var(--text-light);margin-top:4px;">Last accessed: ${new Date(c.last_accessed).toLocaleDateString()}</div>` : ''}
+                    ${serves && c.file && !c.is_current ? `<div style="margin-top:8px;"><button class="btn btn-sm btn-secondary" data-file="${escapeHtml(c.file)}" onclick="App.switchServedCompany(this.dataset.file)">Open</button></div>` : ''}
                 </div>`;
             }
             html += '</div>';
@@ -265,9 +272,15 @@ const CompaniesPage = {
         if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
         if (status) status.textContent = `Setting up ${data.name || 'the company'} — this takes a few seconds.`;
         try {
-            await API.post('/companies', data);
+            const made = await API.post('/companies', data);
+            let serves = false;
+            if (made && made.file && !CompaniesPage._isDesktop()) {
+                try { serves = ((await API.get('/auth/status')).companies || []).length > 1; } catch (err) { /* said below */ }
+            }
             toast(CompaniesPage._isDesktop()
                 ? 'Company created. Switch company… opens it.'
+                : serves
+                ? 'Company created. Open it here to set it up; this server serves it with the others.'
                 : `Company created as its own database${data.database_name ? ` (${data.database_name})` : ''}. To open it, run a second server pointed at that database, or point this one at it and restart (docs/operations.md, "Several companies on a server").`);
             closeModal();
             App.navigate('#/companies');

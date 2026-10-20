@@ -136,6 +136,7 @@ from app.config import (
     SESSION_IDLE_TIMEOUT_SECONDS,
 )
 from app.database import SessionLocal, Base, engine
+from app.database import _served_company
 from app.services.audit import register_audit_hooks
 from app.services.request_context import acting_username as _acting_username
 from app.services.request_context import (
@@ -146,6 +147,11 @@ from app.services.closing_date import (
     password_from_header as _closing_password_from_header,
 )
 from app.services.api_token_service import resolve as _resolve_api_token
+from app.services.served_companies import CompanyUnavailable
+
+# An API token's request names the company it works in with this header
+# (#358); a signed-in person's session carries its company instead.
+_COMPANY_HEADER = "X-SlowBooks-Company"
 
 
 def _run_startup_security_checks():
@@ -229,7 +235,7 @@ def _run_startup_security_checks():
     _create_missing_tables()
 
 
-def _refuse_a_database_behind_head() -> None:
+def _refuse_a_database_behind_head(target=None) -> None:
     """Refuse to start against a database the migrations have not reached.
 
     Issue #132, found by the macOS QA agent while gating 2.11.0.
@@ -254,11 +260,14 @@ def _refuse_a_database_behind_head() -> None:
     """
     from sqlalchemy import inspect as _inspect, text as _text
 
+    # ``target``: another company a Server Edition server serves (#358),
+    # checked the first time a session opens it
+    checked = engine if target is None else target
     try:
-        insp = _inspect(engine)
+        insp = _inspect(checked)
         if not insp.has_table("alembic_version"):
             return  # fresh database — create_all is how it gets built
-        with engine.connect() as conn:
+        with checked.connect() as conn:
             row = conn.execute(_text("SELECT version_num FROM alembic_version")).first()
         current = row[0] if row else None
     except Exception:
@@ -299,7 +308,7 @@ def _refuse_a_database_behind_head() -> None:
         # error saying "deactivate it instead" when nothing could deactivate.
         from app.services.schema_repair import looks_half_upgraded
 
-        if looks_half_upgraded(engine):
+        if looks_half_upgraded(checked):
             # Name the path that exists on THIS install. Frozen bundles put
             # it under _internal/scripts; a checkout has it at scripts/.
             # Printing the repo path at a Server Edition operator who only
@@ -329,7 +338,7 @@ def _refuse_a_database_behind_head() -> None:
         )
 
 
-def _create_missing_tables() -> None:
+def _create_missing_tables(target=None) -> None:
     """create_all for whatever the migrations do not cover — serialized.
 
     Under Docker the entrypoint starts uvicorn with two workers, and each
@@ -341,15 +350,17 @@ def _create_missing_tables() -> None:
     gate). A transaction-scoped advisory lock makes the second worker
     wait for the first; checkfirst then finds everything present.
     SQLite has one process and no enum types, so it takes the plain path.
+    ``target`` is another company a Server Edition server serves (#358).
     """
-    if engine.dialect.name == "postgresql":
+    checked = engine if target is None else target
+    if checked.dialect.name == "postgresql":
         from sqlalchemy import text
 
-        with engine.begin() as conn:
+        with checked.begin() as conn:
             conn.execute(text("SELECT pg_advisory_xact_lock(7264013)"))
             Base.metadata.create_all(bind=conn)
         return
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=checked)
 
 
 @asynccontextmanager
@@ -546,6 +557,17 @@ async def _missing_control_account_handler(request: Request, exc: Exception):
 
 
 app.add_exception_handler(MissingControlAccount, _missing_control_account_handler)
+
+
+# ---- Another company this server cannot open now (#358) ----
+# A session chose a company the server serves, and its file is missing,
+# locked, or from another version. 503 with the one sentence, never a
+# traceback; the person can sign in to another company meanwhile.
+async def _company_unavailable_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+app.add_exception_handler(CompanyUnavailable, _company_unavailable_handler)
 
 
 # ---- A value the database refuses (422, not 500) ----
@@ -1049,11 +1071,34 @@ class ActingUserContextMiddleware:
                     override = _closing_password_from_header(value.decode("latin-1"))
         token = _acting_username.set(acting)
         override_token = _closing_date_password.set(override)
+        # The company this request works in (#358), here for the same reason
+        # as the username: every Session the request opens binds to it.
+        company_token = _served_company.set(_request_company(scope, session))
         try:
             await self.app(scope, receive, send)
         finally:
+            _served_company.reset(company_token)
             _closing_date_password.reset(override_token)
             _acting_username.reset(token)
+
+
+def _request_company(scope, session) -> str | None:
+    """The company file a request works in: the one its session chose, or,
+    for an API token's request (no sign-in), the one its
+    X-SlowBooks-Company header names, where the token is then looked up.
+    None is the company the server was started for."""
+    from app.services import served_companies
+
+    chosen = served_companies.chosen_file(session)
+    if chosen is not None or session.get("authenticated") is True:
+        return chosen
+    wanted = _COMPANY_HEADER.lower().encode("latin-1")
+    for name, value in scope.get("headers") or []:
+        if name == wanted:
+            return served_companies.chosen_file(
+                {served_companies.SESSION_FILE_KEY: value.decode("latin-1").strip()}
+            )
+    return None
 
 
 # ---- Session cookie (Phase 9.7) ----

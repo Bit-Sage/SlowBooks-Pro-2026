@@ -1835,6 +1835,43 @@ def _lan_addresses() -> list[str]:
     return seen
 
 
+def _migrate_other_companies(started: str, output=None) -> list[str]:
+    """Server Edition serves every company in the list (#358): bring each
+    one besides the company it starts for up to this version first, the
+    way launch_company() does that one. A company that cannot be (no key
+    for an encrypted file, a failed migration) is named and skipped; the
+    server refuses to open it until it is. Returns the files skipped."""
+    from app.services import company_file, company_service
+
+    skipped = []
+    for entry in company_service.manifest_list_companies():
+        filename = entry["file"]
+        if filename == started:
+            continue
+        db_path = company_service.company_db_path(filename)
+        if db_path is None or not db_path.exists():
+            continue
+        key = None
+        if company_file.is_encrypted_file(db_path):
+            key = company_file.install_key()
+            if key is None:
+                print(
+                    f"WARNING: {filename} is encrypted under a key of its own "
+                    "and is not served; set COMPANY_FILE_ENCRYPTION_SECRET to serve it."
+                )
+                skipped.append(filename)
+                continue
+        try:
+            migrate("sqlite:///" + db_path.as_posix(), output=output, key=key)
+        except Exception as exc:  # one company must not stop the others
+            print(
+                f"WARNING: could not bring {filename} up to date ({exc}); "
+                "it is not served until it is."
+            )
+            skipped.append(filename)
+    return skipped
+
+
 def _start_default_company(
     port: int, bind_host: str = "127.0.0.1", output=None
 ) -> subprocess.Popen | None:
@@ -1854,6 +1891,11 @@ def _start_default_company(
                 print(f"ERROR: {result['error']}")
                 return None
             filename = result["file"]
+
+    # every company the server will serve (#358); not while another server
+    # has them open (launch_company says so below)
+    if bind_host != "127.0.0.1" and not _server_already_running(port):
+        _migrate_other_companies(filename, output=output)
 
     print(f"Opening company file: {filename}")
     try:

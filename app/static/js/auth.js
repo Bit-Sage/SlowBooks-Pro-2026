@@ -18,6 +18,10 @@
     const AUTH_STATUS_URL = "/api/auth/status";
     const AUTH_SETUP_URL = "/api/auth/setup";
     const AUTH_LOGIN_URL = "/api/auth/login";
+    const AUTH_COMPANY_URL = "/api/auth/company";
+    // The username a company switch carried over (#358): the sign-in screen
+    // of the company switched to has it chosen already.
+    const SWITCH_USERNAME_KEY = "slowbooks_switch_username";
 
     const OVERLAY_ID = "auth-overlay";
     const MIN_PASSWORD_LEN = 8;
@@ -189,6 +193,34 @@
     // never see it.
     let multiUser = false;
     let usernames = [];
+    // Several companies on one server (#358): the sign-in screen asks which.
+    let companies = [];
+
+    function rememberedUsername() {
+        try { return sessionStorage.getItem(SWITCH_USERNAME_KEY) || ""; } catch (e) { return ""; }
+    }
+
+    function rememberUsername(name) {
+        try {
+            if (name) sessionStorage.setItem(SWITCH_USERNAME_KEY, name);
+            else sessionStorage.removeItem(SWITCH_USERNAME_KEY);
+        } catch (e) {}
+    }
+
+    function companySelectHTML() {
+        if (companies.length < 2) return "";
+        const opts = companies.map(function (c) {
+            const e = document.createElement("option");
+            e.value = c.file; e.textContent = c.name;
+            if (c.current) e.setAttribute("selected", "");
+            return e.outerHTML;
+        }).join("");
+        return (
+            '<label for="auth-company" style="display:block;font-size:12px;font-weight:600;margin-bottom:4px;">Company</label>' +
+            '<select id="auth-company" style="' + inputStyle() + '">' + opts + "</select>" +
+            '<div style="height:10px"></div>'
+        );
+    }
 
     // Inside the native desktop window the launcher's bridge is present;
     // in a browser (Server Edition) it is not, and the picker does not exist.
@@ -264,9 +296,11 @@
                 autocomplete: "username",
             });
         }
+        const chosen = rememberedUsername();
         const opts = usernames.map(function (u) {
             const e = document.createElement("option");
             e.value = u; e.textContent = u;
+            if (u === chosen) e.setAttribute("selected", "");
             return e.outerHTML;
         }).join("");
         return (
@@ -295,6 +329,7 @@
                     ? "Enter the password for " + escapeText(name) + " to continue."
                     : "Enter your password to continue.") +
             "</p>" +
+            companySelectHTML() +
             (multiUser ? userSelectHTML() + '<div style="height:10px"></div>' : "") +
             field("auth-password", "Password", {
                 type: "password",
@@ -322,7 +357,23 @@
         const userInput = overlay.querySelector("#auth-username");
         const errBox = overlay.querySelector("#auth-error");
         const btn = overlay.querySelector("#auth-submit");
-        (userInput || input).focus();
+        const companyInput = overlay.querySelector("#auth-company");
+        if (companyInput) {
+            // Another company: its own people and its own password (#358).
+            // The person stays chosen when the other company has them.
+            companyInput.addEventListener("change", async function () {
+                errBox.textContent = "";
+                if (userInput) rememberUsername(userInput.value);
+                try {
+                    await postJSON(AUTH_COMPANY_URL, { file: companyInput.value });
+                    removeOverlay();
+                    promptAuth(onSuccess);
+                } catch (err) {
+                    errBox.textContent = err.message;
+                }
+            });
+        }
+        (rememberedUsername() && userInput ? input : (userInput || input)).focus();
 
         form.addEventListener("submit", async function (e) {
             e.preventDefault();
@@ -333,6 +384,7 @@
                 const body = { password: input.value };
                 if (userInput) body.username = userInput.value.trim();
                 await postJSON(AUTH_LOGIN_URL, body);
+                rememberUsername("");
                 removeOverlay();
                 if (onSuccess) onSuccess();
                 else window.location.reload();
@@ -623,6 +675,7 @@
                 multiUser = status.multi_user === true;
                 desktopWindow = status.desktop === true;
                 usernames = Array.isArray(status.usernames) ? status.usernames : [];
+                companies = Array.isArray(status.companies) ? status.companies : [];
                 existingCompany = {
                     name: status.company_name || "",
                     hasData: status.has_data === true,
@@ -640,6 +693,9 @@
     // Expose globals so api.js can prompt on 401
     window.SlowbooksAuth = {
         promptAuth: promptAuth,
+        // the header's company switch (app.js) when the sign-in did not
+        // open the other company: its sign-in screen has this person chosen
+        rememberUsername: rememberUsername,
         // Back-compat: explicit view requests still work
         promptLogin: function () {
             renderView("login");

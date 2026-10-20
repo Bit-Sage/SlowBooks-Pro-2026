@@ -5,12 +5,14 @@
 #   POST /api/auth/setup   → first-time password set (409 if already set)
 #   POST /api/auth/login   → password (+ username once 2+ users exist)
 #   POST /api/auth/logout  → clear session
+#   POST /api/auth/company → work in another company this server serves (#358)
 #
 # These routes are deliberately NOT protected by require_auth — they're
 # how you become authenticated in the first place.
 # ============================================================================
 
 import ipaddress
+import logging
 from datetime import date
 import os
 from typing import Optional
@@ -20,8 +22,9 @@ from pydantic import Field
 from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, use_company
 from app.models.auth import LoginAttempt
+from app.services import served_companies
 from app.services.auth import (
     authenticate,
     ensure_admin_user,
@@ -42,6 +45,7 @@ from app.services.settings_service import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 def _record_login_attempt(db: Session, request: Request, success: bool) -> None:
@@ -208,6 +212,15 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
         {k: v for k, v in copy.items() if k != "token"} if copy else None
     )
     out["desktop"] = _desktop_window(request)
+    if served_companies.enabled():
+        # Several companies on this server (#358): the sign-in screen asks
+        # which, and the header offers the others. "opens" is whether this
+        # sign-in's password opened that company too, so a switch is a click.
+        opens = request.session.get(served_companies.SESSION_OPENS_KEY) or []
+        out["companies"] = [
+            {**c, "opens": authenticated and c["file"] in opens}
+            for c in served_companies.names_for_sign_in()
+        ]
     if setup_needed:
         from app.models.transactions import Transaction
 
@@ -283,6 +296,15 @@ def setup(
             status_code=status.HTTP_409_CONFLICT,
             detail="Password already set — use /login",
         )
+    chosen = served_companies.chosen_file(request.session)
+    if chosen is not None and request.session.get(SET_UP_KEY) != chosen:
+        # Another company on this server with no password yet (#358): made
+        # under Companies, and set up by the administrator who opens it from
+        # there, not by whoever on the network picks it first.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=NOT_SET_UP_MESSAGE,
+        )
 
     if payload.company_name:
         from app.services.company_service import (
@@ -336,6 +358,14 @@ def setup(
     remember_this_start(request.session)
     remember_this_company(request.session)
     _stash_user(request, admin)
+    if served_companies.enabled() and admin is not None:
+        # a company set up from another one's sign-in (#358): the way back
+        # is a click when the password is the same there
+        here = served_companies.current_file()
+        request.session[served_companies.SESSION_FILE_KEY] = here
+        request.session[served_companies.SESSION_OPENS_KEY] = [here] + (
+            _other_companies_opened_by(admin.username, payload.password, here)
+        )
     out = {"status": "ok", "authenticated": True}
     if payload.encrypt:
         out.update(_encrypt_at_setup(db, admin, payload.password, payload.company_name))
@@ -361,11 +391,11 @@ def _encrypt_at_setup(db: Session, admin, password: str, company_name) -> dict:
             import app.database as db_module
 
             db.close()
-            db_module.engine.dispose()
+            db_module.current_engine().dispose()
             try:
                 company_file.convert(path, key, encrypt=True)
             finally:
-                db_module.engine.dispose()
+                db_module.current_engine().dispose()
             return {"encrypted": True, "encryption_note": None}
         if os.environ.get("SLOWBOOKS_DESKTOP") != "1":
             return {
@@ -487,11 +517,153 @@ def login(
     remember_this_company(request.session)
     _stash_user(request, user)
     _keep_keyring_current(user, payload.password)
+    if served_companies.enabled():
+        here = served_companies.current_file()
+        request.session[served_companies.SESSION_FILE_KEY] = here
+        request.session[served_companies.SESSION_OPENS_KEY] = [here] + (
+            _other_companies_opened_by(user.username, payload.password, here)
+        )
     return {"status": "ok", "authenticated": True}
+
+
+def _user_who_may_open(db: Session, username: str):
+    """The active user by this name in this company, if their sign-in has
+    not ended; else None."""
+    from app.models.users import User
+
+    user = (
+        db.query(User)
+        .filter(User.username == (username or "").strip().lower(), User.is_active)
+        .first()
+    )
+    if user is None:
+        return None
+    if user.expires_on is not None and date.today() > user.expires_on:
+        return None
+    return user
+
+
+def _other_companies_opened_by(username: str, password: str, here: str) -> list[str]:
+    """The other companies this server serves where the same username, with
+    the same password, is an active sign-in (#358). Checked once, at the
+    sign-in; each company still says what role the person has in it."""
+    from app.services.auth import verify_password
+
+    found = []
+    for company in served_companies.listed():
+        if company["file"] == here:
+            continue
+        try:
+            with use_company(company["file"]):
+                import app.database as db_module
+
+                other = db_module.SessionLocal()
+                try:
+                    user = _user_who_may_open(other, username)
+                    if user is not None and verify_password(
+                        password, user.password_hash
+                    ):
+                        found.append(company["file"])
+                finally:
+                    other.close()
+        except Exception:
+            # a company that cannot be opened now is simply not offered
+            logger.warning("could not check sign-in for %s", company["file"])
+    return found
 
 
 @router.post("/logout")
 def logout(request: Request):
-    """Clear the session cookie."""
+    """Clear the session cookie. On a server serving several companies the
+    sign-in screen stays in the company signed out of (#358)."""
+    company = request.session.get(served_companies.SESSION_FILE_KEY)
     request.session.clear()
+    if company and served_companies.enabled():
+        request.session[served_companies.SESSION_FILE_KEY] = company
     return {"status": "ok"}
+
+
+# A company on the served list that nobody has set up yet is set up by an
+# administrator who opened it from a signed-in session (#358).
+SET_UP_KEY = "company_file_to_set_up"
+NOT_SET_UP_MESSAGE = (
+    "This company has not been set up yet. An administrator sets it up: "
+    "sign in to another company on this server and open it from Companies."
+)
+
+
+class CompanyChoice(StrictModel):
+    file: str = Field(..., min_length=1, max_length=80)
+
+
+@router.post("/company")
+@limiter.limit("30/minute")
+def choose_company(request: Request, payload: CompanyChoice):
+    """Work in another company this server serves (#358).
+
+    Signed in, and the sign-in's password opened that company too: the
+    session moves there, signed in as the same username with the role that
+    company gives it, and the company's own log records the sign-in.
+    Otherwise the session is signed out and the sign-in screen asks for
+    that company's password, the username filled in."""
+    if not served_companies.enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This server serves one company.",
+        )
+    target = payload.file
+    if not served_companies.is_served(target):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=served_companies.NOT_SERVED
+        )
+    session = request.session
+    username = session.get("username") or ""
+    opens = session.get(served_companies.SESSION_OPENS_KEY) or []
+    signed_in = session.get("authenticated") is True
+    admin = signed_in and (session.get("role") or "admin") == "admin"
+    if admin and not session.get("must_change_password"):
+        import app.database as db_module
+
+        with use_company(target):
+            db = db_module.SessionLocal()
+            try:
+                new_company = not password_is_set(db)
+            finally:
+                db.close()
+        if new_company:
+            session.clear()
+            session[served_companies.SESSION_FILE_KEY] = target
+            session[SET_UP_KEY] = target
+            return {"status": "ok", "authenticated": False, "setup": True}
+    if (
+        signed_in
+        and target in opens
+        and not session.get("must_change_password")
+        and username
+    ):
+        with use_company(target):
+            import app.database as db_module
+
+            db = db_module.SessionLocal()
+            try:
+                user = _user_who_may_open(db, username)
+                if user is not None:
+                    from datetime import datetime, timezone
+
+                    db.info["acting_username"] = user.username
+                    user.last_login_at = datetime.now(timezone.utc)
+                    db.commit()
+                    _record_login_attempt(db, request, success=True)
+                    session.clear()
+                    session["authenticated"] = True
+                    remember_this_start(session)
+                    session[served_companies.SESSION_FILE_KEY] = target
+                    remember_this_company(session)
+                    _stash_user(request, user)
+                    session[served_companies.SESSION_OPENS_KEY] = opens
+                    return {"status": "ok", "authenticated": True}
+            finally:
+                db.close()
+    session.clear()
+    session[served_companies.SESSION_FILE_KEY] = target
+    return {"status": "ok", "authenticated": False, "username": username}

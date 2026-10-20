@@ -171,10 +171,14 @@ def _write_manifest(data: dict) -> None:
 
 
 def _current_company_file() -> str | None:
-    """Basename of the SQLite file the running app is connected to, if any."""
-    if not DATABASE_URL.startswith("sqlite:///"):
+    """Basename of the SQLite file the running app is connected to, if any:
+    on a Server Edition server, the company this request works in (#358)."""
+    from app.database import another_company_url
+
+    url = another_company_url() or DATABASE_URL
+    if not url.startswith("sqlite:///"):
         return None
-    raw = DATABASE_URL[len("sqlite:///") :]
+    raw = url[len("sqlite:///") :]
     if not raw or raw == ":memory:":
         return None
     return os.path.basename(raw)

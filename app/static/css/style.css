@@ -289,6 +289,12 @@ body {
 }
 .topbar-company:empty { display: none; }
 .topbar-company:empty + .tb-sep { display: none; }
+/* Several companies on one server (#358): the switch sits beside the name */
+.tb-company-switch {
+    font-size: 12px;
+    max-width: 200px;
+    margin-right: 6px;
+}
 
 .topbar-brand {
     font-size: 13px;

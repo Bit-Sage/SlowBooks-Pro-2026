@@ -358,13 +358,17 @@ _company_ids_lock = threading.Lock()
 
 
 def _company_id() -> str | None:
-    """This company's id, made the first time it is asked for. A server
-    serves one company, so the id is kept for the process, per database
-    (the test harness and the launcher repoint app.database.SessionLocal)."""
+    """This company's id, made the first time it is asked for. The id is
+    kept for the process, per database (the test harness and the launcher
+    repoint app.database.SessionLocal; a Server Edition server serves
+    several companies, each on an engine of its own: #358)."""
     import app.database as database
 
     factory = database.SessionLocal
-    key = getattr(factory, "kw", {}).get("bind") or factory
+    if database.served_company() is not None:
+        key = database.current_engine()
+    else:
+        key = getattr(factory, "kw", {}).get("bind") or factory
     company = _company_ids.get(key)
     if company:
         return company
