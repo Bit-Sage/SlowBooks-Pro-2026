@@ -769,6 +769,14 @@ def check_register(
             and not e["voided"]
             and e["reconciliation_id"] is None
         )
+        # a check written here or as an expense prints (discussion #354):
+        # money out of a bank account, not a card, not void
+        row["printable"] = (
+            e["source_type"] in ("bank_entry", "expense")
+            and account.bank_kind == "bank"
+            and e["credit"] > 0
+            and not e["voided"]
+        )
         entries.append(row)
     return {
         "account_id": account.id,
