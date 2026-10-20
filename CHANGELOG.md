@@ -5,6 +5,12 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+- Refuse account-grouped QuickBooks ledger CSVs with an added Account column
+  before they can be mistaken for sales documents. The error explains the
+  default-column export and All accounts filter (#359, discussion #349).
+
 ### v2.24.0 — Working with your accountant
 
 **An Accountant role** (#340). Settings → Users offers Accountant: a sign-in

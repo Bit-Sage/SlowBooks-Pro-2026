@@ -124,6 +124,17 @@ two trial balances match.
 The simplest way to bring every transaction across: in QuickBooks Desktop,
 **Reports > Accountant & Taxes > Transaction Detail by Account**, set the
 dates to **All**, and save it as CSV (keep the report's default columns).
+In **Customize Report → Filters → Account**, choose **All accounts**.
+That is a filter, not a column: do **not** add an **Account** column. The
+account-grouped report already names each account above its transactions.
+An account-grouped report with that added column is refused before import;
+export it again with the default columns and the All accounts filter.
+The refusal says:
+
+> This appears to be Transaction Detail by Account with an added Account column.
+> Nothing was imported. Export again using the default columns; set Customize
+> Report > Filters > Account > All accounts rather than adding an Account column.
+
 Import your lists IIF first, then upload the report under
 **Interoperability → Import from Report CSV**. Every deposit, check,
 transfer, general journal entry and opening balance comes across as a
