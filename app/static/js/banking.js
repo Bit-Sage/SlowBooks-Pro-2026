@@ -529,7 +529,7 @@ const BankingPage = {
                     <td class="amount">${e.deposit > 0 ? formatCurrency(e.deposit) : ''}</td>
                     <td class="amount" style="font-weight:700;">${formatCurrency(e.balance)}</td>
                     <td style="text-align:center;">${e.reconciliation_id ? 'R' : (e.cleared ? '✓' : '')}</td>
-                    <td>${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
+                    <td style="white-space:nowrap;">${BankingPage._printCheckButton(e)}${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
                 </tr>`).join('');
             // oldest first, so the balance brought forward (a start date's
             // doing) opens the table (2.23.5 round 2, NEW-142); the entry
@@ -551,6 +551,14 @@ const BankingPage = {
     // an import) — its journal entry. Every line opens something.
     _entryHref(e) {
         return e.source_link || `#/journal/${e.transaction_id}`;
+    },
+
+    // A check written here, or an expense paid from this account, prints
+    // its check (discussion #354); the register says which (`printable`:
+    // money out of a bank account, not a card, not void).
+    _printCheckButton(e) {
+        if (!e.printable) return '';
+        return `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/checks/print?transaction_id=${e.transaction_id}','_blank')">Print Check</button> `;
     },
 
     _reviewPanel(review, feedId, accountId, kind) {

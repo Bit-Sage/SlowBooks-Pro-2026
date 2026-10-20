@@ -5,6 +5,15 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+- Print Check for a check written straight into the bank register or
+  entered as an Expense paid from a bank account, from the register row
+  and the expense's view: the same 3-per-page voucher as a bill payment's
+  check, each split line on the stub (`GET
+  /api/checks/print?transaction_id=`). A deposit, card charge, transfer or
+  void is refused with the reason (discussion #354).
+
 ### v2.24.0 — Working with your accountant
 
 **An Accountant role** (#340). Settings → Users offers Accountant: a sign-in
