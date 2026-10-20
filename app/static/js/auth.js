@@ -493,7 +493,11 @@
                 // 409 means the password was set between status check and
                 // submit — guide the user to the login view rather than
                 // leaving them stuck.
-                if (err.status === 409) {
+                // Two 409s: a password already set (switch to sign in), and
+                // a company name another file already has, which stays here
+                // with its sentence (2.24.0 round 2, W-24: it switched to an
+                // Unlock form for a company with no password).
+                if (err.status === 409 && !/already named/i.test(err.message || "")) {
                     errBox.textContent =
                         "Setup is already complete on this server. Switching to sign in.";
                     setTimeout(function () {

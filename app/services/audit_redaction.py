@@ -63,7 +63,12 @@ def sensitive_setting_keys() -> frozenset:
     return _SETTING_KEYS
 
 
+_NOT_SECRETS = frozenset({"must_change_password", "ask_password_on_start"})
+
+
 def is_secret_column(name: str) -> bool:
+    if name in _NOT_SECRETS:
+        return False
     return name in REDACT_COLUMNS or name.endswith(_REDACT_SUFFIXES)
 
 
@@ -78,9 +83,11 @@ def redact_values(table_name: str, values: dict | None) -> dict | None:
         table_name == "settings" and values.get("key") in sensitive_setting_keys()
     )
     for k, v in values.items():
-        if is_secret_column(k) and v not in (None, ""):
+        # a secret is text; a flag (must_change_password, a true/false) says
+        # something happened and stays (2.24.0 gate, W-26 / NEW-166)
+        if is_secret_column(k) and isinstance(v, str) and v != "":
             out[k] = REDACTED
-        elif secret_setting and k == "value" and v not in (None, ""):
+        elif secret_setting and k == "value" and isinstance(v, str) and v != "":
             out[k] = REDACTED
         else:
             out[k] = v

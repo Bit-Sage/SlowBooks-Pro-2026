@@ -708,8 +708,12 @@ const SettingsPage = {
                     + 'Keep the recovery key where the backups are not: it opens the file, and every backup of it, if every administrator\'s password is lost.';
             } else keyWords = 'The key comes from the launcher.';
             // backups made before Turn on stay plain SQLite in the same list
-            // (NEW-158): say so, and how many
-            const plain = (SettingsPage._backups || []).filter(b => b.encrypted === false).length;
+            // (NEW-158 / W-25): say so, and how many, from the list itself
+            // (loadBackups may not have run yet)
+            let backups = [];
+            try { backups = await API.get('/backups'); } catch (e) { backups = []; }
+            SettingsPage._backups = backups;
+            const plain = backups.filter(b => b.encrypted === false).length;
             const backupWords = plain
                 ? `Backups made while it is on are encrypted; ${plain} backup${plain === 1 ? '' : 's'} in the list below ${plain === 1 ? 'was' : 'were'} made before and ${plain === 1 ? 'is' : 'are'} plain SQLite, readable with no key: delete ${plain === 1 ? 'it' : 'them'} once a newer backup exists. `
                 : 'Backups made while it is on are encrypted. ';
@@ -727,6 +731,8 @@ const SettingsPage = {
             actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.can_turn_on ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
         }
         section.hidden = false;
+        // the list marks the plain backups once the state is known
+        SettingsPage.loadBackups();
     },
 
     async _companyNameNow() {
@@ -1086,7 +1092,7 @@ const SettingsPage = {
                 role: form.role.value,
                 expires_on: form.expires_on.value || null,
             });
-            const note = `Address: ${r.address}\nUsername: ${r.username}\nOne-time password: ${r.password}${r.expires_on ? `\nThe sign-in ends on ${r.expires_on}.` : ''}\n\nSign in once with this password; you will be asked to choose your own.`;
+            const note = `Address: ${r.address}${r.note ? ` (${r.note})` : ''}\nUsername: ${r.username}\nOne-time password: ${r.password}${r.expires_on ? `\nThe sign-in ends on ${r.expires_on}.` : ''}\n\nSign in once with this password; you will be asked to choose your own.`;
             openModal('Send this to your accountant', `
                 <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The one-time password is shown here once. Copy it now; it is not stored anywhere readable.</p>
                 <textarea readonly rows="7" style="width:100%; font-family:var(--font-mono); font-size:12px;" onclick="this.select()">${escapeHtml(note)}</textarea>
@@ -1403,7 +1409,8 @@ const SettingsPage = {
                 <thead><tr><th scope="col">Filename</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${backups.map(b => `<tr>
                     <td>${escapeHtml(b.filename)}${b.backup_type === 'pre-restore'
-                        ? ' <span style="font-size:10px; color:var(--text-muted);">(taken before a restore)</span>' : ''}</td>
+                        ? ' <span style="font-size:10px; color:var(--text-muted);">(taken before a restore)</span>' : ''}${b.encrypted === false && SettingsPage._companyFile && SettingsPage._companyFile.encrypted
+                        ? ' <span style="font-size:10px; color:var(--danger);">(plain SQLite, made before encryption: readable with no key)</span>' : ''}</td>
                     <td>${(b.file_size / 1024).toFixed(1)} KB</td>
                     <td>${escapeHtml(SettingsPage._when(b.created_at))}</td>
                     <td class="actions">

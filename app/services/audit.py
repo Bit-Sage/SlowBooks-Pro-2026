@@ -90,10 +90,14 @@ def _get_instance_dict(instance):
         key = col.key
         if _is_file_content(col):
             continue
-        if key in _REDACT_COLUMNS or is_secret_column(key):
+        val = getattr(instance, key, None)
+        if (
+            (key in _REDACT_COLUMNS or is_secret_column(key))
+            and isinstance(val, str)
+            and val
+        ):
             result[key] = REDACTED
             continue
-        val = getattr(instance, key, None)
         result[key] = _serialize_value(val)
     return redact_values(getattr(instance, "__tablename__", ""), result)
 

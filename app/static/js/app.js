@@ -702,6 +702,13 @@ const App = {
             if (history.state && history.state.focus) ReportsPage._refocusRow($('#page-content'));
         } catch (err) {
             if (adminOnly()) return showAdminOnly();
+            // a sign-in that must set its password first: the form, not
+            // the refusal its page met (NEW-149)
+            if (App.mustChangePassword) {
+                $('#page-content').innerHTML = App._passwordChangeHtml();
+                App.setStatus('Set your password');
+                return;
+            }
             // Server-side detail (err.message and stack) goes to console
             // for devs; the DOM gets a clean user-facing error with a
             // recovery action. Avoid leaking framework internals into
@@ -711,7 +718,7 @@ const App = {
                 <h3>Couldn't load this page</h3>
                 <p>${escapeHtml(err.message || 'An unexpected error occurred.')}</p>
                 <p style="margin-top:12px;">
-                    <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+                    <a href="#/" class="btn btn-secondary" onclick="App.navigate('#/')">Return to Dashboard</a>
                 </p>
             </div>`;
             App.setStatus('Error loading page');
@@ -1915,13 +1922,14 @@ const App = {
         App.updateClock();
         setInterval(App.updateClock, 60000);
 
-        // Real version in the footer + optional update badge
-        App.initSystemInfo();
-
         // Settings first: the vocabulary and the nonprofit nav items must
         // be in place before the first page paints (no flash of "Customers"
-        // on a donor's screen). loadCompanySettings never rejects.
-        App.loadCompanySettings().then(() => {
+        // on a donor's screen). loadCompanySettings never rejects. The
+        // sign-in's state too (the version, the role, a one-time password
+        // to replace): the first page waited for neither, so a sign-in that
+        // must set its password got the dashboard's 403 painted over the
+        // form (2.24.0 round 2, NEW-149 on the Mac).
+        Promise.all([App.loadCompanySettings(), App.initSystemInfo()]).then(() => {
             App.applyTerminology();
             App.renderOpenTabs();  // the session's open screens (#336)
             App.navigate(location.hash || '#/');
@@ -1966,8 +1974,8 @@ const App = {
                 const a = await auth.json();
                 if (a.user) App.setRole(a.user.role, a.user.username);
                 if (a.user && a.user.must_change_password) {
+                    // the first page (init awaits this) draws the form
                     App.mustChangePassword = true;
-                    App.navigate(location.hash || '#/');
                 }
                 // the copy itself takes journal entries and nothing else:
                 // the pages are locked the way the Accountant role's are

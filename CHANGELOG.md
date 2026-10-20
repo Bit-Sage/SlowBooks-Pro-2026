@@ -111,7 +111,10 @@ value (an UPDATE copied them before and after), and the Audit Log page,
 the Accountant's Package and the Accountant's Copy redact what earlier
 releases wrote. Closing Date Exceptions works on the page's clock, so an
 evening override is in the day it was made and times show in local time
-with the zone named; accounts on it are named, not numbered.
+with the zone named; accounts on it are named, not numbered. First-run
+setup refused for a company name another file already has shows that
+sentence and stays on setup (it switched to a sign-in form for a company
+with no password).
 
 Schema: migration `c2d3e4f5a6b7` (an entry's adjusting flag and who posted
 it, a user's one-time-password flag and end date, the accountants_copies

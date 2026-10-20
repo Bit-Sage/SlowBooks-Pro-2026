@@ -50,7 +50,7 @@ const CompaniesPage = {
                     <button class="btn btn-primary" data-admin onclick="CompaniesPage.showCreate()">+ New Company</button>
                 </div>
             </div>
-            ${ac.is_copy ? `<div class="hint" style="margin-bottom:12px;">This is an accountant's copy of <strong>${escapeHtml(ac.copy.company_name)}</strong>, made ${escapeHtml((ac.copy.made_at || '').slice(0, 10))}. It takes journal entries dated on or before <strong>${escapeHtml(ac.copy.dividing_date)}</strong> and nothing else. When the adjustments are in, Send changes back writes the file to return.</div>` : ''}
+            ${ac.is_copy ? `<div class="hint" style="margin-bottom:12px;">This is an accountant's copy of <strong>${escapeHtml(ac.copy.company_name)}</strong>, made ${ac.copy.made_at ? escapeHtml(new Date(ac.copy.made_at).toLocaleDateString()) : ''}. It takes journal entries dated on or before <strong>${escapeHtml(ac.copy.dividing_date)}</strong> and nothing else. When the adjustments are in, Send changes back writes the file to return.</div>` : ''}
             ${!ac.is_copy && ac.sent.length ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Copies sent to an accountant: ${ac.sent.map(s => `${escapeHtml(s.dividing_date)} (${s.applied} entr${s.applied === 1 ? 'y' : 'ies'} applied back)`).join(' · ')}</div>` : ''}
             <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
                 Each company is stored in its own separate database.

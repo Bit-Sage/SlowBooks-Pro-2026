@@ -225,16 +225,27 @@ def invite_user(
     db.commit()
     out = _user_out(user)
     out["password"] = one_time  # shown once; never stored or logged
-    out["address"] = _invite_address(request)
+    out["address"], out["note"] = _invite_address(request)
     return out
 
 
-def _invite_address(request: Request) -> str:
-    """The address the accountant signs in at: the one this request came
-    to, by its Host header. On a desktop that is loopback, which only this
-    computer reaches (2.24.0 gate, NEW-150), so the machine's own LAN
-    address stands in for it; a server's host name is kept as typed."""
+DESKTOP_ADDRESS_NOTE = (
+    "this computer only: the desktop app serves itself. For an accountant "
+    "elsewhere, send an Accountant's Copy (Companies, Send to accountant) or "
+    "run Server Edition"
+)
+
+
+def _invite_address(request: Request) -> tuple[str, str]:
+    """The address the accountant signs in at, and a note when it reaches
+    nobody else: the one this request came to, by its Host header. The
+    desktop app's server listens on loopback alone, so its address is this
+    computer's only and the note says so (2.24.0 gate, NEW-150 / W-23: a LAN
+    address was given that answered nothing). A server reached by loopback
+    (Server Edition on the host itself) gets the machine's LAN address; a
+    server's host name is kept as typed."""
     import ipaddress
+    import os
     import socket
 
     host = (request.headers.get("host") or request.url.netloc or "").strip()
@@ -246,6 +257,15 @@ def _invite_address(request: Request) -> str:
             loopback = ipaddress.ip_address(name).is_loopback
         except ValueError:
             loopback = False
+    desktop = (
+        os.environ.get("SLOWBOOKS_DESKTOP") == "1"
+        and os.environ.get("SLOWBOOKS_SERVER_MODE") != "1"
+    )
+    if loopback and desktop:
+        return (
+            f"{scheme}://{name or '127.0.0.1'}{':' + port if port else ''}",
+            DESKTOP_ADDRESS_NOTE,
+        )
     if loopback:
         lan = None
         try:
@@ -259,4 +279,4 @@ def _invite_address(request: Request) -> str:
             lan = None
         if lan and not ipaddress.ip_address(lan).is_loopback:
             name = lan
-    return f"{scheme}://{name}{':' + port if port else ''}"
+    return f"{scheme}://{name}{':' + port if port else ''}", ""

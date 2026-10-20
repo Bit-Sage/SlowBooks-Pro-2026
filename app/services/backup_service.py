@@ -550,6 +550,9 @@ def list_company_backups(db: Session) -> list[dict]:
         listed.append(
             {
                 "id": row.id if row is not None else None,
+                # a backup made before encryption was turned on is plain
+                # SQLite (2.24.0 gate, NEW-158 / W-25); the page says which
+                "encrypted": company_file.is_encrypted_file(path),
                 "filename": filename,
                 "file_size": stat.st_size,
                 "backup_type": (
