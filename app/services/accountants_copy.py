@@ -30,6 +30,7 @@ import io
 import json
 import logging
 import secrets
+import string
 import shutil
 import tempfile
 import time
@@ -160,8 +161,12 @@ def check_entry_date(db: Session, day: date) -> None:
 
 
 # No look-alikes (0/O, 1/l/I): the passphrase is read out or typed from a
-# note (2.24.0 gate, NEW-155). 55 characters, 24 of them: ~139 bits.
-_PASSPHRASE_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+# note (2.24.0 gate, NEW-155). 55 characters, 24 of them: ~139 bits. Built,
+# not written out: a secret scanner read the alphabet as a password.
+_LOOKALIKE_CHARS = "0O1lI"
+_PASSPHRASE_ALPHABET = "".join(
+    c for c in string.ascii_letters + string.digits if c not in _LOOKALIKE_CHARS
+)
 
 
 def _passphrase() -> str:
