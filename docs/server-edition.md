@@ -91,6 +91,46 @@ trusted networks.
    person's last sign-in. An administrator's password reset works the same
    way: the new password is for one use.
 
+## Several companies on one server
+
+One host serves every company in its list. A bookkeeper who keeps a small
+business's books and a nonprofit's signs in to either from the same address,
+and two people can work in two companies at the same time.
+
+- **The sign-in screen asks which company.** It lists the companies by name
+  (names only, like the usernames, and only on a Server Edition host), then the
+  people in the chosen company.
+- **Each company keeps its own people and roles.** A user lives in the company
+  file, the way they always have. To give the bookkeeper both companies, add
+  them under Settings → Users in each one, with whatever role each company
+  gives them: admin in one and bookkeeper in the other is fine.
+- **One sign-in, one click to switch.** Signing in also checks the same
+  username and password against the other companies. The topbar then offers a
+  company switch: each company that sign-in opens is one click away, with that
+  company's role. A company where the person has another password, or no
+  sign-in at all, is marked "(sign in)" and asks for its own password, with
+  the username already chosen. A switch is recorded as a sign-in in that
+  company's own log.
+- **Everything else stays per company:** the audit log, backups (named for the
+  company, and listed only in it), bank feeds, settings and the closing date.
+  The company is still one file: backup is copy, undo is restore.
+- **A new company** made under Companies → + New Company joins the list at
+  once. The administrator who made it opens it (Companies → Open) and sets it
+  up. Nobody else on the network can set up a company nobody has set up yet.
+- **API tokens** belong to the company they were made in. A token's request
+  names that company with an `X-SlowBooks-Company: <file>.db` header; without
+  it, the request goes to the company the server was started for.
+- **Starting the server** brings every company in the list up to this version
+  before it serves any of them. A company that cannot be brought up (a failed
+  migration, or a file encrypted under its own recovery key, which only opens
+  at the SlowBooks Pro window) is named in `launcher.log` and is not served. To
+  serve encrypted company files, set `COMPANY_FILE_ENCRYPTION_SECRET` on the
+  host; every company is opened with it.
+
+Customer pay links, the employee portal and payment-provider webhooks still
+reach only the company the server was started for (the last one opened on the
+host).
+
 ## Honest limits (current release)
 
 - **Plain HTTP** — run this on a network you trust (an office LAN behind

@@ -5,6 +5,20 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased — Several companies on one server
+
+**Server Edition serves every company file** (#358). The sign-in screen asks
+which company, then who; a session works in the company it chose, so two
+people work in two companies at once. Each company keeps its own users and
+roles. Signing in checks the same username and password against the other
+companies, and the topbar's company switch opens each one that matches in one
+click, with that company's role. The rest ask for their own password. Audit
+log, backups, bank feeds and settings stay per company. A company made under
+Companies is set up by the administrator who opens it. An API token's request
+names its company with `X-SlowBooks-Company`. Starting with `--serve-lan` brings
+every listed company up to this version first. The desktop window still opens
+one company at a time, and a PostgreSQL server still serves one database.
+
 ### v2.24.0 — Working with your accountant
 
 **An Accountant role** (#340). Settings → Users offers Accountant: a sign-in

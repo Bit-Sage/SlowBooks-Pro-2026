@@ -233,9 +233,38 @@ def key_source() -> str | None:
         return "secret"
     if _has_keyring():
         return "keyring"
+    if serving_another_company():
+        return "launcher" if _env_key() is not None else None
     if _env_key() is not None or _runtime_key is not None:
         return "launcher"
     return None
+
+
+def install_key() -> bytes | None:
+    """The key every company on this install shares, when there is one: the
+    one COMPANY_FILE_ENCRYPTION_SECRET derives, or the launcher's copy of it
+    in the environment. A Server Edition server opens the other companies
+    it serves with this one only (#358): the runtime key is the started
+    company's own."""
+    key = _env_key()
+    if key is not None:
+        return key
+    secret = _secret()
+    if secret:
+        return _derived(secret)
+    return None
+
+
+_derived_keys: dict = {}
+
+
+def _derived(secret: str) -> bytes:
+    """derive_key, once per secret per process: it costs about half a
+    second, and every other company's engine asks."""
+    found = _derived_keys.get(secret)
+    if found is None:
+        found = _derived_keys[secret] = derive_key(secret)
+    return found
 
 
 def resolve_key() -> bytes | None:
@@ -248,6 +277,8 @@ def resolve_key() -> bytes | None:
     handed this process in its environment is the retired one; preferring
     the environment left every connection after a re-key on the old key
     until a restart (2.24.0 gate, NEW-157)."""
+    if serving_another_company():
+        return install_key()
     if _runtime_key is not None:
         return _runtime_key
     key = _env_key()
@@ -286,10 +317,22 @@ def sqlite_path(url: str) -> Path | None:
 
 
 def active_path() -> Path | None:
-    """The file behind the running app's DATABASE_URL, when it is one."""
+    """The file behind the company this request works in (the running app's
+    DATABASE_URL, or another company a Server Edition session chose: #358),
+    when it is one."""
     from app.config import DATABASE_URL
+    from app.database import another_company_url
 
-    return sqlite_path(DATABASE_URL)
+    return sqlite_path(another_company_url() or DATABASE_URL)
+
+
+def serving_another_company() -> bool:
+    """True while a request works in a company other than the one the
+    server was started for (#358)."""
+    from app.database import served_company, started_company_file
+
+    chosen = served_company()
+    return chosen is not None and chosen != started_company_file()
 
 
 def is_encrypted_file(path: Path | str | None) -> bool:
@@ -588,14 +631,16 @@ def status() -> dict:
     this build can encrypt, whether the file is encrypted now, and where a
     key would come from."""
     from app.config import DATABASE_URL
+    from app.database import another_company_url
 
-    if DATABASE_URL.startswith("postgresql"):
+    url = another_company_url() or DATABASE_URL
+    if url.startswith("postgresql"):
         engine = "postgresql"
-    elif DATABASE_URL.startswith("sqlite"):
+    elif url.startswith("sqlite"):
         engine = "sqlite"
     else:
         engine = "other"
-    path = sqlite_path(DATABASE_URL) if engine == "sqlite" else None
+    path = sqlite_path(url) if engine == "sqlite" else None
     return {
         "engine": engine,
         "supported": engine == "sqlite" and path is not None and available(),

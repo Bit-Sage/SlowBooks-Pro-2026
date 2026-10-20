@@ -116,10 +116,14 @@ def _is_sqlite() -> bool:
 
 def _sqlite_db_path() -> Path | None:
     """Filesystem path of the active SQLite database, or None when the URL
-    isn't a file-backed SQLite database (e.g. sqlite:///:memory:)."""
-    if not DATABASE_URL.startswith("sqlite:///"):
+    isn't a file-backed SQLite database (e.g. sqlite:///:memory:). On a
+    Server Edition server, the company this request works in (#358)."""
+    from app.database import another_company_url
+
+    url = another_company_url() or DATABASE_URL
+    if not url.startswith("sqlite:///"):
         return None
-    raw = DATABASE_URL[len("sqlite:///") :]
+    raw = url[len("sqlite:///") :]
     if not raw or raw == ":memory:":
         return None
     return Path(raw)
@@ -238,7 +242,7 @@ def _restore_sqlite_backup(
     # rewritten (SQLite locking; also matters for Windows file semantics).
     import app.database as db_module
 
-    db_module.engine.dispose()
+    db_module.current_engine().dispose()
 
     live_encrypted = company_file.is_encrypted_file(dest)
     backup_encrypted = company_file.is_encrypted_file(filepath)
@@ -661,5 +665,5 @@ def bring_restored_books_up_to_date() -> dict:
         }
     import app.database as db_module
 
-    db_module.engine.dispose()
+    db_module.current_engine().dispose()
     return {"success": True}

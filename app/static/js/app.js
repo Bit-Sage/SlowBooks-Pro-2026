@@ -1747,6 +1747,51 @@ const App = {
         });
     },
 
+    // ---- Several companies on one server (#358) ----------------------------
+    // A Server Edition host serving more than one company file: the topbar
+    // offers the others. One whose sign-in this one's password opened is a
+    // click away, with the role that company gives; the rest ask for their
+    // own password, this username chosen.
+    showCompanySwitch(companies) {
+        const old = document.getElementById('topbar-company-switch');
+        if (old) old.remove();
+        const brand = $('#topbar-company');
+        if (!brand) return;
+        const serves = Array.isArray(companies) && companies.length > 1;
+        // the switch names the company itself
+        brand.classList.toggle('hidden', serves);
+        if (!serves) return;
+        const select = document.createElement('select');
+        select.id = 'topbar-company-switch';
+        select.className = 'tb-company-switch';
+        select.setAttribute('aria-label', 'Switch company');
+        select.title = 'Switch company';
+        companies.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c.file;
+            o.textContent = c.current || c.opens ? c.name : `${c.name} (sign in)`;
+            o.selected = !!c.current;
+            select.appendChild(o);
+        });
+        select.addEventListener('change', () => App.switchServedCompany(select.value));
+        brand.insertAdjacentElement('afterend', select);
+    },
+
+    async switchServedCompany(file) {
+        try {
+            const r = await API.post('/auth/company', { file });
+            if (!r.authenticated && window.SlowbooksAuth) {
+                window.SlowbooksAuth.rememberUsername(r.username || App.username || '');
+            }
+        } catch (err) {
+            toast(err.message, 'error');
+            return;
+        }
+        // another company's books: start from its Home page
+        location.hash = '#/';
+        location.reload();
+    },
+
     showCompany(s) {
         App.settings = s || {};
         App.applyHiddenMenu(App.settings);
@@ -1984,6 +2029,7 @@ const App = {
                 App.copyDividingDate = a.accountants_copy ? a.accountants_copy.dividing_date : '';
                 if (App.inCopy) { App.setRole(App.role, App.username); }
                 App._tabsOwnerChanged(a);
+                App.showCompanySwitch(a.companies);
                 if (a.accountants_copy && !document.getElementById('ac-banner')) {
                     // an accountant's copy says so on every page (#346)
                     const banner = document.createElement('div');

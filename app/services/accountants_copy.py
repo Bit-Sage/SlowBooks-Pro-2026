@@ -104,10 +104,12 @@ def mode_of(db: Session) -> dict | None:
 def mode() -> dict | None:
     """The same, for the request gate, read at most every few seconds."""
     from app.config import DATABASE_URL
-    from app.database import SessionLocal
+    from app.database import SessionLocal, another_company_url
 
+    # per company: a Server Edition server serves several (#358)
+    url = another_company_url() or DATABASE_URL
     now = time.monotonic()
-    if _mode_cache["url"] == DATABASE_URL and now - _mode_cache["at"] < 5:
+    if _mode_cache["url"] == url and now - _mode_cache["at"] < 5:
         return _mode_cache["value"]
     try:
         db = SessionLocal()
@@ -117,7 +119,7 @@ def mode() -> dict | None:
             db.close()
     except Exception:
         value = None
-    _mode_cache.update(at=now, value=value, url=DATABASE_URL)
+    _mode_cache.update(at=now, value=value, url=url)
     return value
 
 

@@ -83,9 +83,15 @@ def _status() -> dict:
 
 
 def _desktop() -> bool:
+    """The desktop's own key is the company the window (or the server) was
+    started for: another company a Server Edition server serves is keyed by
+    the operator secret only (#358)."""
     import os
 
-    return os.environ.get("SLOWBOOKS_DESKTOP") == "1"
+    return (
+        os.environ.get("SLOWBOOKS_DESKTOP") == "1"
+        and not company_file.serving_another_company()
+    )
 
 
 def _signed_in_admin(request: Request, db: Session, password: str | None):
@@ -113,7 +119,7 @@ def _rewrite(db: Session, path, work) -> None:
     import app.database as db_module
 
     db.close()
-    db_module.engine.dispose()
+    db_module.current_engine().dispose()
     try:
         work()
     except company_file.CompanyFileLocked as exc:
@@ -127,7 +133,7 @@ def _rewrite(db: Session, path, work) -> None:
             "as they were. Check the log.",
         )
     finally:
-        db_module.engine.dispose()
+        db_module.current_engine().dispose()
 
 
 @router.get("/encryption")
@@ -209,7 +215,8 @@ def change_encryption(
             # plain again: the keyring has nothing to hold, and the process
             # keeps no key for a plain file
             company_keyring.remove(path)
-            company_file.set_runtime_key(None)
+            if not company_file.serving_another_company():
+                company_file.set_runtime_key(None)
 
     _rewrite(db, path, work)
     logger.info(
