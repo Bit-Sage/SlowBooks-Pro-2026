@@ -854,6 +854,8 @@ def test_choosing_only_classes_with_no_activity_shows_the_empty_state_and_the_co
         page.get_by_role("button", name="Apply").click()
         page.wait_for_selector(".empty-state.grid-filtered")
         page.get_by_role("link", name="Show every class").click()
+        # Navigation removes the old note before the replacement grid arrives.
+        page.wait_for_selector("#report-content .pivot-grid")
         page.wait_for_function("() => !document.querySelector('.grid-filtered')")
         assert len(_heads(page)) == 14  # Account, twelve classes, Total
         assert page.evaluate(choice) == ""
