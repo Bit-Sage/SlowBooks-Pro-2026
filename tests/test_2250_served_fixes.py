@@ -68,8 +68,10 @@ def test_a_company_that_cannot_open_answers_the_sentence_and_the_sign_in_keeps_i
     client = TestClient(app)
     assert _sign_in(client, "lee", B_PW, company="bravo.db").status_code == 200
     assert _company_name(client) == "Bravo Food Pantry"
-    (host / "companies" / "bravo.db").unlink()
     db_module.forget_company_engines()  # as a restart, or an eviction, would
+    (
+        host / "companies" / "bravo.db"
+    ).unlink()  # after the engine let go: Windows refuses otherwise
     r = client.get("/api/settings")
     assert r.status_code == 503, r.text
     assert "missing" in r.json()["detail"]
