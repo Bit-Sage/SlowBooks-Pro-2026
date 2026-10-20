@@ -159,7 +159,9 @@ jobs:
           # 2.24.0's round 2: the Closing Date Exceptions clock test renders
           # the report's PDF, which skips here with the other PDF tests
           # (no WeasyPrint stack on the runner)
-          MAX_SKIPS: "120"
+          # 2.24.0's round 4: the invitation's browser test, skipped like
+          # the other Playwright modules (no Playwright on the runner)
+          MAX_SKIPS: "121"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
