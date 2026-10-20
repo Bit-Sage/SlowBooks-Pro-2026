@@ -106,18 +106,38 @@ const CompaniesPage = {
         try {
             const r = await API.post('/accountants-copy/make', { dividing_date: form.dividing_date.value, company_name: form.company_name.value });
             const note = `File: ${r.file_name}\nPassphrase: ${r.passphrase}\nDividing date: ${r.dividing_date}\n\nOpen it in SlowBooks Pro: Companies → Open accountant's copy…, with this passphrase. Post the adjustments dated on or before the dividing date, then Companies → Send changes back and return that file.`;
+            // The file name and the passphrase each copy on their own
+            // (NEW-167); the whole note sits under them, selectable like
+            // any text.
+            CompaniesPage._sent = { file: r.file_name, passphrase: r.passphrase, note };
             openModal('Send these two things to your accountant', `
-                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The passphrase is shown here once and kept nowhere. Send the file one way and the passphrase another.</p>
-                <textarea readonly rows="8" style="width:100%; font-family:var(--font-mono); font-size:12px;" onclick="this.select()">${escapeHtml(note)}</textarea>
-                <div class="form-actions">
-                    <button type="button" class="btn btn-primary" onclick="window.open('/api/accountants-copy/download/${encodeURIComponent(r.copy_id)}','_blank')">Download the copy</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal(); App.navigate('#/companies');">Done</button>
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The passphrase is shown here once and kept nowhere. Send the file one way and the passphrase another; each line copies on its own.</p>
+                <div style="display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; gap:6px 10px; align-items:center; margin-bottom:10px;">
+                    ${copyLineHtml('sent-file', 'File', r.file_name, "CompaniesPage.copySent('file')")}
+                    ${copyLineHtml('sent-passphrase', 'Passphrase', r.passphrase, "CompaniesPage.copySent('passphrase')")}
+                    <span style="font-size:12px; color:var(--text-muted);">Dividing date</span><span style="font-size:12px;">${escapeHtml(r.dividing_date)}</span><span></span>
+                </div>
+                <textarea id="sent-note" readonly rows="8" aria-label="The whole note" style="width:100%; font-family:var(--font-mono); font-size:12px;">${escapeHtml(note)}</textarea>
+                <div class="form-actions" style="justify-content:space-between;">
+                    <button type="button" class="btn btn-secondary" onclick="CompaniesPage.copySent('note')">Copy the whole note</button>
+                    <div>
+                        <button type="button" class="btn btn-primary" onclick="window.open('/api/accountants-copy/download/${encodeURIComponent(r.copy_id)}','_blank')">Download the copy</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal(); App.navigate('#/companies');">Done</button>
+                    </div>
                 </div>`);
         } catch (err) {
             toast(err.message, 'error');
             if (btn) { btn.disabled = false; btn.textContent = 'Make the copy'; }
             if (status) status.textContent = '';
         }
+    },
+
+    // One line of the note, or all of it, to the clipboard; where the page
+    // may not write it the text is selected for the copy shortcut instead.
+    async copySent(which) {
+        const sent = CompaniesPage._sent || {};
+        const labels = { file: 'File name', passphrase: 'Passphrase', note: 'Note' };
+        await copyToClipboard(sent[which] || '', labels[which] || 'Text', $(`#sent-${which}`));
     },
 
     showOpenCopy() {

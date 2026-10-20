@@ -1290,7 +1290,13 @@ function currencyPayloadFromForm(form) {
 // Hence: name the real cause when we know it, and leave the text SELECTED so
 // the fallback is one keystroke rather than an instruction to aim a mouse.
 function _selectElementText(el) {
-    if (!el || !window.getSelection || !document.createRange) return false;
+    if (!el) return false;
+    // a text box selects its own value (a range over the element would
+    // only take its first text)
+    if (typeof el.select === 'function' && typeof el.setSelectionRange === 'function') {
+        try { el.focus(); el.select(); return true; } catch (e) { return false; }
+    }
+    if (!window.getSelection || !document.createRange) return false;
     try {
         const range = document.createRange();
         range.selectNodeContents(el);
@@ -1301,6 +1307,23 @@ function _selectElementText(el) {
     } catch (e) {
         return false;
     }
+}
+
+/**
+ * One line of something shown once (an invitation, a copy's passphrase) for
+ * a three-column grid: its label, the value as text a click selects whole,
+ * and a Copy button of its own (NEW-167: a box that selected all of its text
+ * on any click gave no way to copy the password alone).
+ * @param {string} id       the value element's id, for the Copy fallback
+ * @param {string} label    what the line is, e.g. 'One-time password'
+ * @param {string} value    the text
+ * @param {string} handler  the button's onclick
+ * @returns {string} HTML
+ */
+function copyLineHtml(id, label, value, handler) {
+    return `<span style="font-size:12px; color:var(--text-muted);">${escapeHtml(label)}</span>`
+        + `<code id="${id}" style="font-family:var(--font-mono); font-size:12px; user-select:all; overflow-wrap:anywhere;">${escapeHtml(value || '')}</code>`
+        + `<button type="button" class="btn btn-secondary btn-sm" aria-label="Copy the ${escapeHtml(label.toLowerCase())}" onclick="${handler}">Copy</button>`;
 }
 
 /**

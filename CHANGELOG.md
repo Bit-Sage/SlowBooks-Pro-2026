@@ -13,9 +13,11 @@ posts journal entries, voids the ones it posted and attaches the support
 behind one, and nothing else; every other write is refused with a sentence
 that says what the role is for. Payroll and HR stay the administrator's.
 Settings → Users also **invites** an accountant (#345): a one-time password
-shown once with the address, an end date if the engagement has one, and
-their own password set at the first sign-in; an ended sign-in is refused
-with the date, and the Users list shows each person's last sign-in.
+shown once with the address, each line with a Copy button of its own and
+the password free of look-alike characters (no 0/O, 1/l/I), an end date if
+the engagement has one, and their own password set at the first sign-in;
+an ended sign-in is refused with the date, and the Users list shows each
+person's last sign-in.
 
 **Adjusting entries, marked and reported** (#341). A journal entry can be
 marked as an adjusting entry (the accountant's are, always), carries who

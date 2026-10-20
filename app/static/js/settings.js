@@ -1093,12 +1093,33 @@ const SettingsPage = {
                 expires_on: form.expires_on.value || null,
             });
             const note = `Address: ${r.address}${r.note ? ` (${r.note})` : ''}\nUsername: ${r.username}\nOne-time password: ${r.password}${r.expires_on ? `\nThe sign-in ends on ${r.expires_on}.` : ''}\n\nSign in once with this password; you will be asked to choose your own.`;
+            // Each line copies on its own (NEW-167): the password is typed at
+            // the sign-in, the rest goes in a message; the whole invitation
+            // sits under them, selectable like any text.
+            SettingsPage._invite = { address: r.address, username: r.username, password: r.password, note };
             openModal('Send this to your accountant', `
-                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The one-time password is shown here once. Copy it now; it is not stored anywhere readable.</p>
-                <textarea readonly rows="7" style="width:100%; font-family:var(--font-mono); font-size:12px;" onclick="this.select()">${escapeHtml(note)}</textarea>
-                <div class="form-actions"><button type="button" class="btn btn-primary" onclick="closeModal()">Done</button></div>`);
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The one-time password is shown here once; it is not stored anywhere readable. Each line copies on its own, or copy the whole invitation.</p>
+                <div style="display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; gap:6px 10px; align-items:center; margin-bottom:10px;">
+                    ${copyLineHtml('invite-address', 'Address', r.address, "SettingsPage.copyInvite('address')")}
+                    ${copyLineHtml('invite-username', 'Username', r.username, "SettingsPage.copyInvite('username')")}
+                    ${copyLineHtml('invite-password', 'One-time password', r.password, "SettingsPage.copyInvite('password')")}
+                </div>
+                <textarea id="invite-note" readonly rows="7" aria-label="The whole invitation" style="width:100%; font-family:var(--font-mono); font-size:12px;">${escapeHtml(note)}</textarea>
+                <div class="form-actions" style="justify-content:space-between;">
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.copyInvite('note')">Copy the whole invitation</button>
+                    <button type="button" class="btn btn-primary" onclick="closeModal()">Done</button>
+                </div>`);
             SettingsPage.loadUsers();
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // One line of the invitation, or all of it, to the clipboard; where the
+    // page may not write it (plain HTTP on a network address) the text is
+    // selected for the copy shortcut instead.
+    async copyInvite(which) {
+        const inv = SettingsPage._invite || {};
+        const labels = { address: 'Address', username: 'Username', password: 'One-time password', note: 'Invitation' };
+        await copyToClipboard(inv[which] || '', labels[which] || 'Text', $(`#invite-${which}`));
     },
 
     async updateUser(id, patch) {

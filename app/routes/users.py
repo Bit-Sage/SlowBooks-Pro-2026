@@ -8,7 +8,6 @@
 # ============================================================================
 
 import re
-import secrets
 from typing import Optional
 
 from datetime import date, timezone
@@ -19,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.users import ROLE_ACCOUNTANT, ROLE_ADMIN, VALID_ROLES, User
-from app.services.auth import MIN_PASSWORD_LEN, hash_password
+from app.services.auth import MIN_PASSWORD_LEN, hash_password, one_time_password
 
 
 def _utc_iso(stamp):
@@ -211,7 +210,7 @@ def invite_user(
         )
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=409, detail="Username already exists")
-    one_time = secrets.token_urlsafe(12)
+    one_time = one_time_password()
     user = User(
         username=username,
         display_name=payload.display_name.strip() or username.title(),

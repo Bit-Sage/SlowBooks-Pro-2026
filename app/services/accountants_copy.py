@@ -30,7 +30,6 @@ import io
 import json
 import logging
 import secrets
-import string
 import shutil
 import tempfile
 import time
@@ -47,6 +46,7 @@ from app.models.accountants_copies import AccountantsCopy
 from app.models.accounts import Account
 from app.models.transactions import Transaction
 from app.services import company_file
+from app.services.auth import READABLE_ALPHABET
 from app.services.settings_service import (
     ENCRYPTED_SETTINGS_KEYS,
     get_setting_raw,
@@ -163,10 +163,9 @@ def check_entry_date(db: Session, day: date) -> None:
 # No look-alikes (0/O, 1/l/I): the passphrase is read out or typed from a
 # note (2.24.0 gate, NEW-155). 55 characters, 24 of them: ~139 bits. Built,
 # not written out: a secret scanner read the alphabet as a password.
-_LOOKALIKE_CHARS = "0O1lI"
-_PASSPHRASE_ALPHABET = "".join(
-    c for c in string.ascii_letters + string.digits if c not in _LOOKALIKE_CHARS
-)
+# The passphrase's alphabet (NEW-155): letters and digits with no look-alikes,
+# the one the invitation's one-time password draws on too.
+_PASSPHRASE_ALPHABET = READABLE_ALPHABET
 
 
 def _passphrase() -> str:

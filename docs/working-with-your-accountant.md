@@ -82,9 +82,9 @@ so your accountant simply installs it.
 
 1. **Send to accountant** (Companies, an administrator): pick a dividing
    date and type the company's name to confirm. SlowBooks copies the books
-   into a file encrypted under a passphrase it shows once, with your
-   sign-ins and secrets left out. Send the file one way and the passphrase
-   another.
+   into a file encrypted under a passphrase it shows once (with a Copy
+   button of its own), with your sign-ins and secrets left out. Send the
+   file one way and the passphrase another.
 2. **Open accountant's copy** (your accountant, their own SlowBooks Pro,
    Companies): the file and the passphrase. The copy becomes a company file
    of its own on their picker, opened with a password they choose, and it

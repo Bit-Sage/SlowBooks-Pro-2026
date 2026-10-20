@@ -13,6 +13,7 @@
 import logging
 import os
 import secrets
+import string
 import threading
 import weakref
 from pathlib import Path
@@ -35,6 +36,22 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
 # Minimum password length for setup
 MIN_PASSWORD_LEN = 8
+
+# A password shown once is read off a screen and typed, often at the same
+# computer (the desktop's invitation): letters and digits with no 0/O or
+# 1/l/I among them (2.24.0, NEW-167). The accountant's copy's passphrase
+# draws on the same alphabet.
+LOOKALIKE_CHARS = "0O1lI"
+READABLE_ALPHABET = "".join(
+    c for c in string.ascii_letters + string.digits if c not in LOOKALIKE_CHARS
+)
+
+
+def one_time_password(length: int = 16) -> str:
+    """A password for one sign-in, shown once: 16 characters from the
+    readable alphabet (57 symbols, 93 bits), replaced at that sign-in."""
+    return "".join(secrets.choice(READABLE_ALPHABET) for _ in range(length))
+
 
 # argon2-cffi defaults: time_cost=3, memory_cost=65536 (64MB), parallelism=4
 # → ~100 ms per hash on a modern CPU, expensive enough to kill brute force.
