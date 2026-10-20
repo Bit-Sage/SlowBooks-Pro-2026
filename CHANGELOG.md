@@ -16,6 +16,25 @@ on what the software does, not on what sprint shipped what.
   check, each split line on the stub (`GET
   /api/checks/print?transaction_id=`). A deposit, card charge, transfer or
   void is refused with the reason (discussion #354).
+- Profit & Loss and Balance Sheet compare to last year (#347). "Compare to
+  same period last year" on the P&L, and "Compare to same date last year"
+  on the Balance Sheet, add a Prior Year column on screen and in the PDF
+  and CSV (`compare=prior_year` on `/api/reports/profit-loss`,
+  `/api/reports/balance-sheet` and their exports), with $ Change and
+  % Change columns that "Show $ and % change" turns off (`hide_changes=1`
+  on the exports). The prior period is the same dates one year earlier, a
+  month's last day mapping to that month's last day, so a full February
+  compares with a full February across a leap year. An account with
+  activity in only one of the two years shows 0 in the other; % Change is
+  "—" against a zero. The rows keep the chosen order, and "Without
+  adjusting entries" applies to both years. A prior-year amount drills into
+  that year's transactions and "Back to …" returns to the comparison; both
+  choices ride on the address and in saved reports. The Balance Sheet
+  screen also shows the Liabilities + Equity total its PDF already had.
+- A Balance Sheet line's drill-down for an as-of date in an earlier year
+  started on January 1 of the current year, after its own end date, so the
+  dates were refused and this year's transactions shown instead. It starts
+  on January 1 of the as-of date's year (#347).
 
 ### v2.24.0 — Working with your accountant
 
