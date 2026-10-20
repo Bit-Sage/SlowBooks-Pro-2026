@@ -43,7 +43,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Vendor page** (v2.21.0) — click a vendor for its own page: contact, terms, 1099 status and whether a W-9 is on file (v2.22.2), the default account, notes edited in place, what's owed, its bills, bill payments and unapplied credits, each opening from the page
 - **W-9 on file** (v2.22.2, #257) — a vendor's W-9 flag, next to the 1099 question on the vendor form. The 1099-NEC always printed "W-9 on file: No", because nothing could set the flag it prints. The 1099 Summary shows each vendor's W-9 and counts the reportable vendors without one (`vendors_missing_w9`)
 - **Vendor list** — Balances worked out from open bills and unapplied credits; a vendor can be made inactive; cost-of-goods accounts can be a vendor's default ("Default Expense or COGS Account")
-- **Bill Payments** — Pay vendor bills with allocation. Journal: DR AP, CR Bank. Pay Bills makes one payment per vendor and asks for one vendor at a time when a check number is entered; a payment pays only its own vendor's bills. A bill lists its payments, each with View, Print Check and Void (refused once the check is reconciled). Paying from a bank account that would go below zero asks first. A payment that names no bank pays from Checking (1000); a chart without it is refused with a 409 naming the account, nothing written (v2.22.3, #284)
+- **Bill Payments** — Pay vendor bills with allocation. Journal: DR AP, CR Bank. Pay Bills makes one payment per vendor and asks for one vendor at a time when a check number is entered; a payment pays only its own vendor's bills. A bill lists its payments, each with View, Print Check and Void (refused once the check is reconciled). A check written straight into the bank register, or entered as an Expense paid from a bank account, prints from its register row or the expense's view (discussion #354): the same 3-per-page stock, each split line on the stub. Paying from a bank account that would go below zero asks first. A payment that names no bank pays from Checking (1000); a chart without it is refused with a 409 naming the account, nothing written (v2.22.3, #284)
 - **AP Aging Report** — Outstanding payables grouped by vendor with 30/60/90 day buckets past due, in home currency, with vendor credits and bill-payment money not yet applied netted, so the total equals account 2000. A bill with no due date ages from its date and terms
 
 ## Double-Entry Accounting
@@ -591,7 +591,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/deposits/{id}/pdf · /print-preview` | GET | The deposit slip (v2.22.2): the account, the date, each payment taken and the total; VOID when void |
 | `/api/deposits/{id}/void` | POST | Void a deposit (its payments wait to be deposited again) |
 | `/api/cc-charges` | GET, POST | Credit card charge entry (`card_account_id`, `…/{id}/void`) |
-| `/api/checks/print` | GET | Generate check PDF (3-per-page format) for a bill payment (`bill_payment_id`) |
+| `/api/checks/print` | GET | Generate check PDF (3-per-page format) for a bill payment (`bill_payment_id`), or for a check written in the bank register or as an expense (`transaction_id`; a deposit, card charge, transfer or void is refused with the reason) |
 
 ### Journal Entries
 | Endpoint | Methods | Description |
