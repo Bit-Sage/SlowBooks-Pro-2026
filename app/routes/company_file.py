@@ -156,7 +156,8 @@ def turn_on_with_recovery_key(
     def work():
         company_file.convert(path, key, encrypt=True)
         company_keyring.save(path, ring)
-        company_file.set_runtime_key(key)
+        if not company_file.serving_another_company():
+            company_file.set_runtime_key(key)
 
     _rewrite(db, path, work)
     return recovery

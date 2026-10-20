@@ -55,24 +55,20 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.24 — Working with your accountant.** An Accountant role that reads
-everything and posts journal entries only, invited with a one-time
-password and an end date (#340, #345); adjusting entries marked with who
-posted them, reported, and left out of a statement on request (#341); a
-Closing Date Exceptions report of every change made into a closed period
-with the password (#342); the Accountant's Package, one zip of statements,
-ledger, agings, reconciliations, adjustments, exceptions and the audit log
-(#343); the IIF round trip both ways, checks, card charges, transfers, bill
-payments and journal entries included (#344); and SlowBooks' own
-Accountant's Copy: send an encrypted copy with a dividing date, the
-accountant works in their own SlowBooks Pro, and their entries come back
-once as adjusting entries (#346). Also a categorized bank sheet that
-imports as posted transactions (#328), Reclassify Transactions for moving
-many lines at once (#337), the session's open screens at the top of the
-sidebar (#336), and company file encryption on the desktop, with a
-recovery key and an administrator's sign-in to unlock (#290).
+**v2.25 — Several companies on one server.** Server Edition serves every
+company file in the install's list (#358): the sign-in screen asks which
+company, then who; a session works in the company it chose, so two people
+work in two companies at once; and a sign-in whose password opens another
+company switches to it with one click from the topbar, with the role that
+company gives, while the rest ask for their own password. Audit log,
+backups, bank feeds and settings stay per company; a company made under
+Companies is set up by the administrator who opens it; an API token's
+request names its company with the `X-SlowBooks-Company` header; and
+`--serve-lan` brings every listed company up to date first. The desktop
+window still opens one company at a time, and a PostgreSQL server still
+serves one database.
 
-Patch releases and everything before 2.24 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.25 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -87,7 +83,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (585 operations in v2.24.1) — built for Claude
+self-documenting local REST API (586 operations in v2.25.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

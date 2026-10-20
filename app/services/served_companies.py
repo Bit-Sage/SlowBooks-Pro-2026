@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # sign-in's password was found to open, so a switch to one takes a click.
 SESSION_FILE_KEY = "company_file"
 SESSION_OPENS_KEY = "company_files"
+# what the session remembers of each other company's sign-in, so a switch
+# can tell the password was changed there since (2.25.0 review)
+SESSION_OPENS_FP_KEY = "company_files_fp"
 
 ENCRYPTED_ON_ITS_OWN_KEY = (
     "This company file is encrypted under a key of its own, which only opens "
@@ -73,6 +76,7 @@ def listed() -> list[dict]:
         stamp = (str(path), stat.st_mtime_ns, stat.st_size)
     except OSError:
         return []
+    gone: set = set()
     with _manifest_lock:
         if _manifest_cache["stamp"] == stamp:
             return list(_manifest_cache["rows"])
@@ -82,8 +86,15 @@ def listed() -> list[dict]:
             if safe is None or any(r["file"] == safe for r in rows):
                 continue
             rows.append({"file": safe, "name": (entry.get("name") or "").strip()})
+        gone = {r["file"] for r in _manifest_cache["rows"]} - {r["file"] for r in rows}
         _manifest_cache.update(stamp=stamp, rows=rows)
-        return list(rows)
+    if gone:
+        # a company taken off the list gives its engine up at once, rather
+        # than at the next restart (2.25.0 review)
+        from app import database
+
+        database.drop_company_engines(gone)
+    return list(rows)
 
 
 def is_served(filename: str | None) -> bool:

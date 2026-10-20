@@ -923,6 +923,16 @@ def _role_refusal(role: str) -> str:
 
 @app.middleware("http")
 async def require_session(request: Request, call_next):
+    try:
+        return await _require_session(request, call_next)
+    except CompanyUnavailable as exc:
+        # The session's company cannot be opened now (#358): the gate itself
+        # opens it (the company id, the copy's mode) before any route runs,
+        # so the sentence is answered here too, as a 503, never a traceback.
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+async def _require_session(request: Request, call_next):
     path = request.url.path
     if (
         path in _AUTH_EXEMPT_EXACT

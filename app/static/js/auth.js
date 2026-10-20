@@ -682,6 +682,12 @@
                 };
                 if (status.authenticated) return false;
                 renderView(status.setup_needed ? "setup" : "login", onSuccess);
+                if (status.company_unavailable) {
+                    // the session's company cannot be opened now (#358):
+                    // the sentence, with the other companies still offered
+                    const box = document.querySelector("#" + OVERLAY_ID + " #auth-error");
+                    if (box) box.textContent = status.company_unavailable;
+                }
                 return true;
             } finally {
                 authPromptPromise = null;

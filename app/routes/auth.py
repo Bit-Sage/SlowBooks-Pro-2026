@@ -11,6 +11,7 @@
 # how you become authenticated in the first place.
 # ============================================================================
 
+import hashlib
 import ipaddress
 import logging
 from datetime import date
@@ -162,9 +163,41 @@ def _desktop_window(request: Request) -> bool:
 
 
 @router.get("/status")
-def auth_status(request: Request, db: Session = Depends(get_db)):
+def auth_status(request: Request):
     """Tell the SPA whether first-run setup is needed and whether the
-    current session is authenticated."""
+    current session is authenticated. When the session's company cannot be
+    opened now (#358: its file missing, locked or from another version),
+    the answer says so and still lists the companies this server serves,
+    so the sign-in screen keeps its choice."""
+    import app.database as db_module
+
+    try:
+        db = db_module.SessionLocal()
+    except served_companies.CompanyUnavailable as exc:
+        return _status_while_company_unavailable(request, str(exc))
+    try:
+        return _auth_status(request, db)
+    finally:
+        db.close()
+
+
+def _status_while_company_unavailable(request: Request, sentence: str) -> dict:
+    return {
+        "authenticated": False,
+        "setup_needed": False,
+        "multi_user": False,
+        "usernames": [],
+        "company_name": "",
+        "accountants_copy": None,
+        "desktop": _desktop_window(request),
+        "company_unavailable": sentence,
+        "companies": [
+            {**c, "opens": False} for c in served_companies.names_for_sign_in()
+        ],
+    }
+
+
+def _auth_status(request: Request, db: Session) -> dict:
     authenticated = request.session.get("authenticated") is True
     if authenticated and (
         signed_in_before_this_start(request.session)
@@ -361,10 +394,8 @@ def setup(
     if served_companies.enabled() and admin is not None:
         # a company set up from another one's sign-in (#358): the way back
         # is a click when the password is the same there
-        here = served_companies.current_file()
-        request.session[served_companies.SESSION_FILE_KEY] = here
-        request.session[served_companies.SESSION_OPENS_KEY] = [here] + (
-            _other_companies_opened_by(admin.username, payload.password, here)
+        _remember_opened(
+            request.session, admin, payload.password, served_companies.current_file()
         )
     out = {"status": "ok", "authenticated": True}
     if payload.encrypt:
@@ -397,7 +428,15 @@ def _encrypt_at_setup(db: Session, admin, password: str, company_name) -> dict:
             finally:
                 db_module.current_engine().dispose()
             return {"encrypted": True, "encryption_note": None}
-        if os.environ.get("SLOWBOOKS_DESKTOP") != "1":
+        if (
+            os.environ.get("SLOWBOOKS_DESKTOP") != "1"
+            or company_file.serving_another_company()
+        ):
+            # the desktop's own key is the company the window was started
+            # for; another company a server serves is keyed by the host's
+            # secret alone (2.25.0 review: the wizard read the raw flag,
+            # which --serve-lan sets too, and would have put the new
+            # company's key where the started company's belongs)
             return {
                 "encrypted": False,
                 "encryption_note": (
@@ -518,10 +557,8 @@ def login(
     _stash_user(request, user)
     _keep_keyring_current(user, payload.password)
     if served_companies.enabled():
-        here = served_companies.current_file()
-        request.session[served_companies.SESSION_FILE_KEY] = here
-        request.session[served_companies.SESSION_OPENS_KEY] = [here] + (
-            _other_companies_opened_by(user.username, payload.password, here)
+        _remember_opened(
+            request.session, user, payload.password, served_companies.current_file()
         )
     return {"status": "ok", "authenticated": True}
 
@@ -543,13 +580,32 @@ def _user_who_may_open(db: Session, username: str):
     return user
 
 
-def _other_companies_opened_by(username: str, password: str, here: str) -> list[str]:
+def _fingerprint(password_hash: str) -> str:
+    """What a session remembers of another company's sign-in: enough to tell
+    at a switch that the password was changed or reset there since, and
+    nothing of the hash itself (the session cookie is signed, not hidden)."""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _remember_opened(session, user, password: str, here: str) -> None:
+    """The companies this sign-in's password opens, this one included, with
+    each one's fingerprint (#358), so a switch to any of them, and back,
+    can tell the password is still the one that was given."""
+    opened = {here: _fingerprint(user.password_hash)}
+    opened.update(_other_companies_opened_by(user.username, password, here))
+    session[served_companies.SESSION_FILE_KEY] = here
+    session[served_companies.SESSION_OPENS_KEY] = list(opened)
+    session[served_companies.SESSION_OPENS_FP_KEY] = opened
+
+
+def _other_companies_opened_by(username: str, password: str, here: str) -> dict:
     """The other companies this server serves where the same username, with
-    the same password, is an active sign-in (#358). Checked once, at the
-    sign-in; each company still says what role the person has in it."""
+    the same password, is an active sign-in (#358): {file: fingerprint}.
+    Checked at the sign-in, and again at each switch, which asks for the
+    password instead when the fingerprint no longer matches."""
     from app.services.auth import verify_password
 
-    found = []
+    found = {}
     for company in served_companies.listed():
         if company["file"] == here:
             continue
@@ -563,7 +619,7 @@ def _other_companies_opened_by(username: str, password: str, here: str) -> list[
                     if user is not None and verify_password(
                         password, user.password_hash
                     ):
-                        found.append(company["file"])
+                        found[company["file"]] = _fingerprint(user.password_hash)
                 finally:
                     other.close()
         except Exception:
@@ -619,6 +675,7 @@ def choose_company(request: Request, payload: CompanyChoice):
     session = request.session
     username = session.get("username") or ""
     opens = session.get(served_companies.SESSION_OPENS_KEY) or []
+    fingerprints = session.get(served_companies.SESSION_OPENS_FP_KEY) or {}
     signed_in = session.get("authenticated") is True
     admin = signed_in and (session.get("role") or "admin") == "admin"
     if admin and not session.get("must_change_password"):
@@ -647,7 +704,14 @@ def choose_company(request: Request, payload: CompanyChoice):
             db = db_module.SessionLocal()
             try:
                 user = _user_who_may_open(db, username)
-                if user is not None:
+                # the person as they are there now: still active, no
+                # one-time password to replace, and the same password as
+                # at the sign-in (a reset there since asks for it)
+                if (
+                    user is not None
+                    and not getattr(user, "must_change_password", False)
+                    and _fingerprint(user.password_hash) == fingerprints.get(target)
+                ):
                     from datetime import datetime, timezone
 
                     db.info["acting_username"] = user.username
@@ -661,6 +725,7 @@ def choose_company(request: Request, payload: CompanyChoice):
                     remember_this_company(session)
                     _stash_user(request, user)
                     session[served_companies.SESSION_OPENS_KEY] = opens
+                    session[served_companies.SESSION_OPENS_FP_KEY] = fingerprints
                     return {"status": "ok", "authenticated": True}
             finally:
                 db.close()

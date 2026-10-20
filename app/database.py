@@ -165,6 +165,17 @@ def forget_company_engines() -> None:
         _company_engines.clear()
 
 
+def drop_company_engines(filenames) -> None:
+    """Close and drop the engines of companies no longer on the served list:
+    a request naming one again is refused by the list, or opens it afresh if
+    it comes back."""
+    with _company_engines_lock:
+        for name in list(filenames):
+            found = _company_engines.pop(name, None)
+            if found is not None:
+                found.dispose()
+
+
 class CompanySession(Session):
     """A Session bound to the company the request works in."""
 

@@ -303,9 +303,15 @@ def test_a_missing_file_says_so(served):
     client = TestClient(app)
     (served / "companies" / "bravo.db").unlink()
     assert client.post("/api/auth/company", json={"file": "bravo.db"}).is_success
+    # the sign-in screen keeps its choice: the sentence, and the companies
+    # this server serves (the 2.25.0 review: a 503 with no body lost them)
     r = client.get("/api/auth/status")
-    assert r.status_code == 503
-    assert "missing" in r.json()["detail"]
+    assert r.status_code == 200
+    assert "missing" in r.json()["company_unavailable"]
+    assert [c["name"] for c in r.json()["companies"]] == [
+        "Alpha Hardware",
+        "Bravo Food Pantry",
+    ]
 
 
 def test_an_api_token_names_its_company(served):

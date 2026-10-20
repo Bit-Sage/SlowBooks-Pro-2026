@@ -1,4 +1,13 @@
 {
+  "2.25.0": {
+    "title": "Several companies on one server",
+    "items": [
+      "Server Edition serves every company file in the list: the sign-in screen asks which company, a session works in the company it chose, and two people work in two companies at once.",
+      "A sign-in whose password opens another company switches to it with one click from the topbar, with the role that company gives; the rest ask for their own password.",
+      "Audit log, backups, bank feeds and settings stay per company; a company made under Companies is set up by the administrator who opens it.",
+      "An API token's request names its company with the X-SlowBooks-Company header; --serve-lan brings every listed company up to date first."
+    ]
+  },
   "2.24.1": {
     "title": "Checks from the register, and a ledger export caught",
     "items": [

@@ -5,9 +5,9 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased — Several companies on one server
+### v2.25.0 — Several companies on one server
 
-**Server Edition serves every company file** (#358). The sign-in screen asks
+**Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
 which company, then who; a session works in the company it chose, so two
 people work in two companies at once. Each company keeps its own users and
 roles. Signing in checks the same username and password against the other
@@ -18,6 +18,18 @@ Companies is set up by the administrator who opens it. An API token's request
 names its company with `X-SlowBooks-Company`. Starting with `--serve-lan` brings
 every listed company up to this version first. The desktop window still opens
 one company at a time, and a PostgreSQL server still serves one database.
+A company the server cannot open now (its file missing, locked or from another
+version) answers with one sentence, from the gate as well as from a page, and
+the sign-in screen still lists the companies so another can be chosen. The
+one-click switch looks at the person as they are in the other company now:
+a password changed or reset there since the sign-in, or a one-time password
+waiting to be replaced, asks for that company's password instead. The setup
+wizard's encrypt box on a company served with the others leaves the started
+company's key alone (a served company is encrypted under the host's
+`COMPANY_FILE_ENCRYPTION_SECRET`). A company taken off the served list gives
+its engine up at once. Merged as contributed, with these on top.
+
+No schema change. 586 API operations (`POST /api/auth/company`).
 
 ### v2.24.1 — Checks from the register, and a ledger export caught
 
