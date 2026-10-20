@@ -5,17 +5,30 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.24.1 — Checks from the register, and a ledger export caught
 
-- Refuse account-grouped QuickBooks ledger CSVs with an added Account column
-  before they can be mistaken for sales documents. The error explains the
-  default-column export and All accounts filter (#359, discussion #349).
-- Print Check for a check written straight into the bank register or
-  entered as an Expense paid from a bank account, from the register row
-  and the expense's view: the same 3-per-page voucher as a bill payment's
-  check, each split line on the stub (`GET
-  /api/checks/print?transaction_id=`). A deposit, card charge, transfer or
-  void is refused with the reason (discussion #354).
+**Print Check for a check written in the bank register or as an expense**
+(PR #362, @ContractorKeith; discussion #354). Print Check sat on bill
+payments alone. A check typed straight into the register (+ Entry, the
+quick-entry row, a split) or entered as an Expense paid from a bank account
+now prints from its register row and from the expense's view, on the same
+3-per-page voucher as a bill payment's check: the payee from the vendor or
+the entry, the reference as the check number, the entry's memo, and each
+split line on the stub. A deposit, a card charge, a transfer and a void are
+refused with the reason, and a bill payment's check prints from its bill.
+Merged as contributed.
+
+**A QuickBooks ledger export with an added Account column is refused, not
+read as sales** (#359, PR #360, @ContractorKeith; discussion #349). A
+Transaction Detail by Account export with an Account column added matched
+the sales-report signature and posted sales receipts and payments instead
+of ledger history. The account-grouped layout is now recognized by its
+section headings before the sales check, and such a file is refused with
+the sentence that says to export again with the default columns and the
+All accounts filter. The default export is read exactly as before. Merged
+as contributed.
+
+No schema change. 585 API operations.
 
 ### v2.24.0 — Working with your accountant
 

@@ -1,4 +1,11 @@
 {
+  "2.24.1": {
+    "title": "Checks from the register, and a ledger export caught",
+    "items": [
+      "Print Check for a check written straight into the bank register or entered as an Expense paid from a bank account: the register row and the expense's view print the same 3-per-page voucher as a bill payment's check, each split line on the stub.",
+      "A QuickBooks Transaction Detail by Account export with an added Account column is refused with the export instructions, instead of being read as sales receipts and payments."
+    ]
+  },
   "2.24.0": {
     "title": "Working with your accountant",
     "items": [
