@@ -179,6 +179,57 @@ The app reads `X-Forwarded-For` and `X-Forwarded-Proto` correctly when
 those headers are present, so login-attempt IPs and same-origin checks
 work as expected.
 
+## Client IP and rate limiting behind the proxy
+
+Two settings matter once a proxy is in front. Both fail silently — the
+app serves fine without them — so they are easy to miss.
+
+### `FORWARDED_ALLOW_IPS` — required behind a proxy
+
+uvicorn parses `X-Forwarded-For`, but only trusts it from the addresses
+in `--forwarded-allow-ips`, which defaults to `127.0.0.1`. A proxy in
+another container or pod has a different address, so by default the
+header is ignored and **every request reports the proxy's IP**. That has
+two invisible consequences:
+
+- the login rate limiter (keyed on client IP) collapses into **one
+  shared bucket for all users** — 5 login attempts/minute becomes 5
+  across everyone, so one noisy client locks out real logins; and
+- `login_attempts` / `portal_accesses` record the proxy's address, so
+  the security audit tables are useless for forensics.
+
+Set `FORWARDED_ALLOW_IPS` to the proxy's address or subnet:
+
+```bash
+# Docker compose default bridge network, for example
+FORWARDED_ALLOW_IPS=172.18.0.0/16
+```
+
+`docker-compose.prod.yml` requires it (it assumes a proxy). The Docker
+entrypoint passes it to uvicorn as `--proxy-headers --forwarded-allow-ips`.
+**Never set it to `0.0.0.0/0` or `*`** — that trusts the header from any
+source, letting a client forge its own IP and evade the rate limiter.
+
+For the Traefik option above, the two containers share the compose
+network, so set `FORWARDED_ALLOW_IPS` to that network's CIDR. For nginx
+on the same host forwarding from `127.0.0.1`, the uvicorn default already
+covers it, but setting it explicitly to `127.0.0.1` documents the intent.
+
+### `RATE_LIMIT_STORAGE_URI` — required for multiple workers
+
+Rate-limit counters live in memory by default, which is per-worker and
+per-replica. `docker-compose.prod.yml` runs `APP_WORKERS=4`, so a "5 per
+minute" limit is really 20 — and more if you scale to several replicas.
+Point the counters at shared storage so the limit means what it says:
+
+```bash
+RATE_LIMIT_STORAGE_URI=redis://redis:6379/0
+```
+
+Leave it unset for a single-worker container or the desktop app, where
+the in-memory default is correct. The app logs a warning at startup when
+`APP_WORKERS > 1` and this is unset.
+
 ## Common pitfalls
 
 | Symptom | Likely cause |

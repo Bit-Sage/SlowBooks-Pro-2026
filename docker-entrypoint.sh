@@ -44,6 +44,19 @@ if [ -z "${SKIP_BOOT_SELFCHECK:-}" ] && python -c "import pytest" 2>/dev/null; t
 fi
 
 echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."
+
+# Reverse-proxy client-IP trust. Behind a TLS-terminating proxy the real client
+# address arrives in X-Forwarded-For, but uvicorn trusts that header only from
+# the addresses in --forwarded-allow-ips (default 127.0.0.1 — not a proxy in
+# another container/pod). Unset FORWARDED_ALLOW_IPS => no flags, so a directly
+# reachable deploy never trusts a spoofable header. See the helper for why.
+# An array so the flags stay separate argv entries under quoted expansion
+# below (the shell-safety audit requires every expansion be quoted); the
+# helper emits space-free tokens, so the unquoted command substitution that
+# fills the array splits them one per element and nothing else.
+# shellcheck disable=SC2046
+PROXY_ARGS=( $(python scripts/uvicorn_proxy_args.py) )
+
 # Multi-worker production mode.
 # uvloop + httptools come from uvicorn[standard], explicit for clarity.
 # APP_WORKERS defaults to 2 (tunable via docker-compose env or .env).
@@ -53,4 +66,5 @@ exec uvicorn app.main:app \
     --workers "${APP_WORKERS:-2}" \
     --loop uvloop \
     --http httptools \
+    "${PROXY_ARGS[@]}" \
     --access-log
