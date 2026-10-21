@@ -33,6 +33,14 @@ their input were not reachable, but the regexes are hardened for any caller.
 Pydantic `pattern=` constraints are unaffected: they use the Rust regex engine,
 where `$` is end-of-text.
 
+**Bank-feed connection management is admin-only.** Connecting a SimpleFIN
+bank feed, remapping its accounts and disconnecting it change a stored
+credential and the books' wiring, so they now require the administrator
+role — the same boundary as Settings and the AI provider key. Running a
+sync or reading status on a feed the administrator has already connected
+stays available to the bookkeeper as daily books work; read-only is
+unchanged. Previously a non-admin sign-in or token could reach these.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

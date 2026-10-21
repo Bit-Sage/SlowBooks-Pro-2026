@@ -80,8 +80,11 @@ trusted networks.
 3. Roles are enforced server-side: a read-only user physically cannot
    post an entry; an accountant can post and void their own journal
    entries and nothing else; a bookkeeper cannot touch Settings, Users,
-   backups, or migrations. The last active admin can never be locked out —
-   the app refuses to demote or deactivate them.
+   backups, or migrations, and cannot connect, remap or disconnect a bank
+   feed (those store a credential and wire the books, so they are the
+   administrator's) — but a bookkeeper does run the day-to-day syncs on a
+   feed the administrator has connected. The last active admin can never be
+   locked out — the app refuses to demote or deactivate them.
 4. **Invite your accountant** (Settings → Users) makes a sign-in with a
    one-time password and shows what to send, once: the address, the username
    and the password, each with a Copy button of its own. They choose their own

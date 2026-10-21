@@ -10,6 +10,9 @@ import socket
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
 
 from app.models.accounts import Account, AccountType
 from app.models.bank_rules import BankRule
@@ -463,6 +466,81 @@ def test_sync_route_bridge_down_is_502(authed_client, db_session, monkeypatch):
     monkeypatch.setattr(sf, "send", lambda req, **kw: _resp(status=500))
     r = authed_client.post("/api/simplefin/sync")
     assert r.status_code == 502
+
+
+def _bearer(token):
+    """Fresh cookie-less client so the Bearer (token) path authenticates,
+    not the admin session — mirrors tests/test_api_tokens.py."""
+    c = TestClient(app)
+    c.headers["Authorization"] = f"Bearer {token}"
+    return c
+
+
+def test_connection_management_is_admin_only(authed_client, db_session, monkeypatch):
+    """Claiming, remapping and disconnecting the bank feed change stored
+    credentials and the books' wiring — an administrator's, like other
+    connection settings (GET /api/settings redacts the access URL and a
+    non-admin is refused writes there). A bookkeeper may sync an
+    already-connected feed, which is daily books work, but must not connect,
+    remap or disconnect it; a read-only token is refused every write."""
+    keeper_token = authed_client.post(
+        "/api/tokens", json={"label": "keeper", "role": "bookkeeper"}
+    ).json()["token"]
+    reader_token = authed_client.post(
+        "/api/tokens", json={"label": "reader", "role": "readonly"}
+    ).json()["token"]
+    keeper = _bearer(keeper_token)
+    reader = _bearer(reader_token)
+
+    # An admin has already connected and mapped a feed.
+    ba = _mk_bank_account(db_session, name="Shared Checking")
+    set_setting(db_session, "simplefin_access_url", ACCESS_URL)
+    set_setting(db_session, "simplefin_account_map", json.dumps({"ACT-1": ba.id}))
+    db_session.commit()
+
+    # Connection management is refused for both non-admin roles. The claim's
+    # outbound POST must never fire, so no network mock is set: a 403 has to
+    # come from the gate, before claim_access_url would reach send().
+    for who in (keeper, reader):
+        assert (
+            who.post("/api/simplefin/claim", json={"setup_token": _token()}).status_code
+            == 403
+        )
+        assert (
+            who.post(
+                "/api/simplefin/map", json={"mapping": {"ACT-1": ba.id}}
+            ).status_code
+            == 403
+        )
+        assert who.post("/api/simplefin/disconnect").status_code == 403
+
+    # The refused calls changed nothing: the feed is still connected and mapped.
+    assert get_setting_raw(db_session, "simplefin_access_url") == ACCESS_URL
+
+    # A bookkeeper may sync the connected feed and read status; read-only may
+    # read status but not sync (any write).
+    monkeypatch.setattr(sf, "send", lambda req, **kw: _resp(json_body=SF_DATA))
+    assert keeper.get("/api/simplefin/status").status_code == 200
+    assert keeper.post("/api/simplefin/sync").status_code == 200
+    assert reader.get("/api/simplefin/status").status_code == 200
+    assert reader.post("/api/simplefin/sync").status_code == 403
+
+    # Admin (the session) still connects, maps and disconnects.
+    responses = [_resp(text=ACCESS_URL), _resp(json_body=SF_DATA)]
+    monkeypatch.setattr(sf, "send", lambda req, **kw: responses.pop(0))
+    assert (
+        authed_client.post(
+            "/api/simplefin/claim", json={"setup_token": _token()}
+        ).status_code
+        == 200
+    )
+    assert (
+        authed_client.post(
+            "/api/simplefin/map", json={"mapping": {"ACT-1": ba.id}}
+        ).status_code
+        == 200
+    )
+    assert authed_client.post("/api/simplefin/disconnect").status_code == 200
 
 
 def test_disconnect_route_clears_settings(authed_client, db_session):
