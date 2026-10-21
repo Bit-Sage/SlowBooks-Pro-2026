@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.accounting import _q
-from app.routes._helpers import clamp_pagination
+from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.models.accounts import Account
 from app.models.banking import (
     BankAccount,
@@ -233,7 +233,7 @@ def update_bank_account(
     ba = db.query(BankAccount).filter(BankAccount.id == account_id).first()
     if not ba:
         raise HTTPException(status_code=404, detail="Bank account not found")
-    fields = data.model_dump(exclude_unset=True)
+    fields = reject_null_updates(BankAccount, data.model_dump(exclude_unset=True))
     if "account_id" in fields and fields["account_id"] != ba.account_id:
         linked = (
             db.query(BankTransaction.id)

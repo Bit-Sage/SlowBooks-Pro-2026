@@ -41,6 +41,28 @@ sync or reading status on a feed the administrator has already connected
 stays available to the bookkeeper as daily books work; read-only is
 unchanged. Previously a non-admin sign-in or token could reach these.
 
+**Hostile input is a 422, not a 500.** Four malformed-input classes that
+passed schema validation and then crashed downstream are now refused at the
+request boundary, centrally in the shared request base model
+(`app/schemas/common.StrictModel`) rather than field by field:
+
+- A non-finite float (`NaN` / `Infinity`) in any float field — a bill line
+  quantity/rate hit `decimal.InvalidOperation`, a bill-payment amount became
+  a NULL insert — is rejected (`allow_inf_nan=False`); the ~200 float fields
+  are covered in one place. Decimal money fields already refused these.
+- A NUL byte (`\x00`) in any string, which SQLite stored silently and
+  PostgreSQL rejected with a 500, is refused everywhere a request carries text.
+- A document/transaction date outside 1900–2199 is refused: an invoice dated
+  `9999-12-31` overflowed computing its Net-30 due date. The window still fits
+  every real document, hire date and birth date, and file importers
+  (QuickBooks/Xero/IIF) build rows directly, so historical imports are
+  unaffected.
+- A PUT that explicitly sets a NOT NULL column to `null` (e.g.
+  `PUT /api/customers/{id}` or `/api/vendors/{id}` with `{"name": null}`) is
+  refused with a 422 naming the field, via a generic helper
+  (`reject_null_updates`) applied to every all-optional Update route, instead
+  of the IntegrityError 500 it caused. An empty `{}` PUT stays a no-op 200.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
