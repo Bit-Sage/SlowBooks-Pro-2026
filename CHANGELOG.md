@@ -22,8 +22,10 @@ sentence that says what to do. `POST .../nacha` takes each field as
 optional now, outranking the saved one, and its `effective_date` reaches
 the batch header, which always carried the pay date. The file header holds
 a 10-character immediate origin whole: a space and nine digits dropped the
-leading "1" of "1" + EIN. Settings refuse a routing number that is not one
-and an identifier longer than its field.
+leading "1" of "1" + EIN. The builder itself refuses a run with no
+credits rather than returning a well-formed empty file (from PNWImport's
+fork, 5f522667). Settings refuse a routing number that is not one and an
+identifier longer than its field.
 
 ### v2.25.0 — Several companies on one server
 

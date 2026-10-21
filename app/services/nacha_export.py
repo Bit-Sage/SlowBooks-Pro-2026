@@ -378,25 +378,36 @@ def generate_nacha_file(db: Session, pay_run_id: int, originating: dict) -> str:
             entry_hash += int(_routing_prefix(routing))
             total_credit += amount_cents
 
+    # A file with no credits is still a well-formed file: header, batch,
+    # controls, padding. It used to be returned, and a bank would take it
+    # as a batch of nothing. Refused here, whoever calls, so the route's own
+    # check is not the only thing between the person and an empty upload
+    # (PNWImport's fork, 5f522667).
+    if not entries:
+        raise ValueError(
+            "No employee in this run has direct-deposit details (an active "
+            "bank account that is not awaiting prenote), so there is nothing "
+            "to send to the bank."
+        )
+
     # The debit side: a single offsetting debit to the company account funds
     # all the credits. Banks typically expect a balanced file.
-    if entries:
-        trace_seq += 1
-        entries.append(
-            _entry_detail(
-                "27",  # checking debit (offsetting company account)
-                str(originating.get("immediate_destination") or ""),
-                str(originating.get("company_account") or ""),
-                total_credit,
-                str(originating.get("company_id") or ""),
-                originating.get("company_name") or "",
-                originating_dfi,
-                trace_seq,
-            )
+    trace_seq += 1
+    entries.append(
+        _entry_detail(
+            "27",  # checking debit (offsetting company account)
+            str(originating.get("immediate_destination") or ""),
+            str(originating.get("company_account") or ""),
+            total_credit,
+            str(originating.get("company_id") or ""),
+            originating.get("company_name") or "",
+            originating_dfi,
+            trace_seq,
         )
-        entry_hash += int(
-            _routing_prefix(str(originating.get("immediate_destination") or ""))
-        )
+    )
+    entry_hash += int(
+        _routing_prefix(str(originating.get("immediate_destination") or ""))
+    )
 
     total_debit = total_credit
     # Entry hash is truncated to its rightmost 10 digits.

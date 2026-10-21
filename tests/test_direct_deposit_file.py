@@ -270,6 +270,33 @@ def test_a_run_with_no_accounts_is_refused_not_an_empty_file(client, seed_accoun
     assert "Pay them by check" in r.json()["detail"]
 
 
+def test_the_generator_itself_refuses_a_file_with_no_credits(
+    client, db_session, seed_accounts
+):
+    """The route checks first and says what to do; the generator checks
+    too, for every caller, so an empty but well-formed file never leaves
+    (a bank would take it as a batch of nothing). From PNWImport's fork."""
+    from app.services.nacha_export import generate_nacha_file
+
+    emp = _employee(client)
+    run = _run(client, emp)
+    orig = {
+        "immediate_destination": "021000021",
+        "immediate_origin": "1123456789",
+        "originating_dfi_id": "02100002",
+        "company_account": "123456789",
+        "company_name": "Example Co",
+        "company_id": "1123456789",
+    }
+    with pytest.raises(ValueError, match="nothing to send to the bank"):
+        generate_nacha_file(db_session, run["id"], orig)
+    # and with one account, the file comes back whole
+    _bank_account(client, emp["id"])
+    db_session.expire_all()
+    lines = _lines(generate_nacha_file(db_session, run["id"], orig))
+    assert len([ln for ln in lines if ln.startswith("622")]) == 1
+
+
 def test_a_posted_body_outranks_the_saved_settings(client, seed_accounts):
     client.put("/api/settings", json={**BANK, "company_name": "Example Co"})
     emp = _employee(client)
