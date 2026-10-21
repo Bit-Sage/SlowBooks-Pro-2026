@@ -365,7 +365,22 @@
                 errBox.textContent = "";
                 if (userInput) rememberUsername(userInput.value);
                 try {
-                    await postJSON(AUTH_COMPANY_URL, { file: companyInput.value });
+                    const r = await postJSON(AUTH_COMPANY_URL, { file: companyInput.value });
+                    if (r && r.authenticated) {
+                        // This session's sign-in opens that company too, so
+                        // it is signed in there now: start from its Home page,
+                        // as the topbar's switch does. (It used to call
+                        // promptAuth, which found the session signed in and
+                        // drew nothing: the screen closed onto the page the
+                        // old company's missing file had left, with the old
+                        // company's name in the topbar — 2.25.0 gate,
+                        // macbase1 NEW-169, #370.)
+                        rememberUsername("");
+                        removeOverlay();
+                        window.location.hash = "#/";
+                        window.location.reload();
+                        return;
+                    }
                     removeOverlay();
                     promptAuth(onSuccess);
                 } catch (err) {
