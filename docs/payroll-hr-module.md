@@ -220,6 +220,11 @@ employee (`/api/employees/{id}/bank-accounts`) or by them in the portal.
 | `GET /api/payroll/{run_id}/nacha` | The file for a processed run, from the saved settings; the pay run view's **Direct deposit file** button. `attachment`, named `Direct-Deposit_<pay date>.ach` |
 | `POST /api/payroll/{run_id}/nacha` | The same with any originating field in the body outranking the saved one (`effective_date` sets the batch's effective entry date); an empty body is the saved settings |
 
+Each file made is an `EXPORT` row in the audit trail on `pay_runs`: who
+made it, for which run, how many it credits, the total and the effective
+date. The account numbers stay in the file, never in the trail. A refused
+download leaves no row.
+
 A refusal says why: 400 when the run is not processed; 409 naming the
 settings still blank, or that no one on the run has an active account (an
 account in its prenote waiting period is not paid). Each stub of a run

@@ -213,6 +213,47 @@ def test_a_draft_run_has_no_file(client, seed_accounts):
     assert client.get("/api/payroll/999/nacha").status_code == 404
 
 
+def test_each_file_made_is_in_the_audit_trail(client, db_session, seed_accounts):
+    # A file that moves the payroll is a record of its own: who made it, for
+    # which run, how many it pays and how much — never the account numbers.
+    from app.models.audit import AuditLog
+
+    def exports():
+        return (
+            db_session.query(AuditLog)
+            .filter(AuditLog.table_name == "pay_runs", AuditLog.action == "EXPORT")
+            .all()
+        )
+
+    emp = _employee(client)
+    _bank_account(client, emp["id"])
+    run = _run(client, emp)
+    # refused (no bank details yet): no file, so no row
+    assert client.get(f"/api/payroll/{run['id']}/nacha").status_code == 409
+    assert exports() == []
+
+    client.put("/api/settings", json=BANK)
+    assert client.get(f"/api/payroll/{run['id']}/nacha").status_code == 200
+    assert client.post(f"/api/payroll/{run['id']}/nacha", json={}).status_code == 200
+    rows = exports()
+    assert len(rows) == 2
+    row = rows[0]
+    assert row.record_id == run["id"]
+    assert row.new_values["file"] == "Direct-Deposit_2026-04-20.ach"
+    assert row.new_values["credits"] == 1
+    assert row.new_values["total"] == f"{run['stubs'][0]['net_pay']:.2f}"
+    assert row.new_values["effective_date"] == "2026-04-20"
+    logged = json.dumps([r.new_values for r in rows])
+    assert "9876543210" not in logged and "123456789" not in logged
+
+
+def test_the_audit_page_shows_and_filters_an_export():
+    audit_js = (ROOT / "app" / "static" / "js" / "audit.js").read_text(encoding="utf-8")
+    assert '<option value="EXPORT">EXPORT</option>' in audit_js
+    # a hand-logged event (EXPORT, RESTORE) lists what it recorded
+    assert "} else if (log.new_values) {" in audit_js
+
+
 def test_the_run_says_who_the_file_pays(client, seed_accounts):
     client.put("/api/settings", json=BANK)
     deposit = _employee(client, first_name="Dee", last_name="Posit")

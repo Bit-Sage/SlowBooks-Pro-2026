@@ -25,7 +25,10 @@ a 10-character immediate origin whole: a space and nine digits dropped the
 leading "1" of "1" + EIN. The builder itself refuses a run with no
 credits rather than returning a well-formed empty file (from PNWImport's
 fork, 5f522667). Settings refuse a routing number that is not one and an
-identifier longer than its field.
+identifier longer than its field. Each file made leaves an `EXPORT` row in
+the audit trail (who, which run, how many it pays, the total and the
+effective date, never an account number), and the Audit Log page lists and
+filters it, as it now does a backup `RESTORE`.
 
 ### v2.25.0 — Several companies on one server
 

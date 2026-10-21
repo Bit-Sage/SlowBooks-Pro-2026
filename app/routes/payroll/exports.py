@@ -107,7 +107,8 @@ def _direct_deposit_file(run_id: int, overrides: dict, db: Session):
         raise HTTPException(status_code=409, detail=str(e))
     if not orig.get("effective_date"):
         orig["effective_date"] = run.pay_date
-    if not direct_deposit_stubs(run):
+    paid = direct_deposit_stubs(run)
+    if not paid:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -122,6 +123,24 @@ def _direct_deposit_file(run_id: int, overrides: dict, db: Session):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     name = file_name("Direct-Deposit", run.pay_date) + ".ach"
+    # A file the bank will pay from is a record of its own, like a restore:
+    # who made it, for which run, how many it pays and how much. Never the
+    # account numbers — the file carries those, the trail does not.
+    from app.services.audit import log_event
+
+    log_event(
+        db,
+        table_name="pay_runs",
+        record_id=run.id,
+        action="EXPORT",
+        new_values={
+            "file": name,
+            "credits": len(paid),
+            "total": str(sum((s.net_pay or 0) for s in paid)),
+            "effective_date": orig["effective_date"].isoformat(),
+        },
+    )
+    db.commit()
     return PlainTextResponse(
         content=nacha,
         headers={"Content-Disposition": content_disposition(name, "attachment")},
