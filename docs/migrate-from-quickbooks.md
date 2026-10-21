@@ -140,7 +140,9 @@ Import your lists IIF first, then upload the report under
 transfer, general journal entry and opening balance comes across as a
 journal entry with its date, number, name and memo, and each account ends
 with the balance QuickBooks shows. The file is checked first and refused
-whole if anything is off, and uploading it again posts nothing twice.
+whole if anything is off, and uploading it again posts nothing twice. A
+refusal lists every transaction that is off, however many; **Save the
+list** under the box writes them to a text file to work from.
 
 Journal entries carry the history; the A/R and A/P aging read invoices and
 bills, so a company that invoices in QuickBooks brings its open invoices in
