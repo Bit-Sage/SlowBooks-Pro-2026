@@ -28,7 +28,7 @@ concurrency:
 jobs:
   build:
     name: Build unsigned macOS arm64 app
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -212,7 +212,7 @@ jobs:
     needs: build
     # Signing secrets exist only in the canonical repo; forks build unsigned.
     if: github.repository == 'VonHoltenCodes/SlowBooks-Pro-2026'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
