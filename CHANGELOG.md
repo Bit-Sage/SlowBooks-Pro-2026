@@ -63,6 +63,9 @@ request boundary, centrally in the shared request base model
   (`reject_null_updates`) applied to every all-optional Update route, instead
   of the IntegrityError 500 it caused. An empty `{}` PUT stays a no-op 200.
 
+The four above were reported in PNWImport's fork as still present upstream,
+and each was checked against 2.25.0 before it was fixed.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
