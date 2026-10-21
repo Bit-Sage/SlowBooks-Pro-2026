@@ -5,6 +5,22 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**CORS and the security headers now sit outside the login gate.** Starlette
+makes the last-registered middleware the outermost layer, so registering CORS
+and the security-header middleware before the auth gate had made them the
+inner layers — the gate wrapped them. Two consequences, both fixed by
+registering the gate inside CORS and the headers: an unauthenticated CORS
+preflight (browsers send it without credentials) was answered 401 with no
+`Access-Control-Allow-*` headers, so a deployment with a configured
+`CORS_ALLOW_ORIGINS` allow-list could sign in and then fail every cross-origin
+API call; and the gate's own 401/403/503 refusals (unauthenticated, role
+refusal, a company that cannot be opened) carried no CSP, `X-Frame-Options`,
+nosniff or Referrer-Policy. The allow-list and credential handling are
+unchanged, and a route that chose a stricter header of its own (the portal's
+`Referrer-Policy: no-referrer`) still wins.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
