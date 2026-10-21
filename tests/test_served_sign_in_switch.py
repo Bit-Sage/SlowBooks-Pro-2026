@@ -1,5 +1,7 @@
 """Choosing another company on the sign-in screen of a company whose file is
-gone lands in that company (2.25.0 gate, macbase1 NEW-169, #370).
+gone lands in that company (2.25.0 gate, macbase1 NEW-169, #370), and the
+setup form of a company nobody has set up yet offers the other companies
+(skytech W-28, #369).
 
 On a Server Edition host serving several companies, a session signed in to
 a company whose file then went missing gets the sign-in screen with the
@@ -14,6 +16,14 @@ nothing to type into, and a reload showed the right company.
 The screen now reloads the page onto the chosen company's Home, as the
 topbar's switch does. A company that asks for its own password still gets
 its sign-in drawn, and a refused choice still says why on the same screen.
+
+#369: an administrator makes a company under Companies and, before they
+open it, someone on the sign-in screen chooses it. The screen became that
+company's setup form; submitting was refused with the right sentence, and
+the form had no Company select and no way back but clearing the cookies.
+The setup form on a served host now carries the same Company select and
+the same change handler as the sign-in; a server with one company, and the
+desktop's first run, draw the form as before.
 """
 
 import functools
@@ -78,8 +88,52 @@ def test_a_refused_choice_says_why_on_the_same_screen():
 
 def test_the_source_reloads_on_an_opened_company():
     src = (ROOT / "app" / "static" / "js" / "auth.js").read_text(encoding="utf-8")
-    handler = src.split('companyInput.addEventListener("change"', 1)[1]
+    handler = src.split("function wireCompanySelect(", 1)[1]
     handler = handler.split("promptAuth(onSuccess);", 1)[0]
     assert "if (r && r.authenticated)" in handler
     assert 'window.location.hash = "#/";' in handler
     assert "window.location.reload();" in handler
+
+
+@needs_node
+def test_an_unset_companys_setup_form_offers_the_other_companies():
+    setup = _scenarios()["setup-offers-the-others"]
+    assert setup["has_select"] is True
+    # choosing a company that is set up draws its sign-in in the form's place
+    assert setup["reloads"] == 0
+    assert setup["overlays"] == 1
+    assert setup["screen"] == "login"
+    assert setup["status_checks"] == 2
+
+
+@needs_node
+def test_the_administrators_sign_in_opens_the_company_chosen_on_the_setup_form():
+    opens = _scenarios()["setup-opens"]
+    assert opens["has_select"] is True
+    assert opens["reloads"] == 1
+    assert opens["hash"] == "#/"
+    assert opens["overlays"] == 0
+
+
+@needs_node
+def test_a_lone_companys_setup_form_is_as_it_was():
+    alone = _scenarios()["setup-alone"]
+    assert alone["screen"] == "setup"
+    assert alone["has_select"] is False
+    assert alone["reloads"] == 0
+
+
+def test_the_setup_view_shares_the_sign_ins_company_select():
+    src = (ROOT / "app" / "static" / "js" / "auth.js").read_text(encoding="utf-8")
+    setup_view = src.split("function setupViewHTML()", 1)[1].split(
+        "function collectSetupPayload", 1
+    )[0]
+    assert "companySelectHTML()" in setup_view
+    wire_setup = src.split("function wireSetup(", 1)[1].split(
+        "function showRecoveryKey", 1
+    )[0]
+    assert "wireCompanySelect(overlay, onSuccess);" in wire_setup
+    wire_login = src.split("function wireLogin(", 1)[1].split("// ----- setup view", 1)[
+        0
+    ]
+    assert "wireCompanySelect(overlay, onSuccess);" in wire_login
