@@ -47,6 +47,9 @@ vm.runInContext(fs.readFileSync('app/static/js/payroll.js', 'utf8'), ctx, { file
 vm.runInContext('this.PayrollPage = PayrollPage;', ctx);
 
 const flat = (html) => html.replace(/\s+/g, ' ');
+// Strip tags until nothing changes: one pass can leave a tag behind
+// ('<scr<script>ipt>'), which is how CodeQL reads a single replace.
+const stripTags = (s) => { let prev; s = String(s); do { prev = s; s = s.replace(/<[^>]*>/g, ''); } while (s !== prev); return s; };
 (async () => {
   const out = {};
   for (const [key, id] of [['processed', 1], ['checks_only', 2], ['draft', 3]]) {
@@ -55,11 +58,11 @@ const flat = (html) => html.replace(/\s+/g, ' ');
     const html = flat(modal.html);
     const note = (html.match(/<p[^>]*>([^<]*(?:Direct deposit file|pay each stub by check|Once processed)[^<]*)<\/p>/) || [])[1] || '';
     const paid_by = [];
-    const header = (html.match(/<thead>.*?<\/thead>/) || [''])[0].match(/<th[^>]*>([^<]*)<\/th>/g).map((h) => h.replace(/<[^>]+>/g, ''));
+    const header = (html.match(/<thead>.*?<\/thead>/) || [''])[0].match(/<th[^>]*>([^<]*)<\/th>/g).map(stripTags);
     const col = header.indexOf('Paid by');
     for (const tr of (html.match(/<tbody>(.*?)<\/tbody>/) || ['', ''])[1].match(/<tr>.*?<\/tr>/g) || []) {
       const cells = tr.match(/<td[^>]*>.*?<\/td>/g) || [];
-      paid_by.push((cells[col] || '').replace(/<[^>]+>/g, '').trim());
+      paid_by.push(stripTags(cells[col] || '').trim());
     }
     out[key] = { button: /downloadDirectDeposit\(\d+\)/.test(html), note: note.trim(), paid_by };
   }
