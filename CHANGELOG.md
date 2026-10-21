@@ -5,9 +5,9 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased — Time approval that can't be spoofed or skipped
+### Unreleased
 
-**Time-entry approval integrity**. Approving a time entry records the
+**Time-entry approval integrity.** Approving a time entry records the
 signed-in user as the approver — the same name the audit log carries — instead
 of taking it from the request body, so no caller can stamp an approval in
 someone else's name. The `approved_by` field is still accepted on
