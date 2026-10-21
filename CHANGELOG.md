@@ -5,6 +5,18 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**A permit's Copy buttons copy the text, never run it.** The reseller permit
+Verify dialog built each Copy button as an inline handler with the value
+inside a JavaScript string. `escapeHtml` turns a quote into an entity, but
+the browser decodes that before the script runs, so a permit number or tax
+ID with a quote broke the button, and a crafted one ran script for whoever
+opened the permit. The buttons now carry the value in a `data-` attribute,
+read as text. The same dialog showed a customer's or vendor's name as
+`[object Object]`; it shows the name. A test now fails on any escaped value
+inside a quoted inline-handler string. Found in LayoverLogic's fork.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
