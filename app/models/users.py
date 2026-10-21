@@ -46,3 +46,9 @@ class User(Base):
         Boolean, nullable=False, default=False, server_default=sa_false()
     )
     expires_on = Column(Date, nullable=True)
+    # Revocable sessions: a sign-in records this number; every request
+    # re-reads the row and signs the session out when the two differ. Bumped
+    # on deactivation, a role change, and a password change/reset, so those
+    # end the user's existing sessions at once instead of waiting for the
+    # idle timeout — the signed cookie is no longer trusted on its own.
+    session_version = Column(Integer, nullable=False, default=0, server_default="0")
