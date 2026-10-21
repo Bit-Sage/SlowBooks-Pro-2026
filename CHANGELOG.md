@@ -21,6 +21,18 @@ nosniff or Referrer-Policy. The allow-list and credential handling are
 unchanged, and a route that chose a stricter header of its own (the portal's
 `Referrer-Policy: no-referrer`) still wins.
 
+**Validators reject a trailing newline.** Several input validators built a
+Python `re` pattern ending in `$` and checked it with `.match()`/`.search()`.
+In Python `$` also matches just before a trailing `"\n"`, so a value like
+`"evil.db\n"` passed. The backup and company `.db` filename allow-lists, the
+Postgres database-name allow-list, the chart account number, the username, the
+preference key, the idempotency-request key, the Cloudflare account id and the
+AI worker-url host check now use `re.fullmatch` (anchored to the whole string),
+which rejects the trailing newline. HTTP entry points that already `strip()`
+their input were not reachable, but the regexes are hardened for any caller.
+Pydantic `pattern=` constraints are unaffected: they use the Rust regex engine,
+where `$` is end-of-text.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

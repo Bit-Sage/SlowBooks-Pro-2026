@@ -42,7 +42,7 @@ def _reject_duplicate_number(db: Session, number, exclude_id=None):
 # " - Name" in every picker (2.17.3 exploratory test, W-L4). Charts brought
 # in by an importer keep whatever numbers they carry; this is the rule for
 # numbers typed on the form or sent to the API.
-_ACCOUNT_NUMBER_RE = re.compile(r"^\d+(?:[.-]\d+)*$")
+_ACCOUNT_NUMBER_RE = re.compile(r"\d+(?:[.-]\d+)*")
 
 
 def _check_account_number(number) -> None:
@@ -51,7 +51,7 @@ def _check_account_number(number) -> None:
     or 6150.1 / 6150-01 for a sub-account."""
     if not number:
         return
-    if len(number) > 20 or not _ACCOUNT_NUMBER_RE.match(number):
+    if len(number) > 20 or not _ACCOUNT_NUMBER_RE.fullmatch(number):
         raise HTTPException(
             status_code=400,
             detail=(
