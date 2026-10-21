@@ -49,9 +49,10 @@ All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engi
 | `GET /api/onboarding/{emp_id}/new-hire-report/pdf` | `onboarding.new_hire_pdf` | Downloadable PDF |
 | `GET /api/time-entries` | `time_entries.list_entries` | List, filterable by employee/date range |
 | `POST /api/time-entries` | `time_entries.create_entry` | Create a time entry |
-| `PUT /api/time-entries/{entry_id}` | `time_entries.update_entry` | Edit |
-| `DELETE /api/time-entries/{entry_id}` | `time_entries.delete_entry` | Remove |
-| `POST /api/time-entries/{entry_id}/approve` | `time_entries.approve_entry` | Manager workflow |
+| `PUT /api/time-entries/{entry_id}` | `time_entries.update_entry` | Edit (not `status`, and blocked once paid or costed to a job) |
+| `DELETE /api/time-entries/{entry_id}` | `time_entries.delete_entry` | Remove (blocked once paid or costed to a job) |
+| `POST /api/time-entries/{entry_id}/submit` | `time_entries.submit_entry` | Move draft → submitted |
+| `POST /api/time-entries/{entry_id}/approve` | `time_entries.approve_entry` | Manager workflow; approver is the signed-in user (body `approved_by` ignored) |
 | `POST /api/time-entries/{entry_id}/reject` | `time_entries.reject_entry` | Manager workflow |
 | `GET /api/pto/policies` | `pto.list_policies` | All policies |
 | `GET /api/pto/policies/{policy_id}` | `pto.get_policy` | Single policy (added during wiring audit) |

@@ -5,6 +5,25 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased — Time approval that can't be spoofed or skipped
+
+**Time-entry approval integrity**. Approving a time entry records the
+signed-in user as the approver — the same name the audit log carries — instead
+of taking it from the request body, so no caller can stamp an approval in
+someone else's name. The `approved_by` field is still accepted on
+`POST /api/time-entries/{id}/approve` for backward compatibility but is ignored.
+`PUT /api/time-entries/{id}` no longer changes an entry's status: it still
+accepts `status` so a client can round-trip the whole entry, but only to resend
+the current value — a real change (e.g. straight to `approved`) is rejected with
+a 400, so status moves only through `/submit`, `/approve` and `/reject`. PUT and
+DELETE now also refuse an entry already costed to a job (`job_cost_id` set),
+mirroring the existing pay-run lock, so a job's posted labor cost can't be left
+orphaned. QuickBooks-imported entries keep the approval name from their import.
+
+**API change.** Callers of `/api/time-entries/{id}/approve` that relied on
+`approved_by` from the body no longer control the recorded approver. Callers of
+`PUT /api/time-entries/{id}` can no longer change `status`.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
