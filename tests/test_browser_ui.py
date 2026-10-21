@@ -35,6 +35,8 @@ import pytest
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
+from tests.test_theme_contrast import new_page  # noqa: E402  (a Linux browser)
+
 ROOT = Path(__file__).resolve().parents[1]
 ORIGIN = "http://slowbooks.test"
 
@@ -196,7 +198,7 @@ def _serve(route):
 def _open_raw(browser, width, height):
     """A page with the app served, before any navigation: for tests of what
     the first load itself does (the splash)."""
-    page = browser.new_page(viewport={"width": width, "height": height})
+    page = new_page(browser, viewport={"width": width, "height": height})
     page.route("**/*", _serve)
     return page
 

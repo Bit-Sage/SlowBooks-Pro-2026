@@ -33,6 +33,7 @@ from tests.test_theme_contrast import (  # noqa: E402,F401  (the fixtures)
     _served_by,
     _visit,
     browser_fixture,
+    new_page,
     company_fixture,
     settle,
 )
@@ -151,8 +152,8 @@ def _open_at(browser, client, page_hash, width=1280, height=800):
     # JavaScript violates…"), which made a slow redraw a red test. The
     # page under test is the same; only Playwright's own polling is let
     # past the policy.
-    page = browser.new_page(
-        viewport={"width": width, "height": height}, bypass_csp=True
+    page = new_page(
+        browser, viewport={"width": width, "height": height}, bypass_csp=True
     )
     page.route("**/*", _served_by(client, handled, SERVED))
     page.goto(f"{ORIGIN}/{page_hash}")
