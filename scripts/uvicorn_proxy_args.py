@@ -35,4 +35,9 @@ def build_proxy_args(env=None) -> list[str]:
 
 
 if __name__ == "__main__":
-    sys.stdout.write(" ".join(build_proxy_args()))
+    # Read only the one variable this needs, by name, rather than handing the
+    # whole environment (which holds secrets) to the builder.
+    trusted_proxies = os.environ.get("FORWARDED_ALLOW_IPS", "")
+    sys.stdout.write(
+        " ".join(build_proxy_args({"FORWARDED_ALLOW_IPS": trusted_proxies}))
+    )
