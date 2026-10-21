@@ -16,7 +16,7 @@ from app.main import static_dir
 
 # A W-4 as a pre-2.18 install left it — the kind of file that must never be
 # reachable over /static without a sign-in.
-SECRET = b"%PDF-1.4 W-4 Marisol Vance - must never be served over /static"
+W4_BYTES = b"%PDF-1.4 W-4 Marisol Vance - must never be served over /static"
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def uploads_file():
     created_dir = not uploads.exists()
     uploads.mkdir(parents=True, exist_ok=True)
     path = uploads / "w4.pdf"
-    path.write_bytes(SECRET)
+    path.write_bytes(W4_BYTES)
     try:
         yield path
     finally:
@@ -61,7 +61,7 @@ def test_the_uploads_folder_is_never_served(unauthed_client, uploads_file, url):
     for method in (unauthed_client.get, unauthed_client.head):
         r = method(url)
         assert r.status_code == 404, f"{url} -> {r.status_code}\n{r.text[:200]}"
-        assert SECRET not in r.content
+        assert W4_BYTES not in r.content
 
 
 def test_ordinary_static_assets_are_still_served(unauthed_client):
