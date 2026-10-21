@@ -7,6 +7,7 @@
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.models.transactions import Transaction, TransactionLine
@@ -169,6 +170,46 @@ def reversing_lines(lines) -> list[dict]:
     ]
 
 
+def apply_balance_deltas(db: Session, deltas: dict) -> None:
+    """Apply per-account balance changes with an atomic SQL update.
+
+    `deltas` maps account_id -> signed Decimal already in the account's
+    natural direction (debit-normal accounts get debit-credit, the rest
+    credit-debit). A single `UPDATE accounts SET balance = balance + delta`
+    per account is what keeps the stored balance correct under concurrency:
+    the old read-modify-write in Python (`account.balance += delta`) lets two
+    sessions posting to the same account on Postgres both read the same
+    starting balance and one overwrite the other, silently dropping an update
+    — the journal lines stayed right, but Account.balance drifted. The
+    database does the add, so each posting's delta lands even when they race.
+
+    Deltas are aggregated per account by the caller and applied here in
+    ascending account-id order, so two transactions touching the same set of
+    accounts take the row locks in the same order and cannot deadlock.
+    COALESCE guards a NULL balance (the column is nullable). Behaviour is
+    identical on SQLite, which runs the same expression serially.
+
+    In-session Account objects are expired afterward so a read later in the
+    same request/session (e.g. an API response that returns Account.balance)
+    reflects the new value instead of a stale Python copy.
+    """
+    for account_id in sorted(deltas):
+        delta = deltas[account_id]
+        if delta == 0:
+            continue
+        db.execute(
+            update(Account)
+            .where(Account.id == account_id)
+            .values(balance=func.coalesce(Account.balance, 0) + delta)
+            .execution_options(synchronize_session=False)
+        )
+    # synchronize_session=False leaves loaded objects untouched, so expire the
+    # ones we changed: their balance reloads from the row on next access.
+    for obj in list(db.identity_map.values()):
+        if isinstance(obj, Account) and obj.id in deltas and deltas[obj.id] != 0:
+            db.expire(obj, ["balance"])
+
+
 def create_journal_entry(
     db: Session,
     txn_date: date,
@@ -271,6 +312,9 @@ def create_journal_entry(
     from app.services.classes_service import default_function_of
 
     fn_cache: dict = {}
+    # Aggregate per account, then apply as one atomic SQL update each so a
+    # concurrent poster to the same account can't clobber our delta.
+    balance_deltas: dict = {}
     for line_data in lines:
         debit = Decimal(str(line_data.get("debit", 0)))
         credit = Decimal(str(line_data.get("credit", 0)))
@@ -299,16 +343,21 @@ def create_journal_entry(
         )
         db.add(txn_line)
 
-        # Update account balance
+        # Accumulate the balance change in the account's natural direction;
+        # the atomic update is applied once per account after the loop.
         account = (
             db.query(Account).filter(Account.id == line_data["account_id"]).first()
         )
         if account:
             if account.account_type.value in ("asset", "expense", "cogs"):
-                account.balance += debit - credit
+                delta = debit - credit
             else:
-                account.balance += credit - debit
+                delta = credit - debit
+            balance_deltas[account.id] = (
+                balance_deltas.get(account.id, Decimal("0")) + delta
+            )
 
+    apply_balance_deltas(db, balance_deltas)
     return txn
 
 
