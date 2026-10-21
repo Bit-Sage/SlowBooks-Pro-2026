@@ -160,14 +160,23 @@ def _split_net_pay(net_pay: Decimal, accounts: list) -> list[tuple]:
 # --- record builders --------------------------------------------------------
 
 
+def _id10(value) -> str:
+    """A 10-character immediate destination or origin. A routing number is
+    9 digits behind a space; an identifier the bank assigned as 10 characters
+    ("1" + EIN) fills the field, where a space and nine digits dropped its
+    first character."""
+    s = "".join(ch for ch in str(value or "") if ch.isalnum())
+    if len(s) >= 10:
+        return s[-10:]
+    return " " + s.rjust(9, "0")
+
+
 def _file_header(originating: dict, created: date) -> str:
     rec = (
         "1"  # record type
         + "01"
-        + " "
-        + _num(originating.get("immediate_destination"), 9)
-        + " "
-        + _num(originating.get("immediate_origin"), 9)
+        + _id10(originating.get("immediate_destination"))
+        + _id10(originating.get("immediate_origin"))
         + created.strftime("%y%m%d")
         + "0000"  # file creation time
         + "A"  # file id modifier
@@ -315,7 +324,13 @@ def generate_nacha_file(db: Session, pay_run_id: int, originating: dict) -> str:
             f"Pay run {pay_run_id} is not processed (status={pay_run.status})"
         )
 
-    effective_date = pay_run.pay_date or date.today()
+    # The batch's effective entry date: what the caller asked for (a bank
+    # that wants it a day before the pay date), else the pay date.
+    effective_date = (
+        originating.get("effective_date") or pay_run.pay_date or date.today()
+    )
+    if isinstance(effective_date, str):
+        effective_date = date.fromisoformat(effective_date)
     created = date.today()
     originating_dfi = "".join(
         ch for ch in str(originating.get("originating_dfi_id") or "") if ch.isdigit()

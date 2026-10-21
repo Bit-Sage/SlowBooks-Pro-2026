@@ -5,6 +5,26 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**A processed pay run's direct deposit file, from the page** (discussion
+#211, @ContractorKeith). The NACHA file could only be made by an API client
+that sent the bank's numbers in the request body; the page had no button,
+and nothing kept the numbers. Settings → Direct Deposit (ACH) keeps them
+now: the bank's routing number and name, the company account the pay comes
+from (encrypted at rest) and the two identifiers the bank assigns, "1" +
+EIN from the company tax id when blank. A processed run's view has a
+**Direct deposit file** button (`GET /api/payroll/{id}/nacha`), the file
+named for the pay date, and says who it pays and who is paid by check
+(`direct_deposit` on each stub, a Paid by column). A run nobody on has an
+account, or a company with the bank details blank, is refused with the
+sentence that says what to do. `POST .../nacha` takes each field as
+optional now, outranking the saved one, and its `effective_date` reaches
+the batch header, which always carried the pay date. The file header holds
+a 10-character immediate origin whole: a space and nine digits dropped the
+leading "1" of "1" + EIN. Settings refuse a routing number that is not one
+and an identifier longer than its field.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

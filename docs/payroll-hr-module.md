@@ -203,6 +203,32 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 
 ---
 
+## Direct deposit
+
+SlowBooks makes the ACH file (NACHA format); the bank moves the money.
+The business account needs ACH origination from the bank, which then
+gives the numbers Settings → Direct Deposit (ACH) asks for: the bank's
+routing number and name, the company account the net pay is paid from
+(`ach_company_account`, encrypted at rest like the SMTP password) and the
+two 10-character identifiers (`ach_immediate_origin`, `ach_company_id`),
+which are "1" + the EIN unless the bank says otherwise and are filled from
+the company tax id when blank. Employees' own accounts are entered on the
+employee (`/api/employees/{id}/bank-accounts`) or by them in the portal.
+
+| Method + Path | Purpose |
+|---------------|---------|
+| `GET /api/payroll/{run_id}/nacha` | The file for a processed run, from the saved settings; the pay run view's **Direct deposit file** button. `attachment`, named `Direct-Deposit_<pay date>.ach` |
+| `POST /api/payroll/{run_id}/nacha` | The same with any originating field in the body outranking the saved one (`effective_date` sets the batch's effective entry date); an empty body is the saved settings |
+
+A refusal says why: 400 when the run is not processed; 409 naming the
+settings still blank, or that no one on the run has an active account (an
+account in its prenote waiting period is not paid). Each stub of a run
+carries `direct_deposit`: true when the file pays it, false means pay by
+check; the view shows the split and a Paid by column. Admin only, like the
+rest of payroll.
+
+---
+
 ## Pending items
 
 The major Tier 3 work has shipped — tax PDFs with audit hashes, the
