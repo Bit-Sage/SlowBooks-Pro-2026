@@ -1243,8 +1243,42 @@ static_dir = Path(__file__).parent / "static"
 # who could reach the server. Each company now keeps its files in its own
 # database and serves them through signed-in routes; the folder is left on
 # disk (the upgrade copies from it, and other companies may still need it)
-# but nothing reads it over HTTP. Registered before the /static mount, which
-# on a server install covers app/static/uploads too.
+# but nothing reads it over HTTP.
+#
+# The route below answers 404 for the literal /static/uploads/ prefix, but a
+# route only matches that one spelling — StaticFiles resolves the request path
+# itself, so /static//uploads/<file> and /static/css/%2e%2e/uploads/<file>
+# slipped past the route and the mount served the file with 200. The real
+# defence is the mount: resolve the request against the static directory
+# and refuse it if it lands inside <static>/uploads, whatever spelling got it
+# there. The route stays as belt-and-braces for the common path.
+class _UploadsHiddenStaticFiles(StaticFiles):
+    """A /static mount that never serves anything under the uploads folder."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The one folder that must stay unreachable, as its resolved real path
+        # with the filesystem's case folding — normcase so a request for
+        # UPLOADS matches uploads on macOS/Windows; realpath so symlinks and
+        # the parent's real location are accounted for. Computed once; it is
+        # the same folder for the life of the mount even if it does not exist
+        # yet (realpath still normalises a missing path).
+        self._uploads_prefix = os.path.normcase(
+            os.path.realpath(os.path.join(str(self.directory), "uploads"))
+        )
+
+    def lookup_path(self, path):
+        full_path, stat_result = super().lookup_path(path)
+        if full_path:
+            resolved = os.path.normcase(os.path.realpath(full_path))
+            # the folder itself or anything inside it
+            if resolved == self._uploads_prefix or resolved.startswith(
+                self._uploads_prefix + os.sep
+            ):
+                return "", None
+        return full_path, stat_result
+
+
 @app.api_route(
     "/static/uploads/{rest:path}", methods=["GET", "HEAD"], include_in_schema=False
 )
@@ -1252,7 +1286,9 @@ async def _uploads_folder_is_not_served(rest: str):
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+app.mount(
+    "/static", _UploadsHiddenStaticFiles(directory=str(static_dir)), name="static"
+)
 
 # SPA entry point
 index_path = Path(__file__).parent.parent / "index.html"

@@ -5,6 +5,17 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**The uploads folder is refused whatever the address says.** The guard that
+keeps pre-2.18 files in `app/static/uploads/` (logos, attachments, W-4s) off
+the web matched only the plain `/static/uploads/…` path; `/static//uploads/…`
+and `/static/css/%2e%2e/uploads/…` reached the static mount and were served
+without signing in. The mount now resolves each request and refuses anything
+inside the uploads folder, however it is spelled, symlinks and case included.
+Only installs upgraded from before 2.18 that still have files there, served
+over the network, were exposed. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
