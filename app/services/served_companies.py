@@ -42,11 +42,43 @@ ENCRYPTED_ON_ITS_OWN_KEY = (
     "that secret."
 )
 NOT_SERVED = "That company is not one this server serves."
+MISSING = "That company's file is missing from the company folder."
+OTHER_VERSION = (
+    "That company's file is from another version of SlowBooks Pro: restart "
+    "the server on the host so it can bring the file up to date."
+)
 
 
 class CompanyUnavailable(Exception):
-    """A company file the server cannot open now. ``str(exc)`` is the one
-    sentence to show."""
+    """A company file the server cannot open now. ``exc.sentence`` is the one
+    sentence to show, always one of this server's own (``sentence_of``)."""
+
+    def __init__(self, sentence: str):
+        super().__init__(sentence)
+        self.sentence = sentence
+
+
+def sentence_of(exc: CompanyUnavailable) -> str:
+    """The sentence a response carries for the company it cannot open: one
+    of the server's own, looked up, never the exception's text itself (a
+    code scanner reads ``str(exc)`` on the way to a response as a possible
+    traceback; here it is never one, and this keeps it so)."""
+    from app.services import company_file
+
+    known = (
+        NOT_SERVED,
+        MISSING,
+        OTHER_VERSION,
+        ENCRYPTED_ON_ITS_OWN_KEY,
+        company_file.UNAVAILABLE_MESSAGE,
+        company_file.NO_KEY_MESSAGE,
+        company_file.WRONG_KEY_MESSAGE,
+    )
+    given = getattr(exc, "sentence", "")
+    for sentence in known:
+        if sentence == given:
+            return sentence
+    return NOT_SERVED
 
 
 def enabled() -> bool:
@@ -139,9 +171,7 @@ def open_engine(filename: str):
         raise CompanyUnavailable(NOT_SERVED)
     path = company_service.company_db_path(filename)
     if path is None or not path.exists():
-        raise CompanyUnavailable(
-            "That company's file is missing from the company folder."
-        )
+        raise CompanyUnavailable(MISSING)
     company_file.sweep_stale_conversions(path)
     if company_file.is_encrypted_file(path):
         from app.services import company_keyring
@@ -158,7 +188,21 @@ def open_engine(filename: str):
         try:
             company_file.verify_key(path, key)
         except company_file.CompanyFileLocked as exc:
-            raise CompanyUnavailable(str(exc)) from exc
+            # one of the module's own sentences, never the exception's text
+            given = str(exc)
+            sentence = next(
+                (
+                    s
+                    for s in (
+                        company_file.NO_KEY_MESSAGE,
+                        company_file.WRONG_KEY_MESSAGE,
+                        company_file.UNAVAILABLE_MESSAGE,
+                    )
+                    if s == given
+                ),
+                company_file.WRONG_KEY_MESSAGE,
+            )
+            raise CompanyUnavailable(sentence) from exc
 
     from app import database
 
@@ -175,11 +219,7 @@ def open_engine(filename: str):
     except RuntimeError as exc:
         engine.dispose()
         logger.error("not serving %s: %s", filename, exc)
-        raise CompanyUnavailable(
-            "That company's file is from another version of SlowBooks Pro: "
-            "restart the server on the host so it can bring the file up to "
-            "date."
-        ) from exc
+        raise CompanyUnavailable(OTHER_VERSION) from exc
     return engine
 
 

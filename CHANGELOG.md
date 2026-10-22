@@ -5,6 +5,13 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+The sentence a Server Edition server answers for a company it cannot open
+now is always one of its own, looked up by the server rather than read off
+the exception that carried it (two code-scanning alerts on 2.25.0 read that
+path as a possible traceback; it never was one, and now cannot be).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

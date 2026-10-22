@@ -174,7 +174,9 @@ def auth_status(request: Request):
     try:
         db = db_module.SessionLocal()
     except served_companies.CompanyUnavailable as exc:
-        return _status_while_company_unavailable(request, str(exc))
+        return _status_while_company_unavailable(
+            request, served_companies.sentence_of(exc)
+        )
     try:
         return _auth_status(request, db)
     finally:

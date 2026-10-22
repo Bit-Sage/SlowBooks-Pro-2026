@@ -147,7 +147,7 @@ from app.services.closing_date import (
     password_from_header as _closing_password_from_header,
 )
 from app.services.api_token_service import resolve as _resolve_api_token
-from app.services.served_companies import CompanyUnavailable
+from app.services.served_companies import CompanyUnavailable, sentence_of
 
 # An API token's request names the company it works in with this header
 # (#358); a signed-in person's session carries its company instead.
@@ -564,7 +564,7 @@ app.add_exception_handler(MissingControlAccount, _missing_control_account_handle
 # locked, or from another version. 503 with the one sentence, never a
 # traceback; the person can sign in to another company meanwhile.
 async def _company_unavailable_handler(request: Request, exc: Exception):
-    return JSONResponse(status_code=503, content={"detail": str(exc)})
+    return JSONResponse(status_code=503, content={"detail": sentence_of(exc)})
 
 
 app.add_exception_handler(CompanyUnavailable, _company_unavailable_handler)
@@ -929,7 +929,7 @@ async def require_session(request: Request, call_next):
         # The session's company cannot be opened now (#358): the gate itself
         # opens it (the company id, the copy's mode) before any route runs,
         # so the sentence is answered here too, as a 503, never a traceback.
-        return JSONResponse(status_code=503, content={"detail": str(exc)})
+        return JSONResponse(status_code=503, content={"detail": sentence_of(exc)})
 
 
 async def _require_session(request: Request, call_next):
