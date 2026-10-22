@@ -5,6 +5,14 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+A QuickBooks Desktop ledger export whose parent accounts have sub-accounts
+imports: QuickBooks reports a parent's own postings in a section it names
+"<Parent> - Other", which is not an account, and the import refused the
+whole file as "accounts not in the chart" for each of them (discussion
+#349). Those lines post to the parent account itself now.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
