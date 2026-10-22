@@ -1110,7 +1110,9 @@ const BankingPage = {
                 <div class="card"><div class="card-header">Cleared</div>
                     <div class="card-value" id="recon-cleared">${formatCurrency(data.cleared_total)}</div></div>
                 <div class="card"><div class="card-header">Statement Balance</div>
-                    <div class="card-value">${formatCurrency(data.statement_balance)}</div></div>
+                    <div class="card-value">${formatCurrency(data.statement_balance)}</div>
+                    <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px;" data-write
+                        onclick="BankingPage.changeStatement(${reconId}, '${data.statement_date}', ${data.statement_balance})">Change…</button></div>
                 <div class="card"><div class="card-header">Difference</div>
                     <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
                     <div style="font-size:11px; font-weight:600;" role="status">${balanced ? '✓ Balanced — ready to finish' : '⚠ Out of balance — finish when this is $0.00'}</div></div>
@@ -1130,6 +1132,46 @@ const BankingPage = {
                 <tbody>${rows || '<tr><td colspan="5" style="text-align:center;">No ledger lines up to this date</td></tr>'}</tbody>
             </table></div>
             <div id="recon-through-note" role="status" style="font-size:11px; color:var(--gray-500); margin-top:6px;">${hidden ? `${hidden} later line${hidden === 1 ? '' : 's'} hidden (dated after ${formatDate(through)}); the figures above count the whole session` : ''}</div>`;
+    },
+
+    // The statement's ending balance and date can be corrected while the
+    // reconciliation is in progress (#389): a transposed digit was a fresh
+    // start. The ticks stay; the view re-renders with the new difference.
+    changeStatement(reconId, statementDate, statementBalance) {
+        openModal('Change Statement', `
+            <form onsubmit="BankingPage.saveStatement(event, ${reconId})">
+                <p style="margin-bottom:12px; font-size:11px; color:var(--gray-500);">
+                    Correct the ending date or balance from your statement. The lines you have ticked stay ticked; the difference is refigured.
+                </p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Statement Date *</label>
+                        <input name="statement_date" type="date" required value="${escapeHtml(statementDate)}"></div>
+                    <div class="form-group"><label>Statement Ending Balance *</label>
+                        <input name="statement_balance" type="number" step="0.01" required value="${Number(statementBalance).toFixed(2)}"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>`);
+    },
+
+    async saveStatement(e, reconId) {
+        e.preventDefault();
+        const form = e.target;
+        try {
+            await API.put(`/banking/reconciliations/${reconId}`, {
+                statement_date: form.statement_date.value,
+                statement_balance: form.statement_balance.value,
+            });
+            closeModal();
+            // The Through day and filter are bounded by the statement date;
+            // start them over so they cannot sit past a date moved earlier.
+            BankingPage._reconThrough[reconId] = '';
+            BankingPage._reconDay[reconId] = '';
+            toast('Statement changed');
+            BankingPage.showReconcileView(reconId);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // Every line at once (#258): ticked, ticked through a date, or all

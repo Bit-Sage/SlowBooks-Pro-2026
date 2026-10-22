@@ -7,6 +7,19 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**The statement's ending balance can be corrected while reconciling**
+(#389, from a bookkeeper's notes). The ending balance was typed once, at
+the start; a transposed digit meant abandoning the reconciliation and
+ticking every line again. The reconcile screen's Statement Balance card
+has a **Change…** button now, for the balance and the statement date
+(`PUT /api/banking/reconciliations/{id}`, either field optional). The
+ticks stay and the difference is refigured from them. A date moved later
+brings the lines up to it onto the session; one moved earlier leaves the
+lines after it off the session with their ticks kept, as Abandon keeps
+them. A date on or before the last completed statement is refused as a
+fresh start is, and a completed reconciliation refuses the change. The
+change leaves an `UPDATE` row in the audit trail.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

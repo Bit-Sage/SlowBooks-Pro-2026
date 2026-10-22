@@ -32,6 +32,7 @@ from app.schemas.banking import (
     BankTransactionResponse,
     LegacyBalancePost,
     ReconciliationCreate,
+    ReconciliationUpdate,
     StatementAdd,
     StatementCategory,
     StatementMatch,
@@ -627,6 +628,27 @@ def _recon(db: Session, recon_id: int) -> Reconciliation:
     recon = db.query(Reconciliation).filter(Reconciliation.id == recon_id).first()
     if not recon:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    return recon
+
+
+@router.put("/reconciliations/{recon_id}", response_model=ReconciliationResponse)
+def update_reconciliation(
+    recon_id: int, data: ReconciliationUpdate, db: Session = Depends(get_db)
+):
+    """Correct the statement's ending balance or date while the
+    reconciliation is in progress (#389); the next session's difference
+    is recomputed from the lines already ticked. 400 once completed."""
+    from app.services import reconciliation as rc
+
+    fields = reject_null_updates(Reconciliation, data.model_dump(exclude_unset=True))
+    recon = rc.update(
+        db,
+        _recon(db, recon_id),
+        statement_date=fields.get("statement_date"),
+        statement_balance=fields.get("statement_balance"),
+    )
+    db.commit()
+    db.refresh(recon)
     return recon
 
 

@@ -48,27 +48,7 @@ def start(
                 "existing_id": open_one.id,
             },
         )
-    last = (
-        db.query(Reconciliation)
-        .filter(
-            Reconciliation.account_id == acct.id,
-            Reconciliation.status == ReconciliationStatus.COMPLETED,
-        )
-        .order_by(Reconciliation.statement_date.desc(), Reconciliation.id.desc())
-        .first()
-    )
-    # A statement on or before the last reconciled one would start from
-    # that later statement's balance and offer lines it already closed —
-    # a Sep 1 statement after the Sep 26 one was accepted (exploratory
-    # 2.17.3, W-M20).
-    if last and statement_date <= last.statement_date:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"{acct.name} is reconciled through {date_text(last.statement_date)}. "
-                "Start the next reconciliation with a later statement date."
-            ),
-        )
+    last = _require_after_last(db, acct, statement_date)
     recon = Reconciliation(
         account_id=acct.id,
         statement_date=statement_date,
@@ -80,6 +60,65 @@ def start(
     )
     db.add(recon)
     db.flush()
+    return recon
+
+
+def _last_completed(db: Session, account_id: int, exclude_id=None):
+    q = db.query(Reconciliation).filter(
+        Reconciliation.account_id == account_id,
+        Reconciliation.status == ReconciliationStatus.COMPLETED,
+    )
+    if exclude_id is not None:
+        q = q.filter(Reconciliation.id != exclude_id)
+    return q.order_by(
+        Reconciliation.statement_date.desc(), Reconciliation.id.desc()
+    ).first()
+
+
+def _require_after_last(
+    db: Session, acct: Account, statement_date: date, exclude_id=None
+):
+    """A statement on or before the last reconciled one would start from
+    that later statement's balance and offer lines it already closed — a
+    Sep 1 statement after the Sep 26 one was accepted (exploratory 2.17.3,
+    W-M20)."""
+    last = _last_completed(db, acct.id, exclude_id)
+    if last and statement_date <= last.statement_date:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{acct.name} is reconciled through {date_text(last.statement_date)}. "
+                "Start the next reconciliation with a later statement date."
+            ),
+        )
+    return last
+
+
+def update(
+    db: Session,
+    recon: Reconciliation,
+    statement_date: date | None = None,
+    statement_balance: Decimal | None = None,
+) -> Reconciliation:
+    """Correct the statement's date or ending balance mid-reconciliation
+    (#389). The ending balance only moves the difference, which the next
+    session recomputes from the lines already ticked. The date moves the
+    session's window: a later date brings more lines in, an earlier one
+    leaves the lines after it out, their ticks kept (a tick is a fact about
+    the line, as Abandon keeps them). Refused once completed, and refused
+    on or before the last completed statement, as a fresh start is."""
+    _open(recon)
+    if statement_date is not None and statement_date != recon.statement_date:
+        acct = db.query(Account).filter(Account.id == recon.account_id).first()
+        if not acct:
+            raise HTTPException(
+                status_code=400,
+                detail="This reconciliation predates 2.10 and has no ledger account",
+            )
+        _require_after_last(db, acct, statement_date, exclude_id=recon.id)
+        recon.statement_date = statement_date
+    if statement_balance is not None:
+        recon.statement_balance = Decimal(str(statement_balance))
     return recon
 
 

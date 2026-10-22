@@ -130,7 +130,10 @@ reconciliation per account.
 `POST /api/banking/reconciliations {account_id, statement_date,
 statement_balance}` (409 with `existing_id` when one is open), `GET
 /{id}/transactions`, `POST /{id}/toggle/{line_id}`, `POST /{id}/complete`,
-`DELETE /{id}`.
+`DELETE /{id}`. `PUT /{id} {statement_balance?, statement_date?}` corrects
+the statement while the reconciliation is in progress (the screen's
+**Change…** button): the ticks stay and the difference is refigured; a date
+moved earlier leaves the lines after it off the session, ticks kept.
 
 A statement date on or before the last completed one is refused. Finish
 names the difference when it isn't $0.00. A completed reconciliation keeps

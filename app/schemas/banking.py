@@ -162,6 +162,15 @@ class ReconciliationCreate(StrictModel):
     statement_balance: Decimal
 
 
+class ReconciliationUpdate(StrictModel):
+    """Correct the statement's date or ending balance while the
+    reconciliation is in progress (#389): a transposed digit was a fresh
+    start. Both optional; an omitted field is left as it was."""
+
+    statement_date: Optional[dt_date] = None
+    statement_balance: Optional[Decimal] = None
+
+
 class ReconciliationResponse(BaseModel):
     id: int
     account_id: Optional[int]
