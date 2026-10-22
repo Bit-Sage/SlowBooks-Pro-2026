@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.util import identity_key
 
 from app.models.transactions import Transaction, TransactionLine
 from app.models.accounts import Account, AccountType
@@ -185,28 +186,38 @@ def apply_balance_deltas(db: Session, deltas: dict) -> None:
 
     Deltas are aggregated per account by the caller and applied here in
     ascending account-id order, so two transactions touching the same set of
-    accounts take the row locks in the same order and cannot deadlock.
-    COALESCE guards a NULL balance (the column is nullable). Behaviour is
-    identical on SQLite, which runs the same expression serially.
+    accounts take the row locks in the same order and a single call cannot
+    deadlock with another. That holds per call, not per transaction: an
+    edit's reversal followed by its repost in one transaction can still
+    contend with a concurrent edit of the same accounts, which the database
+    resolves by failing one of them. COALESCE guards a NULL balance (the
+    column is nullable). Behaviour is identical on SQLite, which runs the
+    same expression serially.
 
-    In-session Account objects are expired afterward so a read later in the
-    same request/session (e.g. an API response that returns Account.balance)
-    reflects the new value instead of a stale Python copy.
+    A pending `account.balance = x` assignment is flushed first so the UPDATE
+    adds to it rather than the expire below discarding it. In-session Account
+    objects are then expired, looked up by key rather than by walking the
+    identity map (a migration committing mid-bundle can hold tens of
+    thousands of objects), so a read later in the same request/session (e.g.
+    an API response that returns Account.balance) reflects the new value
+    instead of a stale Python copy.
     """
-    for account_id in sorted(deltas):
-        delta = deltas[account_id]
-        if delta == 0:
-            continue
+    pending = {aid: d for aid, d in deltas.items() if d != 0}
+    if not pending:
+        return
+    db.flush()
+    for account_id in sorted(pending):
         db.execute(
             update(Account)
             .where(Account.id == account_id)
-            .values(balance=func.coalesce(Account.balance, 0) + delta)
+            .values(balance=func.coalesce(Account.balance, 0) + pending[account_id])
             .execution_options(synchronize_session=False)
         )
     # synchronize_session=False leaves loaded objects untouched, so expire the
     # ones we changed: their balance reloads from the row on next access.
-    for obj in list(db.identity_map.values()):
-        if isinstance(obj, Account) and obj.id in deltas and deltas[obj.id] != 0:
+    for account_id in pending:
+        obj = db.identity_map.get(identity_key(Account, account_id))
+        if obj is not None:
             db.expire(obj, ["balance"])
 
 
