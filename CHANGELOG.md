@@ -88,6 +88,16 @@ read as text. The same dialog showed a customer's or vendor's name as
 `[object Object]`; it shows the name. A test now fails on any escaped value
 inside a quoted inline-handler string. Found in LayoverLogic's fork.
 
+**Sessions end when access changes.** A signed-in session is now
+re-checked against the users table on every request instead of being trusted
+from the signed cookie alone. Sessions end on the next request when a user is
+deactivated, their role changes, or their password changes or is reset; the
+role is read from the user row, so a role change takes effect at once. A
+user's own password change keeps the session that made it and ends their
+others. Single-user desktop sign-in and API-token requests are unchanged. Adds
+`users.session_version` (one Alembic migration, run in each company file).
+Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

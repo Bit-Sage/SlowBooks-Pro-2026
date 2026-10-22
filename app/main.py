@@ -126,6 +126,8 @@ from app.services.auth import get_session_secret
 from app.services.auth import (
     signed_in_before_this_start as _signed_in_before_this_start,
     signed_in_to_another_company as _signed_in_to_another_company,
+    check_session_user as _check_session_user,
+    SESSION_VERSION_KEY as _SESSION_VERSION_KEY,
 )
 
 from app import __version__
@@ -963,7 +965,31 @@ async def _require_session(request: Request, call_next):
                     "company's password to continue."
                 },
             )
-        role = request.session.get("role") or "admin"
+        # Revocable sessions: the signed cookie is no longer trusted
+        # on its own. Re-read the user this session names (one cheap lookup
+        # on this company's DB) and sign the session out when it has been
+        # deactivated, its role or password changed since, or the row is
+        # gone. The role comes from the row too, so a demotion takes effect
+        # on the next request instead of living in the cookie.
+        state, db_role, db_version = _check_session_user(request.session)
+        if state == "revoked":
+            request.session.clear()
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "Your sign-in has ended. Sign in again to continue."
+                },
+            )
+        if state == "ok":
+            role = db_role
+            # Keep the cookie's own copy honest: routes that gate on
+            # request.session["role"] (user management, company switch) then
+            # see the demotion too, not the stale role the cookie carried.
+            if request.session.get("role") != db_role:
+                request.session["role"] = db_role
+            request.session[_SESSION_VERSION_KEY] = db_version
+        else:  # "skip": a legacy / desktop session that names no user row
+            role = request.session.get("role") or "admin"
     else:
         # Scoped API tokens: non-human principals (agents, integrations)
         # authenticate with `Authorization: Bearer sbp_...` and wear a role

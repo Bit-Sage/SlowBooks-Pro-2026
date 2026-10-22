@@ -143,6 +143,9 @@ def update_user(
 
     demoting = payload.role is not None and payload.role != ROLE_ADMIN
     deactivating = payload.is_active is False
+    # captured before the row is mutated: a role that is merely re-set to its
+    # current value should not end the user's sessions
+    role_changed = payload.role is not None and payload.role != user.role
     if (
         user.role == ROLE_ADMIN
         and user.is_active
@@ -173,6 +176,14 @@ def update_user(
         user.must_change_password = True
     if "expires_on" in payload.model_fields_set:
         user.expires_on = payload.expires_on
+    # revocable sessions: deactivating, demoting or resetting the
+    # password ends that user's existing sessions on their next request —
+    # the point of each of those actions — rather than leaving them live
+    # until the idle timeout
+    if deactivating or role_changed or payload.password:
+        from app.services.auth import bump_session_version
+
+        bump_session_version(user)
     db.commit()
     # an administrator removed, demoted or reset no longer unlocks the
     # company file (#290); a reset one is wrapped again once they set a

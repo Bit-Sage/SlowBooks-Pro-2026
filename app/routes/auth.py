@@ -311,8 +311,15 @@ def set_own_password(
             )
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
+    # revocable sessions: a changed password ends this user's OTHER
+    # sessions (a copied cookie elsewhere) — but not the one making the
+    # change, which re-stores the new version below so it stays signed in.
+    from app.services.auth import bump_session_version
+
+    bump_session_version(user)
     db.commit()
     request.session["must_change_password"] = False
+    request.session["session_version"] = user.session_version
     _keep_keyring_current(user, payload.new_password, force=True)
     return {"status": "ok"}
 
@@ -503,6 +510,9 @@ def _stash_user(request: Request, user) -> None:
     request.session["must_change_password"] = bool(
         getattr(user, "must_change_password", False)
     )
+    # revocable sessions: the version this sign-in is good for; a
+    # later bump (deactivate, role or password change) ends it
+    request.session["session_version"] = getattr(user, "session_version", 0) or 0
 
 
 @router.post("/login")

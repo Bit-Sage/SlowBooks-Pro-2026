@@ -263,6 +263,71 @@ def authenticate(db: Session, password: str, username: str | None = None):
     return user
 
 
+# ---------------------------------------------------------------------------
+# Revocable sessions. The signed session cookie is tamper-proof but it
+# is not revocable on its own: it carried the role and lived until the idle
+# timeout, so deactivating a user, changing their role or resetting their
+# password did not end the sessions they already had. Each user row now keeps
+# a session_version; a sign-in records it, every request re-reads the row and
+# signs the session out when the two differ, and the role is taken from the
+# row rather than the cookie. These two keys are what a session stores.
+# ---------------------------------------------------------------------------
+
+SESSION_USER_ID_KEY = "user_id"
+SESSION_VERSION_KEY = "session_version"
+
+
+def check_session_user(session: dict):
+    """Re-check a signed-in session against its user row. Returns
+    (status, role, version):
+      ("ok", role, version)   keep the session; use this role, store version
+      ("revoked", None, None) the user is gone, inactive, or the version was
+                              bumped (deactivated / role changed / password
+                              changed) — the caller signs the session out
+      ("skip", None, None)    the session names no user row (a legacy cookie
+                              from before the users table, or a desktop
+                              password-only session with no row): nothing to
+                              re-check, left as it was
+
+    A read-only point lookup (one row by primary key) on the company this
+    request works in — cheap enough to run on every request.
+    """
+    user_id = session.get(SESSION_USER_ID_KEY)
+    if not user_id:
+        return ("skip", None, None)
+    import app.database as database
+
+    from app.models.users import User
+
+    db = database.SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if user is None or not user.is_active:
+            return ("revoked", None, None)
+        stored = session.get(SESSION_VERSION_KEY)
+        # A session from before this column carries no version: adopt the
+        # row's current one rather than sign everyone out on the upgrade (the
+        # same courtesy signed_in_to_another_company extends to an old cookie
+        # with no company). A password change since the upgrade still bumps
+        # the row, so the adopted session is caught from then on.
+        if stored is not None and stored != user.session_version:
+            return ("revoked", None, None)
+        return ("ok", user.role, user.session_version)
+    finally:
+        db.close()
+
+
+def bump_session_version(user) -> None:
+    """End this user's existing sessions: raise the row's version so
+    the version each live session stored no longer matches and its next
+    request is signed out. Call on deactivation, a role change, and a
+    password change/reset. The caller commits; a caller that wants to keep
+    the acting session alive re-stores the new value in its own session."""
+    if user is None:
+        return
+    user.session_version = (user.session_version or 0) + 1
+
+
 def require_auth(request: Request) -> None:
     """
     FastAPI dependency that rejects unauthenticated requests with 401.
