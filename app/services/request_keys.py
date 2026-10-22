@@ -34,7 +34,7 @@ from app.models.request_keys import RequestKey
 
 HEADER = "Idempotency-Key"
 RETENTION_DAYS = 7
-_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_KEY_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
 
 def _canonical(value):
@@ -91,7 +91,7 @@ def reserve(db: Session, request: Request, route: str, payload, actor: str | Non
     if not key:
         return None
     key = key.strip()
-    if not _KEY_RE.match(key):
+    if not _KEY_RE.fullmatch(key):
         raise HTTPException(
             status_code=400,
             detail=f"{HEADER} must be 1–128 characters of letters, digits, '-', '_', '.' or ':'.",

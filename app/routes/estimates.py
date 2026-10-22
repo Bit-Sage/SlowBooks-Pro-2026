@@ -21,7 +21,7 @@ from app.routes.invoices.helpers import (
     opening_status,
     resolve_line_taxable,
 )
-from app.routes._helpers import clamp_pagination
+from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.services.audit import audited_bulk_delete
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
@@ -190,7 +190,9 @@ def update_estimate(
     if not estimate:
         raise HTTPException(status_code=404, detail="Estimate not found")
 
-    changes = data.model_dump(exclude_unset=True, exclude={"lines"})
+    changes = reject_null_updates(
+        Estimate, data.model_dump(exclude_unset=True, exclude={"lines"})
+    )
     if changes.get("customer_id") not in (None, estimate.customer_id):
         customer = db.get(Customer, changes["customer_id"])
         if not customer:

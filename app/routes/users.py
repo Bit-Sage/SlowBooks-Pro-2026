@@ -35,7 +35,7 @@ def _utc_iso(stamp):
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
-_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,49}$")
+_USERNAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,49}")
 
 
 def _require_admin(request: Request) -> None:
@@ -106,7 +106,7 @@ def list_users(request: Request, db: Session = Depends(get_db)):
 def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     username = payload.username.strip().lower()
-    if not _USERNAME_RE.match(username):
+    if not _USERNAME_RE.fullmatch(username):
         raise HTTPException(
             status_code=400,
             detail="Username must be 3-50 characters: letters, digits, . _ -",
@@ -207,7 +207,7 @@ def invite_user(
     the end date if one is given."""
     _require_admin(request)
     username = payload.username.strip().lower()
-    if not _USERNAME_RE.match(username):
+    if not _USERNAME_RE.fullmatch(username):
         raise HTTPException(
             status_code=400,
             detail="Username must be 3-50 characters: letters, digits, . _ -",

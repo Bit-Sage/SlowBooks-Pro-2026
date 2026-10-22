@@ -11,7 +11,7 @@ from app.models.accounts import Account
 from app.services import control_accounts
 from app.models.transactions import TransactionLine
 from app.schemas.accounts import AccountCreate, AccountUpdate, AccountResponse
-from app.routes._helpers import get_or_404
+from app.routes._helpers import get_or_404, reject_null_updates
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -42,7 +42,7 @@ def _reject_duplicate_number(db: Session, number, exclude_id=None):
 # " - Name" in every picker (2.17.3 exploratory test, W-L4). Charts brought
 # in by an importer keep whatever numbers they carry; this is the rule for
 # numbers typed on the form or sent to the API.
-_ACCOUNT_NUMBER_RE = re.compile(r"^\d+(?:[.-]\d+)*$")
+_ACCOUNT_NUMBER_RE = re.compile(r"\d+(?:[.-]\d+)*")
 
 
 def _check_account_number(number) -> None:
@@ -51,7 +51,7 @@ def _check_account_number(number) -> None:
     or 6150.1 / 6150-01 for a sub-account."""
     if not number:
         return
-    if len(number) > 20 or not _ACCOUNT_NUMBER_RE.match(number):
+    if len(number) > 20 or not _ACCOUNT_NUMBER_RE.fullmatch(number):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -242,7 +242,7 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
 @router.put("/{account_id}", response_model=AccountResponse)
 def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(get_db)):
     account = get_or_404(db, Account, account_id)
-    fields = data.model_dump(exclude_unset=True)
+    fields = reject_null_updates(Account, data.model_dump(exclude_unset=True))
 
     # Issue #119: the posting code resolves these accounts BY NUMBER, so
     # renumbering one makes every later document skip its journal entry —

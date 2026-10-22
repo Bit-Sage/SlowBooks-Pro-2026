@@ -23,6 +23,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -684,21 +685,16 @@ async def _request_validation_handler(request: Request, exc: RequestValidationEr
 
 app.add_exception_handler(RequestValidationError, _request_validation_handler)
 
-# ---- CORS (Phase 9.7: locked down) ----
-# Wildcard origins with credentials is a CSRF amplifier. Default to just
-# localhost; override with ALLOWED_ORIGINS env var (comma-separated) for
-# a custom LAN hostname like http://slowbooks.local:3001.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ALLOW_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# gzip responses larger than 1 KB. Analytics JSON payloads compress ~70%,
-# which is a big win over LAN for /api/analytics/dashboard and friends.
-app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+# ---- Middleware registration ----
+# All middleware is registered as one ordered block near the end of this
+# module (the "Middleware stack" section), after require_session and
+# ActingUserContextMiddleware are defined. Starlette makes the LAST-added
+# middleware the OUTERMOST layer, and CORS plus the security-header
+# middleware MUST sit OUTSIDE the auth gate (require_session): a CORS
+# preflight is unauthenticated and has to be answered before auth, and the
+# gate's own 401/403/503 responses have to carry the security headers.
+# security_headers and require_session are only DEFINED below; the single
+# registration block at the end wires the whole stack in the right order.
 
 
 # Content-Security-Policy: defense in depth against XSS even if autoescape
@@ -781,7 +777,6 @@ def _set_if_unset(headers, name: str, value: str) -> None:
         headers[name] = value
 
 
-@app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     # The desktop shell fetches documents from page JS and saves them
@@ -825,24 +820,17 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-# Promote any plain-HTTP request to HTTPS before it touches the app. Added
-# BEFORE other middleware so it runs LAST in the response chain — i.e. the
-# OUTERMOST request gate. Behind a TLS-terminating proxy this is a no-op
-# because the proxy already speaks HTTPS to the app.
-if FORCE_HTTPS:
-    app.add_middleware(HTTPSRedirectMiddleware)
-
-
 # ---- Auth gate (Phase 9.7) ----
 # Single middleware that lets through static assets, the SPA shell, the
 # auth routes themselves, /health, and the public customer pay page.
 # Everything else demands an authenticated session.
 #
-# IMPORTANT: This decorator MUST come before the SessionMiddleware
-# add_middleware() call. Starlette's middleware stack wraps the
-# most-recently-added layer on the outside, so the LAST add_middleware
-# call is the outermost / runs first. SessionMiddleware needs to run
-# BEFORE require_session so that request.session is populated.
+# IMPORTANT: require_session must run INSIDE SessionMiddleware so that
+# request.session is populated by the time the gate dispatches, and INSIDE
+# CORS and the security-header middleware so a preflight is answered before
+# auth and the gate's own refusals still carry the headers. The registration
+# that enforces this lives in the "Middleware stack" section at the end of
+# this module; see it for the full outer-to-inner order.
 _AUTH_EXEMPT_PREFIXES = (
     "/static/",
     "/api/auth/",
@@ -979,7 +967,6 @@ def _role_refusal(role: str) -> str:
     return "Your role doesn't allow this action"
 
 
-@app.middleware("http")
 async def require_session(request: Request, call_next):
     try:
         return await _require_session(request, call_next)
@@ -1193,12 +1180,42 @@ def _request_company(scope, session) -> str | None:
     return None
 
 
-# ---- Session cookie (Phase 9.7) ----
+# ---- Middleware stack ----
+# Registered here, as one ordered block, because every constraint below is
+# about ORDER and Starlette resolves order by registration sequence: the
+# LAST add_middleware call is the OUTERMOST layer (runs first on the way in,
+# last on the way out). Registering innermost-first, the resulting stack is,
+# outermost to innermost:
+#
+#   HTTPS redirect -> CORS -> security headers -> session cookie
+#     -> acting-user context -> auth gate -> gzip -> routes
+#
+# Why this order:
+#   - HTTPS redirect outermost: a plain-HTTP request is promoted before any
+#     cookie is parsed or the app is touched. A no-op behind a TLS proxy.
+#   - CORS outside the auth gate: a browser preflight (OPTIONS) is sent
+#     WITHOUT credentials, so if it reached require_session it would be
+#     answered 401 with no Access-Control-Allow-* headers — breaking every
+#     cross-origin call after a successful login. It must be answered by
+#     CORSMiddleware before auth. The allow-list is unchanged; credentials
+#     still never combine with a wildcard origin.
+#   - Security headers outside the auth gate: so the gate's own 401/403/503
+#     refusals (unauthenticated, role refusal, CompanyUnavailable) still
+#     carry CSP, X-Frame-Options, nosniff, Referrer-Policy and HSTS.
+#     _set_if_unset means a route that already chose a stricter value (the
+#     portal's Referrer-Policy: no-referrer) still wins, since routes run
+#     inside this layer.
+#   - SessionMiddleware outside the gate and ActingUserContextMiddleware:
+#     both read the session (request.session / scope["session"]), which it
+#     populates.
+#   - ActingUserContextMiddleware outside the gate: it sets the acting-user
+#     and served-company contextvars before require_session opens the
+#     company and before any route runs.
+#   - gzip innermost: it only needs to compress route payloads; the gate's
+#     short refusals are tiny and need no compression.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+app.add_middleware(BaseHTTPMiddleware, dispatch=require_session)
 app.add_middleware(ActingUserContextMiddleware)
-
-# Added AFTER require_session so SessionMiddleware becomes the outer
-# layer (Starlette: last added = outermost). That way request.session
-# is populated by the time require_session dispatches.
 app.add_middleware(
     SessionMiddleware,
     secret_key=get_session_secret(),
@@ -1210,6 +1227,21 @@ app.add_middleware(
     # if the app insists on HTTPS, the session cookie must too.
     https_only=FORCE_HTTPS,
 )
+app.add_middleware(BaseHTTPMiddleware, dispatch=security_headers)
+# Wildcard origins with credentials is a CSRF amplifier. Default to just
+# localhost; override with ALLOWED_ORIGINS env var (comma-separated) for
+# a custom LAN hostname like http://slowbooks.local:3001.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# Outermost: promote plain HTTP to HTTPS before anything else sees the
+# request. Behind a TLS-terminating proxy this is a no-op.
+if FORCE_HTTPS:
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # Phase 9.7: Auth routes MUST be included (they're exempt from the session gate)
 app.include_router(auth_routes.router)

@@ -130,6 +130,65 @@ list is empty, or when more than one worker runs with in-memory counters.
 starts as before with the warning. Desktop and
 single-worker installs are unaffected. See `docs/tls-proxy-setup.md`.
 
+**CORS and the security headers now sit outside the login gate.** Starlette
+makes the last-registered middleware the outermost layer, so registering CORS
+and the security-header middleware before the auth gate had made them the
+inner layers — the gate wrapped them. Two consequences, both fixed by
+registering the gate inside CORS and the headers: an unauthenticated CORS
+preflight (browsers send it without credentials) was answered 401 with no
+`Access-Control-Allow-*` headers, so a deployment with a configured
+`CORS_ALLOW_ORIGINS` allow-list could sign in and then fail every cross-origin
+API call; and the gate's own 401/403/503 refusals (unauthenticated, role
+refusal, a company that cannot be opened) carried no CSP, `X-Frame-Options`,
+nosniff or Referrer-Policy. The allow-list and credential handling are
+unchanged, and a route that chose a stricter header of its own (the portal's
+`Referrer-Policy: no-referrer`) still wins.
+
+**Validators reject a trailing newline.** Several input validators built a
+Python `re` pattern ending in `$` and checked it with `.match()`/`.search()`.
+In Python `$` also matches just before a trailing `"\n"`, so a value like
+`"evil.db\n"` passed. The backup and company `.db` filename allow-lists, the
+Postgres database-name allow-list, the chart account number, the username, the
+preference key, the idempotency-request key, the Cloudflare account id and the
+AI worker-url host check now use `re.fullmatch` (anchored to the whole string),
+which rejects the trailing newline. HTTP entry points that already `strip()`
+their input were not reachable, but the regexes are hardened for any caller.
+Pydantic `pattern=` constraints are unaffected: they use the Rust regex engine,
+where `$` is end-of-text.
+
+**Bank-feed connection management is admin-only.** Connecting a SimpleFIN
+bank feed, remapping its accounts and disconnecting it change a stored
+credential and the books' wiring, so they now require the administrator
+role — the same boundary as Settings and the AI provider key. Running a
+sync or reading status on a feed the administrator has already connected
+stays available to the bookkeeper as daily books work; read-only is
+unchanged. Previously a non-admin sign-in or token could reach these.
+
+**Hostile input is a 422, not a 500.** Four malformed-input classes that
+passed schema validation and then crashed downstream are now refused at the
+request boundary, centrally in the shared request base model
+(`app/schemas/common.StrictModel`) rather than field by field:
+
+- A non-finite float (`NaN` / `Infinity`) in any float field — a bill line
+  quantity/rate hit `decimal.InvalidOperation`, a bill-payment amount became
+  a NULL insert — is rejected (`allow_inf_nan=False`); the ~200 float fields
+  are covered in one place. Decimal money fields already refused these.
+- A NUL byte (`\x00`) in any string, which SQLite stored silently and
+  PostgreSQL rejected with a 500, is refused everywhere a request carries text.
+- A document/transaction date outside 1900–2199 is refused: an invoice dated
+  `9999-12-31` overflowed computing its Net-30 due date. The window still fits
+  every real document, hire date and birth date, and file importers
+  (QuickBooks/Xero/IIF) build rows directly, so historical imports are
+  unaffected.
+- A PUT that explicitly sets a NOT NULL column to `null` (e.g.
+  `PUT /api/customers/{id}` or `/api/vendors/{id}` with `{"name": null}`) is
+  refused with a 422 naming the field, via a generic helper
+  (`reject_null_updates`) applied to every all-optional Update route, instead
+  of the IntegrityError 500 it caused. An empty `{}` PUT stays a no-op 200.
+
+The four above were reported in PNWImport's fork as still present upstream,
+and each was checked against 2.25.0 before it was fixed.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
