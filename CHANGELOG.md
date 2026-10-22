@@ -7,6 +7,15 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A file the bank import can't read is said so, not a 500** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV or
+a cut-off statement sent to Banking → Import file raised ofxparse's own
+error as a 500. The OFX/QFX and CSV preview and import now answer "That
+file isn't a bank statement this can read: an OFX, QFX or CSV export from
+the bank." for any file they can't parse (an empty one says it is empty),
+and write nothing; an unrecognised CSV still goes to the column-mapping
+step.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

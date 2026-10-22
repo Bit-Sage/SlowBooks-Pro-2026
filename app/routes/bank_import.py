@@ -3,7 +3,9 @@
 # Feature 18: Upload → preview → confirm → auto-match by amount/date
 # ============================================================================
 
+import csv
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
@@ -11,24 +13,55 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.banking import BankAccount
-from app.services.ofx_import import parse_ofx, import_transactions
+from app.services.ofx_import import (
+    EMPTY_TEXT,
+    UNREADABLE_TEXT,
+    UnreadableStatement,
+    import_transactions,
+    parse_ofx,
+)
 from app.services.bank_csv_import import parse_csv, import_csv_transactions
 from app.services.upload_limits import read_limited
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/bank-import", tags=["bank_import"])
+
+
+async def _read_statement(file: UploadFile, label: str, bom: str = "utf-8") -> str:
+    """The uploaded statement as text, or a 400 saying why it can't be:
+    an empty file, or a binary one (a PDF, a spreadsheet, a UTF-16 export,
+    random bytes) that no statement parser here reads (Testing#101)."""
+    content = await read_limited(file, label=label)
+    if not content.strip():
+        raise HTTPException(status_code=400, detail=EMPTY_TEXT)
+    if b"\x00" in content[:8192] or content.startswith(b"%PDF"):
+        logger.info("bank file rejected as binary (%d bytes)", len(content))
+        raise HTTPException(status_code=400, detail=UNREADABLE_TEXT)
+    try:
+        return content.decode(bom)
+    except UnicodeDecodeError:
+        return content.decode("latin-1")
+
+
+def _read_ofx(text: str) -> list[dict]:
+    try:
+        return parse_ofx(text)
+    except UnreadableStatement as problem:
+        raise HTTPException(status_code=400, detail=problem.user_text) from None
+
+
+def _unreadable_csv(exc: csv.Error) -> HTTPException:
+    # csv.Error's text can quote the file; log its class only.
+    logger.info("bank CSV unreadable: %s", type(exc).__name__)
+    return HTTPException(status_code=400, detail=UNREADABLE_TEXT)
 
 
 @router.post("/preview")
 async def preview_ofx(file: UploadFile = File(...)):
     """Parse OFX/QFX file and return preview of transactions."""
-    content = await read_limited(file, label="Bank file")
-    try:
-        # Try UTF-8 first, fall back to latin-1
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        text = content.decode("latin-1")
-
-    transactions = parse_ofx(text)
+    text = await _read_statement(file, label="Bank file")
+    transactions = _read_ofx(text)
     return {
         "count": len(transactions),
         "transactions": [
@@ -53,13 +86,8 @@ async def import_ofx(
     if not ba:
         raise HTTPException(status_code=404, detail="Bank account not found")
 
-    content = await read_limited(file, label="Bank file")
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        text = content.decode("latin-1")
-
-    transactions = parse_ofx(text)
+    text = await _read_statement(file, label="Bank file")
+    transactions = _read_ofx(text)
     result = import_transactions(db, bank_account_id, transactions)
     return result
 
@@ -87,13 +115,11 @@ async def preview_csv(
     """Parse CSV bank statement and return preview of transactions. An
     unrecognised layout answers with its columns and a few rows, for the
     dialog's mapping step; `mapping` (JSON) is that step's answer."""
-    content = await read_limited(file, label="CSV file")
+    text = await _read_statement(file, label="CSV file", bom="utf-8-sig")
     try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = content.decode("latin-1")
-
-    result = parse_csv(text, _mapping(mapping))
+        result = parse_csv(text, _mapping(mapping))
+    except csv.Error as exc:
+        raise _unreadable_csv(exc) from None
     if result["error"]:
         out = {
             "format": result["format"],
@@ -148,13 +174,11 @@ async def import_csv(
     if not ba:
         raise HTTPException(status_code=404, detail="Bank account not found")
 
-    content = await read_limited(file, label="CSV file")
+    text = await _read_statement(file, label="CSV file", bom="utf-8-sig")
     try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = content.decode("latin-1")
-
-    result = import_csv_transactions(
-        db, bank_account_id, text, mapping=_mapping(mapping)
-    )
+        result = import_csv_transactions(
+            db, bank_account_id, text, mapping=_mapping(mapping)
+        )
+    except csv.Error as exc:
+        raise _unreadable_csv(exc) from None
     return result
