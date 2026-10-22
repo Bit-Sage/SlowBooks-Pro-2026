@@ -28,6 +28,7 @@ from app.models.auth import LoginAttempt
 from app.services import served_companies
 from app.services.auth import (
     SESSION_USER_ID_KEY,
+    SESSION_VERSION_KEY,
     authenticate,
     bump_session_version,
     check_session_user,
@@ -734,7 +735,7 @@ def choose_company(request: Request, payload: CompanyChoice):
             session[served_companies.SESSION_FILE_KEY] = here
     elif state == "ok":
         session["role"] = db_role
-        session["session_version"] = db_version
+        session[SESSION_VERSION_KEY] = db_version
     username = session.get("username") or ""
     opens = session.get(served_companies.SESSION_OPENS_KEY) or []
     fingerprints = session.get(served_companies.SESSION_OPENS_FP_KEY) or {}

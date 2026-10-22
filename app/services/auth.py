@@ -329,7 +329,8 @@ def bump_session_version(user) -> None:
     """End this user's existing sessions: raise the row's version so
     the version each live session stored no longer matches and its next
     request is signed out. Call on deactivation, a role change, a password
-    change/reset, an end date set in the past, and sign-out. The caller commits; a caller that wants to keep
+    change/reset, an end date set in the past, and sign-out. The caller
+    commits; a caller that wants to keep
     the acting session alive re-stores the new value in its own session."""
     if user is None:
         return
