@@ -353,9 +353,10 @@ def import_ledger_report(
         return result
     journals, errors = group_journals(lines)
     if errors:
-        result["errors"] = errors[:20] + (
-            [f"… and {len(errors) - 20} more"] if len(errors) > 20 else []
-        )
+        # The whole list, however long: it stopped at twenty with "and 14,070
+        # more", and the person asked where the rest were (discussion #349).
+        # The page counts them and saves the list as a file.
+        result["errors"] = errors
         return result
     have = {
         ref

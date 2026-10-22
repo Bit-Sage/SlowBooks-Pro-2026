@@ -5,6 +5,17 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**An import's whole error list, and a file of it** (discussion #349,
+@ContractorKeith). The Transaction Detail by Account and categorized-sheet
+imports cut their list at twenty and said "… and 14,070 more", and the
+person asked whether there was a way to see the whole report. There was
+not. Both lists come whole now, as the IIF import's already did; the box
+on the Interoperability page says how many problems there are and has
+**Save the list**, a text file of every line (the desktop app saves it to
+Documents/SlowBooks Pro/Reports and says where).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
