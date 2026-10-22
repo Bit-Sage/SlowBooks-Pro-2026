@@ -119,7 +119,9 @@ and two people can work in two companies at the same time.
   up. Nobody else on the network can set up a company nobody has set up yet.
 - **API tokens** belong to the company they were made in. A token's request
   names that company with an `X-SlowBooks-Company: <file>.db` header; without
-  it, the request goes to the company the server was started for.
+  it, the request goes to the company the server was started for. A token
+  is its own principal, not its maker's session: by design it outlives the
+  deactivation of the user who made it, until it is revoked itself.
 - **Starting the server** brings every company in the list up to this version
   before it serves any of them. A company that cannot be brought up (a failed
   migration, or a file encrypted under its own recovery key, which only opens

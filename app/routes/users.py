@@ -174,13 +174,15 @@ def update_user(
         user.password_hash = hash_password(payload.password)
         # an administrator's reset is a one-time password too
         user.must_change_password = True
+    ended = False
     if "expires_on" in payload.model_fields_set:
         user.expires_on = payload.expires_on
-    # revocable sessions: deactivating, demoting or resetting the
-    # password ends that user's existing sessions on their next request —
-    # the point of each of those actions — rather than leaving them live
-    # until the idle timeout
-    if deactivating or role_changed or payload.password:
+        ended = payload.expires_on is not None and date.today() > payload.expires_on
+    # revocable sessions: deactivating, demoting, resetting the password or
+    # ending the sign-in (an end date already past) ends that user's
+    # existing sessions on their next request — the point of each of those
+    # actions — rather than leaving them live until the idle timeout
+    if deactivating or role_changed or payload.password or ended:
         from app.services.auth import bump_session_version
 
         bump_session_version(user)

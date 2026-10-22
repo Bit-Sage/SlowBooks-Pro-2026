@@ -27,7 +27,10 @@ from app.database import get_db, use_company
 from app.models.auth import LoginAttempt
 from app.services import served_companies
 from app.services.auth import (
+    SESSION_USER_ID_KEY,
     authenticate,
+    bump_session_version,
+    check_session_user,
     ensure_admin_user,
     is_multi_user,
     password_is_set,
@@ -641,12 +644,40 @@ def _other_companies_opened_by(username: str, password: str, here: str) -> dict:
 @router.post("/logout")
 def logout(request: Request):
     """Clear the session cookie. On a server serving several companies the
-    sign-in screen stays in the company signed out of (#358)."""
+    sign-in screen stays in the company signed out of (#358). Sign out bumps
+    the user's session version too, so a copy of the cookie taken before it
+    does not keep working; a sign-out still succeeds when the books cannot
+    be reached, or the session names no user row (a desktop or legacy
+    session)."""
     company = request.session.get(served_companies.SESSION_FILE_KEY)
+    _end_sessions_of(request.session.get(SESSION_USER_ID_KEY))
     request.session.clear()
     if company and served_companies.enabled():
         request.session[served_companies.SESSION_FILE_KEY] = company
     return {"status": "ok"}
+
+
+def _end_sessions_of(user_id) -> None:
+    """Bump the session version of this user row on the company the request
+    works in, ending every session it has. Never fatal: a sign-out must
+    succeed whether or not the row, or the database, can be reached."""
+    if not user_id:
+        return
+    try:
+        import app.database as db_module
+
+        from app.models.users import User
+
+        db = db_module.SessionLocal()
+        try:
+            user = db.get(User, user_id)
+            if user is not None:
+                bump_session_version(user)
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.warning("could not end the other sessions of user %s", user_id)
 
 
 # A company on the served list that nobody has set up yet is set up by an
@@ -683,6 +714,27 @@ def choose_company(request: Request, payload: CompanyChoice):
             status_code=status.HTTP_404_NOT_FOUND, detail=served_companies.NOT_SERVED
         )
     session = request.session
+    # Revocable sessions: /api/auth/ is outside the gate that re-checks a
+    # session against its user row, so it is re-checked here, against the
+    # company the session is in, before the cookie's role opens anything. A
+    # session ended since (deactivated, demoted, password reset, sign-in
+    # ended) is signed out, as at Sign out, and goes on as not signed in:
+    # the target asks for its own password. The role is the row's. A session
+    # whose own company cannot be opened now (its file missing or locked)
+    # cannot be verified, and counts as signed out the same way: the switch
+    # is how the sign-in screen offers the companies that do open.
+    try:
+        state, db_role, db_version = check_session_user(session)
+    except served_companies.CompanyUnavailable:
+        state, db_role, db_version = "revoked", None, None
+    if state == "revoked":
+        here = session.get(served_companies.SESSION_FILE_KEY)
+        session.clear()
+        if here:
+            session[served_companies.SESSION_FILE_KEY] = here
+    elif state == "ok":
+        session["role"] = db_role
+        session["session_version"] = db_version
     username = session.get("username") or ""
     opens = session.get(served_companies.SESSION_OPENS_KEY) or []
     fingerprints = session.get(served_companies.SESSION_OPENS_FP_KEY) or {}

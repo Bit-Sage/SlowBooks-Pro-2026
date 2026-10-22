@@ -16,6 +16,7 @@ import secrets
 import string
 import threading
 import weakref
+from datetime import date
 from pathlib import Path
 
 from argon2 import PasswordHasher
@@ -281,9 +282,10 @@ def check_session_user(session: dict):
     """Re-check a signed-in session against its user row. Returns
     (status, role, version):
       ("ok", role, version)   keep the session; use this role, store version
-      ("revoked", None, None) the user is gone, inactive, or the version was
-                              bumped (deactivated / role changed / password
-                              changed) — the caller signs the session out
+      ("revoked", None, None) the user is gone, inactive, past its end date,
+                              or the version was bumped (deactivated / role
+                              changed / password changed) — the caller signs
+                              the session out
       ("skip", None, None)    the session names no user row (a legacy cookie
                               from before the users table, or a desktop
                               password-only session with no row): nothing to
@@ -304,6 +306,12 @@ def check_session_user(session: dict):
         user = db.get(User, user_id)
         if user is None or not user.is_active:
             return ("revoked", None, None)
+        # an invited sign-in past its end date (#345): the same day test the
+        # login path refuses it by, so an ended sign-in stops answering now
+        # rather than at the idle timeout
+        expires_on = getattr(user, "expires_on", None)
+        if expires_on is not None and date.today() > expires_on:
+            return ("revoked", None, None)
         stored = session.get(SESSION_VERSION_KEY)
         # A session from before this column carries no version: adopt the
         # row's current one rather than sign everyone out on the upgrade (the
@@ -320,8 +328,8 @@ def check_session_user(session: dict):
 def bump_session_version(user) -> None:
     """End this user's existing sessions: raise the row's version so
     the version each live session stored no longer matches and its next
-    request is signed out. Call on deactivation, a role change, and a
-    password change/reset. The caller commits; a caller that wants to keep
+    request is signed out. Call on deactivation, a role change, a password
+    change/reset, an end date set in the past, and sign-out. The caller commits; a caller that wants to keep
     the acting session alive re-stores the new value in its own session."""
     if user is None:
         return
