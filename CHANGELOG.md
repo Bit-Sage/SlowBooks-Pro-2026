@@ -7,6 +7,19 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**The register adds a payee or a category as it is typed** (#386, from a
+bookkeeper's notes). A payee typed into the register's entry row or the +
+Entry form that is not a vendor's name gets a toast, on leaving the box and
+again when the entry posts: "Add … as a vendor?" with Add and Not now. Add
+makes the vendor (`POST /api/vendors`, the name alone); either way the
+entry posts with the text as before, and a name answered Not now is not
+asked about again that session. Both category pickers open with **+ Add a
+new account…**: name, type (the kinds the picker offers), an optional
+parent of that type and an optional number, in a panel under the picker
+rather than a dialog that would replace the form. Added, the account is in
+every picker on the page (the split lines' too), chosen, and the cursor
+moves on to the amount or the memo. No server change.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

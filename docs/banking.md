@@ -55,6 +55,12 @@ Register entries, transfers and card charges have **Void** (a mirror-image
 reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
 
+The entry row at the foot of the register posts the same way (Enter or
+Post). A payee typed there, or in + Entry, that is not a vendor's name is
+offered as one (Add / Not now; the entry posts either way), and the
+category picker's first choice, **+ Add a new account…**, makes the account
+in place — name, type, an optional parent and number — and selects it.
+
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,
 job_id?}` → the journal entry. `GET /api/banking/check-register?account_id=`

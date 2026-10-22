@@ -452,12 +452,15 @@ const BankingPage = {
             }
         }
         const filterQs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
-        const [reg, overview, classes, chart] = await Promise.all([
+        const [reg, overview, classes, chart, vendors] = await Promise.all([
             API.get(`/banking/check-register?account_id=${id}${filterQs}`),
             API.get('/banking/overview'),
             API.get('/classes?include_archived=true').catch(() => []),
             API.get('/accounts?active_only=true').catch(() => []),
+            API.get('/vendors?active_only=true').catch(() => null),
         ]);
+        BankingPage._accounts = chart;
+        BankingPage._vendorNames = vendors ? new Set(vendors.map(v => v.name.toLowerCase())) : null;
         const info = overview.find(a => a.account_id === id) || {};
         const feed = info.feed || null;
         const kind = reg.bank_kind;
@@ -734,7 +737,7 @@ const BankingPage = {
 
     _quickEntryRow(accountId, kind, chart, outLabel, inLabel) {
         const cats = (chart || [])
-            .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
+            .filter(a => a.id !== accountId && BankingPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}">${accountLabel(a, a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
         const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.postQuickEntry(${accountId}); }"`;
         const now = new Date();
@@ -743,15 +746,16 @@ const BankingPage = {
         // named for the new entry, apart from the page's other fields
         return `<tfoot><tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
                     <td><input type="date" id="qe-date" aria-label="New entry date" value="${today}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value)" ${key}></td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:180px;"><option value="">Category…</option>${cats}</select></td>
+                    <td><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:180px;" onchange="BankingPage.categoryChanged(this, ${accountId})"><option value="">Category…</option>${BankingPage.ADD_ACCOUNT_OPTION}${cats}</select></td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td></td><td></td>
                     <td><button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.postQuickEntry(${accountId})">Post</button></td>
-                </tr></tfoot>`;
+                </tr>
+                <tr data-write><td colspan="10" style="padding:0; border:0;">${BankingPage._newAccountPanel('qe-category', accountId)}</td></tr></tfoot>`;
     },
 
     // The quick row posts through the same call as + Entry (#329): money
@@ -761,6 +765,7 @@ const BankingPage = {
     async postQuickEntry(accountId) {
         const v = (sel) => (document.getElementById(sel) || {}).value || '';
         const out = parseFloat(v('qe-out') || '0'), inn = parseFloat(v('qe-in') || '0');
+        if (v('qe-category') === '__new__') { toast('Add the account, or choose one', 'error'); return; }
         if (!v('qe-category')) { toast('Choose a category', 'error'); return; }
         if ((out > 0) === (inn > 0)) { toast('Enter an amount in one column', 'error'); return; }
         const data = {
@@ -775,6 +780,7 @@ const BankingPage = {
         try {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
+            BankingPage.payeeTyped(data.payee);
             await BankingPage.go(`#/banking/${accountId}`);
             BankingPage._focusPayee();
         } catch (err) { toast(err.message, 'error'); }
@@ -803,8 +809,13 @@ const BankingPage = {
         const me = accounts.find(a => a.id === accountId) || {};
         const isCard = me.bank_kind === 'credit_card';
         const catOpts = accounts
-            .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
+            .filter(a => a.id !== accountId && BankingPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}">${accountLabel(a)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
+        BankingPage._accounts = accounts;
+        if (!BankingPage._vendorNames) {
+            const vendors = await API.get('/vendors?active_only=true').catch(() => null);
+            if (vendors) BankingPage._vendorNames = new Set(vendors.map(v => v.name.toLowerCase()));
+        }
         const classGroup = await classFormGroupHtml();
         openModal('New Register Entry', `
             <form onsubmit="BankingPage.saveEntry(event, ${accountId})">
@@ -815,11 +826,12 @@ const BankingPage = {
                         <input name="amount" type="number" step="0.01" required>
                         <div style="font-size:10px; color:var(--gray-500);">${isCard ? 'Negative = a charge (owe more). Positive = a payment to the card.' : 'Negative = money out (a payment). Positive = money in (a deposit).'}</div></div>
                     <div class="form-group"><label>Payee</label>
-                        <input name="payee"></div>
+                        <input name="payee" onblur="BankingPage.payeeTyped(this.value)"></div>
                     <div class="form-group"><label>Check / ref #</label>
                         <input name="check_number"></div>
                     <div class="form-group full-width"><label>Category * <span style="font-weight:normal; color:var(--gray-500);">(the other side of the entry; a bank or card account makes it a transfer)</span></label>
-                        <select name="category_account_id" id="entry-category"><option value="">Select…</option>${catOpts}</select></div>
+                        <select name="category_account_id" id="entry-category" onchange="BankingPage.categoryChanged(this, ${accountId})"><option value="">Select…</option>${BankingPage.ADD_ACCOUNT_OPTION}${catOpts}</select>
+                        ${BankingPage._newAccountPanel('entry-category', accountId)}</div>
                     <div class="form-group full-width"><label>Memo</label>
                         <input name="description"></div>
                     ${classGroup}
@@ -915,6 +927,7 @@ const BankingPage = {
         const form = e.target;
         let splits;
         try { splits = BankingPage._splitLines(form); } catch (err) { toast(err.message, 'error'); return; }
+        if (form.category_account_id.value === '__new__') { toast('Add the account, or choose one', 'error'); return; }
         if (!splits && !form.category_account_id.value) { toast('Choose a category, or split the entry', 'error'); return; }
         const data = {
             account_id: accountId,
@@ -931,9 +944,134 @@ const BankingPage = {
         try {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
+            BankingPage.payeeTyped(data.payee);
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ------------------------------------------------------------------
+    // A payee or a category typed that is not on the list is added from
+    // the row or the form (#386, from a bookkeeper's notes): the payee as
+    // a vendor, offered once per name and session; the category as a new
+    // account under a chosen parent, chosen in the picker when it is made.
+    // ------------------------------------------------------------------
+    CATEGORY_TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'],
+    ADD_ACCOUNT_OPTION: '<option value="__new__">+ Add a new account…</option>',
+    _accounts: null,      // the chart as last drawn: the parents offered, the picker's new option
+    _vendorNames: null,   // lower-cased; null until the register has loaded them
+    _payeesAsked: new Set(),
+
+    // The payee as typed, on blur and again when the entry posts: not a
+    // vendor's name and not asked before, a toast offers to add it. The
+    // entry goes on with the text either way; Not now, or no answer, is
+    // not asked again this session.
+    payeeTyped(payee) {
+        const name = (payee || '').trim();
+        if (!name || !BankingPage._vendorNames) return;
+        const key = name.toLowerCase();
+        if (BankingPage._vendorNames.has(key) || BankingPage._payeesAsked.has(key)) return;
+        BankingPage._payeesAsked.add(key);
+        toastAction(`Add "${name}" as a vendor?`, 'Add', () => BankingPage.addVendor(name), 15000, 'Not now');
+    },
+
+    async addVendor(name) {
+        try {
+            await API.post('/vendors', { name });
+            BankingPage._vendorNames.add(name.toLowerCase());
+            toast(`${name} added to Vendors`);
+        } catch (err) {
+            // a near match (409): the entry keeps its text; no second vendor
+            const dupes = err.status === 409 && err.detail && err.detail.duplicates;
+            toast(dupes ? `Not added: ${dupes.map(d => d.name).join(', ')} is already a vendor` : err.message, 'error');
+        }
+    },
+
+    // The panel under a category picker: name, type, an optional parent of
+    // that type, an optional number. Hidden until "+ Add a new account…"
+    // is chosen; nothing in it is `required`, so the entry form still
+    // submits while it is hidden.
+    _newAccountPanel(selectId, accountId) {
+        const id = `${selectId}-new`;
+        const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.saveNewAccount('${selectId}', ${accountId}); }"`;
+        const types = BankingPage.CATEGORY_TYPES
+            .map(t => `<option value="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('');
+        return `<div id="${id}" style="display:none; padding:8px; border:1px solid var(--gray-300); border-radius:4px; margin-top:4px;">
+            <div class="form-grid">
+                <div class="form-group"><label for="${id}-name">Account name *</label>
+                    <input id="${id}-name" aria-label="New account name" aria-required="true" ${key}></div>
+                <div class="form-group"><label for="${id}-type">Type</label>
+                    <select id="${id}-type" data-no-search onchange="BankingPage.newAccountTypeChanged('${selectId}', ${accountId})">${types}</select></div>
+                <div class="form-group"><label for="${id}-parent">Sub-account of</label>
+                    <select id="${id}-parent" data-no-search><option value="">None</option></select></div>
+                <div class="form-group"><label for="${id}-number">Number <span style="font-weight:normal; color:var(--gray-500);">(optional)</span></label>
+                    <input id="${id}-number" maxlength="20" placeholder="e.g. 6150, or leave blank" ${key}></div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:6px;">
+                <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveNewAccount('${selectId}', ${accountId})">Add account</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.cancelNewAccount('${selectId}')">Cancel</button>
+            </div>
+        </div>`;
+    },
+
+    categoryChanged(sel, accountId) {
+        if (sel.value !== '__new__') return;
+        const panel = document.getElementById(`${sel.id}-new`);
+        if (!panel) return;
+        panel.style.display = '';
+        BankingPage.newAccountTypeChanged(sel.id, accountId);
+        focusFor(document.getElementById(`${sel.id}-new-name`), true);
+    },
+
+    // The parents offered are the accounts of the chosen type (a
+    // sub-account takes its parent's type), never the register's own
+    // account or another bank or card.
+    newAccountTypeChanged(selectId, accountId) {
+        const type = document.getElementById(`${selectId}-new-type`).value;
+        const parent = document.getElementById(`${selectId}-new-parent`);
+        parent.innerHTML = '<option value="">None</option>' + (BankingPage._accounts || [])
+            .filter(a => a.account_type === type && a.id !== accountId && !a.bank_kind)
+            .map(a => `<option value="${a.id}">${accountLabel(a)}</option>`).join('');
+    },
+
+    cancelNewAccount(selectId) {
+        const sel = document.getElementById(selectId);
+        const panel = document.getElementById(`${selectId}-new`);
+        if (panel) panel.style.display = 'none';
+        if (sel) { sel.value = ''; focusFor(sel._cbx ? sel._cbx.box : sel, true); }
+    },
+
+    // POST /accounts, then the new account goes into every category picker
+    // on the page (the split lines' list too) and is the choice; the cursor
+    // moves on, to the amount in the row or the memo in the form.
+    async saveNewAccount(selectId, accountId) {
+        const f = (part) => document.getElementById(`${selectId}-new-${part}`);
+        const name = f('name').value.trim();
+        if (!name) { toast('Name the account', 'error'); focusFor(f('name'), true); return; }
+        let made;
+        try {
+            made = await API.post('/accounts', {
+                name,
+                account_type: f('type').value,
+                parent_id: f('parent').value ? parseInt(f('parent').value, 10) : null,
+                account_number: f('number').value.trim() || null,
+            });
+        } catch (err) { toast(err.message, 'error'); return; }
+        (BankingPage._accounts = BankingPage._accounts || []).push(made);
+        const opt = `<option value="${made.id}">${accountLabel(made)}</option>`;
+        for (const id of ['qe-category', 'entry-category']) {
+            const s = document.getElementById(id);
+            if (s) s.insertAdjacentHTML('beforeend', opt);
+        }
+        if (BankingPage._splitCats) BankingPage._splitCats += opt;
+        f('name').value = ''; f('number').value = ''; f('parent').value = '';
+        document.getElementById(`${selectId}-new`).style.display = 'none';
+        document.getElementById(selectId).value = String(made.id);
+        toast(`${made.account_number ? made.account_number + ' - ' : ''}${made.name} added to the chart`);
+        const next = selectId === 'qe-category'
+            ? document.getElementById('qe-out')
+            : document.querySelector('#modal-body input[name="description"]');
+        focusFor(next, true);
     },
 
     async showTransferForm(fromId = null) {

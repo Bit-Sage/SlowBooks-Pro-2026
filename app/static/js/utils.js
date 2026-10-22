@@ -393,7 +393,9 @@ function chartFigures(opts = {}) {
 
 // A toast that carries one action (e.g. "Saved to … [Show in folder]").
 // Stays longer than a plain toast because the user has to read a path.
-function toastAction(message, actionLabel, onClick, ms = 8000) {
+// With dismissLabel it is a question ("Add … as a vendor?" Add / Not now):
+// the second button only closes it, as the timeout does.
+function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null) {
     const container = $('#toast-container');
     const el = document.createElement('div');
     el.className = 'toast toast-success';
@@ -410,6 +412,14 @@ function toastAction(message, actionLabel, onClick, ms = 8000) {
     btn.addEventListener('click', () => { try { onClick(); } finally { el.remove(); } });
     el.appendChild(text);
     el.appendChild(btn);
+    if (dismissLabel) {
+        const no = document.createElement('button');
+        no.type = 'button';
+        no.className = 'btn btn-sm btn-secondary';
+        no.textContent = dismissLabel;
+        no.addEventListener('click', () => el.remove());
+        el.appendChild(no);
+    }
     container.appendChild(el);
     setTimeout(() => el.remove(), ms);
 }
