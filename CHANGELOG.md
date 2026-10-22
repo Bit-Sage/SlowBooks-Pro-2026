@@ -130,14 +130,22 @@ rate limiter into one shared bucket for all users (5 attempts/minute across
 everyone, not per client) and recorded the proxy's IP in the `login_attempts` /
 `portal_accesses` audit tables. Separately, rate-limit counters lived in
 per-worker memory, so `APP_WORKERS=4` made every configured limit 4x looser.
-The Docker entrypoint now passes `--proxy-headers --forwarded-allow-ips` when
-`FORWARDED_ALLOW_IPS` is set; the limiter honours `RATE_LIMIT_STORAGE_URI` (e.g.
-`redis://…`) for shared counters, defaulting to in-memory as before; and the app
-logs a startup warning when a proxy is implied (`FORCE_HTTPS` on) but the trust
-list is empty, or when more than one worker runs with in-memory counters.
+Set `FORWARDED_ALLOW_IPS` to the proxy's address or CIDR: uvicorn reads it from
+the environment itself, so the Docker entrypoint passes no flag. The client
+address is now decided in that one place — `client_ip()` (login and portal
+audit rows) reads what uvicorn reports and no longer parses `X-Forwarded-For`
+itself, and the `TRUST_PROXY_HEADERS` knob is retired (removed from
+`.env.example`, `docker-compose.prod.yml` and the docs). The limiter honours
+`RATE_LIMIT_STORAGE_URI` (e.g. `redis://…`) for shared counters, defaulting to
+in-memory as before; the `redis` client now ships in `requirements.txt` (a
+`redis://` URI used to fail at import without it), and when the URI is set the
+storage is health-checked once at startup, so an unreachable Redis stops the
+app with a clear message instead of making every login a 500. The app logs a
+startup warning when a proxy is implied (`FORCE_HTTPS` on) but the trust list
+is empty, or when more than one worker runs with in-memory counters.
 `docker-compose.prod.yml` passes `FORWARDED_ALLOW_IPS` through; left blank, it
-starts as before with the warning. Desktop and
-single-worker installs are unaffected. See `docs/tls-proxy-setup.md`.
+starts as before with the warning. Desktop and single-worker installs are
+unaffected. See `docs/tls-proxy-setup.md`.
 
 **CORS and the security headers now sit outside the login gate.** Starlette
 makes the last-registered middleware the outermost layer, so registering CORS

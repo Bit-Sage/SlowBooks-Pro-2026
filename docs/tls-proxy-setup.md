@@ -205,8 +205,12 @@ Set `FORWARDED_ALLOW_IPS` to the proxy's address or subnet:
 FORWARDED_ALLOW_IPS=172.18.0.0/16
 ```
 
-`docker-compose.prod.yml` requires it (it assumes a proxy). The Docker
-entrypoint passes it to uvicorn as `--proxy-headers --forwarded-allow-ips`.
+`docker-compose.prod.yml` passes it through (it assumes a proxy). Nothing
+else is needed: uvicorn reads `FORWARDED_ALLOW_IPS` from the environment
+itself and honours `X-Forwarded-For` / `X-Forwarded-Proto` from those
+addresses, so the client address the rate limiter and the audit tables see
+is the one uvicorn decided on. (The older `TRUST_PROXY_HEADERS` knob is
+retired; the app no longer parses the header a second time.)
 **Never set it to `0.0.0.0/0` or `*`** — that trusts the header from any
 source, letting a client forge its own IP and evade the rate limiter.
 
@@ -228,14 +232,17 @@ RATE_LIMIT_STORAGE_URI=redis://redis:6379/0
 
 Leave it unset for a single-worker container or the desktop app, where
 the in-memory default is correct. The app logs a warning at startup when
-`APP_WORKERS > 1` and this is unset.
+`APP_WORKERS > 1` and this is unset. The `redis` client ships with the app,
+and when the URI is set the storage is health-checked once at startup: an
+unreachable Redis stops the app with a message naming the variable and the
+host, rather than turning every login into a 500.
 
 ## Common pitfalls
 
 | Symptom | Likely cause |
 |---------|--------------|
 | Browser refuses the session cookie | `FORCE_HTTPS=true` but the request reached the app over plain HTTP. Check the proxy is sending traffic via HTTPS to the browser. |
-| `ERR_TOO_MANY_REDIRECTS` | The proxy is forwarding HTTPS to the app, and the app's `HTTPSRedirectMiddleware` is bouncing it again. Either set `FORCE_HTTPS=false` (the proxy is the TLS terminator) or make sure the proxy sets `X-Forwarded-Proto: https`. |
+| `ERR_TOO_MANY_REDIRECTS` | `FORWARDED_ALLOW_IPS` is unset (or does not cover the proxy's address). uvicorn then ignores the proxy's `X-Forwarded-Proto: https`, sees plain `http` on every request, and `FORCE_HTTPS` redirects to HTTPS forever. Set `FORWARDED_ALLOW_IPS` to the proxy's address or CIDR (above) and check the proxy sends `X-Forwarded-Proto: https`. |
 | HSTS won't go away after disable | The browser cached it for `HSTS_MAX_AGE` seconds (2 years by default). Use a private window to test cert changes. |
 | Let's Encrypt rate-limited | You hit 5 cert requests per week for the same domain. Wait, or use the staging environment (`--staging` flag) while iterating. |
 | 502 Bad Gateway from nginx | SlowBooks isn't running, or it's bound to `127.0.0.1` and nginx is in a different namespace. Check `ss -tlnp \| grep 3001`. |

@@ -183,6 +183,10 @@ def _run_startup_security_checks():
             "Set a unique, strong PAYROLL_ENCRYPTION_SECRET before deploying."
         )
 
+    # A configured rate-limit storage that cannot be reached would otherwise
+    # surface as a 500 on every rate-limited route (login first of all).
+    _check_rate_limit_storage()
+
     if not APP_DEBUG:
         if PAYROLL_ENCRYPTION_SECRET == _DEV_KEY:
             raise RuntimeError(
@@ -291,6 +295,42 @@ def _warn_on_proxy_misconfiguration() -> None:
             "RATE_LIMIT_STORAGE_URI at shared storage, e.g. redis://redis:6379/0.",
             workers,
             workers,
+        )
+
+
+def _check_rate_limit_storage() -> None:
+    """Refuse to start when RATE_LIMIT_STORAGE_URI names storage that fails
+    its health check. Unset (in-process memory) is never checked.
+
+    slowapi builds the storage from the URI at import; a Redis that is down
+    or mis-addressed only shows up when the first rate-limited request runs
+    its counter, which turns every login into a 500. Fail once, loudly, here
+    instead. The message names the scheme and host only — the URI may carry
+    a password."""
+    from urllib.parse import urlsplit
+
+    from app.services.rate_limit import RATE_LIMIT_STORAGE_URI, limiter
+
+    if not RATE_LIMIT_STORAGE_URI:
+        return
+    parts = urlsplit(RATE_LIMIT_STORAGE_URI)
+    where = f"{parts.scheme}://{parts.hostname or ''}" + (
+        f":{parts.port}" if parts.port else ""
+    )
+    try:
+        healthy = limiter._storage.check()
+    except Exception as exc:  # the limits backends wrap their own errors
+        raise RuntimeError(
+            f"FATAL: RATE_LIMIT_STORAGE_URI storage at {where} failed its "
+            f"health check ({type(exc).__name__}: {exc}). Start the storage "
+            "service, fix the URI, or unset RATE_LIMIT_STORAGE_URI for "
+            "in-process counters (single worker only)."
+        ) from exc
+    if not healthy:
+        raise RuntimeError(
+            f"FATAL: RATE_LIMIT_STORAGE_URI storage at {where} is unreachable. "
+            "Start the storage service, fix the URI, or unset "
+            "RATE_LIMIT_STORAGE_URI for in-process counters (single worker only)."
         )
 
 
