@@ -115,3 +115,8 @@ class Reconciliation(Base):
 
     bank_account = relationship("BankAccount")
     account = relationship("Account", foreign_keys=[account_id])
+
+    @property
+    def account_name(self):
+        """The ledger account's name, for a list across accounts (#395)."""
+        return self.account.name if self.account else None

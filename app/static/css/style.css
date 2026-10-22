@@ -936,6 +936,18 @@ td.amount, th.amount {
 }
 .card-link:hover { text-decoration: none; }
 a.card-link:focus-visible { box-shadow: 0 0 0 8px var(--focus-halo); }
+/* The Report Center's pin (#395): a star on each card's corner, a button
+   beside the link in a slot (not in it), pressed while pinned. */
+.card-slot { position: relative; display: grid; }
+.card-slot .card-header { padding-right: 26px; }
+.card-pin {
+    position: absolute; top: 6px; right: 6px;
+    width: 24px; height: 24px; padding: 0; line-height: 22px;
+    border: 1px solid transparent; border-radius: 0; background: transparent;
+    color: var(--text-muted); font-size: 15px; cursor: pointer;
+}
+.card-pin:hover { border-color: var(--panel-border); }
+.card-pin[aria-pressed="true"] { color: var(--warning); }
 
 /* ========================================================================
  * FORMS — Modal forms styled like QB2003 data entry windows

@@ -599,13 +599,20 @@ def void_bank_entry(txn_id: int, db: Session = Depends(get_db)):
 
 @router.get("/reconciliations", response_model=list[ReconciliationResponse])
 def list_reconciliations(
-    account_id: int = None, bank_account_id: int = None, db: Session = Depends(get_db)
+    account_id: int = None,
+    bank_account_id: int = None,
+    status: Optional[ReconciliationStatus] = None,
+    db: Session = Depends(get_db),
 ):
+    """Every reconciliation, newest statement first; `status=completed`
+    keeps the finished ones (the Report Center's list, #395)."""
     q = db.query(Reconciliation)
     if account_id:
         q = q.filter(Reconciliation.account_id == account_id)
     elif bank_account_id:
         q = q.filter(Reconciliation.bank_account_id == bank_account_id)
+    if status is not None:
+        q = q.filter(Reconciliation.status == status)
     return q.order_by(
         Reconciliation.statement_date.desc(), Reconciliation.id.desc()
     ).all()
