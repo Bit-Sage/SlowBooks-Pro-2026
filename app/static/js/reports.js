@@ -1107,7 +1107,7 @@ const ReportsPage = {
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
-        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: true });
+        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -1202,7 +1202,7 @@ const ReportsPage = {
                         ${total(T('Liabilities + Equity'), data.total_liabilities + data.total_equity, (p.total_liabilities || 0) + (p.total_equity || 0), 'font-weight:700; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
-        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill, params: bsParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(bsParams, 'Compare to same date last year'), wide: true });
+        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill, params: bsParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(bsParams, 'Compare to same date last year'), wide: bsParams.compare === 'prior_year' });
     },
 
     async salesTax(prefill) {
@@ -2757,10 +2757,17 @@ ReportsPage._compareToolbar = function (params, label) {
             onchange="ReportsPage.setParam('hide_changes', this.checked ? '' : '1')"> Show $ and % change</label>
     </div>`;
 };
-// The change checkbox only means something while comparing.
+// The change checkbox only means something while comparing, and so does
+// the wide dialog: five columns need it, two do not, and a dialog that is
+// wide for no reason reaches over the sidebar and takes the Open links from
+// under the pointer (test_browser_open_tabs; the #367 review). The width
+// follows the choice, and Back is re-measured against it.
 ReportsPage._cmpSync = function (params) {
     const wrap = $('#cmp-changes-wrap');
     if (wrap) wrap.style.display = params.compare ? 'inline-flex' : 'none';
+    const modal = $('#modal');
+    if (modal) modal.classList.toggle('modal--wide', params.compare === 'prior_year');
+    if (window.App && App.syncBack) App.syncBack();
 };
 ReportsPage._cmpQs = function (params) {
     if (!params || params.compare !== 'prior_year') return '';
