@@ -230,9 +230,12 @@ def profit_loss(
         db, AccountType.EXPENSE, start_date, end_date, in_class, sort, exclude_adjusting
     )
 
-    total_income = sum(i["amount"] for i in income)
-    total_cogs = sum(c["amount"] for c in cogs)
-    total_expenses = sum(e["amount"] for e in expenses)
+    # The rows are floats: totals rounded to the cent, or 777.40 of sales
+    # less cost answers 777.4000000000001 and stops matching the by-class
+    # grid, which sums in Decimal.
+    total_income = round(sum(i["amount"] for i in income), 2)
+    total_cogs = round(sum(c["amount"] for c in cogs), 2)
+    total_expenses = round(sum(e["amount"] for e in expenses), 2)
 
     return {
         "start_date": start_date.isoformat(),
@@ -246,9 +249,9 @@ def profit_loss(
         "expenses": expenses,
         "total_income": total_income,
         "total_cogs": total_cogs,
-        "gross_profit": total_income - total_cogs,
+        "gross_profit": round(total_income - total_cogs, 2),
         "total_expenses": total_expenses,
-        "net_income": total_income - total_cogs - total_expenses,
+        "net_income": round(total_income - total_cogs - total_expenses, 2),
     }
 
 

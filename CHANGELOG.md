@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+An inventory item created with a starting quantity on hand posts that stock
+now, as QuickBooks does (found in PNWImport's fork,
+SlowBooks-Pro-Testing#101). Ten on hand at $4.00 used to write 10 onto the
+item and nothing else: no movement, no journal entry, so the $40 never
+reached the balance sheet and the first sale took its cost of goods out of
+an Inventory account that had never been given it. The item's opening
+quantity is a movement at its cost and one entry, DR Inventory / CR 3900
+Opening Balance Equity, dated the day it is created (`opening_balance`, the
+source type the Journal page lists as an opening balance), refused like any
+other entry on a closed date. A zero cost moves the stock with no entry; a
+negative starting quantity is refused. A later change to on-hand still posts
+as an inventory adjustment, as the item form already sends it; `PUT
+/api/items/{id}` never sets it. The Profit & Loss rounds its totals to the
+cent, so that cost of goods on the sales after it no longer answers a net
+income of 777.4000000000001 beside the by-class grid's 777.40.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
