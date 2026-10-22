@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account, AccountType
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
+from app.services.account_tree import loop_message, loop_through
 from app.services.csv_export import strip_formula_guard
 
 # --- vocabulary -------------------------------------------------------------
@@ -678,7 +679,14 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
         if parent:
             kind, ref = parent
             pid = created[ref].id if kind == "new" else ref
-            if pid != a.id:
+            through = None if pid == a.id else loop_through(db, a.id, pid)
+            if through is not None:
+                # A file whose rows name each other as parents (Testing
+                # #101): the link that would close the loop is left off.
+                entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
+                    loop_message(a.name, through.name) + " The link was left off."
+                )
+            elif pid != a.id:
                 a.parent_id = pid
     db.commit()
 

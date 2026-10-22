@@ -7,6 +7,17 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**An account can't become a sub-account of its own sub-account** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Only an account named as its
+own parent was refused: Vehicles under Truck with Truck already under
+Vehicles was saved, and the IIF export's full names recursed until they
+failed. The edit form refuses it now ("That would make Vehicles a
+sub-account of itself (through Truck).") at any depth, a parent id that
+names no account is refused on create and edit, a chart file whose rows
+name each other as parents leaves the closing link off with that sentence
+as the row's note, and the report paths and IIF names stop at a loop saved
+before this release.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

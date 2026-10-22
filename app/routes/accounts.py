@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.accounts import Account
 from app.services import control_accounts
+from app.services.account_tree import loop_message, loop_through
 from app.models.transactions import TransactionLine
 from app.schemas.accounts import AccountCreate, AccountUpdate, AccountResponse
 from app.routes._helpers import get_or_404, reject_null_updates
@@ -62,6 +63,14 @@ def _check_account_number(number) -> None:
 
 
 _BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
+
+
+def _check_parent_exists(db: Session, parent_id) -> None:
+    """A parent id must name an account (SQLite does not enforce the FK)."""
+    if parent_id is not None and db.get(Account, parent_id) is None:
+        raise HTTPException(
+            status_code=400, detail="That parent account does not exist."
+        )
 
 
 def _check_bank_kind(bank_kind, account_type) -> None:
@@ -225,6 +234,7 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_bank_kind(data.bank_kind, data.account_type)
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
+    _check_parent_exists(db, data.parent_id)
     account = Account(**data.model_dump())
     db.add(account)
     try:
@@ -274,6 +284,16 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
         raise HTTPException(
             status_code=400, detail="An account cannot be its own parent."
         )
+    if fields.get("parent_id") is not None:
+        _check_parent_exists(db, fields["parent_id"])
+        # Testing #101: A under B, then B under A, was accepted, and every
+        # walk up the tree went round forever.
+        through = loop_through(db, account_id, fields["parent_id"])
+        if through is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=loop_message(fields.get("name", account.name), through.name),
+            )
     if "bank_kind" in fields or "account_type" in fields:
         _check_bank_kind(
             fields.get("bank_kind", account.bank_kind),
