@@ -19,6 +19,24 @@ Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
 the API each split line is signed on its own, and a line of 0.00 is refused
 rather than dropped.
 
+**A register entry opens for editing** (#388, from a bookkeeper's notes). A
+typo in an entry made from the bank register meant voiding it and entering
+it again; now the row has **Edit**, which opens the + Entry form filled in
+(the split lines included), and Save rewrites the entry in place — the same
+journal entry, so its links, statement match and audit trail stay with it
+(`GET` and `PUT /api/banking/entries/{id}`, the PUT taking the form's
+fields). The lines are replaced the way a bill's are on edit: each old line
+a DELETE in the audit log, each new one an INSERT. An entry a completed
+reconciliation holds warns first — "This entry was reconciled on the Sep
+30, 2026 statement. Changing it moves that reconciled balance." — with
+**Change it anyway** in the form (`confirm_reconciled` on the request, and
+the audit log says the edit moved past that reconciliation). A line whose
+account and amount did not change keeps its cleared mark; one that changed
+loses it, and the answer says so. A void entry is not edited, an edit that
+would turn the entry into a transfer is refused (void it and post the
+transfer), and the closing date holds for the entry's old date and its new
+one. Journal entries and deposits still open their own views from the row.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

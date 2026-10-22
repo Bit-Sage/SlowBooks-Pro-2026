@@ -535,6 +535,7 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/banking/transactions` | GET, POST | GET: statement lines (review queue). POST: a register entry — posts a journal entry |
 | `/api/banking/transactions/{id}/candidates · match · unmatch · add · exclude · restore` | GET, POST | Review-queue actions |
 | `/api/banking/accounts/{id}/feed/add-all · auto-match` | POST | Bulk review actions |
+| `/api/banking/entries/{id}` | GET, PUT | A register entry in the + Entry form's shape; PUT rewrites it in place (409 until `confirm_reconciled` when a completed reconciliation holds it) (#388) |
 | `/api/banking/entries/{id}/void` | POST | Void a register entry |
 | `/api/banking/reconciliations` | GET, POST, DELETE | Reconciliation sessions over ledger lines (`…/{id}/transactions`, `toggle/{line_id}`, `mark-all` `{cleared, through}` (v2.22.2), `complete`) |
 | `/api/transfers` | GET, POST | Transfers between bank/card accounts (`…/{id}/void`) |

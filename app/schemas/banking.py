@@ -99,6 +99,15 @@ class BankTransactionCreate(StrictModel):
     splits: Optional[list[BankSplit]] = None
 
 
+class BankEntryUpdate(BankTransactionCreate):
+    """The + Entry form's fields again, for editing a register entry in
+    place (#388). `account_id` may be left out (the entry's own) but may
+    not name another account. An entry a completed reconciliation holds
+    is refused with 409 until `confirm_reconciled` is true."""
+
+    confirm_reconciled: bool = False
+
+
 class BankEntryResponse(BaseModel):
     id: int  # the journal entry
     account_id: int
@@ -111,6 +120,28 @@ class BankEntryResponse(BaseModel):
     reference: str
     source_type: str
     status: str
+
+
+class BankSplitOut(BaseModel):
+    category_account_id: int
+    amount: Decimal
+    description: Optional[str] = None
+
+
+class BankEntryDetail(BankEntryResponse):
+    """A register entry in the + Entry form's shape (#388): the signed
+    amount, the category (or the split lines), payee, memo, reference,
+    class and job; `reconciled_on` is the statement date of the completed
+    reconciliation that holds it, if one does. After an edit, `uncleared`
+    names the lines whose amount changed and so lost their cleared mark,
+    and `note` says so in a sentence."""
+
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
+    splits: Optional[list[BankSplitOut]] = None
+    reconciled_on: Optional[dt_date] = None
+    uncleared: list[dict] = []
+    note: Optional[str] = None
 
 
 class BankTransactionResponse(BaseModel):

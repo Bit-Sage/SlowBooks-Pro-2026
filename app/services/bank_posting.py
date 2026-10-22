@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
-from app.models.banking import BankTransaction
+from app.models.banking import BankTransaction, Reconciliation
 from app.models.transactions import Transaction
 from app.services.accounting import (
     _q,
@@ -172,31 +172,27 @@ def post_transfer(
     )
 
 
-def post_bank_entry(
-    db: Session,
+def bank_entry_lines(
     account: Account,
-    txn_date: date,
     amount: Decimal,
     category: Account,
     payee: str | None = None,
     memo: str | None = None,
-    reference: str | None = None,
-    class_id: int | None = None,
-    job_id: int | None = None,
-    source_id: int | None = None,
     splits: list | None = None,
-) -> Transaction:
-    """A register entry. amount < 0: DR category / CR account (money out,
-    or a card charge). amount > 0: DR account / CR category (money in, or a
-    card payment). A category that is itself a bank/card account is a
-    transfer. With `splits` ([(account, amount, memo), …] adding up to
-    `amount`), the other side is several lines (#330). Each part's own sign
-    says which way it posts: a negative part debits its account, a positive
-    part credits it, whichever way the entry goes. So a card processor's
-    deposit is the gross as income (+100.00) and the fee as an expense
-    (−3.00), the bank taking the net 97.00 (#387); and a check with a
-    refund netted against it (−620.00 and +120.00) is a −500.00 check. A
-    part of zero is refused."""
+) -> tuple[str, list[dict]]:
+    """A register entry's description and journal lines, for posting one
+    and for rewriting one in place (#388). amount < 0: DR category / CR
+    account (money out, or a card charge). amount > 0: DR account / CR
+    category (money in, or a card payment). With `splits` ([(account,
+    amount, memo), …] adding up to `amount`), the other side is several
+    lines (#330). Each part's own sign says which way it posts: a negative
+    part debits its account, a positive part credits it, whichever way the
+    entry goes. So a card processor's deposit is the gross as income
+    (+100.00) and the fee as an expense (−3.00), the bank taking the net
+    97.00 (#387); and a check with a refund netted against it (−620.00 and
+    +120.00) is a −500.00 check. A part of zero is refused. A bank or card
+    category is a transfer, which is not an entry of this shape: the caller
+    decides that first."""
     amount = _q(amount)
     if amount == 0:
         raise HTTPException(status_code=400, detail="Amount must not be zero")
@@ -204,8 +200,9 @@ def post_bank_entry(
         raise HTTPException(
             status_code=400, detail="Category must differ from the account itself"
         )
+    line_desc = memo or payee or None
+    description = payee or memo or "Bank entry"
     if splits:
-        line_desc = memo or payee or None
         lines = []
         for cat, part, part_memo in splits:
             part = _q(part)
@@ -230,24 +227,7 @@ def post_bank_entry(
                 "description": line_desc,
             }
         )
-        return create_journal_entry(
-            db,
-            txn_date,
-            payee or memo or "Bank entry",
-            lines,
-            source_type="bank_entry",
-            source_id=source_id,
-            reference=reference or "",
-            class_id=class_id,
-            job_id=job_id,
-        )
-    if category.bank_kind:
-        if amount < 0:
-            return post_transfer(
-                db, txn_date, account, category, -amount, memo, reference
-            )
-        return post_transfer(db, txn_date, category, account, amount, memo, reference)
-    line_desc = memo or payee or None
+        return description, lines
     if amount < 0:
         lines = [
             {
@@ -278,10 +258,45 @@ def post_bank_entry(
                 "description": line_desc,
             },
         ]
+    return description, lines
+
+
+def post_bank_entry(
+    db: Session,
+    account: Account,
+    txn_date: date,
+    amount: Decimal,
+    category: Account,
+    payee: str | None = None,
+    memo: str | None = None,
+    reference: str | None = None,
+    class_id: int | None = None,
+    job_id: int | None = None,
+    source_id: int | None = None,
+    splits: list | None = None,
+) -> Transaction:
+    """A register entry (the lines: `bank_entry_lines`). A category that is
+    itself a bank/card account is a transfer."""
+    amount = _q(amount)
+    if amount == 0:
+        raise HTTPException(status_code=400, detail="Amount must not be zero")
+    if category.id == account.id:
+        raise HTTPException(
+            status_code=400, detail="Category must differ from the account itself"
+        )
+    if not splits and category.bank_kind:
+        if amount < 0:
+            return post_transfer(
+                db, txn_date, account, category, -amount, memo, reference
+            )
+        return post_transfer(db, txn_date, category, account, amount, memo, reference)
+    description, lines = bank_entry_lines(
+        account, amount, category, payee, memo, splits
+    )
     return create_journal_entry(
         db,
         txn_date,
-        payee or memo or "Bank entry",
+        description,
         lines,
         source_type="bank_entry",
         source_id=source_id,
@@ -289,6 +304,111 @@ def post_bank_entry(
         class_id=class_id,
         job_id=job_id,
     )
+
+
+def reconciled_on(db: Session, txn: Transaction) -> Reconciliation | None:
+    """The completed reconciliation holding a line of this entry (the latest
+    statement, when more than one), or None."""
+    ids = {ln.reconciliation_id for ln in txn.lines if ln.reconciliation_id}
+    if not ids:
+        return None
+    return (
+        db.query(Reconciliation)
+        .filter(Reconciliation.id.in_(ids))
+        .order_by(Reconciliation.statement_date.desc(), Reconciliation.id.desc())
+        .first()
+    )
+
+
+def replace_bank_entry(
+    db: Session,
+    txn: Transaction,
+    account: Account,
+    txn_date: date,
+    amount: Decimal,
+    category: Account,
+    payee: str | None = None,
+    memo: str | None = None,
+    reference: str | None = None,
+    class_id: int | None = None,
+    job_id: int | None = None,
+    splits: list | None = None,
+) -> list[dict]:
+    """Rewrite a register entry in place (#388): the Transaction keeps its
+    id (so its links, attachments, statement matches and audit trail stay
+    on the one record), its lines are replaced the way a bill's or an
+    invoice's are on edit (#289) — balances reversed, each old line a
+    DELETE in the audit log, each new line an INSERT, the header an UPDATE.
+
+    A line whose account and amount did not change keeps its cleared mark
+    and its reconciliation, and the statement line matched to it follows
+    to the new row; one that changed loses them, its statement line going
+    back to review. Returns the old lines that lost a mark, so the caller
+    can say so."""
+    from app.routes.invoices.helpers import _reverse_and_delete_journal
+
+    description, lines = bank_entry_lines(
+        account, amount, category, payee, memo, splits
+    )
+    old = [
+        {
+            "id": ln.id,
+            "account_id": ln.account_id,
+            "account_name": ln.account.name if ln.account else "",
+            "debit": _q(ln.debit or 0),
+            "credit": _q(ln.credit or 0),
+            "cleared": bool(ln.cleared),
+            "reconciliation_id": ln.reconciliation_id,
+        }
+        for ln in txn.lines
+    ]
+    links = {
+        bt.transaction_line_id: bt
+        for bt in db.query(BankTransaction).filter(
+            BankTransaction.transaction_line_id.in_([o["id"] for o in old])
+        )
+    }
+    _reverse_and_delete_journal(db, txn.id)
+    create_journal_entry(
+        db,
+        txn_date,
+        description,
+        lines,
+        source_type="bank_entry",
+        source_id=txn.source_id,
+        reference=reference or "",
+        class_id=class_id,
+        job_id=job_id,
+        existing_transaction=txn,
+        posted_by=txn.posted_by,
+    )
+    db.flush()
+    db.refresh(txn)
+    pool = list(old)
+    for ln in txn.lines:
+        same = next(
+            (
+                o
+                for o in pool
+                if o["account_id"] == ln.account_id
+                and o["debit"] == _q(ln.debit or 0)
+                and o["credit"] == _q(ln.credit or 0)
+            ),
+            None,
+        )
+        if same is None:
+            continue
+        pool.remove(same)
+        ln.cleared = same["cleared"]
+        ln.reconciliation_id = same["reconciliation_id"]
+        bt = links.pop(same["id"], None)
+        if bt is not None:
+            bt.transaction_line_id = ln.id
+    for bt in links.values():
+        bt.transaction_id = None
+        bt.transaction_line_id = None
+        bt.match_status = "unmatched"
+    return [o for o in pool if o["cleared"] or o["reconciliation_id"]]
 
 
 def assert_not_reconciled(txn: Transaction) -> None:

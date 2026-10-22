@@ -529,7 +529,7 @@ const BankingPage = {
                     <td class="amount">${e.deposit > 0 ? formatCurrency(e.deposit) : ''}</td>
                     <td class="amount" style="font-weight:700;">${formatCurrency(e.balance)}</td>
                     <td style="text-align:center;">${e.reconciliation_id ? 'R' : (e.cleared ? '✓' : '')}</td>
-                    <td style="white-space:nowrap;">${BankingPage._printCheckButton(e)}${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
+                    <td style="white-space:nowrap;">${BankingPage._printCheckButton(e)}${BankingPage._editButton(e, id)}${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
                 </tr>`).join('');
             // oldest first, so the balance brought forward (a start date's
             // doing) opens the table (2.23.5 round 2, NEW-142); the entry
@@ -551,6 +551,14 @@ const BankingPage = {
     // an import) — its journal entry. Every line opens something.
     _entryHref(e) {
         return e.source_link || `#/journal/${e.transaction_id}`;
+    },
+
+    // A register entry opens for editing (#388); the register says which
+    // (`editable`: a bank entry that is not void — a reconciled one too,
+    // the save warns first).
+    _editButton(e, accountId) {
+        if (!e.editable) return '';
+        return `<button class="btn btn-sm btn-secondary" onclick="BankingPage.editEntry(${e.transaction_id}, ${accountId})">Edit</button>`;
     },
 
     // A check written here, or an expense paid from this account, prints
@@ -798,7 +806,7 @@ const BankingPage = {
     // ------------------------------------------------------------------
     // + Entry (posts) and Transfer
     // ------------------------------------------------------------------
-    async showEntryForm(accountId) {
+    async showEntryForm(accountId, entry = null) {
         const accounts = await API.get('/accounts?active_only=true');
         const me = accounts.find(a => a.id === accountId) || {};
         const isCard = me.bank_kind === 'credit_card';
@@ -842,6 +850,49 @@ const BankingPage = {
                 </div>
             </form>`);
         BankingPage._splitCats = catOpts;
+        if (entry) BankingPage._fillEntryForm(entry);
+    },
+
+    // Edit (#388): a register entry opens in the + Entry form, filled in;
+    // Save sends it back as a PUT and the row is rewritten in place.
+    async editEntry(txnId, accountId) {
+        try {
+            const entry = await API.get(`/banking/entries/${txnId}`);
+            await BankingPage.showEntryForm(accountId, entry);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The form as "Edit entry": the entry's fields in the boxes, its split
+    // lines when it has them, and the entry id on the form for saveEntry.
+    _fillEntryForm(entry) {
+        const form = document.querySelector('#modal-body form');
+        if (!form) return;
+        const title = document.getElementById('modal-title');
+        if (title) title.textContent = 'Edit entry';
+        form.dataset.entryId = entry.id;
+        form.date.value = entry.date;
+        form.amount.value = Number(entry.amount).toFixed(2);
+        form.payee.value = entry.payee || '';
+        form.check_number.value = entry.reference || '';
+        form.description.value = entry.description || '';
+        form.category_account_id.value = entry.category_account_id || '';
+        if (form.class_id) form.class_id.value = entry.class_id || '';
+        const submit = form.querySelector('button[type="submit"]');
+        if (submit) submit.textContent = 'Save';
+        if (entry.splits && entry.splits.length) {
+            if (!BankingPage._splitsOpen()) BankingPage.toggleSplits();
+            const body = document.getElementById('entry-split-rows');
+            if (body) body.innerHTML = '';
+            entry.splits.forEach(sp => {
+                BankingPage.addSplitRow();
+                const row = body ? body.lastElementChild : null;
+                if (!row) return;
+                row.querySelector('.split-cat').value = sp.category_account_id;
+                row.querySelector('.split-amt').value = Number(sp.amount).toFixed(2);
+                row.querySelector('.split-memo').value = sp.description || '';
+            });
+            BankingPage.splitNote();
+        }
     },
 
     // Splits (#330): the Category becomes the first line and more lines
@@ -942,12 +993,62 @@ const BankingPage = {
             ...(splits ? { splits } : {}),
         };
         if (!(await ClassWarn.ok(form))) return;
+        const entryId = form.dataset.entryId ? parseInt(form.dataset.entryId, 10) : null;
+        if (entryId) { await BankingPage._putEntry(entryId, data, accountId); return; }
         try {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The edit's save (#388). An entry a completed reconciliation holds
+    // comes back 409 ("This entry was reconciled on the Sep 30 statement.
+    // Changing it moves that reconciled balance."): the sentence is shown
+    // in the form with "Change it anyway", which sends the same edit once
+    // more with confirm_reconciled.
+    async _putEntry(entryId, data, accountId) {
+        try {
+            const saved = await API.put(`/banking/entries/${entryId}`, data);
+            toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
+            closeModal();
+            BankingPage.go(`#/banking/${accountId}`);
+        } catch (err) {
+            if (err.status === 409 && err.detail && err.detail.code === 'reconciled' && !data.confirm_reconciled) {
+                BankingPage._askReconciled(entryId, data, accountId, err.detail.message);
+                return;
+            }
+            toast(err.message, 'error');
+        }
+    },
+
+    _askReconciled(entryId, data, accountId, message) {
+        const form = document.querySelector('#modal-body form');
+        if (!form) { toast(message, 'error'); return; }
+        BankingPage._pendingEdit = { entryId, data, accountId };
+        let box = document.getElementById('entry-reconciled-warning');
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'entry-reconciled-warning';
+            box.setAttribute('role', 'alert');
+            box.className = 'form-group full-width';
+            box.style.cssText = 'display:block; padding:8px 10px; border:1px solid var(--warning, #b7791f); border-radius:4px; font-size:12px;';
+            const actions = form.querySelector('.form-actions');
+            if (actions) actions.before(box); else form.appendChild(box);
+        }
+        box.innerHTML = `<p style="margin:0 0 8px;">${escapeHtml(message)}</p>
+            <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveEntryAnyway()">Change it anyway</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('entry-reconciled-warning').remove()">Keep it as it is</button>`;
+        const first = box.querySelector('button');
+        if (first) first.focus();
+    },
+
+    async saveEntryAnyway() {
+        const pending = BankingPage._pendingEdit;
+        if (!pending) return;
+        BankingPage._pendingEdit = null;
+        await BankingPage._putEntry(pending.entryId, { ...pending.data, confirm_reconciled: true }, pending.accountId);
     },
 
     async showTransferForm(fromId = null) {

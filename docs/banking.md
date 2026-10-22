@@ -62,13 +62,29 @@ Register entries, transfers and card charges have **Void** (a mirror-image
 reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
 
+A register entry's row has **Edit** (#388): the same form, filled in, and
+Save rewrites the entry on the same journal entry (its links, statement
+match and audit trail stay with it; each old line is a DELETE in the audit
+log and each new one an INSERT). An entry a completed reconciliation holds
+warns first — the statement date and that changing it moves the reconciled
+balance — with **Change it anyway**. A line whose account and amount did
+not change keeps its cleared mark; one that changed loses it, and the page
+says so. A void entry is not edited; an edit that would make the entry a
+transfer is refused (void it and post the transfer). Journal entries and
+deposits open their own views from the row.
+
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,
 job_id?, splits?: [{category_account_id, amount, description?}]}` → the
 journal entry (the split lines add up to `amount`; none is zero; no bank or
-card account among them). `GET /api/banking/check-register?account_id=`
-is the register (`start_date`/`end_date` optional; an opening balance is
-carried in for a range).
+card account among them). `GET /api/banking/entries/{id}` is a register
+entry in that shape (plus `class_id`, `job_id` and `reconciled_on`); `PUT
+/api/banking/entries/{id}` takes the same fields and rewrites it (409 with
+the statement date until `confirm_reconciled` is true; the answer's
+`uncleared` names the lines that lost their mark). `GET
+/api/banking/check-register?account_id=` is the register
+(`start_date`/`end_date` optional; an opening balance is carried in for a
+range); its rows say `editable`.
 
 A check written here, or an Expense paid from a bank account, prints from
 its register row (Print Check) and from the expense's view: `GET
