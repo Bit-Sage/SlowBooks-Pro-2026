@@ -140,11 +140,26 @@ Import your lists IIF first, then upload the report under
 transfer, general journal entry and opening balance comes across as a
 journal entry with its date, number, name and memo, and each account ends
 with the balance QuickBooks shows. The file is checked first and refused
-whole if anything is off, and uploading it again posts nothing twice.
+whole if anything is off, and uploading it again posts nothing twice. A
+refusal lists every transaction that is off, however many; **Save the
+list** under the box writes them to a text file to work from.
 
 Journal entries carry the history; the A/R and A/P aging read invoices and
 bills, so a company that invoices in QuickBooks brings its open invoices in
 from the invoice report below.
+
+**Parent accounts with sub-accounts.** QuickBooks reports a parent account's
+own postings in a section it names "<Parent> - Other" (for example "Advertising
+and Promotion - Other"). That is not an account in its chart, and the import
+posts those lines to the parent account itself.
+
+**Long histories.** QuickBooks' Save as CSV stops a report at 32,768 rows with
+no warning: the last section ends without its Total line, and the income and
+expense accounts, which come after the balance sheet accounts, may be missing
+altogether. Export in date ranges (set From and To, keep All accounts and the
+default columns) so each file stays under that, and import them oldest first;
+a transaction's lines share a date, so a range never splits one, and a line
+already posted is skipped on the next file.
 
 ### Time: the Time by Name by Job detail report
 

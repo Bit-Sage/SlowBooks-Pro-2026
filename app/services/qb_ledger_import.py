@@ -289,6 +289,32 @@ def _reference(journal: list[dict], seen: dict) -> str:
     return base[:100]
 
 
+OTHER_SECTION_SUFFIX = " - Other"
+
+
+def _parent_of_other_section(db: Session, path: str):
+    """The account a "<Parent> - Other" section belongs to. When a parent
+    account has sub-accounts, QuickBooks reports the parent's own postings
+    in a section it names "<Parent> - Other", though no such account
+    exists in its chart (a 16-year export on discussion #349 was refused
+    as "accounts not in the chart" for every one of them). Those lines
+    belong to the parent itself. The section sits under its parent in the
+    report ("Parent:Parent - Other"), or stands by its name alone when the
+    export carries one label column."""
+    from app.services.iif_import import _find_account
+
+    segments = [part.strip() for part in path.split(":") if part.strip()]
+    if not segments or not segments[-1].endswith(OTHER_SECTION_SUFFIX):
+        return None
+    leaf = segments[-1][: -len(OTHER_SECTION_SUFFIX)].strip()
+    if not leaf:
+        return None
+    parents = segments[:-1]
+    if parents and parents[-1].lower() == leaf.lower():
+        return _find_account(db, ":".join(parents))
+    return _find_account(db, ":".join(parents + [leaf]))
+
+
 def import_ledger_report(
     db: Session,
     rows: list[list[str]],
@@ -340,6 +366,8 @@ def import_ledger_report(
     for path in OrderedDict.fromkeys(ln["path"] for ln in lines):
         acct = _find_account(db, path)
         if acct is None:
+            acct = _parent_of_other_section(db, path)
+        if acct is None:
             missing.append(path)
         accounts[path] = acct
     if missing:
@@ -353,9 +381,10 @@ def import_ledger_report(
         return result
     journals, errors = group_journals(lines)
     if errors:
-        result["errors"] = errors[:20] + (
-            [f"… and {len(errors) - 20} more"] if len(errors) > 20 else []
-        )
+        # The whole list, however long: it stopped at twenty with "and 14,070
+        # more", and the person asked where the rest were (discussion #349).
+        # The page counts them and saves the list as a file.
+        result["errors"] = errors
         return result
     have = {
         ref
