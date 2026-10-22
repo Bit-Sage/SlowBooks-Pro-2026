@@ -888,7 +888,13 @@ const BankingPage = {
                 const row = body ? body.lastElementChild : null;
                 if (!row) return;
                 row.querySelector('.split-cat').value = sp.category_account_id;
-                row.querySelector('.split-amt').value = Number(sp.amount).toFixed(2);
+                // a line that goes the other way from the entry (a fee on a
+                // deposit, a refund on a check, #387) is shown as it was
+                // typed: its own number with Taken out ticked
+                const part = Number(sp.amount);
+                const against = (part < 0) !== (Number(entry.amount) < 0);
+                row.querySelector('.split-amt').value = (against ? -part : part).toFixed(2);
+                row.querySelector('.split-fee').checked = against;
                 row.querySelector('.split-memo').value = sp.description || '';
             });
             BankingPage.splitNote();

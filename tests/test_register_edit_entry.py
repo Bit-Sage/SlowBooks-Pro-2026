@@ -424,3 +424,15 @@ def test_a_reconciled_refusal_is_asked_in_the_form_not_a_browser_dialog():
     start = js.index("async _putEntry(")
     end = js.index("async saveEntryAnyway(")
     assert "confirm(" not in js[start:end].replace("confirm_reconciled", "")
+
+
+def test_the_edit_form_shows_a_fee_line_as_typed():
+    """A deposit's fee line (#387) reopens as its own number with Taken out
+    ticked, not as a negative amount."""
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/banking.js").read_text()
+    fill = js[js.index("_fillEntryForm(entry) {") :]
+    fill = fill[: fill.index("\n    },")]
+    assert ".split-fee').checked = against" in fill
+    assert "(against ? -part : part)" in fill
