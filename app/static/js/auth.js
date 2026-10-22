@@ -350,6 +350,42 @@
         );
     }
 
+    // The Company select on a served host's screens (#358): another
+    // company's own people and its own password. The person stays chosen
+    // when the other company has them. Shared by the sign-in and the setup
+    // view, so a wrong choice is one more choice away from either.
+    function wireCompanySelect(overlay, onSuccess) {
+        const companyInput = overlay.querySelector("#auth-company");
+        if (!companyInput) return;
+        const errBox = overlay.querySelector("#auth-error");
+        const userInput = overlay.querySelector("#auth-username");
+        companyInput.addEventListener("change", async function () {
+            errBox.textContent = "";
+            if (userInput) rememberUsername(userInput.value);
+            try {
+                const r = await postJSON(AUTH_COMPANY_URL, { file: companyInput.value });
+                if (r && r.authenticated) {
+                    // This session's sign-in opens that company too, so it
+                    // is signed in there now: start from its Home page, as
+                    // the topbar's switch does. (It used to call promptAuth,
+                    // which found the session signed in and drew nothing:
+                    // the screen closed onto the page the old company's
+                    // missing file had left, with the old company's name in
+                    // the topbar — 2.25.0 gate, macbase1 NEW-169, #370.)
+                    rememberUsername("");
+                    removeOverlay();
+                    window.location.hash = "#/";
+                    window.location.reload();
+                    return;
+                }
+                removeOverlay();
+                promptAuth(onSuccess);
+            } catch (err) {
+                errBox.textContent = err.message;
+            }
+        });
+    }
+
     function wireLogin(overlay, onSuccess) {
         const form = overlay.querySelector("#auth-form");
         wireSwitchCompany(overlay);
@@ -357,22 +393,7 @@
         const userInput = overlay.querySelector("#auth-username");
         const errBox = overlay.querySelector("#auth-error");
         const btn = overlay.querySelector("#auth-submit");
-        const companyInput = overlay.querySelector("#auth-company");
-        if (companyInput) {
-            // Another company: its own people and its own password (#358).
-            // The person stays chosen when the other company has them.
-            companyInput.addEventListener("change", async function () {
-                errBox.textContent = "";
-                if (userInput) rememberUsername(userInput.value);
-                try {
-                    await postJSON(AUTH_COMPANY_URL, { file: companyInput.value });
-                    removeOverlay();
-                    promptAuth(onSuccess);
-                } catch (err) {
-                    errBox.textContent = err.message;
-                }
-            });
-        }
+        wireCompanySelect(overlay, onSuccess);
         (rememberedUsername() && userInput ? input : (userInput || input)).focus();
 
         form.addEventListener("submit", async function (e) {
@@ -430,6 +451,12 @@
             "Just enough to get you in. You can configure everything else later." +
             "</p>" +
             existingNotice +
+            // On a served host the setup form is one choice among the
+            // companies, like the sign-in: a company nobody has set up yet,
+            // chosen by the wrong person, held the browser on this form
+            // with no way back (2.25.0 gate, skytech W-28, #369). Empty on
+            // a server with one company, and on the desktop.
+            companySelectHTML() +
             field("operator_name", "Your name", { required: true }) +
             field("operator_email", "Your email", {
                 type: "email",
@@ -512,6 +539,7 @@
         const btn = overlay.querySelector("#auth-submit");
         const firstField = overlay.querySelector("#operator_name");
 
+        wireCompanySelect(overlay, onSuccess);
         if (firstField) firstField.focus();
 
         form.addEventListener("submit", async function (e) {
