@@ -55,7 +55,9 @@ If they would rather not sign in, send:
 - Reports → **Financial Statements Pack**: the Profit & Loss, Balance Sheet
   and Trial Balance in one PDF;
 - Reports → **General Ledger** → Save CSV: every line, by account;
-- the A/R and A/P agings, and the bank reconciliation reports, as needed.
+- Reports → **A/R Aging** and **A/P Aging** → Save CSV: who owes, and who
+  is owed, by age;
+- the bank reconciliation reports, as needed.
 
 Then enter their adjustments yourself under **Journal Entries**, with the
 **Adjusting entry** box ticked, so they show on the Adjusting Journal Entries

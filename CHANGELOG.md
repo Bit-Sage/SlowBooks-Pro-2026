@@ -7,6 +7,16 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Save CSV on the A/R and A/P Aging reports** (from a bookkeeper's notes,
+#393). A client who asks for the aging as a spreadsheet could only have it
+from the Accountant's Package, so one file meant building the whole zip.
+Each aging report has a **Save CSV** button now (`GET
+/api/reports/ar-aging/csv` and `/ap-aging/csv`, `as_of_date` as the
+screen's) that writes the file the package carries — the same preamble,
+columns and totals row, made by the one function both use, so the two
+cannot drift. Opened from a customer's or vendor's page, the file is that
+one's row and total (`customer_id` / `vendor_id`), and its name says so.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

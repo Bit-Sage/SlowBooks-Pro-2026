@@ -540,3 +540,61 @@ def adjusting_entries_csv(data: dict, company: str) -> str:
         ]
     )
     return out.getvalue()
+
+
+_AGING_COLS = ("current", "over_30", "over_60", "over_90", "total", "unapplied_credits")
+
+
+def aging_csv(data: dict, company: str, side: str) -> str:
+    """The A/R or A/P aging as the screen shows it: a row per customer or
+    vendor with the buckets and the total, then the totals row. The
+    Accountant's Package (#343) and the report's own Save CSV (#393)
+    both write this, so the two files are the same."""
+    out = io.StringIO()
+    w = _SafeWriter(out)
+    name_key = "customer_name" if side == "ar" else "vendor_name"
+    title = "Accounts Receivable Aging" if side == "ar" else "Accounts Payable Aging"
+    _preamble(w, company, title, f"as of {data['as_of_date']}")
+    head = [
+        "Customer" if side == "ar" else "Vendor",
+        "Current",
+        "1-30",
+        "31-60",
+        "61-90+",
+        "Total",
+    ]
+    if side == "ar":
+        head.append("Unapplied credits")
+    w.writerow(head)
+    for i in data.get("items", []):
+        row = [
+            i.get(name_key) or "",
+            _money(i.get("current")),
+            _money(i.get("over_30")),
+            _money(i.get("over_60")),
+            _money(i.get("over_90")),
+            _money(i.get("total")),
+        ]
+        if side == "ar":
+            row.append(_money(i.get("unapplied_credits")))
+        w.writerow(row)
+    t = data.get("totals") or {}
+    row = ["Total"] + [
+        _money(t.get(k)) for k in ("current", "over_30", "over_60", "over_90", "total")
+    ]
+    if side == "ar":
+        row.append(_money(t.get("unapplied_credits")))
+    w.writerow(row)
+    return out.getvalue()
+
+
+def aging_of_one(data: dict, side: str, party_id: int) -> dict:
+    """The aging narrowed to one customer or vendor (the report opened from
+    their page carries their id): their row, and a totals row that is the
+    same figures. Nobody's row leaves an aging of zeros."""
+    id_key = "customer_id" if side == "ar" else "vendor_id"
+    items = [i for i in data.get("items", []) if i.get(id_key) == party_id]
+    totals = dict(data.get("totals") or {})
+    for k in _AGING_COLS:
+        totals[k] = float(sum(Decimal(str(i.get(k) or 0)) for i in items))
+    return {**data, "items": items, "totals": totals}

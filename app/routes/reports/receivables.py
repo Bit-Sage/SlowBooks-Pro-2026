@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from app.schemas.common import StrictModel
 from sqlalchemy import or_
@@ -55,6 +55,30 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
     a customer paid that was not applied to an invoice was left out
     entirely (unapplied_credits read 0 for everyone)."""
     return ar_aging_report(db, as_of_date or date.today())
+
+
+@router.get("/ar-aging/csv")
+def ar_aging_csv_route(
+    request: Request,
+    as_of_date: date = Query(default=None),
+    customer_id: int = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The A/R Aging as a spreadsheet (#393): the file the Accountant's
+    Package carries, on its own. With customer_id (the report opened from
+    the customer's page) that customer's row and total only."""
+    from app.routes.csv import _csv_response
+    from app.routes.reports.financial import _company_name
+    from app.services.ledger_exports import aging_csv, aging_of_one
+
+    data = ar_aging_report(db, as_of_date or date.today())
+    name = f"ar-aging_{data['as_of_date']}"
+    if customer_id:
+        data = aging_of_one(data, "ar", customer_id)
+        name += f"_customer-{customer_id}"
+    return _csv_response(
+        aging_csv(data, _company_name(db), "ar"), f"{name}.csv", request
+    )
 
 
 def ar_aging_report(db: Session, as_of_date: date) -> dict:
