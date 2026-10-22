@@ -63,6 +63,9 @@ request boundary, centrally in the shared request base model
   (`reject_null_updates`) applied to every all-optional Update route, instead
   of the IntegrityError 500 it caused. An empty `{}` PUT stays a no-op 200.
 
+The NUL check also walks `list[str]` fields, and `BudgetUpdate` now shares
+the strict request base, so an unknown field on it is a 422 like everywhere else.
+
 The four above were reported in PNWImport's fork as still present upstream,
 and each was checked against 2.25.0 before it was fixed.
 

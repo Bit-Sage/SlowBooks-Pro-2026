@@ -429,8 +429,12 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Cannot edit a voided bill")
     check_closing_date(db, bill.date)
 
+    # The edit form sends a cleared number as null; the generate step below
+    # fills it in, so it is the one NOT NULL column null may reach.
     update_data = reject_null_updates(
-        Bill, data.model_dump(exclude_unset=True, exclude={"lines"})
+        Bill,
+        data.model_dump(exclude_unset=True, exclude={"lines"}),
+        allow_null=("bill_number",),
     )
 
     vendor = bill.vendor
