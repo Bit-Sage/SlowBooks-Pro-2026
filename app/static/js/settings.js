@@ -271,6 +271,28 @@ const SettingsPage = {
                         Send Test Email</button>
                 </div>
 
+                <div class="settings-section" role="group" aria-labelledby="settings-h-direct-deposit">
+                    <h3 id="settings-h-direct-deposit">Direct Deposit (ACH)</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        What the bank prints on its ACH origination agreement. With these saved, a processed
+                        pay run has a <strong>Direct deposit file</strong> button; upload the file to the bank.
+                        Employees' own accounts are entered on the employee, under Direct Deposit.
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Bank Routing Number</label>
+                            <input name="ach_bank_routing" inputmode="numeric" maxlength="9" value="${escapeHtml(s.ach_bank_routing || '')}" placeholder="9 digits"></div>
+                        <div class="form-group"><label>Bank Name</label>
+                            <input name="ach_bank_name" maxlength="23" value="${escapeHtml(s.ach_bank_name || '')}"></div>
+                        <div class="form-group"><label>Company Account Number</label>
+                            <input name="ach_company_account" type="password" inputmode="numeric" maxlength="17" value="${escapeHtml(s.ach_company_account || '')}" autocomplete="off">
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">The account the net pay is paid from. Stored encrypted.</div></div>
+                        <div class="form-group"><label>Immediate Origin</label>
+                            <input name="ach_immediate_origin" maxlength="10" value="${escapeHtml(s.ach_immediate_origin || '')}" placeholder="1 + EIN unless the bank says otherwise"></div>
+                        <div class="form-group"><label>Company Identification</label>
+                            <input name="ach_company_id" maxlength="10" value="${escapeHtml(s.ach_company_id || '')}" placeholder="1 + EIN unless the bank says otherwise"></div>
+                    </div>
+                </div>
+
                 <div class="settings-section" role="group" aria-labelledby="settings-h-online-payments">
                     <h3 id="settings-h-online-payments">Online Payments</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">

@@ -12,6 +12,29 @@ now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
 path as a possible traceback; it never was one, and now cannot be).
 
+**A processed pay run's direct deposit file, from the page** (discussion
+#211, @ContractorKeith). The NACHA file could only be made by an API client
+that sent the bank's numbers in the request body; the page had no button,
+and nothing kept the numbers. Settings → Direct Deposit (ACH) keeps them
+now: the bank's routing number and name, the company account the pay comes
+from (encrypted at rest) and the two identifiers the bank assigns, "1" +
+EIN from the company tax id when blank. A processed run's view has a
+**Direct deposit file** button (`GET /api/payroll/{id}/nacha`), the file
+named for the pay date, and says who it pays and who is paid by check
+(`direct_deposit` on each stub, a Paid by column). A run nobody on has an
+account, or a company with the bank details blank, is refused with the
+sentence that says what to do. `POST .../nacha` takes each field as
+optional now, outranking the saved one, and its `effective_date` reaches
+the batch header, which always carried the pay date. The file header holds
+a 10-character immediate origin whole: a space and nine digits dropped the
+leading "1" of "1" + EIN. The builder itself refuses a run with no
+credits rather than returning a well-formed empty file (from PNWImport's
+fork, 5f522667). Settings refuse a routing number that is not one and an
+identifier longer than its field. Each file made leaves an `EXPORT` row in
+the audit trail (who, which run, how many it pays, the total and the
+effective date, never an account number), and the Audit Log page lists and
+filters it, as it now does a backup `RESTORE`.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks

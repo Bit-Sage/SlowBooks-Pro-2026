@@ -157,6 +157,11 @@ const scenarios = {
     await p.get('IIFPage')._download('/api/iif/export/all', 'slowbooks_export.iif');
     return last(p.toasts);
   },
+  async 'payroll.js direct deposit file'() {
+    const p = page(['app/static/js/payroll.js']);
+    await p.get('PayrollPage').downloadDirectDeposit(1);
+    return last(p.toasts);
+  },
   async 'iif.js validate'() {
     const p = page(['app/static/js/iif.js']);
     const IIF = p.get('IIFPage');
