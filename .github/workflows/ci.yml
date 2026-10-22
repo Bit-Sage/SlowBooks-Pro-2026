@@ -164,7 +164,10 @@ jobs:
           # 125 with printed register checks: four tests in
           # tests/test_register_check_print.py render the check's PDF, which
           # skips here with the other PDF tests (no WeasyPrint stack)
-          MAX_SKIPS: "125"
+          # 126 with atomic account balances: the concurrent-postings race
+          # in tests/test_atomic_account_balance.py needs a Postgres server
+          # (SLOWBOOKS_TEST_POSTGRES_URL), like the other Postgres-only tests
+          MAX_SKIPS: "126"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

@@ -98,6 +98,21 @@ others. Single-user desktop sign-in and API-token requests are unchanged. Adds
 `users.session_version` (one Alembic migration, run in each company file).
 Found in MorrisAEGIS's fork (arkcpa-slowbooks).
 
+**Account balances update atomically under concurrency.** Posting a
+journal entry used to read each account into memory and add the line's amount
+in Python (`account.balance += delta`). On PostgreSQL, two sessions posting to
+the same account at once could both read the same starting balance and one
+overwrite the other, so `accounts.balance` drifted. The journal lines were
+always correct — only the stored balance was affected — but anything reading
+`Account.balance` saw the drift. Posting now aggregates each account's change
+and applies it as a single `UPDATE accounts SET balance = balance + delta`, so
+the database performs the addition and no concurrent update is lost; the same
+atomic path now backs the invoice/bill journal rebuild. Per-account updates are
+applied in ascending account-id order to avoid deadlocks, NULL balances are
+coalesced to zero, and in-session Account objects are refreshed so a response
+built in the same request reflects the new balance. Behaviour is unchanged on
+SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
