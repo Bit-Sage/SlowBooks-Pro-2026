@@ -12,6 +12,20 @@ now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
 path as a possible traceback; it never was one, and now cannot be).
 
+**Reclassify Transactions filters by payee** (#394, from a bookkeeper's
+notes). An unrecognized vendor is parked in Other expenses until the
+client says what it was, and the tool found lines by account and period
+only, so moving that vendor's meant picking them out of everything else
+parked there. A Payee select beside the account and period lists one
+vendor's lines, ready to tick and move in one pass, and rides on the
+address like the account does. Each row now names its payee as its
+document records it (a bill's vendor, an expense's vendor or the payee
+typed on it, the payee on a bank entry or card charge; a journal entry
+has none). `GET /api/reclassify/lines` takes `vendor_id`, which also
+matches a register entry whose typed payee is the vendor's name, and
+`payee`, a case-insensitive part of the name; each row carries
+`vendor_id` and `payee`.
+
 **A processed pay run's direct deposit file, from the page** (discussion
 #211, @ContractorKeith). The NACHA file could only be made by an API client
 that sent the bank's numbers in the request body; the page had no button,

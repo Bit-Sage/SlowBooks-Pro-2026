@@ -20,6 +20,15 @@ A move dated into a closed period takes the closing-date password, like
 any other change there, and shows on the Closing Date Exceptions report.
 The audit log carries one event for the move, naming every line, and the
 change to each line.
+
+The payee filter (#394): an unrecognized vendor is parked in Other
+expenses until the client says what it was, so the list takes a vendor
+(or a payee name) beside the account and period and shows that one's
+lines. Each line's payee is read the way its document records it: a
+bill's vendor; an expense's vendor, or the payee typed on it; the payee
+typed on a bank entry or a card charge; a journal entry has none. A
+vendor chosen as the filter matches a line that names the vendor, or one
+whose typed payee is the vendor's name.
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account
 from app.models.bills import Bill, BillLine
 from app.models.classes import TxnClass
+from app.models.contacts import Vendor
 from app.models.transactions import Transaction, TransactionLine
 
 # The documents and postings whose account was chosen by hand: these lines
@@ -203,6 +213,17 @@ class _Context:
             else {}
         )
         self.bill_lines = _bill_lines_by_bill(db, bill_ids)
+        vendor_ids = {b.vendor_id for b in self.bills.values() if b.vendor_id} | {
+            ln.transaction.source_id
+            for ln in lines
+            if (ln.transaction.source_type or "") == "expense"
+            and ln.transaction.source_id
+        }
+        self.vendors = (
+            {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+            if vendor_ids
+            else {}
+        )
 
     def verdict(
         self, line: TransactionLine
@@ -248,6 +269,36 @@ class _Context:
                 return f"Bill {bill.bill_number}"
         return None
 
+    def payee(self, txn: Transaction) -> tuple[int | None, str]:
+        """(vendor id, payee name) as the line's document records it; (None,
+        "") for a journal entry and the rest."""
+        source = txn.source_type or ""
+        desc = (txn.description or "").strip()
+        if source in BILL_SOURCES:
+            bill = self.bills.get(txn.source_id or 0)
+            vendor = self.vendors.get(bill.vendor_id) if bill is not None else None
+            return (vendor.id, vendor.name) if vendor is not None else (None, "")
+        if source == "expense":
+            # the vendor is an expense's only linked record (its source_id);
+            # with none, the payee typed on it heads the memo
+            vendor = self.vendors.get(txn.source_id or 0)
+            if vendor is not None:
+                return vendor.id, vendor.name
+            return None, _after_prefix(desc, "Expense: ")
+        if source == "cc_charge":
+            return None, _after_prefix(desc, "CC Charge: ")
+        if source in ("bank_entry", "check"):
+            # a register entry's memo is on its lines; its payee (else its
+            # memo) is the entry's description, "Bank entry" when neither
+            return None, "" if desc == "Bank entry" else desc
+        return None, ""
+
+
+def _after_prefix(text: str, prefix: str) -> str:
+    """The payee an expense or card charge keeps in its description, or ""
+    when it was posted without one (then the description is the plain type)."""
+    return text[len(prefix) :].strip() if text.startswith(prefix) else ""
+
 
 def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
     txn = line.transaction
@@ -255,6 +306,7 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
     cls_id = line.class_id if line.class_id is not None else txn.class_id
     debit = Decimal(line.debit or 0)
     credit = Decimal(line.credit or 0)
+    vendor_id, payee = ctx.payee(txn)
     return {
         "id": line.id,
         "transaction_id": txn.id,
@@ -263,6 +315,8 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
         "source_label": source_label(txn.source_type),
         "document": ctx.document(txn),
         "reference": txn.reference,
+        "vendor_id": vendor_id,
+        "payee": payee,
         "description": line.description or txn.description or "",
         "debit": str(debit),
         "credit": str(credit),
@@ -276,14 +330,25 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
 
 
 def lines_on_account(
-    db: Session, account_id: int, start_date: date, end_date: date
+    db: Session,
+    account_id: int,
+    start_date: date,
+    end_date: date,
+    vendor_id: int | None = None,
+    payee: str | None = None,
 ) -> dict:
-    """The account's lines in the period, each with whether it can move."""
+    """The account's lines in the period, each with whether it can move;
+    with ``vendor_id`` only that vendor's, with ``payee`` only those whose
+    payee name contains it (case does not matter)."""
     acct = db.get(Account, account_id)
     if acct is None:
         raise HTTPException(status_code=404, detail="Account not found")
     if start_date > end_date:
         raise HTTPException(status_code=400, detail="From is after To.")
+    vendor = db.get(Vendor, vendor_id) if vendor_id is not None else None
+    if vendor_id is not None and vendor is None:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    payee = (payee or "").strip()
     lines = (
         db.query(TransactionLine)
         .join(Transaction, TransactionLine.transaction_id == Transaction.id)
@@ -298,11 +363,24 @@ def lines_on_account(
     ctx = _Context(db, lines)
     classes = {c.id: c for c in db.query(TxnClass).all()}
     out = [_line_out(ctx, ln, classes) for ln in lines]
+    if vendor is not None:
+        wanted_name = vendor.name.casefold()
+        out = [
+            ln
+            for ln in out
+            if ln["vendor_id"] == vendor.id or ln["payee"].casefold() == wanted_name
+        ]
+    if payee:
+        out = [ln for ln in out if payee.casefold() in ln["payee"].casefold()]
     movable = [ln for ln in out if ln["movable"]]
     return {
         "account": _account_out(acct),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "vendor": (
+            {"id": vendor.id, "name": vendor.name} if vendor is not None else None
+        ),
+        "payee": payee or None,
         "lines": out,
         "count": len(out),
         "movable": len(movable),

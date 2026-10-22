@@ -1620,29 +1620,35 @@ const ReportsPage = {
         const p = prefill || {};
         const params = {};
         if (/^\d+$/.test(p.account_id || '')) params.account_id = p.account_id;
+        // one payee's lines (#394): the vendor rides on the address like the account
+        if (/^\d+$/.test(p.vendor_id || '')) params.vendor_id = p.vendor_id;
         ReportsPage._rc = { lists: null, lines: [], ticked: new Set(), plan: null, range: null };
         await ReportsPage.openPeriodModal('Reclassify Transactions', 'this_year_to_date', async (_period, range, prm) => {
             const rc = ReportsPage._rc;
             rc.range = range;
             rc.plan = null;
             if (!rc.lists) {
-                const [accounts, classes] = await Promise.all([
+                const [accounts, classes, vendors] = await Promise.all([
                     API.get('/accounts').catch(() => []),
                     API.get('/classes').catch(() => []),
+                    API.get('/vendors').catch(() => []),
                 ]);
-                rc.lists = { accounts, classes };
+                rc.lists = { accounts, classes, vendors };
             }
             const accountId = String(prm.account_id || '');
+            const vendorId = String(prm.vendor_id || '');
             const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`;
             const picker = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
                     <label for="rc-account" style="font-size:11px;">Lines on</label>
                     <select id="rc-account" data-no-search style="max-width:300px;" onchange="ReportsPage.setParam('account_id', this.value)"><option value="">Choose an account…</option>${rc.lists.accounts.map(a => acctOpt(a, accountId)).join('')}</select>
+                    <label for="rc-vendor" style="font-size:11px;">Payee</label>
+                    <select id="rc-vendor" data-no-search style="max-width:260px;" onchange="ReportsPage.setParam('vendor_id', this.value)"><option value="">All payees</option>${rc.lists.vendors.map(v => `<option value="${v.id}"${String(v.id) === vendorId ? ' selected' : ''}>${escapeHtml(v.name)}${v.is_active === false ? ' (inactive)' : ''}</option>`).join('')}</select>
                 </div>`;
             if (!accountId) {
                 rc.lines = [];
                 return `${picker}<p style="color:var(--gray-500);">Pick the account the lines are parked on: a holding account, or one chosen by mistake. Tick the lines to move, choose where they belong, preview the move, then post it as one change. Every moved line is listed in the result and in the audit log.</p>`;
             }
-            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}`);
+            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}${vendorId ? `&vendor_id=${vendorId}` : ''}`);
             rc.lines = data.lines;
             const listed = new Set(data.lines.map(l => l.id));
             rc.ticked.forEach(id => { if (!listed.has(id)) rc.ticked.delete(id); });
@@ -1658,6 +1664,7 @@ const ReportsPage = {
                         <td style="width:28px;">${tick}</td>
                         <td>${formatDate(l.date)}</td>
                         <td>${what}</td>
+                        <td>${escapeHtml(l.payee || '')}</td>
                         <td>${escapeHtml(l.description || '')}${l.movable ? '' : ` <span style="font-size:11px;">(stays: ${escapeHtml(l.reason)})</span>`}</td>
                         <td>${escapeHtml(l.class_name || '')}</td>
                         <td class="amount">${formatCurrency(l.amount)}</td>
@@ -1665,13 +1672,13 @@ const ReportsPage = {
             }).join('');
             const targets = rc.lists.accounts.filter(a => a.is_active !== false && !a.bank_kind && !a.is_control && String(a.id) !== accountId);
             const classOpts = rc.lists.classes.filter(c => !c.is_archived).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-            const empty = `<tr><td colspan="6" style="text-align:center; color:var(--gray-400);">No lines on ${escapeHtml(data.account.label)} in this period</td></tr>`;
+            const empty = `<tr><td colspan="7" style="text-align:center; color:var(--gray-400);">No lines${data.vendor ? ` for ${escapeHtml(data.vendor.name)}` : ''} on ${escapeHtml(data.account.label)} in this period</td></tr>`;
             return `${picker}
                 <p style="margin-bottom:8px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'line' : 'lines'}, ${data.movable} can move${data.count ? ` · lines that can move total ${formatCurrency(data.movable_total)}` : ''}</p>
                 <div class="table-container"><table id="rc-table">
                     <thead><tr>
                         <th scope="col" style="width:28px;">${data.movable ? `<input type="checkbox" id="rc-all" data-write aria-label="Tick every line that can move" onchange="ReportsPage.rcTickAll(this.checked)">` : ''}</th>
-                        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
+                        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
                     </tr></thead>
                     <tbody>${rows || empty}</tbody>
                 </table></div>
