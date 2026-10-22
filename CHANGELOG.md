@@ -224,6 +224,15 @@ imports: QuickBooks reports a parent's own postings in a section it names
 whole file as "accounts not in the chart" for each of them (discussion
 #349). Those lines post to the parent account itself now.
 
+**The Interoperability page says where a bank statement goes** (#396, from
+a bookkeeper's notes). Its CSV imports take lists and reports; a bank or
+credit card statement (CSV, OFX, QFX) is imported from the account itself,
+under Banking → the account → Import file, and the Report CSV section now
+says so with a link, as does the QuickBooks migration guide. The guide also
+answers whether the vendors and accounts on a statement must be entered
+first: they need not — each line comes in as a statement line with its
+payee as text, to match or categorize from the account's To review list.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
