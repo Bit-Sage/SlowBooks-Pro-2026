@@ -16,6 +16,12 @@ on the Interoperability page says how many problems there are and has
 **Save the list**, a text file of every line (the desktop app saves it to
 Documents/SlowBooks Pro/Reports and says where).
 
+A QuickBooks Desktop ledger export whose parent accounts have sub-accounts
+imports: QuickBooks reports a parent's own postings in a section it names
+"<Parent> - Other", which is not an account, and the import refused the
+whole file as "accounts not in the chart" for each of them (discussion
+#349). Those lines post to the parent account itself now.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
