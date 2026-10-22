@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A register deposit splits like a check, with a fee line** (#387, from a
+bookkeeper's notes). A card processor pays over the gross it collected less
+its fee, and only the net reaches the bank; a check could be split across
+lines since 2.23.5, a deposit could not, so it never matched the statement.
+A split line may now go the other way from its entry: the dialog's split
+table has a **Taken out** box per line, so the fee is typed as the positive
+number the statement shows, and a 97.00 deposit is Income 100.00, Bank
+Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
+3, DR bank 97). The same box on a check is a refund netted against it. On
+the API each split line is signed on its own, and a line of 0.00 is refused
+rather than dropped.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

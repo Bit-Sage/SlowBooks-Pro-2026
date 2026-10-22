@@ -190,7 +190,13 @@ def post_bank_entry(
     or a card charge). amount > 0: DR account / CR category (money in, or a
     card payment). A category that is itself a bank/card account is a
     transfer. With `splits` ([(account, amount, memo), …] adding up to
-    `amount`), the other side is several lines (#330)."""
+    `amount`), the other side is several lines (#330). Each part's own sign
+    says which way it posts: a negative part debits its account, a positive
+    part credits it, whichever way the entry goes. So a card processor's
+    deposit is the gross as income (+100.00) and the fee as an expense
+    (−3.00), the bank taking the net 97.00 (#387); and a check with a
+    refund netted against it (−620.00 and +120.00) is a −500.00 check. A
+    part of zero is refused."""
     amount = _q(amount)
     if amount == 0:
         raise HTTPException(status_code=400, detail="Amount must not be zero")
@@ -204,12 +210,15 @@ def post_bank_entry(
         for cat, part, part_memo in splits:
             part = _q(part)
             if part == 0:
-                continue
+                raise HTTPException(
+                    status_code=400,
+                    detail="A split line of 0.00 posts nothing; enter its share or remove the line",
+                )
             lines.append(
                 {
                     "account_id": cat.id,
-                    "debit": -part if amount < 0 else Decimal("0"),
-                    "credit": part if amount > 0 else Decimal("0"),
+                    "debit": -part if part < 0 else Decimal("0"),
+                    "credit": part if part > 0 else Decimal("0"),
                     "description": part_memo or line_desc,
                 }
             )

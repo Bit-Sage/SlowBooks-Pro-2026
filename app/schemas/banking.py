@@ -65,8 +65,10 @@ class LegacyBalancePost(StrictModel):
 
 class BankSplit(StrictModel):
     """One line of a split register entry (#330): the account it posts to
-    and its share of the amount, with the entry's sign (money out
-    negative), and its own memo."""
+    and its share of the amount, signed (money out negative, money in
+    positive), and its own memo. A line may carry the opposite sign from
+    the entry (#387): a card processor's fee on a deposit, a refund netted
+    against a check. Never zero."""
 
     category_account_id: int
     amount: Decimal
@@ -80,8 +82,9 @@ class BankTransactionCreate(StrictModel):
     `bank_account_id` (the feed) is accepted for older callers. With
     `splits`, the other side is several accounts whose amounts add up to
     `amount` (a check that pays several things; a loan payment that is
-    principal and interest); `category_account_id` is then the first
-    split's account, kept for older callers."""
+    principal and interest; a processor's deposit as the gross income and
+    the fee taken out, the bank taking the net); `category_account_id` is
+    then the first split's account, kept for older callers."""
 
     account_id: Optional[int] = None
     bank_account_id: Optional[int] = None
