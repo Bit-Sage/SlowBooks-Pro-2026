@@ -115,10 +115,12 @@ always correct — only the stored balance was affected — but anything reading
 and applies it as a single `UPDATE accounts SET balance = balance + delta`, so
 the database performs the addition and no concurrent update is lost; the same
 atomic path now backs the invoice/bill journal rebuild. Per-account updates are
-applied in ascending account-id order to avoid deadlocks, NULL balances are
-coalesced to zero, and in-session Account objects are refreshed so a response
-built in the same request reflects the new balance. Behaviour is unchanged on
-SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+applied in ascending account-id order, so a single posting cannot deadlock with
+another; an edit's reversal followed by its repost in one transaction can still
+contend with a concurrent edit of the same accounts, which the database resolves
+by failing one of them. NULL balances are coalesced to zero, and in-session
+Account objects are refreshed so a response built in the same request reflects
+the new balance. Behaviour is unchanged on SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
 
 **Reverse-proxy client IP and shared rate-limit counters** (fix). Behind a
 TLS-terminating reverse proxy the app saw the proxy's address on every request
