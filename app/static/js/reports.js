@@ -515,6 +515,11 @@ const ReportsPage = {
     async openDrillDown(accountId, accountName, startDate, endDate, classId = null, className = null, from = null, extra = {}) {
         accountId = parseInt(accountId, 10);
         if (!accountId) { toast('No account_id on this row', 'error'); return; }
+        // A Balance Sheet line gives only its as-of date: the list starts on
+        // January 1 of that date's year, not of this year — a date in an
+        // earlier year (a prior-year comparison) otherwise has its start
+        // after its end, and the dates are refused.
+        if (!startDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate || '')) startDate = `${endDate.slice(0, 4)}-01-01`;
         classId = classId ? parseInt(classId, 10) || null : null;
         const jobGiven = extra && extra.job_id !== undefined && extra.job_id !== null && extra.job_id !== '';
         const jobId = jobGiven ? parseInt(extra.job_id, 10) : null;
@@ -554,6 +559,10 @@ const ReportsPage = {
             const v = ReportsPage._view(back);
             const backParams = v.asOf ? { as_of_date: endDate } : { start_date: startDate, end_date: endDate };
             if ((v.keep || []).includes('class_id') && classId) backParams.class_id = classId;
+            // Back to the P&L or Balance Sheet returns to the dates and
+            // choices it was showing — a prior-year drill-down runs on last
+            // year's dates, which are not the report's own.
+            if (ReportsPage._viewReturn[back]) Object.assign(backParams, ReportsPage._viewReturn[back]);
             backBtn = ReportsPage._backButton(back, backParams, backToClass ? (className || T('Class')) : '');
         } else if (backPage) {
             backBtn = ReportsPage._backPageButton('classes', backPage, { start_date: startDate, end_date: endDate }, className || T('Class'));
@@ -1047,42 +1056,58 @@ const ReportsPage = {
             await ReportsPage.profitLossOfClass(prefill.class_id, null, prefill);
             return;
         }
+        // Compare to the same period a year earlier, with the $ and %
+        // change columns on or off: toolbar checkboxes whose choices ride on
+        // the address, saved reports and the PDF / CSV links.
+        const opts = { ...ReportsPage._statementOpts(prefill) };
+        const plParams = { ...opts.params, ...ReportsPage._compareParams(prefill) };
         await ReportsPage.openPeriodModal(T("Profit & Loss"), "this_year_to_date", async (_period, range, params) => {
-            const data = await API.get(`/reports/profit-loss?start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}`);
-            const pdfBtn = ReportsPage._exportButtons('profit-loss', `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}`);
+            const cmp = params.compare === 'prior_year';
+            const show = !params.hide_changes;
+            ReportsPage._cmpSync(params);
+            const data = await API.get(`/reports/profit-loss?start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}${cmp ? '&compare=prior_year' : ''}`);
+            const prior = cmp ? data.prior : null;
+            ReportsPage._viewReturn['profit-loss'] = { ...ReportsPage._cmpKeep(params), start_date: range.start, end_date: range.end };
+            const pdfBtn = ReportsPage._exportButtons('profit-loss', `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}${ReportsPage._cmpQs(params)}`);
             // Build the onclick payload outside the template so we can
             // HTML-escape the embedded double quotes from JSON.stringify().
             // Otherwise the inner " breaks the outer onclick="…" attribute.
-            const drillCall = (i) => escapeHtml(
-                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},null,null,'profit-loss')`
+            const drillCall = (i, start, end) => escapeHtml(
+                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},${JSON.stringify(start)},${JSON.stringify(end)},null,null,'profit-loss')`
             );
+            const cols = ReportsPage._cmpCols(prior, show);
+            const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
+                item && prior ? drillCall(item, prior.start_date, prior.end_date) : null);
             const section = (items) => {
-                if (!items.length) return `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
+                if (!items.length) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
                 return items.map(i =>
                     `<tr><td style="padding-left:24px;">
                         <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                           onclick="${drillCall(i)}">${escapeHtml(i.account_label || i.account_name)}</a>
-                        </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`
+                           onclick="${drillCall(i, range.start, range.end)}">${escapeHtml(i.account_label || i.account_name)}</a>
+                        </td>${figures(i.amount, i.prior_amount, i)}</tr>`
                 ).join("");
             };
+            const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
+            const total = (label, key, style) => `<tr style="${style}"><td>${label}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
+            const sub = 'font-weight:600; background:var(--gray-50);';
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}</p>
                 <div class="table-container"><table>
-                    <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
-                        <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
+                        ${head(T('Income'))}
                         ${section(data.income)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>${T('Total Income')}</td><td class="amount">${formatCurrency(data.total_income)}</td></tr>
-                        <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
+                        ${total(T('Total Income'), 'total_income', sub)}
+                        ${head('Cost of Goods Sold')}
                         ${section(data.cogs)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>Gross Profit</td><td class="amount">${formatCurrency(data.gross_profit)}</td></tr>
-                        <tr><td><strong>Expenses</strong></td><td></td></tr>
+                        ${total('Gross Profit', 'gross_profit', sub)}
+                        ${head('Expenses')}
                         ${section(data.expenses)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>Total Expenses</td><td class="amount">${formatCurrency(data.total_expenses)}</td></tr>
-                        <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
+                        ${total('Total Expenses', 'total_expenses', sub)}
+                        ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
-        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, ...ReportsPage._statementOpts(prefill) });
+        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: true });
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -1130,35 +1155,54 @@ const ReportsPage = {
     },
 
     async balanceSheet(prefill) {
+        // Compare to the same date a year earlier, as the P&L does.
+        const opts = { ...ReportsPage._sortOpts(prefill) };
+        const bsParams = { ...opts.params, ...ReportsPage._compareParams(prefill) };
         await ReportsPage.openPeriodModal(T("Balance Sheet"), "this_year_to_date", async (_period, params, live) => {
-            const data = await API.get(`/reports/balance-sheet?as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
-            const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${params.as_of_date}${ReportsPage._sortQs(live)}`);
-            const drillCall = (i) => escapeHtml(
-                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'balance-sheet')`
+            const cmp = live.compare === 'prior_year';
+            const show = !live.hide_changes;
+            ReportsPage._cmpSync(live);
+            const asOf = params.as_of_date;
+            const data = await API.get(`/reports/balance-sheet?as_of_date=${asOf}${ReportsPage._sortQs(live)}${cmp ? '&compare=prior_year' : ''}`);
+            const prior = cmp ? data.prior : null;
+            ReportsPage._viewReturn['balance-sheet'] = { ...ReportsPage._cmpKeep(live), as_of_date: asOf };
+            const pdfBtn = ReportsPage._exportButtons('balance-sheet', `as_of_date=${asOf}${ReportsPage._sortQs(live)}${ReportsPage._cmpQs(live)}`);
+            const drillCall = (i, date) => escapeHtml(
+                `ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_label || i.account_name)},null,${JSON.stringify(date)},null,null,'balance-sheet')`
             );
+            const cols = ReportsPage._cmpCols(prior, show);
+            const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
+                item && prior && item.account_id ? drillCall(item, prior.as_of_date) : null);
+            // A computed line (net income to date) has no account to open.
+            const name = (i) => i.account_id
+                ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
+                       onclick="${drillCall(i, asOf)}">${escapeHtml(i.account_label || i.account_name)}</a>`
+                : escapeHtml(i.account_name);
             const section = (items) => items.map(i =>
-                `<tr><td style="padding-left:24px;">
-                    <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                       onclick="${drillCall(i)}">${escapeHtml(i.account_label || i.account_name)}</a>
-                    </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`
-            ).join("") || `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
+                `<tr><td style="padding-left:24px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
+            ).join("") || `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+            const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
+            const total = (label, cur, before, style) => `<tr style="${style}"><td>${label}</td>${figures(cur, before)}</tr>`;
+            const sub = 'font-weight:600; background:var(--gray-50);';
+            const p = prior || {};
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}</p>
                 <div class="table-container"><table>
-                    <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
-                        <tr><td><strong>Assets</strong></td><td></td></tr>
+                        ${head('Assets')}
                         ${section(data.assets)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>Total Assets</td><td class="amount">${formatCurrency(data.total_assets)}</td></tr>
-                        <tr><td><strong>Liabilities</strong></td><td></td></tr>
+                        ${total('Total Assets', data.total_assets, p.total_assets, sub)}
+                        ${head('Liabilities')}
                         ${section(data.liabilities)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>Total Liabilities</td><td class="amount">${formatCurrency(data.total_liabilities)}</td></tr>
-                        <tr><td><strong>${T('Equity')}</strong></td><td></td></tr>
+                        ${total('Total Liabilities', data.total_liabilities, p.total_liabilities, sub)}
+                        ${head(T('Equity'))}
                         ${section(data.equity)}
-                        <tr style="font-weight:600; background:var(--gray-50);"><td>${T('Total Equity')}</td><td class="amount">${formatCurrency(data.total_equity)}</td></tr>
+                        ${total(T('Total Equity'), data.total_equity, p.total_equity, sub)}
+                        ${total(T('Liabilities + Equity'), data.total_liabilities + data.total_equity, (p.total_liabilities || 0) + (p.total_equity || 0), 'font-weight:700; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
-        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill, ...ReportsPage._sortOpts(prefill) });
+        }, "As Of", true, { reportType: 'balance_sheet', view: 'balance-sheet', prefill, params: bsParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(bsParams, 'Compare to same date last year'), wide: true });
     },
 
     async salesTax(prefill) {
@@ -2681,6 +2725,70 @@ ReportsPage._exportButtons = function (path, qs) {
         <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/pdf?${qs}','_blank')">Save PDF</button>
         <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/csv?${qs}','_blank')">Save CSV</button>
     </div>`;
+};
+
+// Prior-year comparison on the Profit & Loss and the Balance Sheet: the
+// params a view starts with (from its address or saved report), the two
+// toolbar checkboxes, and the money cells — Amount alone, or Current |
+// Prior Year, plus $ Change | % Change unless they are turned off.
+ReportsPage._viewReturn = {};
+ReportsPage._compareParams = function (prefill) {
+    const p = prefill || {};
+    const out = {};
+    if (p.compare === 'prior_year') out.compare = 'prior_year';
+    if (['1', 'true'].includes(String(p.hide_changes))) out.hide_changes = '1';
+    return out;
+};
+// What Back from a drill-down returns to: the statement's own choices
+// (sort, adjusting entries, comparison), not the drill-down's dates.
+ReportsPage._cmpKeep = function (params) {
+    const keep = {};
+    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes']) {
+        if (params && params[k]) keep[k] = params[k];
+    }
+    return keep;
+};
+ReportsPage._compareToolbar = function (params, label) {
+    const box = 'font-weight:normal; text-transform:none; font-size:12px; gap:6px; align-items:center;';
+    return `<div class="form-group" style="justify-content:flex-end; gap:4px;">
+        <label style="${box} display:inline-flex;"><input type="checkbox" id="cmp-prior" ${params.compare ? 'checked' : ''}
+            onchange="ReportsPage.setParam('compare', this.checked ? 'prior_year' : '')"> ${escapeHtml(label)}</label>
+        <label id="cmp-changes-wrap" style="${box} display:${params.compare ? 'inline-flex' : 'none'};"><input type="checkbox" id="cmp-changes" ${params.hide_changes ? '' : 'checked'}
+            onchange="ReportsPage.setParam('hide_changes', this.checked ? '' : '1')"> Show $ and % change</label>
+    </div>`;
+};
+// The change checkbox only means something while comparing.
+ReportsPage._cmpSync = function (params) {
+    const wrap = $('#cmp-changes-wrap');
+    if (wrap) wrap.style.display = params.compare ? 'inline-flex' : 'none';
+};
+ReportsPage._cmpQs = function (params) {
+    if (!params || params.compare !== 'prior_year') return '';
+    return `&compare=prior_year${params.hide_changes ? '&hide_changes=1' : ''}`;
+};
+ReportsPage._cmpCols = (prior, show) => (prior ? (show ? 5 : 3) : 2);
+ReportsPage._cmpHead = function (prior, show) {
+    if (!prior) return `<th scope="col" class="amount">Amount</th>`;
+    return `<th scope="col" class="amount">Current</th><th scope="col" class="amount">Prior Year</th>`
+        + (show ? `<th scope="col" class="amount">$ Change</th><th scope="col" class="amount">% Change</th>` : '');
+};
+ReportsPage._cmpPct = function (cur, before) {
+    cur = Number(cur || 0); before = Number(before || 0);
+    if (Math.abs(before) < 0.005) return '&mdash;';
+    const v = (cur - before) / Math.abs(before) * 100;
+    return `${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+};
+// priorDrill: an escaped onclick that opens last year's transactions for
+// the line, or null for a total.
+ReportsPage._cmpCells = function (cur, before, prior, show, priorDrill) {
+    if (!prior) return `<td class="amount">${formatCurrency(cur)}</td>`;
+    const priorCell = priorDrill
+        ? `<a href="javascript:void(0)" style="color:inherit; text-decoration:none;" title="Prior-year transactions" onclick="${priorDrill}">${formatCurrency(before || 0)}</a>`
+        : formatCurrency(before || 0);
+    const cells = `<td class="amount">${formatCurrency(cur)}</td><td class="amount">${priorCell}</td>`;
+    if (!show) return cells;
+    const diff = Number(cur || 0) - Number(before || 0);
+    return `${cells}<td class="amount">${formatCurrency(diff)}</td><td class="amount">${ReportsPage._cmpPct(cur, before)}</td>`;
 };
 
 // Prior-year comparison for the two statements a treasurer reads side by
