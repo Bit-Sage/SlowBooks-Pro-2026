@@ -6,6 +6,7 @@
 import csv
 from decimal import ROUND_HALF_UP, Decimal
 import io
+import re
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,10 @@ from app.models.invoices import Invoice
 from app.models.accounts import Account
 
 _FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+# A whole cell that is just a signed decimal is a number, not a formula:
+# -1234.56, -0.5, +3, and the money_text form -$1,234.56 the reconciliation
+# CSV carries (thousands in strict groups of three). ASCII digits only.
+_PLAIN_NUMBER = re.compile(r"[-+]?\$?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?")
 
 
 def _rate_text(value) -> str:
@@ -41,8 +46,10 @@ def _csv_safe(value: str) -> str:
     """Neutralize spreadsheet formula injection. A cell beginning with
     =, +, -, @, TAB, or CR is treated as a formula by Excel/Sheets; prefixing
     with an apostrophe forces plain text without changing the displayed value.
-    A customer named `=HYPERLINK(...)` otherwise executes on open."""
-    if value and value[0] in _FORMULA_LEADS:
+    A customer named `=HYPERLINK(...)` otherwise executes on open.
+    A plain signed number ("-1234.56") is left alone so a loss still sums
+    (SlowBooks-Pro-Testing#101); "-1+1" or "-SUM(A1)" is still prefixed."""
+    if value and value[0] in _FORMULA_LEADS and not _PLAIN_NUMBER.fullmatch(value):
         return "'" + value
     return value
 

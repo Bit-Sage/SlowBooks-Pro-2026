@@ -7,6 +7,14 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A negative number in a CSV stays a number** (found in PNWImport's fork,
+SlowBooks-Pro-Testing#101). The formula guard every CSV export shares put
+an apostrophe in front of any cell starting with `-`, so a Schedule C loss
+(`-1234.56`) opened as text and would not sum. A cell that is only a signed
+number (`-1234.56`, `-0.5`, the reconciliation's `-$1,234.56`) is now
+written as is; `=1+1`, `-1+1`, `-SUM(A1)`, `@x` and the like keep the
+apostrophe.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
