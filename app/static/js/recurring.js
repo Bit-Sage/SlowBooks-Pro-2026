@@ -93,6 +93,7 @@ const RecurringPage = {
                     <div class="form-group"><label>Tax Rate (%)</label>
                         <input name="tax_rate" type="number" step="0.0001" value="${+((rec.tax_rate || 0) * 100).toFixed(4)}" oninput="RecurringPage.recalc()"></div>
                     ${classGroup}
+                    ${id ? `<div class="form-group"><label style="font-weight:normal"><input type="checkbox" name="is_active" ${rec.is_active !== false ? 'checked' : ''}> Active</label></div>` : ''}
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Line Items</h3>
                 <table class="line-items-table">
@@ -188,6 +189,8 @@ const RecurringPage = {
             class_id: classIdFromForm(form),
             lines,
         };
+        // Clearing Active ends a schedule that has made invoices (it cannot be deleted).
+        if (id) data.is_active = form.is_active.checked;
         if (!id) {
             data.customer_id = parseInt(form.customer_id.value);
             data.start_date = form.start_date.value;
