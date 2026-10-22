@@ -184,6 +184,22 @@ APP_PORT=8080
 ```
 Then `docker compose up` — the app will be at http://localhost:8080.
 
+### Network exposure (defaults are loopback-only)
+
+By default `docker compose up` binds both published ports to `127.0.0.1`, so
+the app (`3001`) and Postgres (`5433`) answer on **this host only**. That keeps
+the dev database — which ships with the default `bookkeeper` password — off the
+LAN. To reach either from another machine, set the matching bind variable in
+`.env` to `0.0.0.0`:
+
+```
+APP_BIND=0.0.0.0        # expose the app (put a TLS proxy in front first)
+POSTGRES_BIND=0.0.0.0   # expose Postgres (set a real POSTGRES_PASSWORD first)
+```
+
+For production, use `docker-compose.prod.yml`, which publishes neither service
+and expects your own TLS-terminating reverse proxy in front.
+
 ### Allowing a different browser origin
 
 CORS defaults to `http://localhost:APP_PORT` and `http://127.0.0.1:APP_PORT`.

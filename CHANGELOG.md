@@ -35,6 +35,23 @@ the audit trail (who, which run, how many it pays, the total and the
 effective date, never an account number), and the Audit Log page lists and
 filters it, as it now does a backup `RESTORE`.
 
+**Docker build context and compose hardening**. `.dockerignore` now
+excludes the auto-generated encryption/signing keys (`.slowbooks-master.key`,
+`.slowbooks-session.key`), SQLite company files and their WAL/shm/journal
+sidecars, `app/static/uploads/`, and log/coverage artifacts, so `COPY . .`
+can't bake a developer's secrets or data into a shared image — while still
+copying everything the container needs at runtime (alembic migrations,
+`app/static` assets, `index.html`, the entrypoint). `docker-compose.yml` now
+binds both published ports to `127.0.0.1` by default (`POSTGRES_BIND` /
+`APP_BIND` to override, `POSTGRES_PORT` still sets the host port), so the dev
+database — which keeps its convenient default `bookkeeper` password — is no
+longer reachable from the LAN on a routable host. `docker-compose.prod.yml`
+already published neither service; unchanged. The image's HEALTHCHECK moved to
+a stdlib `scripts/docker_healthcheck.py` that no longer follows redirects, so
+it stays healthy when `FORCE_HTTPS=true` answers `/health` with a 307. New
+tests parse `.dockerignore` (secrets excluded, runtime paths kept), assert the
+compose ports are loopback-bound, and exercise the healthcheck probe.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
