@@ -1269,14 +1269,41 @@ class _UploadsHiddenStaticFiles(StaticFiles):
 
     def lookup_path(self, path):
         full_path, stat_result = super().lookup_path(path)
-        if full_path:
-            resolved = os.path.normcase(os.path.realpath(full_path))
-            # the folder itself or anything inside it
-            if resolved == self._uploads_prefix or resolved.startswith(
-                self._uploads_prefix + os.sep
-            ):
-                return "", None
+        if full_path and self._inside_uploads(
+            os.path.normcase(os.path.realpath(full_path))
+        ):
+            return "", None
         return full_path, stat_result
+
+    def _inside_uploads(self, resolved: str) -> bool:
+        """Whether a resolved real path is the uploads folder or inside it."""
+        if resolved == self._uploads_prefix or resolved.startswith(
+            self._uploads_prefix + os.sep
+        ):
+            return True
+        # A case-insensitive filesystem (macOS, Windows) opens UPLOADS as
+        # uploads, but normcase folds case on Windows only and realpath keeps
+        # the spelling asked for, so the string test above misses it on a
+        # Mac. Ask the filesystem instead: walk from the file up to the
+        # static root and compare each folder's identity with the uploads
+        # folder's. A few stats per asset, and none when the folder is gone.
+        try:
+            uploads_stat = os.stat(self._uploads_prefix)
+        except OSError:
+            return False
+        root = os.path.normcase(os.path.realpath(str(self.directory)))
+        here = resolved
+        while here.startswith(root):
+            try:
+                if os.path.samestat(os.stat(here), uploads_stat):
+                    return True
+            except OSError:
+                return False
+            parent = os.path.dirname(here)
+            if parent == here:
+                return False
+            here = parent
+        return False
 
 
 @app.api_route(
