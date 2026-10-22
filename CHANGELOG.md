@@ -94,7 +94,14 @@ from the signed cookie alone. Sessions end on the next request when a user is
 deactivated, their role changes, or their password changes or is reset; the
 role is read from the user row, so a role change takes effect at once. A
 user's own password change keeps the session that made it and ends their
-others. Single-user desktop sign-in and API-token requests are unchanged. Adds
+others. A switch to another company (`POST /api/auth/company`) re-checks the
+session the same way before the cookie's role opens anything, so a demoted or
+deactivated administrator cannot set up a new company from a stale session. A
+sign-in past its end date is signed out on its next request, and setting an
+end date in the past ends the sessions at once. Sign out ends the user's other
+sessions too, so a cookie copied before it stops working. Single-user desktop
+sign-in and API-token requests are unchanged; an API token outlives its
+maker's deactivation by design, until it is revoked itself. Adds
 `users.session_version` (one Alembic migration, run in each company file).
 Found in MorrisAEGIS's fork (arkcpa-slowbooks).
 

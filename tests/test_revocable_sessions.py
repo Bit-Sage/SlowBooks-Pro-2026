@@ -7,6 +7,7 @@ and API-token paths are untouched.
 """
 
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,6 +15,14 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.users import ROLE_BOOKKEEPER, ROLE_READONLY, User
 from app.services import auth as auth_service
+from tests import test_served_companies as served_tests
+
+# The Server Edition harness (two companies on one server) for the switch
+# tests, bound by attribute so the fixture name is not an unused import.
+served = served_tests.served
+A_PW = served_tests.A_PW
+_new_company = served_tests._new_company
+_sign_in = served_tests._sign_in
 
 FIXTURE_PW = "test-password-123"
 # Fixture passwords live in named constants, away from any username key,
@@ -231,6 +240,157 @@ def test_check_session_user_states(client, db_session):
     assert auth_service.check_session_user({})[0] == "skip"
     # Unknown id: revoked
     assert auth_service.check_session_user({"user_id": 999999})[0] == "revoked"
+
+
+# ---------------------------------------------------------------------------
+# A sign-in past its end date is signed out; setting one in the past ends the
+# sessions at once (the login path already refused such a user)
+# ---------------------------------------------------------------------------
+
+
+def _yesterday():
+    return date.today() - timedelta(days=1)
+
+
+def test_expired_user_session_dies_next_request(client, db_session):
+    renita = _mk_user(db_session, "renita", RENITA_PW)
+    rc = _signed_in("renita", RENITA_PW)
+    assert rc.get("/api/customers").status_code == 200
+
+    # The end date passes (set directly, without a version bump).
+    renita.expires_on = _yesterday()
+    db_session.commit()
+
+    assert (
+        auth_service.check_session_user(
+            {"user_id": renita.id, "session_version": renita.session_version}
+        )[0]
+        == "revoked"
+    )
+    assert rc.get("/api/customers").status_code == 401
+
+
+def test_setting_a_past_end_date_bumps_the_version(client, db_session):
+    renita = _mk_user(db_session, "renita", RENITA_PW)
+    before = renita.session_version
+    rc = _signed_in("renita", RENITA_PW)
+
+    r = client.put(
+        f"/api/users/{renita.id}", json={"expires_on": _yesterday().isoformat()}
+    )
+    assert r.status_code == 200, r.text
+    db_session.refresh(renita)
+    assert renita.session_version == before + 1
+    assert rc.get("/api/customers").status_code == 401
+
+
+def test_a_future_end_date_keeps_the_session(client, db_session):
+    renita = _mk_user(db_session, "renita", RENITA_PW)
+    before = renita.session_version
+    rc = _signed_in("renita", RENITA_PW)
+
+    later = (date.today() + timedelta(days=30)).isoformat()
+    r = client.put(f"/api/users/{renita.id}", json={"expires_on": later})
+    assert r.status_code == 200, r.text
+    db_session.refresh(renita)
+    assert renita.session_version == before
+    assert rc.get("/api/customers").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Sign out ends the session for good: a cookie copied before it is refused
+# ---------------------------------------------------------------------------
+
+
+def test_logout_ends_a_copied_cookie(client, db_session):
+    renita = _mk_user(db_session, "renita", RENITA_PW)
+    before = renita.session_version
+    rc = _signed_in("renita", RENITA_PW)
+    copied = rc.cookies.get(auth_service.SESSION_COOKIE_NAME)
+    assert copied
+
+    assert rc.post("/api/auth/logout").status_code == 200
+    db_session.refresh(renita)
+    assert renita.session_version == before + 1
+
+    # The cookie as it was before Sign out, put back: no longer signed in.
+    rc.cookies.set(auth_service.SESSION_COOKIE_NAME, copied)
+    assert rc.get("/api/customers").status_code == 401
+
+
+def test_logout_succeeds_without_a_user_row_or_a_database(client, monkeypatch):
+    from app.routes import auth as auth_routes
+
+    # No row by that id, and a session naming no row at all: nothing to bump.
+    auth_routes._end_sessions_of(999999)
+    auth_routes._end_sessions_of(None)
+
+    # The books cannot be reached: Sign out still signs out.
+    import app.database as db_module
+
+    def unreachable(*args, **kwargs):
+        raise RuntimeError("the books are not available")
+
+    monkeypatch.setattr(db_module, "SessionLocal", unreachable)
+    assert client.post("/api/auth/logout").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A switch to another company re-checks the session first: a demoted or
+# deactivated administrator cannot set up a new company from a stale cookie
+# ---------------------------------------------------------------------------
+
+
+def _change_in_alpha(username, **fields):
+    """Change a row in Alpha directly (as an administrator elsewhere would),
+    without the session that carries the old role knowing."""
+    import app.database as db_module
+
+    db = db_module.SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).first()
+        for name, value in fields.items():
+            setattr(user, name, value)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_deactivated_admin_cannot_set_up_a_new_company_at_a_switch(served):
+    _new_company(served, "Charlie Cafe", "charlie.db")
+    client = TestClient(app)
+    assert _sign_in(client, "pat", A_PW).status_code == 200
+    _change_in_alpha("pat", is_active=False)
+
+    r = client.post("/api/auth/company", json={"file": "charlie.db"})
+    assert r.status_code == 200, r.text
+    # signed out, not offered the setup: the target asks for its own password
+    assert r.json() == {"status": "ok", "authenticated": False, "username": ""}
+    r = client.post("/api/auth/setup", json={"password": "stranger-password"})
+    assert r.status_code == 403
+
+
+def test_a_demoted_admin_cannot_set_up_a_new_company_at_a_switch(served):
+    _new_company(served, "Charlie Cafe", "charlie.db")
+    client = TestClient(app)
+    assert _sign_in(client, "pat", A_PW).status_code == 200
+    # Demoted on the row only (no version bump): the row's role is the one
+    # that counts, not the "admin" the cookie still carries.
+    _change_in_alpha("pat", role=ROLE_BOOKKEEPER)
+
+    r = client.post("/api/auth/company", json={"file": "charlie.db"})
+    assert r.status_code == 200, r.text
+    assert "setup" not in r.json()
+    assert r.json()["authenticated"] is False
+
+
+def test_an_admin_still_sets_a_new_company_up_at_a_switch(served):
+    # the re-check leaves a sign-in that is still good alone
+    _new_company(served, "Charlie Cafe", "charlie.db")
+    client = TestClient(app)
+    assert _sign_in(client, "pat", A_PW).status_code == 200
+    r = client.post("/api/auth/company", json={"file": "charlie.db"})
+    assert r.json() == {"status": "ok", "authenticated": False, "setup": True}
 
 
 # ---------------------------------------------------------------------------
