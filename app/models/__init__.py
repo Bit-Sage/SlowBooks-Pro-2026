@@ -92,6 +92,7 @@ from app.models.budgets import Budget
 from app.models.attachments import Attachment
 from app.models.stored_files import StoredFile
 from app.models.email_templates import EmailTemplate
+from app.models.invoice_messages import InvoiceMessage
 
 # Phase 11: Inventory + Saved Reports
 from app.models.items import InventoryMovement
@@ -167,6 +168,7 @@ __all__ = [
     "Attachment",
     "StoredFile",
     "EmailTemplate",
+    "InvoiceMessage",
     # Phase 11
     "InventoryMovement",
     "SavedReport",

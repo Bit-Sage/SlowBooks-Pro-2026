@@ -7,6 +7,23 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Saved invoice messages, one the default, chosen on the invoice** (#392,
+from a bookkeeper's notes). The note that says how to pay — Zelle to this
+address, ask for a card link — was typed into every invoice's Notes by
+hand. Settings → Invoice Messages keeps a short list of them now (name,
+text, a Default radio; add, edit, delete, an administrator's writes like
+the settings around it), and the invoice form offers the list in a
+**Message** select above Notes, "(none)" first: choosing one copies its
+text into Notes, where it can still be edited, and a new invoice starts
+with the default message's text (with no default, the Default Invoice
+Notes setting as before; an estimate converted with no notes of its own
+starts the same way). The invoice keeps the text, not the choice, so a
+message edited later leaves old invoices alone, and the PDF and email
+print it where they printed Notes. `GET/POST /api/invoice-messages`,
+`PUT/DELETE /api/invoice-messages/{id}`; setting one message's
+`is_default` clears the others in the same transaction. The email
+templates are unchanged.
+
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that

@@ -78,6 +78,7 @@ const SettingsPage = {
             SettingsPage.loadCompanyFile();
             SettingsPage.loadLegacyFiles();
             SettingsPage.loadEmailTemplates();
+            SettingsPage.loadInvoiceMessages();
             SettingsPage.loadAiConfig();
             SettingsPage.loadClasses();
             SettingsPage.loadCostCodes();
@@ -423,6 +424,18 @@ const SettingsPage = {
                         <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.seedTemplates()">Seed Default Templates</button>
                     </div>
                     <div id="email-template-list"></div>
+                </div>
+
+                <div class="settings-section" role="group" aria-labelledby="settings-h-invoice-messages">
+                    <h3 id="settings-h-invoice-messages">${T('Invoice')} Messages</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        Saved notes to choose from on the ${T('invoice')} form: how to pay, a thank-you, a season's greeting. The form offers them beside Notes and copies the chosen text in,
+                        where it can still be edited. The default one fills Notes on a new ${T('invoice')}; with no default, the Default ${T('Invoice')} Notes above do.
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;" data-admin data-write>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.editInvoiceMessage()">+ Add Message</button>
+                    </div>
+                    <div id="invoice-message-list"></div>
                 </div>
 
                 <div class="settings-section" role="group" aria-labelledby="settings-h-menu">
@@ -1752,6 +1765,98 @@ const SettingsPage = {
             toast('Template saved');
             closeModal();
             SettingsPage.loadEmailTemplates();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ----- Invoice messages (#392) ---------------------------------------
+    // The saved notes an invoice can choose from, one of them the default.
+    // Writes are an administrator's (the server refuses the rest), so every
+    // control here is data-admin data-write.
+
+    async loadInvoiceMessages() {
+        const el = $('#invoice-message-list');
+        if (!el) return;
+        let messages;
+        try { messages = await API.get('/invoice-messages'); } catch (e) { return; }
+        if (!Array.isArray(messages)) return;
+        if (messages.length === 0) {
+            el.innerHTML = `<div style="font-size:11px; color:var(--text-muted);">No saved messages yet.</div>`;
+            return;
+        }
+        // The Default radios have no name: the list sits inside the Settings
+        // form, and a named radio in it would be sent to PUT /api/settings as
+        // a setting (and count as an edit). The handler unchecks the rest.
+        el.innerHTML = `<div class="table-container"><table>
+            <thead><tr><th scope="col">Default</th><th scope="col">Name</th><th scope="col">Message</th><th scope="col">Actions</th></tr></thead>
+            <tbody>${messages.map(m => `<tr>
+                <td><input type="radio" class="msg-default" aria-label="Default: ${escapeHtml(m.name)}"
+                    data-admin data-write ${m.is_default ? 'checked' : ''} onchange="SettingsPage.setDefaultInvoiceMessage(${m.id}, this)"></td>
+                <td><strong>${escapeHtml(m.name)}</strong></td>
+                <td style="font-size:11px; white-space:pre-wrap;">${escapeHtml(m.body)}</td>
+                <td class="actions">
+                    <button type="button" class="btn btn-sm btn-secondary" data-admin data-write onclick="SettingsPage.editInvoiceMessage(${m.id})">Edit</button>
+                    <button type="button" class="btn btn-sm btn-secondary" data-destructive data-admin data-write onclick="SettingsPage.deleteInvoiceMessage(${m.id})">Delete</button>
+                </td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+        SettingsPage._messages = messages;
+    },
+
+    _messages: [],
+
+    editInvoiceMessage(id = null) {
+        const m = id ? SettingsPage._messages.find(x => x.id === id) : null;
+        openModal(`${m ? 'Edit' : 'New'} ${T('Invoice')} Message`, `
+            <form id="invoice-message-editor" onsubmit="SettingsPage.saveInvoiceMessage(event, ${id})">
+                <div class="form-grid">
+                    <div class="form-group full-width"><label>Name</label>
+                        <input name="name" required maxlength="100" value="${escapeHtml(m ? m.name : '')}" placeholder="e.g. Pay by Zelle or card"></div>
+                    <div class="form-group full-width"><label>Message</label>
+                        <textarea name="body" rows="5" required>${escapeHtml(m ? m.body : '')}</textarea></div>
+                    <div class="form-group full-width"><label style="display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" name="is_default" ${m && m.is_default ? 'checked' : ''}> Default: fills Notes on a new ${T('invoice')}</label></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Message</button>
+                </div>
+            </form>`);
+    },
+
+    async saveInvoiceMessage(e, id) {
+        e.preventDefault();
+        const form = e.target;
+        const data = {
+            name: form.name.value.trim(),
+            body: form.body.value.trim(),
+            is_default: form.is_default.checked,
+        };
+        try {
+            if (id) await API.put(`/invoice-messages/${id}`, data);
+            else await API.post('/invoice-messages', data);
+            toast('Message saved');
+            closeModal();
+            SettingsPage.loadInvoiceMessages();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async setDefaultInvoiceMessage(id, radio) {
+        if (radio) document.querySelectorAll('#invoice-message-list .msg-default').forEach(r => { if (r !== radio) r.checked = false; });
+        try {
+            await API.put(`/invoice-messages/${id}`, { is_default: true });
+            toast('Default message set');
+        } catch (err) { toast(err.message, 'error'); }
+        SettingsPage.loadInvoiceMessages();
+    },
+
+    async deleteInvoiceMessage(id) {
+        const m = SettingsPage._messages.find(x => x.id === id);
+        const name = m ? m.name : 'this message';
+        if (!confirm(`Delete the message "${name}"? ${T('Invoices')} that already carry its text keep it.`)) return;
+        try {
+            await API.del(`/invoice-messages/${id}`);
+            toast('Message deleted');
+            SettingsPage.loadInvoiceMessages();
         } catch (err) { toast(err.message, 'error'); }
     },
 

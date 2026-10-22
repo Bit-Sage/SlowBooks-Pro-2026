@@ -595,14 +595,31 @@ const InvoicesPage = {
 
     lineCount: 0,
     _customers: [],
+    _messages: [],
+
+    // A saved message copies its text into Notes, where it can still be
+    // edited; the invoice keeps the text, not the choice (#392). "(none)"
+    // clears Notes only when it holds a saved message's text as it is, so
+    // something typed by hand is never thrown away.
+    messageChosen(id) {
+        const notes = $('#invoice-form [name="notes"]');
+        if (!notes) return;
+        const chosen = InvoicesPage._messages.find(m => String(m.id) === String(id));
+        if (chosen) { notes.value = chosen.body; return; }
+        const current = notes.value.trim();
+        if (InvoicesPage._messages.some(m => m.body.trim() === current)) notes.value = '';
+    },
 
     async showForm(id = null, prefillCustomerId = null) {
-        const [customers, items, settings] = await Promise.all([
+        const [customers, items, settings, messages] = await Promise.all([
             API.get('/customers?active_only=true'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
+            // the saved messages (#392); the form works without the list
+            API.get('/invoice-messages').catch(() => []),
         ]);
-
+        InvoicesPage._messages = messages;
+        const defaultMessage = messages.find(m => m.is_default);
 
         let inv = {
             customer_id: prefillCustomerId || '',
@@ -610,7 +627,9 @@ const InvoicesPage = {
             terms: settings.default_terms || 'Net 30',
             po_number: '',
             tax_rate: (parseFloat(settings.default_tax_rate || '0') || 0) / 100,
-            notes: settings.invoice_notes || '',
+            // a new invoice starts with the default message; with none, the
+            // Default Invoice Notes setting as before
+            notes: defaultMessage ? defaultMessage.body : (settings.invoice_notes || ''),
             lines: [],
         };
         if (id) inv = await API.get(`/invoices/${id}`);
@@ -687,6 +706,11 @@ const InvoicesPage = {
                     <div class="total-row"><span class="label">Tax</span><span class="value" id="inv-tax">$0.00</span></div>
                     <div class="total-row grand-total"><span class="label">Total</span><span class="value" id="inv-total">$0.00</span></div>
                 </div>
+                ${messages.length ? `<div class="form-group" style="margin-top:12px;"><label>Message</label>
+                    <select name="message_id" id="inv-message-select" onchange="InvoicesPage.messageChosen(this.value)">
+                        <option value="">(none)</option>
+                        ${messages.map(m => `<option value="${m.id}" ${(inv.notes || '').trim() === m.body.trim() ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}
+                    </select></div>` : ''}
                 <div class="form-group" style="margin-top:12px;"><label>Notes</label>
                     <textarea name="notes">${escapeHtml(inv.notes || '')}</textarea></div>
                 ${id ? '' : `<div class="hint" id="inv-create-note">Creating this ${T('invoice')} posts it to the books now; Draft means not yet marked sent. Items tracked in inventory come out of stock when it is created.</div>`}

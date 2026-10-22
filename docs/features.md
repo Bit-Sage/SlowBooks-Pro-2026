@@ -24,6 +24,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Recurring Invoices** — Schedule automatic invoice generation (weekly/monthly/quarterly/yearly) with manual "Generate Now" or cron script. The form prices the item and shows a total; a schedule that adds up to $0.00 is refused, and the generator skips an old one
 - **Documents that add up to $0.00** — An invoice, credit memo, duplicate or estimate conversion for $0.00 asks "Save it anyway?" before it saves (API: `allow_zero_total: true`, else 409 `zero_total`); a no-charge invoice starts Paid
 - **Invoice numbering and footer** — Settings' invoice prefix, next invoice number (leading zeros kept as padding) and invoice footer are used
+- **Saved invoice messages** (#392) — Settings → Invoice Messages keeps a short list of notes (how to pay, a thank-you), one the default; the invoice form's **Message** select copies the chosen text into Notes, editable, and a new invoice starts with the default's text. The invoice keeps the text, not the choice, so editing a message later leaves old invoices alone
 - **Walk-in sales** — A sales receipt needs no customer: counter sales go to a built-in Walk-in Customer (Anonymous Donor in a nonprofit)
 - **Unit prices to four places** — $0.045 a box on invoices, estimates, sales receipts, credit memos, recurring schedules, bills, purchase orders, vendor credits and items; each line amount is rounded to the cent
 - **Credit limit** — Saving an invoice, editing one up, or converting an estimate that takes a customer past their credit limit asks first, in the form and (v2.22.2, #256) on the API: 409 `credit_limit` with the limit and what they'd owe, saved only with `allow_over_credit_limit: true`. What they owe counts the credits and unapplied payments they hold, as A/R Aging does; a sales receipt, paid at once, is never asked
@@ -670,6 +671,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules (`…/apply` runs them over the review queue) |
 | `/api/budgets` | GET, POST, PUT, DELETE | Budget management |
 | `/api/email-templates` | GET, POST, PUT, DELETE | Custom email template management |
+| `/api/invoice-messages` | GET, POST, PUT, DELETE | Saved invoice messages, one the default (writes: administrator) |
 | `/health` | GET | Liveness probe (no auth required) |
 
 ### Inventory
