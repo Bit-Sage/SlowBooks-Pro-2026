@@ -313,7 +313,7 @@ def test_chart_rows_open_the_register_and_the_filter_box_keeps_the_grouping(
         note = page.locator("#accounts-filter-note")
         assert note.get_attribute("role") == "status"
         assert note.inner_text() == "1 account matches"
-        page.keyboard.press("Control+A")
+        page.keyboard.press("ControlOrMeta+A")  # select all, the host's own key
         page.keyboard.type("checking")
         page.wait_for_function(
             "() => [...document.querySelectorAll('#page-content tbody tr')].filter(r => r.offsetParent !== null).some(r => /Assets/.test(r.textContent))"
