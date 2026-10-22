@@ -45,17 +45,10 @@ fi
 
 echo "Starting Slowbooks Pro 2026 on port ${APP_PORT:-3001}..."
 
-# Reverse-proxy client-IP trust. Behind a TLS-terminating proxy the real client
-# address arrives in X-Forwarded-For, but uvicorn trusts that header only from
-# the addresses in --forwarded-allow-ips (default 127.0.0.1 — not a proxy in
-# another container/pod). Unset FORWARDED_ALLOW_IPS => no flags, so a directly
-# reachable deploy never trusts a spoofable header. See the helper for why.
-# An array so the flags stay separate argv entries under quoted expansion
-# below (the shell-safety audit requires every expansion be quoted); the
-# helper emits space-free tokens, so the unquoted command substitution that
-# fills the array splits them one per element and nothing else.
-# shellcheck disable=SC2046
-PROXY_ARGS=( $(python scripts/uvicorn_proxy_args.py) )
+# Reverse-proxy client-IP trust needs no flag here: uvicorn reads
+# FORWARDED_ALLOW_IPS from the environment on its own (default 127.0.0.1, so
+# set it to the proxy's address or CIDR behind a proxy) and --proxy-headers is
+# on by default. A directly reachable deploy never trusts a spoofable header.
 
 # Multi-worker production mode.
 # uvloop + httptools come from uvicorn[standard], explicit for clarity.
@@ -66,5 +59,4 @@ exec uvicorn app.main:app \
     --workers "${APP_WORKERS:-2}" \
     --loop uvloop \
     --http httptools \
-    "${PROXY_ARGS[@]}" \
     --access-log

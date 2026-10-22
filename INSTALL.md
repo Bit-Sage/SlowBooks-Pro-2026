@@ -149,8 +149,11 @@ Open **http://localhost:3001** in your browser.
 > add `?sslmode=require` to `DATABASE_URL`, and unset that flag. Behind a
 > proxy you must also set `FORWARDED_ALLOW_IPS` to the proxy's address or
 > CIDR, or the login rate limiter and the audit tables both key on the
-> proxy's IP instead of the real client's — see
-> [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md).
+> proxy's IP instead of the real client's. uvicorn reads that variable
+> itself and decides the client address once; the older `TRUST_PROXY_HEADERS`
+> knob is retired. With several workers, point `RATE_LIMIT_STORAGE_URI` at a
+> Redis (the client ships with the app; startup refuses to boot when it is
+> unreachable) — see [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md).
 
 > On Windows, **Option 0** avoids all of this (no Docker at all, secret
 > generated for you, opens a desktop window) — prefer it unless you
