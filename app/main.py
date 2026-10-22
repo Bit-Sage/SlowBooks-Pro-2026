@@ -227,6 +227,13 @@ def _run_startup_security_checks():
                 "redirect becomes a no-op."
             )
 
+        # Non-fatal: two proxy misconfigurations that silently weaken a
+        # security control without any visible symptom. Only reached in
+        # production (APP_DEBUG=false) and not on the SLOWBOOKS_PRIVATE_NETWORK
+        # path above, which knowingly serves plain HTTP on a trusted host — so
+        # the desktop app and local dev never see these warnings.
+        _warn_on_proxy_misconfiguration()
+
     # Only after the cheap checks pass do we open a DB connection — and an
     # encrypted company file is not opened at all without its key (#290):
     # one sentence, before the migration guard or create_all can touch it.
@@ -235,6 +242,55 @@ def _run_startup_security_checks():
     refuse_a_locked_file()
     _refuse_a_database_behind_head()
     _create_missing_tables()
+
+
+def _warn_on_proxy_misconfiguration() -> None:
+    """Warn (never refuse) on two silent weakenings behind a reverse proxy.
+
+    Both degrade a security control without any visible symptom — exactly the
+    kind of thing that goes unnoticed for a year — but the app serves correctly
+    either way, and failing hard would break existing deploys on upgrade.
+
+    1. Client IP. uvicorn parses X-Forwarded-For but trusts it only from the
+       addresses in --forwarded-allow-ips / FORWARDED_ALLOW_IPS (default
+       127.0.0.1). A proxy in another container or pod has a different address,
+       so the header is ignored and every request reports the PROXY's IP. That
+       collapses the login rate limiter into one shared bucket for all users and
+       writes the proxy's address into login_attempts and portal_accesses,
+       making the audit trail useless for forensics. FORCE_HTTPS=true is the
+       reliable signal here: it means TLS terminates somewhere (almost always a
+       proxy, since the app serves plain HTTP), so an empty trust list is wrong.
+
+    2. Rate-limit storage. In-process counters are per-worker and per-replica,
+       so with APP_WORKERS>1 the effective limit is N times the configured one.
+       Point RATE_LIMIT_STORAGE_URI at shared storage (e.g. redis://...).
+    """
+    from app.services.rate_limit import RATE_LIMIT_STORAGE_URI, _enabled
+
+    log = logging.getLogger("uvicorn.error")
+
+    if FORCE_HTTPS and not os.environ.get("FORWARDED_ALLOW_IPS", "").strip():
+        log.warning(
+            "FORWARDED_ALLOW_IPS is unset while FORCE_HTTPS is on, which implies "
+            "TLS terminates at a proxy in front of the app. uvicorn trusts "
+            "X-Forwarded-For only from 127.0.0.1, so a proxy in another "
+            "container or pod makes every client IP read as the proxy's address: "
+            "the login rate limiter degrades to one shared bucket for all users "
+            "and login_attempts / portal_accesses lose forensic value. Set "
+            "FORWARDED_ALLOW_IPS to your proxy's address or CIDR (never 0.0.0.0/0 "
+            "or *, which lets any client forge its source IP)."
+        )
+
+    workers = int(os.environ.get("APP_WORKERS", "1") or "1")
+    if _enabled and not RATE_LIMIT_STORAGE_URI and workers > 1:
+        log.warning(
+            "Rate limiting is on with APP_WORKERS=%d but RATE_LIMIT_STORAGE_URI "
+            "is unset, so each worker keeps its own counters — every configured "
+            "limit is effectively %dx looser (more still across replicas). Point "
+            "RATE_LIMIT_STORAGE_URI at shared storage, e.g. redis://redis:6379/0.",
+            workers,
+            workers,
+        )
 
 
 def _refuse_a_database_behind_head(target=None) -> None:

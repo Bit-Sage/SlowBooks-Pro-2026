@@ -113,6 +113,23 @@ coalesced to zero, and in-session Account objects are refreshed so a response
 built in the same request reflects the new balance. Behaviour is unchanged on
 SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
 
+**Reverse-proxy client IP and shared rate-limit counters** (fix). Behind a
+TLS-terminating reverse proxy the app saw the proxy's address on every request
+instead of the caller's, because uvicorn trusts `X-Forwarded-For` only from
+`127.0.0.1` by default and nothing widened that trust. That collapsed the login
+rate limiter into one shared bucket for all users (5 attempts/minute across
+everyone, not per client) and recorded the proxy's IP in the `login_attempts` /
+`portal_accesses` audit tables. Separately, rate-limit counters lived in
+per-worker memory, so `APP_WORKERS=4` made every configured limit 4x looser.
+The Docker entrypoint now passes `--proxy-headers --forwarded-allow-ips` when
+`FORWARDED_ALLOW_IPS` is set; the limiter honours `RATE_LIMIT_STORAGE_URI` (e.g.
+`redis://…`) for shared counters, defaulting to in-memory as before; and the app
+logs a startup warning when a proxy is implied (`FORCE_HTTPS` on) but the trust
+list is empty, or when more than one worker runs with in-memory counters.
+`docker-compose.prod.yml` passes `FORWARDED_ALLOW_IPS` through; left blank, it
+starts as before with the warning. Desktop and
+single-worker installs are unaffected. See `docs/tls-proxy-setup.md`.
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
