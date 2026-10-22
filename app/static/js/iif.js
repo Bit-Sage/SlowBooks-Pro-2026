@@ -152,6 +152,43 @@ const IIFPage = {
     // What an import says when it's done (#197). One that came back with
     // errors said "Imported 0 records" in green and "Import complete", and the
     // red box below was the only sign of them.
+    // The error lists of the last import, by box, for Save the list.
+    _errors: {},
+
+    // The whole list in the box, however long, with its count and a button
+    // that saves it as a text file: the box showed twenty and "and 14,070
+    // more", and the person asked where the rest were (discussion #349).
+    _errorBox(errors, box) {
+        IIFPage._errors[box] = errors;
+        const n = errors.length;
+        let html = '<div class="iif-errors">';
+        if (n > 1) {
+            html += `<div style="margin-bottom:4px;"><strong>${n.toLocaleString()} problems.</strong> `
+                + `<button type="button" class="btn btn-sm btn-secondary" onclick="IIFPage.saveErrors('${box}')" title="Every line of this list, as a text file">Save the list</button></div>`;
+        }
+        errors.forEach(e => { html += `${escapeHtml(e)}<br>`; });
+        return html + '</div>';
+    },
+
+    // The desktop app saves it to Documents/SlowBooks Pro/Reports and says
+    // where; a browser downloads it.
+    async saveErrors(box) {
+        const errors = IIFPage._errors[box] || [];
+        if (!errors.length) return;
+        const day = new Date().toISOString().slice(0, 10);
+        const filename = `Import-problems_${day}.txt`;
+        const blob = new Blob([errors.join('\n') + '\n'], { type: 'text/plain' });
+        const desktop = window.SlowbooksDesktop;
+        if (!(desktop && await desktop.saveFile(blob, filename))) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+            toast(`Saved ${filename}`);
+        }
+    },
+
     _reportImport(total, errors, unsupported = 0, words = null) {
         const records = words || `Imported ${total} record${total === 1 ? '' : 's'}`;
         const left = unsupported > 0 ? `, ${unsupported} not imported (type not supported)` : '';
@@ -206,9 +243,7 @@ const IIFPage = {
                 html += '</div>';
             }
             if (result.errors?.length) {
-                html += '<div class="iif-errors">';
-                result.errors.forEach(e => { html += `${escapeHtml(typeof e === 'string' ? e : JSON.stringify(e))}<br>`; });
-                html += '</div>';
+                html += IIFPage._errorBox(result.errors.map(e => typeof e === 'string' ? e : JSON.stringify(e)), 'qbcsv');
             }
             $('#qbcsv-import-result').innerHTML = html;
             const total = (result.sales_receipts || 0) + (result.invoices || 0) + (result.deposits || 0) + (result.checks || 0) + (result.journals || 0) + (result.time_entries || 0) + (result.posted || 0);  // + the categorized sheet's register entries (W-21)
@@ -571,12 +606,7 @@ const IIFPage = {
         }
 
         if (result.errors && result.errors.length) {
-            html += '<div class="iif-errors">';
-            result.errors.forEach(e => {
-                const msg = typeof e === 'string' ? e : `Row ${e.row}: ${e.message}`;
-                html += `${escapeHtml(msg)}<br>`;
-            });
-            html += '</div>';
+            html += IIFPage._errorBox(result.errors.map(e => typeof e === 'string' ? e : `Row ${e.row}: ${e.message}`), 'iif');
         }
 
         $('#iif-import-result').innerHTML = html;

@@ -7,6 +7,15 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**An import's whole error list, and a file of it** (discussion #349,
+@ContractorKeith). The Transaction Detail by Account and categorized-sheet
+imports cut their list at twenty and said "… and 14,070 more", and the
+person asked whether there was a way to see the whole report. There was
+not. Both lists come whole now, as the IIF import's already did; the box
+on the Interoperability page says how many problems there are and has
+**Save the list**, a text file of every line (the desktop app saves it to
+Documents/SlowBooks Pro/Reports and says where).
+
 A QuickBooks Desktop ledger export whose parent accounts have sub-accounts
 imports: QuickBooks reports a parent's own postings in a section it names
 "<Parent> - Other", which is not an account, and the import refused the
