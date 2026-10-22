@@ -141,8 +141,9 @@ class StrictModel(BaseModel):
     The wildcard validator rejects the two hostile scalar shapes that slip
     past type checks: a NUL byte (``\\x00``) in any string — stored silently
     on SQLite, a 500 on PostgreSQL — and a date outside MIN/MAX_REQUEST_YEAR.
-    It is inherited by every request schema (and runs on their nested models
-    and list items), so one definition covers them all.
+    A ``list[str]`` field is walked too. It is inherited by every request
+    schema (and runs on their nested models and list items), so one
+    definition covers them all.
     """
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -152,6 +153,11 @@ class StrictModel(BaseModel):
     def _reject_hostile_scalars(cls, value):
         if isinstance(value, str):
             if "\x00" in value:
+                raise ValueError("Text may not contain a NUL byte (\\x00).")
+        elif isinstance(value, (list, tuple, set)):
+            # A ``list[str]`` field: pydantic hands the validator the whole
+            # list, so its strings are checked here, not one by one above.
+            if any(isinstance(v, str) and "\x00" in v for v in value):
                 raise ValueError("Text may not contain a NUL byte (\\x00).")
         elif isinstance(value, _date):  # also datetime, a date subclass
             if not (MIN_REQUEST_YEAR <= value.year <= MAX_REQUEST_YEAR):

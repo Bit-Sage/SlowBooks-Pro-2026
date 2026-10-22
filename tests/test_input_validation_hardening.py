@@ -225,3 +225,80 @@ def test_put_vendor_name_null_is_422(client, db_session):
 def test_put_customer_empty_body_stays_noop_200(client, db_session, seed_customer):
     r = client.put(f"/api/customers/{seed_customer.id}", json={})
     assert r.status_code == 200, r.text
+
+
+def _posted_bill(client, db_session, seed_accounts, number="B-100"):
+    vendor = _vendor(db_session)
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor.id,
+            "bill_number": number,
+            "date": "2026-05-01",
+            "tax_rate": 0,
+            "lines": [{"description": "x", "quantity": 1, "rate": 10}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    return vendor, r.json()
+
+
+def test_put_bill_cleared_number_generates_one(client, db_session, seed_accounts):
+    """The desktop's edit form sends a cleared bill number as null (the
+    exact shape bills.js builds). That is not a null on a NOT NULL column
+    to refuse: the route generates a number, as main did."""
+    vendor, bill = _posted_bill(client, db_session, seed_accounts)
+    body = {
+        "vendor_id": vendor.id,
+        "bill_number": None,
+        "date": "2026-05-01",
+        "terms": "Net 30",
+        "notes": None,
+        "class_id": None,
+        "job_id": None,
+        "lines": [{"description": "x", "quantity": 1, "rate": 10}],
+    }
+    r = client.put(f"/api/bills/{bill['id']}", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_number"]
+    assert r.json()["bill_number"] != "B-100"
+
+
+def test_put_bill_vendor_id_null_is_still_422(client, db_session, seed_accounts):
+    _, bill = _posted_bill(client, db_session, seed_accounts)
+    r = client.put(f"/api/bills/{bill['id']}", json={"vendor_id": None})
+    assert r.status_code == 422, r.text
+    assert "vendor_id" in r.json()["detail"]
+    r = client.put(f"/api/bills/{bill['id']}", json={"date": None})
+    assert r.status_code == 422, r.text
+
+
+# ---------------------------------------------------------------------------
+# 5. NUL inside a list[str]; BudgetUpdate is a StrictModel
+# ---------------------------------------------------------------------------
+
+
+def test_nul_byte_inside_list_of_strings_is_rejected():
+    from pydantic import ValidationError
+    import pytest
+
+    from app.routes.simplefin import MapRequest
+
+    MapRequest(mapping={}, reversed=["acct-1"])
+    with pytest.raises(ValidationError, match="NUL"):
+        MapRequest(mapping={}, reversed=["acct-1", "bad\x00id"])
+
+
+def test_budget_update_refuses_unknown_fields():
+    from decimal import Decimal
+
+    from pydantic import ValidationError
+    import pytest
+
+    from app.schemas.budgets import BudgetUpdate
+    from app.schemas.common import StrictModel
+
+    assert issubclass(BudgetUpdate, StrictModel)
+    assert BudgetUpdate(amount=Decimal("5")).amount == Decimal("5")
+    with pytest.raises(ValidationError):
+        BudgetUpdate(amount=Decimal("5"), ammount=Decimal("1"))
