@@ -3,6 +3,8 @@
 unused accounts go in one step (#332); the vendor list has a search box and
 a vendor's page shows what was paid to date, with a CSV (#335)."""
 
+import csv
+import io
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -206,7 +208,7 @@ def test_the_vendor_list_has_a_search_box_and_a_vendor_its_paid_to_date_and_csv(
     db_session.commit()
     r = client.get(f"/api/vendors/{vendor.id}/payments/csv")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
-    assert "Payments_City_Water.csv" in r.headers["content-disposition"]
+    assert "Payments_City-Water.csv" in r.headers["content-disposition"]
     text = r.text
     assert "2026-01-15" in text and "2025-12-15" in text and "yes" in text
     assert "Total paid,350.00" in text  # the voided one aside
@@ -216,3 +218,68 @@ def test_the_vendor_list_has_a_search_box_and_a_vendor_its_paid_to_date_and_csv(
     ).text
     assert "2025-12-15" not in year and "Total paid,250.00" in year
     assert client.get("/api/vendors/99999/payments/csv").status_code == 404
+
+
+def test_vendor_payments_csv_is_formula_guarded_with_bom(client, db_session):
+    """A formula-shaped vendor name is text, amounts stay numbers, BOM first."""
+    vendor = Vendor(name='=HYPERLINK("x")')
+    db_session.add(vendor)
+    db_session.flush()
+    db_session.add(
+        BillPayment(
+            vendor_id=vendor.id,
+            date=date(2026, 1, 15),
+            amount=Decimal("-5.00"),
+            method="+cmd",
+            check_number="1001",
+        )
+    )
+    db_session.commit()
+    r = client.get(f"/api/vendors/{vendor.id}/payments/csv")
+    assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
+    rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
+    assert rows[0] == ["Vendor", '\'=HYPERLINK("x")']
+    assert rows[4][1] == "'+cmd"
+    assert rows[4][3] == "-5.00"  # a number, not "'-5.00"
+    assert rows[5][3] == "-5.00"
+
+
+def test_vendor_payments_csv_non_latin1_name_is_not_a_500(client, db_session):
+    """A vendor name Latin-1 can't carry ("Łódź Supply") used to 500 in the
+    Content-Disposition header. The header now sends an ASCII fallback plus
+    filename*=UTF-8''… (RFC 6266), so the download succeeds."""
+    vendor = Vendor(name="Łódź Supply")
+    db_session.add(vendor)
+    db_session.flush()
+    db_session.add(
+        BillPayment(
+            vendor_id=vendor.id,
+            date=date(2026, 1, 15),
+            amount=Decimal("10.00"),
+            method="check",
+            check_number="1001",
+        )
+    )
+    db_session.commit()
+    r = client.get(f"/api/vendors/{vendor.id}/payments/csv")
+    assert r.status_code == 200
+    cd = r.headers["content-disposition"]
+    # ASCII stand-in for a reader without RFC 6266 (and the header encodes).
+    assert 'filename="Payments_Lodz-Supply.csv"' in cd
+    # Exact name, percent-encoded, for every current browser.
+    assert "filename*=UTF-8''Payments_%C5%81%C3%B3d%C5%BA-Supply.csv" in cd
+
+
+def test_vendor_payments_csv_desktop_header_is_inline(client, db_session):
+    """The desktop shim's X-Slowbooks-Desktop header gets an inline
+    disposition; request is passed through to _csv_response for it."""
+    vendor = Vendor(name="City Water")
+    db_session.add(vendor)
+    db_session.commit()
+    r = client.get(
+        f"/api/vendors/{vendor.id}/payments/csv",
+        headers={"X-Slowbooks-Desktop": "1"},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("inline;")

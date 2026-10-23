@@ -30,6 +30,7 @@ from app.services.csv_export import (
 from app.services.csv_import import import_customers, import_vendors, import_items
 from app.services.chart_import import import_chart
 from app.services.upload_limits import read_limited
+from app.services.request_utils import content_disposition
 
 router = APIRouter(prefix="/api/csv", tags=["csv"])
 
@@ -64,7 +65,7 @@ def _csv_response(
     return Response(
         content=csv_data,
         media_type="text/csv",
-        headers={"Content-Disposition": f"{disposition}; filename={filename}"},
+        headers={"Content-Disposition": content_disposition(filename, disposition)},
     )
 
 
