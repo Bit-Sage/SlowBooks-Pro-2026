@@ -36,7 +36,11 @@ jobs:
 
   test:
     name: Test (pytest + coverage)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest began serving 26.04 (resolute) on 2026-10-23,
+    # where apt has no `libxml2` candidate and the system-deps step below
+    # dies before a test runs. 24.04 is what the suite has run on since
+    # the libjpeg note; move it on purpose, with the package list.
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - uses: actions/checkout@v4
