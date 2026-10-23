@@ -67,52 +67,133 @@ class MissingControlAccount(LookupError):
         self.user_text = detail
 
 
-# number -> (name as seeded, what the posting code uses it for)
+# number -> (name as seeded, the account type the posting code expects, what
+# the posting code uses it for)
 #
 # Every entry here is resolved by literal number somewhere in app/. Renaming
 # one is safe; renumbering it is not, which is what the route guard enforces.
-CONTROL_ACCOUNTS: dict[str, tuple[str, str]] = {
-    "1000": ("Checking", "the default bank account for deposits and payments"),
-    "1100": ("Accounts Receivable", "what customers owe — every invoice and payment"),
-    "1200": ("Undeposited Funds", "payments received but not yet deposited"),
-    "1300": ("Inventory", "the inventory asset behind item purchases and sales"),
-    "2000": ("Accounts Payable", "what you owe vendors — every bill and bill payment"),
-    "2100": ("Credit Card", "credit-card charges and the card's balance"),
-    "2200": ("Sales Tax Payable", "sales tax collected on invoices and receipts"),
+#
+# The TYPE is load-bearing too. A number is only a control account when the
+# account also carries the type the posting code expects: Opening Balance
+# Equity is resolved as an EQUITY 3900, so an imported chart's expense "3900
+# Miscellaneous Expense" is an ordinary account, not a control one — it must
+# not be flagged, locked, or refused a renumber. The resolvers, the route
+# guard and the chart importer all match on number AND type (see is_control).
+CONTROL_ACCOUNTS: dict[str, tuple[str, str, str]] = {
+    "1000": ("Checking", "asset", "the default bank account for deposits and payments"),
+    "1100": (
+        "Accounts Receivable",
+        "asset",
+        "what customers owe — every invoice and payment",
+    ),
+    "1200": ("Undeposited Funds", "asset", "payments received but not yet deposited"),
+    "1300": (
+        "Inventory",
+        "asset",
+        "the inventory asset behind item purchases and sales",
+    ),
+    "2000": (
+        "Accounts Payable",
+        "liability",
+        "what you owe vendors — every bill and bill payment",
+    ),
+    "2100": ("Credit Card", "liability", "credit-card charges and the card's balance"),
+    "2200": (
+        "Sales Tax Payable",
+        "liability",
+        "sales tax collected on invoices and receipts",
+    ),
     "3200": (
         "Retained Earnings",
+        "equity",
         "the balancing account for imported opening balances",
     ),
-    "4000": ("Service Income", "the default income account for invoice lines"),
-    "4800": ("Late Fee Income", "finance charges added to overdue invoices"),
-    "5000": ("Cost of Goods Sold", "the cost side of an inventory item's sale"),
-    "5900": ("Inventory Adjustments", "write-offs and quantity corrections"),
+    "3900": (
+        "Opening Balance Equity",
+        "equity",
+        "the offset for opening balances — bank and card accounts and an "
+        "item's opening stock",
+    ),
+    "4000": (
+        "Service Income",
+        "income",
+        "the default income account for invoice lines",
+    ),
+    "4800": ("Late Fee Income", "income", "finance charges added to overdue invoices"),
+    "5000": ("Cost of Goods Sold", "cogs", "the cost side of an inventory item's sale"),
+    "5900": ("Inventory Adjustments", "expense", "write-offs and quantity corrections"),
     "6000": (
         "Advertising & Marketing",
+        "expense",
         "payroll expense when 6110 or 6120 is missing from an older chart",
     ),
-    "6120": ("Payroll Tax Expense", "employer taxes posted by job costing"),
-    "6150": ("Employee Benefits Expense", "benefit costs posted by job costing"),
+    "6120": ("Payroll Tax Expense", "expense", "employer taxes posted by job costing"),
+    "6150": (
+        "Employee Benefits Expense",
+        "expense",
+        "benefit costs posted by job costing",
+    ),
 }
 
 
+def _type_value(account_type) -> str | None:
+    """The string value of an AccountType enum, a plain string, or None."""
+    if account_type is None:
+        return None
+    return getattr(account_type, "value", account_type)
+
+
 def is_control_number(number: str | None) -> bool:
+    """True when `number` is a control-account number, type aside.
+
+    Use this only where the account type is not available or not relevant —
+    the seeded-gap boot check, the registry tripwire test. The user-facing
+    paths (the route guard, the response flag, the chart importer) call
+    `is_control`, which also matches the type, so an imported 3900 expense is
+    not mistaken for Opening Balance Equity.
+    """
     return bool(number) and str(number) in CONTROL_ACCOUNTS
+
+
+def is_control(number: str | None, account_type) -> bool:
+    """True when `number` is a control number AND `account_type` is the type
+    the posting code expects for it.
+
+    The registry is keyed on number, but the posting code finds, e.g.,
+    Opening Balance Equity by an EQUITY 3900. An account numbered 3900 that
+    is an expense is an ordinary account the registry does not govern: it is
+    not flagged, not type-locked on import, and can be renumbered or deleted.
+    """
+    entry = CONTROL_ACCOUNTS.get(str(number)) if number else None
+    if entry is None:
+        return False
+    return _type_value(account_type) == entry[1]
+
+
+def expected_type(number: str | None) -> str:
+    """The account type the posting code expects for a control number, or ""."""
+    entry = CONTROL_ACCOUNTS.get(str(number)) if number else None
+    return entry[1] if entry else ""
 
 
 def describe(number: str) -> tuple[str, str]:
     """(name, purpose) for a control number; ("", "") if it is not one."""
-    return CONTROL_ACCOUNTS.get(str(number), ("", ""))
+    entry = CONTROL_ACCOUNTS.get(str(number))
+    return (entry[0], entry[2]) if entry else ("", "")
 
 
 def resolve(db: Session, number: str) -> int:
     """The id of a control account, or raise.
 
-    Never returns None. A caller that wants tolerance — a report, an export
-    that only needs a display name — calls `find` instead and says so.
+    Matched on number AND the type the posting code expects (an imported
+    chart may reuse a number for something else), the same rule the route
+    guard and the chart importer apply. Never returns None. A caller that
+    wants tolerance — a report, an export that only needs a display name —
+    calls `find` instead and says so.
     """
+    want_type = expected_type(number)
     acct = db.query(Account).filter(Account.account_number == str(number)).first()
-    if acct is None:
+    if acct is None or (want_type and _type_value(acct.account_type) != want_type):
         name, purpose = describe(number)
         raise MissingControlAccount(str(number), name or "control account", purpose)
     return acct.id

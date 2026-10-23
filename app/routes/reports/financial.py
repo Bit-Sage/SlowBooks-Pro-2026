@@ -231,9 +231,12 @@ def profit_loss(
         db, AccountType.EXPENSE, start_date, end_date, in_class, sort, exclude_adjusting
     )
 
-    total_income = sum(i["amount"] for i in income)
-    total_cogs = sum(c["amount"] for c in cogs)
-    total_expenses = sum(e["amount"] for e in expenses)
+    # The rows are floats: totals rounded to the cent, or 777.40 of sales
+    # less cost answers 777.4000000000001 and stops matching the by-class
+    # grid, which sums in Decimal.
+    total_income = round(sum(i["amount"] for i in income), 2)
+    total_cogs = round(sum(c["amount"] for c in cogs), 2)
+    total_expenses = round(sum(e["amount"] for e in expenses), 2)
 
     return {
         "start_date": start_date.isoformat(),
@@ -247,9 +250,9 @@ def profit_loss(
         "expenses": expenses,
         "total_income": total_income,
         "total_cogs": total_cogs,
-        "gross_profit": total_income - total_cogs,
+        "gross_profit": round(total_income - total_cogs, 2),
         "total_expenses": total_expenses,
-        "net_income": total_income - total_cogs - total_expenses,
+        "net_income": round(total_income - total_cogs - total_expenses, 2),
     }
 
 
@@ -410,9 +413,11 @@ def balance_sheet(
     )
     equity = _totals_by_account(db, AccountType.EQUITY, date_end=as_of_date, sort=sort)
 
-    total_assets = sum(a["amount"] for a in assets)
-    total_liabilities = sum(liab["amount"] for liab in liabilities)
-    total_equity = sum(e["amount"] for e in equity)
+    # Round the totals to the cent as the P&L does (profit_loss above), so a
+    # sum of floats never shows 777.4000000000001 beside the P&L's 777.40.
+    total_assets = round(sum(a["amount"] for a in assets), 2)
+    total_liabilities = round(sum(liab["amount"] for liab in liabilities), 2)
+    total_equity = round(sum(e["amount"] for e in equity), 2)
 
     # Net income for all periods up to as_of_date flows into equity as retained
     # earnings. Without this, the balance sheet fails to balance whenever there
@@ -422,10 +427,14 @@ def balance_sheet(
     income_rows = _totals_by_account(db, AccountType.INCOME, date_end=as_of_date)
     cogs_rows = _totals_by_account(db, AccountType.COGS, date_end=as_of_date)
     expense_rows = _totals_by_account(db, AccountType.EXPENSE, date_end=as_of_date)
-    net_income = (
-        sum(r["amount"] for r in income_rows)
-        - sum(r["amount"] for r in cogs_rows)
-        - sum(r["amount"] for r in expense_rows)
+    # Rounded to the cent the same way profit_loss rounds its net income
+    # (each total to the cent, then subtract and round), so the two reports
+    # agree and no float noise leaks into equity.
+    net_income = round(
+        round(sum(r["amount"] for r in income_rows), 2)
+        - round(sum(r["amount"] for r in cogs_rows), 2)
+        - round(sum(r["amount"] for r in expense_rows), 2),
+        2,
     )
 
     if net_income != 0:
@@ -439,7 +448,7 @@ def balance_sheet(
                 "amount": float(net_income),
             }
         ]
-        total_equity += net_income
+        total_equity = round(total_equity + net_income, 2)
 
     return {
         "as_of_date": as_of_date.isoformat(),

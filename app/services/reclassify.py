@@ -50,6 +50,7 @@ SOURCE_LABELS = {
     "qb_ledger_import": "Imported journal",
     "qbo_ledger": "Imported entry",
     "opening_balance": "Opening balance",
+    "item_opening": "Opening inventory",
     "accountants_copy": "Accountant's entry",
     "bank_entry": "Bank entry",
     "check": "Check",

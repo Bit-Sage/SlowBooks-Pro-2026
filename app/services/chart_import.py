@@ -19,7 +19,7 @@ accepted, both measured against real files rather than guessed at:
 Nothing is written on a dry run: `import_chart(..., dry_run=True)` returns
 the plan — what would be created, renamed, updated, skipped or deactivated,
 row by row, with a reason — and the same call with `dry_run=False` applies
-exactly that plan. The fifteen control accounts the posting code finds by
+exactly that plan. The sixteen control accounts the posting code finds by
 number are never removed and never renumbered; when the file names one of
 them (an account called Receivable, Payable, Checking, Sales tax payable,
 ...) the control account is **renamed to the file's name** so the operator's
@@ -507,7 +507,9 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             if target.name != r.name:
                 changes.append(f"rename '{target.name}' → '{r.name}'")
             if r.type and r.type != target.account_type.value:
-                if control_accounts.is_control_number(target.account_number):
+                if control_accounts.is_control(
+                    target.account_number, target.account_type
+                ):
                     entry["note"] = (
                         f"type stays {target.account_type.value}: control account "
                         f"(the software posts to it by number)"
@@ -587,7 +589,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
         for a in existing:
             if a.id in matched or not a.is_active:
                 continue
-            if control_accounts.is_control_number(a.account_number):
+            if control_accounts.is_control(a.account_number, a.account_type):
                 plan.rows.append(
                     {
                         "row": None,

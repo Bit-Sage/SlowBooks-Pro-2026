@@ -152,7 +152,7 @@ def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
     posted = {aid for (aid,) in db.query(TransactionLine.account_id).distinct()}
     for a in seeded:
         row = {"id": a.id, "account_number": a.account_number or "", "name": a.name}
-        if control_accounts.is_control_number(a.account_number):
+        if control_accounts.is_control(a.account_number, a.account_type):
             kept.append({**row, "reason": "a control account"})
         elif a.account_number in _FOUND_BY_NUMBER:
             kept.append({**row, "reason": _FOUND_BY_NUMBER[a.account_number]})
@@ -260,7 +260,7 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
     # and stays allowed; only the number and the type are load-bearing.
     # (Not gated on is_system: every seeded account carries that flag, and
     # renumbering an ordinary expense account is a reasonable request.)
-    if control_accounts.is_control_number(account.account_number):
+    if control_accounts.is_control(account.account_number, account.account_type):
         name, purpose = control_accounts.describe(account.account_number)
         for field, what in (("account_number", "number"), ("account_type", "type")):
             if field in fields and fields[field] != getattr(account, field):
@@ -355,10 +355,12 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
     # is the same wrong flag 2.10.2 found hiding the Edit button, in a second
     # place (issue #139, reported by tresero coming from hledger).
     #
-    # Fifteen numbers genuinely cannot go: the posting code resolves them
+    # Sixteen numbers genuinely cannot go: the posting code resolves them
     # literally, and a document that cannot find one is #119. Those can be
-    # renamed, not removed. The other forty-two are ordinary accounts.
-    if control_accounts.is_control_number(account.account_number):
+    # renamed, not removed. The other forty-two are ordinary accounts. Gated
+    # on number AND type: an imported 3900 expense is not Opening Balance
+    # Equity, so it deletes like any ordinary account.
+    if control_accounts.is_control(account.account_number, account.account_type):
         name, purpose = control_accounts.describe(account.account_number)
         raise HTTPException(
             status_code=400,

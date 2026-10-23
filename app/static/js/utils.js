@@ -55,7 +55,7 @@ function sourceWord(type) {
         vendor_credit: 'Vendor credit', credit_memo: 'Credit memo', sales_receipt: 'Sales receipt',
         journal: 'Journal entry', manual_journal: 'Journal entry', manual: 'Journal entry',
         expense: 'Expense', deposit: 'Deposit', cc_charge: 'Card charge', transfer: 'Transfer',
-        bank_entry: 'Bank entry', opening_balance: 'Opening balance', check: 'Check',
+        bank_entry: 'Bank entry', opening_balance: 'Opening balance', item_opening: 'Opening inventory', check: 'Check',
         job_cost: () => `${T('Job')} cost`, payroll: 'Pay run', pto: 'Time off accrual',
         in_kind_gift: 'In-kind gift', restriction_release: 'Release from restriction',
         functional_allocation: 'Functional allocation', late_fee: 'Late fee',

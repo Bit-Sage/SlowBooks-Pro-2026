@@ -80,6 +80,37 @@ rows name each other as parents leaves the closing link off with that
 sentence as the row's note, shown in the dry-run preview and when applied
 alike. The report paths and IIF names stop at a loop saved before this
 release. The same one walk now guards the cost-code tree too.
+An inventory item created with a starting quantity on hand posts that stock
+now, as QuickBooks does (found in PNWImport's fork,
+SlowBooks-Pro-Testing#101). Ten on hand at $4.00 used to write 10 onto the
+item and nothing else: no movement, no journal entry, so the $40 never
+reached the balance sheet and the first sale took its cost of goods out of
+an Inventory account that had never been given it. The item's opening
+quantity is a movement at its cost and one entry, DR Inventory / CR 3900
+Opening Balance Equity, under its own source type (`item_opening`), so a
+fixed asset that happens to share the item's id is no longer mistaken for
+its purchase. The entry is dated the day the item is created, or an `as_of`
+date you give (books set up as of a prior year-end); the form notes that an
+opening trial balance's 1300 already counts this stock, and the entry is
+refused on a closed date. Only a stock item posts — a service item with
+tracking forced on through the API does not. A zero cost moves the stock
+with no entry; a negative starting quantity is refused. The entry is listed
+on the Journal page but not voidable there (reversing it would leave the
+stock without its value); correct it with an inventory adjustment. Opening
+Balance Equity is matched by account number 3900, so a chart that already
+holds it under another name — a renamed account, or QuickBooks' "Opening Bal
+Equity" — is reused rather than grown a second one. Only an **equity** 3900
+counts, both for that resolution and as the control account the renumber and
+delete guards now protect; the registry matches on number **and** the type the
+posting code expects, so an imported chart's non-equity 3900 (an expense "3900
+Miscellaneous Expense", say) is an ordinary account you can still renumber or
+delete, and the same holds for any other control number carrying the wrong
+type. A later change to
+on-hand still posts as an inventory adjustment, as the item form already
+sends it; `PUT /api/items/{id}` never sets it. The Balance Sheet now rounds
+its current-period net income and total equity to the cent the same way the
+Profit & Loss does, so the two reports agree and no 777.4000000000001 sits
+beside the P&L's 777.40.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
