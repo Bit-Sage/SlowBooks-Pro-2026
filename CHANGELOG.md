@@ -15,9 +15,12 @@ A split line may now go the other way from its entry: the dialog's split
 table has a **Taken out** box per line, so the fee is typed as the positive
 number the statement shows, and a 97.00 deposit is Income 100.00, Bank
 Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
-3, DR bank 97). The same box on a check is a refund netted against it. On
-the API each split line is signed on its own, and a line of 0.00 is refused
-rather than dropped.
+3, DR bank 97). A ticked line always runs opposite the entry, whichever way
+the entry goes, so the same box on a check is a refund netted against it (a
+−500 check paying Insurance 620 less a 120 refund), and the check's printed
+stub lists that refund as a negative line so the stub still totals the
+check. On the API each split line is signed on its own, and a line of 0.00
+is refused rather than dropped.
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
