@@ -149,6 +149,36 @@ def test_a_bom_only_file_says_it_is_empty(
     assert db_session.query(BankTransaction).count() == 0
 
 
+@pytest.mark.parametrize(
+    "encoding,padded",
+    [
+        ("utf-8-sig", "\ufeff".encode("utf-8") + b"\x00" * 64),
+        ("utf-16-le", "\ufeff".encode("utf-16-le") + b"\x00" * 64),
+        ("utf-16-be", "\ufeff".encode("utf-16-be") + b"\x00" * 64),
+    ],
+)
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/bank-import/preview",
+        "/api/bank-import/import/{id}",
+        "/api/bank-import/preview-csv",
+        "/api/bank-import/import-csv/{id}",
+    ],
+)
+def test_a_bom_then_nul_padding_says_it_is_empty(
+    client, db_session, feed, path, encoding, padded
+):
+    # A byte-order mark followed by nothing but NUL padding is still an empty
+    # file: the empty-file 400 on OFX and CSV, preview and import, not a 200
+    # with an error in the body or an "unreadable" (#411).
+    name = "statement.csv" if "csv" in path else "statement.ofx"
+    r = _post(client, path.format(id=feed["id"]), padded, name=name)
+    assert r.status_code == 400, (encoding, path, r.text)
+    assert r.json()["detail"] == EMPTY_TEXT, (encoding, path, r.text)
+    assert db_session.query(BankTransaction).count() == 0
+
+
 def test_a_binary_file_on_the_csv_path_is_a_400_too(client, db_session, feed):
     for path in (
         "/api/bank-import/preview-csv",

@@ -58,7 +58,10 @@ async def _read_statement(file: UploadFile, label: str, bom: str = "utf-8") -> s
             # the encoding declaration, not content), so it has to answer the
             # empty-file sentence like any other empty file rather than fall
             # through as a 200 with an error in the body or an "unreadable".
-            if not text.strip():
+            # The same goes for a BOM followed only by NUL padding (#411):
+            # drop the padding before asking whether anything is left.
+            text = text.rstrip("\x00")
+            if not text.replace("\x00", "").strip():
                 raise HTTPException(status_code=400, detail=EMPTY_TEXT)
             return text
     # A statement exported to a plain-text file sometimes carries trailing
