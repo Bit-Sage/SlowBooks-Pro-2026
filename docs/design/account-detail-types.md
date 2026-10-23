@@ -469,8 +469,12 @@ Where the build departs from the proposal above, and why:
   / `_update_detail_type` in `routes/accounts.py`, after `_check_bank_kind`.
 - **The model default** is a `before_insert` / `before_update` hook
   (`_settle_detail_type`): a missing or no-longer-fitting detail type
-  becomes the default; a sub-account built or re-parented directly takes
-  its parent's when that fits (QuickBooks' own rule). The API has already
+  becomes the default. A detail type the row declares wins while it fits;
+  a row built with none (or one that does not fit) takes its parent's when
+  that fits, including a parent linked in a later flush (the chart import
+  inserts first and links parents after). A declared type that could not
+  be kept is named on the row (IIF lists, chart CSV, the migration engine's
+  warnings), and the chart import's dry run shows each row's detail type. The API has already
   refused what it refuses, so the hook acts only on the direct paths
   (importers, late fees, FX, disposal, job costing, benefits, seeds). The
   FX (6999) and disposal (7999) accounts are created as Other Expense.
@@ -478,11 +482,23 @@ Where the build departs from the proposal above, and why:
   fits; a type or bank-kind change it no longer fits resets it to the
   default; a new parent's is taken. Control accounts: any change of the
   resulting detail type is refused, so 2100 cannot drop its bank kind.
+- **Pinned parents.** Under 1100, 2000, a bank or a card (Bank, Credit
+  Card, AR, AP — the migration's `_PINNED`, `PINNED_DETAIL_TYPES` in the
+  model) a sub-account is checked on its own detail type alone, so
+  retainage under 1100 or a sweep under a bank account can exist.
+- **A bank or card account in use keeps its bank kind**: with a
+  reconciliation, bank-feed rows or register entries (bank entries,
+  transfers) a PUT that changes or clears `bank_kind` is a 400 saying so.
+  The form sends `bank_kind` only when the choice moves into or out of
+  Bank / Credit Card.
 - **A parent's change goes down** to the sub-accounts that shared its old
   detail type; one that cannot take the new one (a card under a plain
   folder, a type change the children cannot follow) refuses the change
-  and is named. Changing the type of a parent whose sub-accounts share its
-  detail type is therefore refused now, where it was allowed before.
+  and is named. Base types are not cascaded: changing the type of a parent
+  whose sub-accounts share its detail type (or of such a sub-account) is
+  refused, and the 400 says the way out — move the sub-account out from
+  under the parent first (`parent_id: null`), change the types, put it
+  back. The chart page has no parent field, so that is an API step today.
 - **The backfill** reproduces `cash_flow._place` instead of matching the
   seeded number + name pairs for assets and liabilities: the fifteen
   control accounts first take what the API then locks (1100 AR, 2000 AP,
