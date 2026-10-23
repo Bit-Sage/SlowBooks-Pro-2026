@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### Unreleased
 
 **A register deposit splits like a check, with a fee line** (#387, from a
 bookkeeper's notes). A card processor pays over the gross it collected less
@@ -21,6 +21,8 @@ the entry goes, so the same box on a check is a refund netted against it (a
 stub lists that refund as a negative line so the stub still totals the
 check. On the API each split line is signed on its own, and a line of 0.00
 is refused rather than dropped.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
