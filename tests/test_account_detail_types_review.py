@@ -442,3 +442,41 @@ def test_an_equity_3900_keeps_its_detail_type_locked(monkeypatch):
     assert why and "3900 Opening Balance Equity is a control account" in why
     # an equity account on an ordinary number is not locked
     assert detail_type_problem("equity", "equity", None, "3950") is None
+
+
+def test_a_blank_sub_account_of_a_moved_fixed_asset_previews_what_it_writes(
+    client, db_session, seed_accounts
+):
+    # 1500 Equipment (Fixed Asset) is already in the chart; the file puts it
+    # under 1400 Prepaid Expenses (Other Current Asset) and adds a blank
+    # 1550 Trucks under it. The dry run showed both as Other Current Asset,
+    # but the move was a "skip" the apply passed over, so Equipment stayed a
+    # Fixed Asset at the top and Trucks was written as a Fixed Asset.
+    csv = (
+        "Number,Name,Type,Detail type,Parent\n"
+        "1500,Equipment,asset,,1400\n"
+        "1550,Trucks,asset,,1500\n"
+    )
+    preview = _chart(client, csv, dry_run=1)
+    rows = {r["name"]: r for r in preview["rows"]}
+    assert rows["Equipment"]["action"] == "update"
+    assert "parent → 1400 Prepaid Expenses" in rows["Equipment"]["changes"]
+    planned = {n: r["detail_type"] for n, r in rows.items()}
+    assert planned == {
+        "Equipment": "other_current_asset",
+        "Trucks": "other_current_asset",
+    }
+
+    applied = _chart(client, csv, dry_run=0)
+    assert {r["name"]: r["detail_type"] for r in applied["rows"]} == planned
+    got = _by_name(db_session)
+    assert {n: got[n].detail_type for n in planned} == planned
+    assert got["Equipment"].parent_id == got["Prepaid Expenses"].id
+    assert got["Trucks"].parent_id == got["Equipment"].id
+
+    # a re-import of the same file moves nothing and changes nothing
+    again = _chart(client, csv, dry_run=1)
+    assert {r["name"]: r["action"] for r in again["rows"]} == {
+        "Equipment": "skip",
+        "Trucks": "skip",
+    }

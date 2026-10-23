@@ -662,6 +662,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
 
     _flag_parent_types(db, plan)
     _flag_parent_loops(db, plan)
+    _flag_moves(db, plan)
     _flag_inherited_detail(db, plan)
 
     if replace:
@@ -921,6 +922,35 @@ def _flag_parent_loops(db: Session, plan: Plan) -> None:
             entry.pop("_parent", None)
         else:
             accepted[node] = parent
+
+
+def _flag_moves(db: Session, plan: Plan) -> None:
+    """An account already in the chart that the file puts under a different
+    parent is moved there (the apply links every updated row). A row with no
+    other change would be a "skip", which the apply passes over: the dry run
+    then previewed a link (and the detail type it hands down) that was never
+    written. Record the move as the row's change so both say the same."""
+    for entry in plan.rows:
+        hit = entry.get("_parent")
+        if not hit or entry["action"] not in ("skip", "update"):
+            continue
+        acct = db.get(Account, entry["existing_id"])
+        if acct is None or hit == ("existing", acct.parent_id):
+            continue
+        if hit[0] == "new":
+            label = " ".join(
+                p
+                for p in (plan.rows[hit[1]].get("number"), plan.rows[hit[1]]["name"])
+                if p
+            )
+        else:
+            pacct = db.get(Account, hit[1])
+            label = " ".join(p for p in (pacct.account_number, pacct.name) if p)
+        entry["changes"].append(f"parent → {label}")
+        if entry["action"] == "skip":
+            entry["action"] = "update"
+            if entry.get("note") == "already in the chart":
+                entry["note"] = ""
 
 
 def _flag_inherited_detail(db: Session, plan: Plan) -> None:
