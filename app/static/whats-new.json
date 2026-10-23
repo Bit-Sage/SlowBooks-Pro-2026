@@ -1,4 +1,14 @@
 {
+  "2.26.0": {
+    "title": "Direct deposit from the page, and last year beside this one",
+    "items": [
+      "A processed pay run makes its direct deposit (ACH) file from the page: Settings → Direct Deposit keeps the bank's numbers, and the run's view has a Direct deposit file button.",
+      "Profit & Loss and Balance Sheet compare to last year: a Prior Year column with $ and % change, on screen and in the PDF and CSV.",
+      "A session ends when its user is deactivated, their role changes or their password changes, and Sign out ends a copied session too.",
+      "An import's whole error list is shown, and saved as a file.",
+      "On Mac, 2.26.0 needs macOS 15 or later."
+    ]
+  },
   "2.25.0": {
     "title": "Several companies on one server",
     "items": [

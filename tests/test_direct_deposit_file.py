@@ -8,6 +8,7 @@ says who the file pays and who is paid by check.
 """
 
 import re
+import shutil
 import subprocess
 import json
 from pathlib import Path
@@ -387,6 +388,7 @@ def test_a_bookkeeper_cannot_download_the_file(client, seed_accounts):
 # --- The page ---------------------------------------------------------------
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_the_pay_run_page_offers_the_file_to_a_processed_run_with_deposits():
     out = subprocess.run(
         ["node", str(ROOT / "tests" / "js" / "direct_deposit_probe.js")],
