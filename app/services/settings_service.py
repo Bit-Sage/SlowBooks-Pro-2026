@@ -223,6 +223,12 @@ _ACH_ID_SETTINGS = {
 }
 _ALNUM = re.compile(r"[0-9A-Za-z]+")
 
+# Free-text settings with a length cap (#415): a pasted block would run off
+# the page it prints on. {key: (label, max_chars)}.
+_MAX_LENGTH_SETTINGS = {
+    "giving_statement_footer": ("Giving statement footer", 500),
+}
+
 
 class SettingValueError(ValueError):
     """A setting value a person has to correct; str() is the sentence to
@@ -281,6 +287,11 @@ def clean_setting_value(key: str, value) -> str:
                 f"{_ACH_ID_SETTINGS[key]} must be up to 10 letters or digits, "
                 "as the bank assigned it."
             )
+        return text
+    if key in _MAX_LENGTH_SETTINGS:
+        label, cap = _MAX_LENGTH_SETTINGS[key]
+        if len(text) > cap:
+            raise SettingValueError(f"{label} is at most {cap} characters.")
         return text
     if key in _DATE_SETTINGS:
         if text == "":

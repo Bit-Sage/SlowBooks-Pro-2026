@@ -130,6 +130,23 @@ receipt is what gets acknowledged.
   stack), or emailed to everyone (donors who opted out on their record are
   skipped). Cash gifts with the deductible portion and a running total;
   non-cash gifts described without amounts; the IRS sentence at the foot.
+- **The ministry's own words** — Settings → Giving Statement (nonprofit mode)
+  keeps the ministry's own message and footer on the statement. The **Opening
+  messages** are saved the same way as Invoice Messages (a short list, one the
+  default); the default one prints above the gift table (a thank-you from the
+  pastor or the board). The **Footer text** replaces the fixed footer (the
+  ministry's address, website, EIN, a verse) and prints in each page's bottom
+  margin, so a long footer on a multi-page statement never overprints the gift
+  table. Both are plain text with line breaks, printed as typed and escaped as
+  text (no HTML); a message is at most 1500 characters and the footer 500.
+  They ride on all three outputs the same — the single PDF, the all-donors
+  stack and the emailed copy. Leave the message or footer unset to print what
+  printed before; either way a donor's statement carries no product name. The
+  IRS acknowledgment sentence is always printed and is not editable. **Preview
+  one donor's statement** renders the first donor's (a sample donor on a file
+  with no gifts yet) with the saved words — save first, then preview. The
+  giving-statement messages and the footer are an administrator's to change,
+  audited like the settings around them.
 - **No closing entry is needed.** Income and expense are never closed to
   equity in this ledger; the Statement of Financial Position splits the
   change in net assets by restriction at report time, the way the balance

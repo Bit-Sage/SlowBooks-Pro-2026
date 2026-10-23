@@ -14,6 +14,11 @@ class InvoiceMessage(Base):
     The invoice keeps the text itself (no foreign key), so editing a
     message later leaves the invoices already written alone. At most one
     message is the default; it fills Notes on a new invoice.
+
+    ``kind`` tells the two lists apart (#415): 'invoice' messages fill an
+    invoice's Notes; 'giving_statement' messages open the year-end giving
+    statement. One default per kind — a default invoice message and a
+    default giving-statement message, never crossed.
     """
 
     __tablename__ = "invoice_messages"
@@ -21,6 +26,9 @@ class InvoiceMessage(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, nullable=False)
     body = Column(Text, nullable=False)
+    kind = Column(
+        String(32), nullable=False, default="invoice", server_default="invoice"
+    )
     is_default = Column(
         Boolean, nullable=False, default=False, server_default=sa_false()
     )
