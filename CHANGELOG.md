@@ -432,7 +432,7 @@ Accounts lists each type's accounts under a heading per detail type, so a
 loan sitting among the current liabilities shows in the first scroll. The
 detail type cannot contradict the type, a bank or card account is Bank or
 Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
-fifteen control accounts keep theirs. A sub-account shares its parent's
+sixteen control accounts keep theirs. A sub-account shares its parent's
 detail type, except under a bank, card, Accounts Receivable or Accounts
 Payable parent, where it is set on its own — QuickBooks' rule. So a Savings
 account (bank kind bank) under an Other Current Asset folder is a 400 here

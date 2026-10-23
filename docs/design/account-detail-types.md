@@ -500,7 +500,7 @@ Where the build departs from the proposal above, and why:
   back. Since #416 the account form's Sub-account of picker does it: a
   type the parent cannot take lets the parent go in the same save.
 - **The backfill** reproduces `cash_flow._place` instead of matching the
-  seeded number + name pairs for assets and liabilities: the fifteen
+  seeded number + name pairs for assets and liabilities: the sixteen
   control accounts first take what the API then locks (1100 AR, 2000 AP,
   Bank / Credit Card with a bank kind, else the type's default — a 2000 or
   2200 renamed like a loan would be the one control account to move, on
