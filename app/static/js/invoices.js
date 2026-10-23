@@ -297,6 +297,8 @@ const InvoicesPage = {
                 ${inv.status !== 'void' ? `<button data-destructive class="btn btn-danger" onclick="InvoicesPage.void(${inv.id})">Void ${T('Invoice')}</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
+        if (App.documentAddress) App.documentAddress(`#/invoices/${Number(id)}`);
         InvoicesPage.loadAttachments('invoice', inv.id);
         InvoicesPage.loadCreditNote(inv);
     },

@@ -49,9 +49,10 @@ All 50 states + DC: dedicated engines for WA / CA / NY / OR, a table-driven engi
 | `GET /api/onboarding/{emp_id}/new-hire-report/pdf` | `onboarding.new_hire_pdf` | Downloadable PDF |
 | `GET /api/time-entries` | `time_entries.list_entries` | List, filterable by employee/date range |
 | `POST /api/time-entries` | `time_entries.create_entry` | Create a time entry |
-| `PUT /api/time-entries/{entry_id}` | `time_entries.update_entry` | Edit |
-| `DELETE /api/time-entries/{entry_id}` | `time_entries.delete_entry` | Remove |
-| `POST /api/time-entries/{entry_id}/approve` | `time_entries.approve_entry` | Manager workflow |
+| `PUT /api/time-entries/{entry_id}` | `time_entries.update_entry` | Edit (not `status`, and blocked once paid or costed to a job) |
+| `DELETE /api/time-entries/{entry_id}` | `time_entries.delete_entry` | Remove (blocked once paid or costed to a job) |
+| `POST /api/time-entries/{entry_id}/submit` | `time_entries.submit_entry` | Move draft → submitted |
+| `POST /api/time-entries/{entry_id}/approve` | `time_entries.approve_entry` | Manager workflow; approver is the signed-in user (body `approved_by` ignored) |
 | `POST /api/time-entries/{entry_id}/reject` | `time_entries.reject_entry` | Manager workflow |
 | `GET /api/pto/policies` | `pto.list_policies` | All policies |
 | `GET /api/pto/policies/{policy_id}` | `pto.get_policy` | Single policy (added during wiring audit) |
@@ -200,6 +201,37 @@ All return `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 | `#/hr/deductions` | Garnishments | `deductions.js` |
 | `#/hr/tax-forms` | W-2/W-3/940/941 generation + Form history (who, when, hash, Check) | `tax_forms.js` |
 | `#/employees/{id}` | Details modal with portal/YTD/bank/docs tabs | `employees.js` |
+
+---
+
+## Direct deposit
+
+SlowBooks makes the ACH file (NACHA format); the bank moves the money.
+The business account needs ACH origination from the bank, which then
+gives the numbers Settings → Direct Deposit (ACH) asks for: the bank's
+routing number and name, the company account the net pay is paid from
+(`ach_company_account`, encrypted at rest like the SMTP password) and the
+two 10-character identifiers (`ach_immediate_origin`, `ach_company_id`),
+which are "1" + the EIN unless the bank says otherwise and are filled from
+the company tax id when blank. Employees' own accounts are entered on the
+employee (`/api/employees/{id}/bank-accounts`) or by them in the portal.
+
+| Method + Path | Purpose |
+|---------------|---------|
+| `GET /api/payroll/{run_id}/nacha` | The file for a processed run, from the saved settings; the pay run view's **Direct deposit file** button. `attachment`, named `Direct-Deposit_<pay date>.ach` |
+| `POST /api/payroll/{run_id}/nacha` | The same with any originating field in the body outranking the saved one (`effective_date` sets the batch's effective entry date); an empty body is the saved settings |
+
+Each file made is an `EXPORT` row in the audit trail on `pay_runs`: who
+made it, for which run, how many it credits, the total and the effective
+date. The account numbers stay in the file, never in the trail. A refused
+download leaves no row.
+
+A refusal says why: 400 when the run is not processed; 409 naming the
+settings still blank, or that no one on the run has an active account (an
+account in its prenote waiting period is not paid). Each stub of a run
+carries `direct_deposit`: true when the file pays it, false means pay by
+check; the view shows the split and a Paid by column. Admin only, like the
+rest of payroll.
 
 ---
 

@@ -122,6 +122,21 @@ const scenarios = {
     await p.get('JournalPage').uploadAttachment(1);
     return last(p.toasts);
   },
+  // the Accountant's Copy (#346): the copy opened, the changes file previewed
+  async 'companies.js open accountant\'s copy'() {
+    const p = page(['app/static/js/companies.js']);
+    await p.get('CompaniesPage').openCopy({
+      preventDefault() {},
+      target: { file: { files: [{ name: 'books.sbacopy' }] }, passphrase: { value: 'passphrase' } },
+    });
+    return last(p.toasts);
+  },
+  async 'companies.js accountant\'s changes'() {
+    const p = page(['app/static/js/companies.js']);
+    p.ctx.document.querySelector = () => ({ file: { files: [{ name: 'changes.sbchanges' }] } });
+    await p.get('CompaniesPage').previewChanges({ preventDefault() {} });
+    return last(p.toasts);
+  },
   async 'employees.js dropped document'() {
     const p = page(['app/static/js/employees.js']);
     await p.get('EmployeesPage')._uploadDroppedFile(1, { name: 'w4.pdf' });
@@ -140,6 +155,11 @@ const scenarios = {
   async 'iif.js export'() {
     const p = page(['app/static/js/iif.js']);
     await p.get('IIFPage')._download('/api/iif/export/all', 'slowbooks_export.iif');
+    return last(p.toasts);
+  },
+  async 'payroll.js direct deposit file'() {
+    const p = page(['app/static/js/payroll.js']);
+    await p.get('PayrollPage').downloadDirectDeposit(1);
     return last(p.toasts);
   },
   async 'iif.js validate'() {

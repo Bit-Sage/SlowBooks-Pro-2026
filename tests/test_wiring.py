@@ -278,7 +278,6 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     # not a literal the JS scan can see.
     ("GET", "/api/uploads/logo/{file_id}"),
     ("POST", "/api/payroll/gross-up"),
-    ("POST", "/api/payroll/{run_id}/nacha"),
     ("POST", "/api/time-entries/classify"),
     # Legacy: superseded by /api/payroll/forms/* — kept until next major release.
     # Migration tracker in docs/todo.md. (The 1099 summary, the 1099-NEC and

@@ -9,6 +9,7 @@ from sqlalchemy import LargeBinary, event, inspect
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
+from app.services.audit_redaction import REDACTED, is_secret_column, redact_values
 from app.services.request_context import acting_username
 
 
@@ -44,6 +45,9 @@ _SKIP_TABLES = {
 
 # Column values that must never be snapshotted into audit JSON — the users
 # table is audited (who created/changed accounts matters), its hashes are not.
+# The one list, for every action and for settings rows, is
+# app/services/audit_redaction.py (2.24.0 gate, NEW-148: an UPDATE copied the
+# hash before and after, and a settings row carried its secret value).
 _REDACT_COLUMNS = {"password_hash"}
 
 
@@ -86,12 +90,16 @@ def _get_instance_dict(instance):
         key = col.key
         if _is_file_content(col):
             continue
-        if key in _REDACT_COLUMNS:
-            result[key] = "***"
-            continue
         val = getattr(instance, key, None)
+        if (
+            (key in _REDACT_COLUMNS or is_secret_column(key))
+            and isinstance(val, str)
+            and val
+        ):
+            result[key] = REDACTED
+            continue
         result[key] = _serialize_value(val)
-    return result
+    return redact_values(getattr(instance, "__tablename__", ""), result)
 
 
 def log_event(
@@ -149,6 +157,14 @@ def audited_bulk_delete(db: Session, query) -> int:
 def _after_flush(session, flush_context):
     """SQLAlchemy after_flush event — captures all changes."""
     audit_entries = []
+    # A change made into a closed period with the closing-date password
+    # (#342): the override's own row is written by closing_date, and every
+    # row this request changes after it carries the same source, so the
+    # Closing Date Exceptions report can list what the override touched.
+    source = "api"
+    info = getattr(session, "info", None)
+    if isinstance(info, dict) and info.get("_closing_override_recorded"):
+        source = "closing_date_override"
 
     # New objects (INSERT)
     for obj in session.new:
@@ -167,7 +183,7 @@ def _after_flush(session, flush_context):
                 old_values=None,
                 new_values=new_vals,
                 changed_fields=list(new_vals.keys()),
-                source="api",
+                source=source,
                 username=_actor(session),
             )
         )
@@ -199,6 +215,18 @@ def _after_flush(session, flush_context):
                 old_vals[key] = _serialize_value(old_val)
                 new_vals[key] = _serialize_value(new_val)
                 changed.append(key)
+        # a secret moved is noted as moved, never as what it was
+        old_vals = redact_values(table, old_vals) or old_vals
+        new_vals = redact_values(table, new_vals) or new_vals
+        if table == "settings":
+            # the row's key is what tells a secret setting from the rest
+            key_now = getattr(obj, "key", None)
+            from app.services.audit_redaction import sensitive_setting_keys
+
+            if key_now in sensitive_setting_keys():
+                for vals in (old_vals, new_vals):
+                    if vals.get("value") not in (None, ""):
+                        vals["value"] = REDACTED
 
         if changed:
             audit_entries.append(
@@ -209,7 +237,7 @@ def _after_flush(session, flush_context):
                     old_values=old_vals,
                     new_values=new_vals,
                     changed_fields=changed,
-                    source="api",
+                    source=source,
                     username=_actor(session),
                 )
             )
@@ -231,7 +259,7 @@ def _after_flush(session, flush_context):
                 old_values=old_vals,
                 new_values=None,
                 changed_fields=None,
-                source="api",
+                source=source,
                 username=_actor(session),
             )
         )

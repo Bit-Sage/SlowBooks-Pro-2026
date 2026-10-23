@@ -217,6 +217,12 @@ SETTINGS_TAKEN_FROM_A_SIGN_IN = {
         "/api/tokens",
         {"label": "kim-agent", "role": "bookkeeper"},
     ),
+    # inviting an accountant (#345) makes a sign-in: an administrator's
+    "Users — Server Edition › Invite your accountant…": (
+        "POST",
+        "/api/users/invite",
+        {"username": "pat", "display_name": "Pat CPA"},
+    ),
 }
 SETTINGS_TAKEN_PARTS = {
     "AI Insights › #ai-settings-provider": "AI Insights › Save AI settings",
@@ -236,6 +242,12 @@ SETTINGS_TAKEN_PARTS = {
 
 COMPANIES_TAKEN = {
     "+ New Company": ("POST", "/api/companies", {"name": "Harbor Light Catering"}),
+    # applying an accountant's changes posts to the books (#346): an administrator's
+    "Apply accountant's changes…": (
+        "POST",
+        "/api/accountants-copy/changes/apply",
+        None,
+    ),
 }
 MIGRATE_TAKEN = {
     "Dry Run": ("POST", "/api/migration/xero/dry-run", None),

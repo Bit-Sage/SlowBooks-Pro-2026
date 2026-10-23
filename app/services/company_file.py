@@ -24,6 +24,12 @@
 #      derived from it the way app/services/encryption.py derives the
 #      payroll key (PBKDF2-HMAC-SHA256, 480,000 rounds), under this file's
 #      own salt, so the two secrets never share a key.
+#   3. The key this process was given at runtime (set_runtime_key): the
+#      desktop's own, derived from a recovery key and wrapped for each
+#      administrator's password in a keyring beside the file
+#      (app/services/company_keyring.py). The launcher unlocks it at the
+#      picker and hands it on as (1); the switch that turns encryption on
+#      in a running process keeps it here.
 #
 # The key reaches SQLCipher as a raw key (x'…'), which skips SQLCipher's own
 # 256,000-round KDF on every connection: the derivation above is paid once,
@@ -188,24 +194,93 @@ def _env_key() -> bytes | None:
     return key
 
 
+# The key this process was handed at runtime (#290): the desktop's, from
+# the keyring, kept for the process and never written anywhere.
+_runtime_key: bytes | None = None
+# Bumped whenever the runtime key changes (a new recovery key re-keys the
+# file under another key): an engine that cached the key it resolved looks
+# again, rather than keying its next connection with the old one.
+_key_generation = 0
+
+
+def set_runtime_key(key: bytes | None) -> None:
+    global _runtime_key, _key_generation
+    if key is not None and len(key) != KEY_BYTES:
+        raise ValueError(f"a company file key is {KEY_BYTES} bytes")
+    _runtime_key = key
+    _key_generation += 1
+
+
+def _has_keyring() -> bool:
+    try:
+        from app.services import company_keyring
+
+        return company_keyring.exists(active_path())
+    except Exception:
+        return False
+
+
 def key_source() -> str | None:
     """Where the key comes from, as the person set it up: "secret"
-    (COMPANY_FILE_ENCRYPTION_SECRET, wherever SlowBooks Pro starts), or
-    "launcher" (a raw key the launcher handed this process from somewhere
-    else), or None. The launcher derives its key from the secret and hands
-    it over, so with the secret set the answer is the secret, not the
-    launcher (2.23.2 gate, W-2 / NEW-108)."""
+    (COMPANY_FILE_ENCRYPTION_SECRET, wherever SlowBooks Pro starts),
+    "keyring" (the desktop's own: a recovery key, wrapped for each
+    administrator's sign-in beside the file), "launcher" (a raw key the
+    launcher handed this process from somewhere else), or None. The
+    launcher derives its key from the secret and hands it over, so with
+    the secret set the answer is the secret, not the launcher (2.23.2
+    gate, W-2 / NEW-108); with a keyring beside the file, the keyring."""
     if _secret():
         return "secret"
-    if _env_key() is not None:
+    if _has_keyring():
+        return "keyring"
+    if serving_another_company():
+        return "launcher" if _env_key() is not None else None
+    if _env_key() is not None or _runtime_key is not None:
         return "launcher"
     return None
+
+
+def install_key() -> bytes | None:
+    """The key every company on this install shares, when there is one: the
+    one COMPANY_FILE_ENCRYPTION_SECRET derives, or the launcher's copy of it
+    in the environment. A Server Edition server opens the other companies
+    it serves with this one only (#358): the runtime key is the started
+    company's own."""
+    key = _env_key()
+    if key is not None:
+        return key
+    secret = _secret()
+    if secret:
+        return _derived(secret)
+    return None
+
+
+_derived_keys: dict = {}
+
+
+def _derived(secret: str) -> bytes:
+    """derive_key, once per secret per process: it costs about half a
+    second, and every other company's engine asks."""
+    found = _derived_keys.get(secret)
+    if found is None:
+        found = _derived_keys[secret] = derive_key(secret)
+    return found
 
 
 def resolve_key() -> bytes | None:
     """The key in hand, or None. Derivation from the secret costs about half
     a second; callers that may not need it pass this function itself to
-    ``create_sqlite_engine`` and it runs only for an encrypted file."""
+    ``create_sqlite_engine`` and it runs only for an encrypted file.
+
+    A key set at runtime comes first: it is the newest knowledge. A new
+    recovery key re-keys the file and sets it, while the key the launcher
+    handed this process in its environment is the retired one; preferring
+    the environment left every connection after a re-key on the old key
+    until a restart (2.24.0 gate, NEW-157)."""
+    if serving_another_company():
+        return install_key()
+    if _runtime_key is not None:
+        return _runtime_key
     key = _env_key()
     if key is not None:
         return key
@@ -242,10 +317,22 @@ def sqlite_path(url: str) -> Path | None:
 
 
 def active_path() -> Path | None:
-    """The file behind the running app's DATABASE_URL, when it is one."""
+    """The file behind the company this request works in (the running app's
+    DATABASE_URL, or another company a Server Edition session chose: #358),
+    when it is one."""
     from app.config import DATABASE_URL
+    from app.database import another_company_url
 
-    return sqlite_path(DATABASE_URL)
+    return sqlite_path(another_company_url() or DATABASE_URL)
+
+
+def serving_another_company() -> bool:
+    """True while a request works in a company other than the one the
+    server was started for (#358)."""
+    from app.database import served_company, started_company_file
+
+    chosen = served_company()
+    return chosen is not None and chosen != started_company_file()
 
 
 def is_encrypted_file(path: Path | str | None) -> bool:
@@ -289,14 +376,31 @@ def _apply_key(dbapi_conn, key: bytes) -> None:
         cur.close()
 
 
+def sqlite_module():
+    """The one SQLite library this process opens company files with: the
+    sqlcipher3 module when it is installed (the engine's), else the
+    standard sqlite3. Never both on one file (2.24.0 gate, NEW-156): the
+    engine kept every plain company file open through sqlcipher3 while a
+    backup, or the copy for an accountant, read it through the standard
+    module. Two SQLite libraries in one process do not see each other's
+    connections, so the second one, closing, took itself for the last
+    connection, checkpointed the WAL and deleted it under the engine, and
+    everything the engine wrote from then on went when the server exited
+    (sqlite.org, "How To Corrupt", 2.2). Every release from 2.23.2 to
+    2.23.5 had it on a plain file; an encrypted file was never affected,
+    both of its connections being sqlcipher3's."""
+    return _sqlcipher() or sqlite3
+
+
 def connect_raw(path: Path, key: bytes | None = None, *, readonly: bool = False):
     """A DB-API connection to a company file, keyed when ``key`` is given.
 
     With a key, the connection is SQLCipher's and the file is read or
     written encrypted (a file that does not exist yet is created encrypted).
-    Without one, it is the standard sqlite3 module's — unless the file is
-    encrypted, which raises CompanyFileLocked rather than open ciphertext as
-    a database.
+    Without one, the file is read or written plain, through the same
+    library the engine uses (sqlite_module) — unless the file is encrypted,
+    which raises CompanyFileLocked rather than open ciphertext as a
+    database.
 
     ``readonly`` opens the file as it lies (``mode=ro&immutable=1``): no lock,
     no sidecar files, the way backup facts are read."""
@@ -308,7 +412,7 @@ def connect_raw(path: Path, key: bytes | None = None, *, readonly: bool = False)
         if mod is None:
             raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
     else:
-        mod = sqlite3
+        mod = sqlite_module()
     if readonly:
         target = path.resolve().as_uri() + "?mode=ro&immutable=1"
         conn = mod.connect(target, uri=True)
@@ -351,8 +455,13 @@ def create_sqlite_engine(url: str, key: KeyLike = None, **engine_kwargs):
             return
         if mod is None:
             raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
-        if "key" not in resolved:
+        # looked up once it is found; a file that was plain when the
+        # engine was made and is encrypted now (the switch, #290) resolves
+        # on its first encrypted connection, and a key handed to the
+        # process later is found then, not refused for good
+        if resolved.get("key") is None or resolved.get("generation") != _key_generation:
             resolved["key"] = _resolve(key)
+            resolved["generation"] = _key_generation
         if resolved["key"] is None:
             raise CompanyFileLocked(NO_KEY_MESSAGE)
         _apply_key(dbapi_conn, resolved["key"])
@@ -445,6 +554,31 @@ def convert(path: Path, key: bytes | None, *, encrypt: bool) -> None:
     )
 
 
+def rekey(path: Path, old_key: bytes, new_key: bytes) -> None:
+    """Re-encrypt a company file in place under another key (a new recovery
+    key, #290): SQLCipher's own ``PRAGMA rekey`` rewrites every page. The
+    caller disposes any engine pool on the file first, as for convert."""
+    path = Path(path)
+    if not is_encrypted_file(path):
+        raise CompanyFileLocked(NO_KEY_MESSAGE)
+    mod = _sqlcipher()
+    if mod is None:
+        raise CompanyFileLocked(UNAVAILABLE_MESSAGE)
+    conn = mod.connect(str(path), isolation_level=None)
+    try:
+        conn.execute("PRAGMA cipher_log_level = NONE")
+        conn.execute(_key_pragma(old_key))
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except Exception as exc:
+            raise CompanyFileLocked(WRONG_KEY_MESSAGE) from exc
+        conn.execute(f"PRAGMA rekey = \"x'{new_key.hex()}'\"")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    finally:
+        conn.close()
+    logger.info("company file %s re-keyed", path.name)
+
+
 def sweep_stale_conversions(path: Path | str | None) -> list[str]:
     """Remove what an interrupted rewrite could leave on disk: a
     ``.converting`` file beside the company file (a plain copy of
@@ -497,14 +631,16 @@ def status() -> dict:
     this build can encrypt, whether the file is encrypted now, and where a
     key would come from."""
     from app.config import DATABASE_URL
+    from app.database import another_company_url
 
-    if DATABASE_URL.startswith("postgresql"):
+    url = another_company_url() or DATABASE_URL
+    if url.startswith("postgresql"):
         engine = "postgresql"
-    elif DATABASE_URL.startswith("sqlite"):
+    elif url.startswith("sqlite"):
         engine = "sqlite"
     else:
         engine = "other"
-    path = sqlite_path(DATABASE_URL) if engine == "sqlite" else None
+    path = sqlite_path(url) if engine == "sqlite" else None
     return {
         "engine": engine,
         "supported": engine == "sqlite" and path is not None and available(),

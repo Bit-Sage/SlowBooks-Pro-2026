@@ -178,6 +178,9 @@ const App = {
     dialogAddressed() {
         const m = $('#modal');
         if (m) m.dataset.address = location.hash || '#/';
+        // the sidebar stays usable over a report or a document (a view,
+        // not a form): the Open group's links and × reach it (W-22 /
+        // NEW-159); syncBack sets and clears the class
         // An opener that puts its address on the bar first and opens next
         // (the statement picker, the 1099 summary: ReportsPage.setAddress,
         // then openModal): its mark survives the open for this task
@@ -185,6 +188,7 @@ const App = {
         App._marking = true;
         setTimeout(() => { App._marking = false; }, 0);
         App.addressShown();
+        App.screenShown(null);  // the dialog's own screen, with its title (#336)
     },
     editingDialog() {
         const overlay = $('#modal-overlay'), m = $('#modal');
@@ -306,6 +310,20 @@ const App = {
     // The toolbar's Back follows the entry shown: after every push, stamp
     // and history move.
     syncBack() {
+        const overlay = $('#modal-overlay'), m = $('#modal');
+        const addressed = !!(overlay && m && !overlay.classList.contains('hidden')
+            && m.dataset.address === (location.hash || '#/'));
+        // the sidebar is raised over a view's overlay (W-22) only while the
+        // dialog sits clear of it: a wide grid reaching over the sidebar
+        // keeps the overlay whole, or the sidebar would cover its edge
+        const sidebar = $('#sidebar');
+        const clear = addressed && sidebar && m
+            && m.getBoundingClientRect().left >= sidebar.getBoundingClientRect().right - 1;
+        if (document.body && document.body.classList) document.body.classList.toggle('dialog-addressed', !!clear);
+        if (addressed && !App._resizeSync) {
+            App._resizeSync = true;
+            window.addEventListener('resize', () => App.syncBack());
+        }
         const btn = $('#back-btn');
         if (!btn) return;
         btn.disabled = !App.canGoBack();
@@ -344,6 +362,192 @@ const App = {
     // the view was pushed onto becomes the page it opened over, and a
     // refresh (App.navigate(location.hash) after a save), a reload or
     // Back cannot bring the closed view back (NEW-23).
+    // ---- Open screens (#336) -------------------------------------------------
+    // Working a close means moving between a Profit & Loss, a bank register
+    // and a payroll register over and over, each move a scroll through the
+    // whole sidebar. The screens opened in this browser session (pages,
+    // registers, documents, and the dialog reports with their dates) are
+    // listed under "Open" at the top of the sidebar, each a link back and
+    // each closable; sessionStorage keeps the list for the session, by
+    // address, so a reload keeps it and a new window starts clean.
+    OPEN_TABS_KEY: 'slowbooks-open-screens',
+    OPEN_TABS_MAX: 12,
+    _openTabs: null,
+    // this page load: a history entry's number (entryState) means
+    // something only within one load, so a tab remembers which load
+    // numbered it (NEW-164: a stored number matched a fresh entry's)
+    _loadId: String(Date.now()) + Math.random().toString(36).slice(2, 8),
+    // whose list it is: the sign-in and the company (NEW-164: it carried
+    // over to another user, and to another company on the same window)
+    _tabsOwner: '',
+
+    _ownerOf(status) {
+        const user = status && status.user ? status.user.username : '';
+        const company = status ? (status.company_name || '') : '';
+        return `${user}|${company}`;
+    },
+    // called once the sign-in and the company are known: another owner's
+    // list is dropped
+    _tabsOwnerChanged(status) {
+        const owner = App._ownerOf(status);
+        if (owner === App._tabsOwner) return;
+        App._tabsOwner = owner;
+        let stored = null;
+        try { stored = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || 'null'); } catch (e) { stored = null; }
+        if (stored && !Array.isArray(stored) && stored.owner !== owner) {
+            App._openTabs = [];
+            App._saveOpenTabs();
+            App.renderOpenTabs();
+        }
+    },
+
+    openTabs() {
+        if (App._openTabs) return App._openTabs;
+        let stored = null;
+        try { stored = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || 'null'); } catch (e) { stored = null; }
+        const list = Array.isArray(stored) ? [] : ((stored && Array.isArray(stored.tabs)) ? stored.tabs : []);
+        if (stored && !Array.isArray(stored) && typeof stored.owner === 'string' && !App._tabsOwner) App._tabsOwner = stored.owner;
+        App._openTabs = list.filter(t => t && typeof t.key === 'string' && typeof t.label === 'string');
+        return App._openTabs;
+    },
+
+    _saveOpenTabs() {
+        try {
+            sessionStorage.setItem(App.OPEN_TABS_KEY, JSON.stringify({ owner: App._tabsOwner, tabs: App.openTabs() }));
+        } catch (e) { /* no storage: the list lives for the page */ }
+    },
+
+    // The address a screen is listed by: the hash without its '#', the
+    // query included (a report with its dates is its own screen).
+    _screenKey() { return (location.hash || '#/').replace(/^#/, '') || '/'; },
+
+    // Words for a report's period, from its address: the period's name, or
+    // the dates of a custom range, or an as-of date.
+    _periodWords(query) {
+        const names = {
+            this_month: 'this month', this_quarter: 'this quarter', this_year: 'this year',
+            this_year_to_date: 'this year to date', last_month: 'last month',
+            last_quarter: 'last quarter', last_year: 'last year', last_year_to_date: 'last year to date',
+        };
+        if (query.period && names[query.period]) return names[query.period];
+        if (query.as_of_date) return `as of ${formatDate(query.as_of_date)}`;
+        if (query.start_date && query.end_date) return `${formatDate(query.start_date)} – ${formatDate(query.end_date)}`;
+        if (query.year) return String(query.year);
+        return '';
+    },
+
+    // The screen's own name: an open dialog's title (a report, a document)
+    // with its period, else the page's heading, else the route's label.
+    _screenLabel(route) {
+        const { path, query } = App.parseHash(location.hash || '#/');
+        const overlay = $('#modal-overlay'), modal = $('#modal');
+        const dialog = overlay && modal && !overlay.classList.contains('hidden')
+            && modal.dataset.address === (location.hash || '#/');
+        let label = '';
+        // a report view's address names the view: its own name, with its
+        // period, whether or not its dialog is up yet (a "Reports" entry
+        // for the Report Center under it: W-22's note)
+        const view = /^\/reports\/([a-z0-9-]+)$/.exec(path);
+        const known = view && typeof ReportsPage !== 'undefined' && ReportsPage._VIEWS && ReportsPage._VIEWS[view[1]];
+        if (known) {
+            label = typeof known.label === 'function' ? known.label() : known.label;
+            if (dialog) label = ($('#modal-title') || {}).textContent || label;
+            const when = App._periodWords(query);
+            if (when) label = `${label} · ${when}`;
+        } else if (dialog) {
+            label = ($('#modal-title') || {}).textContent || '';
+            const when = App._periodWords(query);
+            if (when) label = `${label} · ${when}`;
+        } else {
+            const h2 = $('#page-content h2');
+            const own = h2 && [...h2.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+            if (own) label = own.textContent;
+        }
+        label = (label || (route && route.label) || '').replace(/\s+/g, ' ').trim();
+        return label.length > 48 ? `${label.slice(0, 47)}…` : label;
+    },
+
+    // A screen shown: listed (or its label refreshed) and the list redrawn.
+    // The Dashboard and the Report Center are one click away already.
+    screenShown(route) {
+        const key = App._screenKey();
+        if (key === '/' || key === '/reports') { App.renderOpenTabs(); return; }
+        const label = App._screenLabel(route);
+        if (!label) { App.renderOpenTabs(); return; }
+        const tabs = App.openTabs();
+        // the history entry's own number (App.entryState): a screen whose
+        // address was replaced on the same entry (a report view over the
+        // Report Center it opened on, a period change in the open report)
+        // is the same screen under its new address, not a second one
+        const n = history.state && typeof history.state.n === 'number' ? history.state.n : null;
+        const found = tabs.find(t => t.key === key)
+            || (n !== null ? tabs.find(t => t.n === n && t.load === App._loadId) : null);
+        if (found) { found.key = key; found.label = label; found.n = n; found.load = App._loadId; }
+        else {
+            tabs.push({ key, label, n, load: App._loadId });
+            while (tabs.length > App.OPEN_TABS_MAX) tabs.shift();
+        }
+        App._saveOpenTabs();
+        App.renderOpenTabs();
+    },
+
+    closeTab(key) {
+        const tabs = App.openTabs();
+        const i = tabs.findIndex(t => t.key === key);
+        if (i < 0) return;
+        tabs.splice(i, 1);
+        App._saveOpenTabs();
+        if (App._screenKey() === key) {
+            // the screen closed is the one showing: the one before it in
+            // the list, else the Dashboard
+            const next = tabs[i - 1] || tabs[i] || null;
+            const overlay = $('#modal-overlay');
+            if (overlay && !overlay.classList.contains('hidden')) closeModal({ keepAddress: true });
+            App.navigate(next ? `#${next.key}` : '#/');
+            return;
+        }
+        App.renderOpenTabs();
+    },
+
+    closeAllTabs() {
+        App._openTabs = [];
+        App._saveOpenTabs();
+        App.renderOpenTabs();
+    },
+
+    renderOpenTabs() {
+        const list = $('#sidebar .nav-links');
+        if (!list) return;
+        let group = $('#open-screens');
+        const tabs = App.openTabs();
+        if (!tabs.length) { if (group) group.remove(); return; }
+        if (!group) {
+            group = document.createElement('li');
+            group.id = 'open-screens';
+            group.className = 'open-screens';
+            list.insertBefore(group, list.firstElementChild);
+        }
+        const here = App._screenKey();
+        const focused = document.activeElement && document.activeElement.closest('#open-screens');
+        const keep = focused ? focused.dataset.key : null;
+        group.innerHTML = `
+            <div class="nav-section open-screens__head"><span id="open-screens-label">Open</span>
+                ${tabs.length > 1 ? `<button type="button" class="open-screens__clear" onclick="App.closeAllTabs()" aria-label="Close every open screen">Close all</button>` : ''}
+            </div>
+            <ul class="open-screens__list" aria-labelledby="open-screens-label">${tabs.map(t => `
+                <li class="open-screens__item${t.key === here ? ' open-screens__item--here' : ''}">
+                    <a href="#${escapeHtml(t.key)}" class="nav-link open-screens__link${t.key === here ? ' active' : ''}" data-key="${escapeHtml(t.key)}"${t.key === here ? ' aria-current="page"' : ''}
+                        title="${escapeHtml(t.label)}">${escapeHtml(t.label)}</a>
+                    <button type="button" class="open-screens__close" data-key="${escapeHtml(t.key)}" onclick="App.closeTab(this.dataset.key)"
+                        aria-label="Close ${escapeHtml(t.label)}">&times;</button>
+                </li>`).join('')}
+            </ul>`;
+        if (keep) {
+            const again = group.querySelector(`.open-screens__close[data-key="${CSS.escape(keep)}"]`) || group.querySelector('.open-screens__link');
+            if (again) again.focus();
+        }
+    },
+
     dialogClosed() {
         const under = App._dialogUnder;
         App._dialogUnder = null;
@@ -352,6 +556,7 @@ const App = {
         // is still behind it, so the toolbar's Back follows (NEW-30)
         history.replaceState(history.state, '', under);
         App.addressShown();
+        App.renderOpenTabs();
     },
 
     // The page a document's or a view's address opens over: the list route
@@ -404,6 +609,13 @@ const App = {
         // the way back to the entry a declined move left (App.stayPut):
         // the page is still that entry's, nothing to render
         if (App._stay) { App._stay = false; App.addressShown(); return; }
+        // an invited sign-in with its one-time password sets its own
+        // before any page (#345); the server refuses everything else
+        if (App.mustChangePassword) {
+            $('#page-content').innerHTML = App._passwordChangeHtml();
+            App.setStatus('Set your password');
+            return;
+        }
         if (App._pageCleanup) { App._pageCleanup(); App._pageCleanup = null; }
         // A dialog open over the page left (a report, a document) does not
         // stay over the page gone to: browser Back from an open report
@@ -482,6 +694,7 @@ const App = {
             if (adminOnly()) return showAdminOnly();
             $('#page-content').innerHTML = html;
             App.setStatus(`${route.label} — Ready`);
+            App.screenShown(route);  // listed under Open (#336)
             if (route.mount) App._pageCleanup = route.mount();
             // Back to a page left by one of its own rows (the chart's
             // account links to a register or a drill-down): the keyboard
@@ -489,6 +702,13 @@ const App = {
             if (history.state && history.state.focus) ReportsPage._refocusRow($('#page-content'));
         } catch (err) {
             if (adminOnly()) return showAdminOnly();
+            // a sign-in that must set its password first: the form, not
+            // the refusal its page met (NEW-149)
+            if (App.mustChangePassword) {
+                $('#page-content').innerHTML = App._passwordChangeHtml();
+                App.setStatus('Set your password');
+                return;
+            }
             // Server-side detail (err.message and stack) goes to console
             // for devs; the DOM gets a clean user-facing error with a
             // recovery action. Avoid leaking framework internals into
@@ -498,7 +718,7 @@ const App = {
                 <h3>Couldn't load this page</h3>
                 <p>${escapeHtml(err.message || 'An unexpected error occurred.')}</p>
                 <p style="margin-top:12px;">
-                    <a href="#/" class="btn btn-secondary">Return to Dashboard</a>
+                    <a href="#/" class="btn btn-secondary" onclick="App.navigate('#/')">Return to Dashboard</a>
                 </p>
             </div>`;
             App.setStatus('Error loading page');
@@ -546,6 +766,33 @@ const App = {
         </div>`;
     },
 
+    // ---- An invited sign-in sets its own password (#345) ------------------
+    mustChangePassword: false,
+
+    _passwordChangeHtml() {
+        return `<div class="page-header"><h2>Set your password</h2></div>
+            <p style="max-width:520px; margin-bottom:12px;">The password you signed in with was for one use. Choose your own to continue; nothing else opens until you do.</p>
+            <form onsubmit="App.savePassword(event)" style="max-width:420px;" data-readonly-ok>
+                <div class="form-group"><label>New password <span style="font-weight:normal; color:var(--gray-500);">(at least 8 characters)</span></label>
+                    <input name="new_password" type="password" required minlength="8" autocomplete="new-password" autofocus></div>
+                <div class="form-group"><label>Again</label>
+                    <input name="again" type="password" required minlength="8" autocomplete="new-password"></div>
+                <div class="form-actions"><button type="submit" class="btn btn-primary">Save password</button></div>
+            </form>`;
+    },
+
+    async savePassword(e) {
+        e.preventDefault();
+        const form = e.target;
+        if (form.new_password.value !== form.again.value) { toast('The two passwords differ', 'error'); return; }
+        try {
+            await API.post('/auth/password', { new_password: form.new_password.value });
+            App.mustChangePassword = false;
+            toast('Password saved');
+            App.navigate('#/');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     // ---- Read-only sign-ins (Server Edition) -------------------------------
     // The server refuses every write from the readonly role with a 403 —
     // that stays the enforcement. But every page offered "+ New", and a
@@ -554,30 +801,65 @@ const App = {
     // create buttons are hidden and every form, a dialog's or a page's, is
     // shown locked, with a sentence saying why.
     role: 'admin',
+    username: '',
     READ_ONLY_MESSAGE: 'Your sign-in is read-only: you can look, but not save changes. '
         + 'An administrator can change your role under Settings → Users.',
+    // An outside accountant's sign-in (#340): the server lets it read
+    // everything (the audit log included) and post journal entries, and
+    // refuses every other write with its own sentence. Here it is treated
+    // as read-only everywhere but the Journal Entries page: the create
+    // buttons go, every form opens locked with this sentence, and the
+    // entry form, Void (on its own entries) and Attach stay.
+    ACCOUNTANT_MESSAGE: 'Your sign-in is an accountant\'s: you can read everything and post '
+        + 'journal entries, but not change documents, bank entries or settings. '
+        + 'An administrator can change your role under Settings → Users.',
+    ACCOUNTANT_ACTIONS: new Set(['JournalPage.showForm', 'JournalPage.save', 'JournalPage.void',
+        'JournalPage.uploadAttachment', 'JournalPage.addLine', 'JournalPage.removeLine']),
 
     isReadOnly() { return App.role === 'readonly'; },
 
+    // the role, or the books: an accountant's copy (#346) takes journal
+    // entries and nothing else, whoever is signed in to it (W-20)
+    inCopy: false,
+    copyDividingDate: '',
+    COPY_MESSAGE() {
+        return `This is an accountant's copy: it takes journal entries dated on or before ${App.copyDividingDate || 'the dividing date'} and nothing else. Send changes back from Companies when they are in.`;
+    },
+
+    isAccountant() { return App.role === 'accountant' || App.inCopy; },
+
+    // read-only, or an accountant away from the journal: what is locked
+    isLocked() { return App.isReadOnly() || App.isAccountant(); },
+
+    lockedMessage() {
+        if (App.inCopy) return App.COPY_MESSAGE();
+        return App.isAccountant() ? App.ACCOUNTANT_MESSAGE : App.READ_ONLY_MESSAGE;
+    },
+
     isAdmin() { return App.role === 'admin'; },
 
-    setRole(role) {
+    setRole(role, username) {
         App.role = role || 'admin';
+        if (username !== undefined) App.username = username || '';
         document.body.classList.toggle('role-readonly', App.isReadOnly());
+        document.body.classList.toggle('role-accountant', App.isAccountant());
         // the first page can open before the role is known
         const open = document.querySelector('#sidebar .nav-link.active');
         if (App.role !== 'admin' && open && App.ADMIN_ONLY_PAGES.includes(open.dataset.page)) {
             App.navigate(location.hash);
         }
         const page = document.getElementById('page-content');
-        if (App.isAdmin() || !page) return;
-        if (App.isReadOnly()) {
+        if ((App.isAdmin() && !App.inCopy) || !page) return;
+        if (App.isLocked()) {
             // the toolbar's shortcuts to new documents, and batch entry
             document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]')
                 .forEach(b => b.classList.add('hidden'));
-            // the sidebar's pages that only enter things (Batch Payments...),
-            // and the Audit Log, which the server refuses this role
+            // the sidebar's pages that only enter things (Batch Payments...)
             App.hideWriteControls(document.getElementById('sidebar'));
+        }
+        if (App.isReadOnly()) {
+            // the Audit Log, which the server refuses this role (an
+            // accountant's sign-in reads it: seeing what moved is the job)
             document.querySelectorAll('#sidebar a[href="#/audit"]').forEach(l => {
                 (l.closest('li') || l).classList.add('hidden');
             });
@@ -692,8 +974,10 @@ const App = {
     // sight, locked. A file chooser is only ever an upload: hidden (macbase1,
     // 2.18.0 round 4: the Attachments "Choose File" in an invoice's view).
     hideWriteControls(root) {
-        if (!root || !App.isReadOnly()) return;
+        if (!root || !App.isLocked()) return;
         root.querySelectorAll('button, a.btn, [data-write], input[type="file"]').forEach(el => {
+            // the accountant keeps the journal page's own controls (#340)
+            if (App.isAccountant() && (el.hasAttribute('data-accountant-ok') || el.closest('[data-accountant-ok]'))) return;
             if (el.getAttribute('data-write') !== null) {
                 if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) el.disabled = true;
                 else el.classList.add('hidden');
@@ -712,6 +996,7 @@ const App = {
             const editBesideView = label === 'Edit' && !!el.parentElement
                 && [...el.parentElement.querySelectorAll('button, a.btn')]
                     .some(b => (b.textContent || '').trim() === 'View');
+            if (App.isAccountant() && call && App.ACCOUNTANT_ACTIONS.has(call[1])) return;
             if (label.startsWith('+') || headerAction || editBesideView
                 || (call && App.WRITE_ACTIONS.has(call[1]))) {
                 el.classList.add('hidden');
@@ -726,8 +1011,10 @@ const App = {
     // data-readonly-ok and stays usable; so does a button that only opens a
     // record inside a locked form (an email template, shown locked in turn).
     lockForms(root) {
-        if (!root || !App.isReadOnly()) return;
-        root.querySelectorAll('form:not([data-readonly-ok])').forEach(form => {
+        if (!root || !App.isLocked()) return;
+        // the accountant's own form: the journal entry's (data-accountant-ok)
+        const skip = App.isAccountant() ? ':not([data-accountant-ok])' : '';
+        root.querySelectorAll(`form:not([data-readonly-ok])${skip}`).forEach(form => {
             form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
             form.querySelectorAll('button').forEach(b => {
                 if (/closeModal\(/.test(b.getAttribute('onclick') || '')) return;
@@ -736,10 +1023,10 @@ const App = {
                 b.style.opacity = '0.5';
                 b.style.cursor = 'not-allowed';
             });
-            form.onsubmit = (e) => { e.preventDefault(); toast(App.READ_ONLY_MESSAGE, 'error'); return false; };
+            form.onsubmit = (e) => { e.preventDefault(); toast(App.lockedMessage(), 'error'); return false; };
             if (!form.querySelector('.readonly-note')) {
                 form.insertAdjacentHTML('afterbegin',
-                    `<div class="hint hint--locked readonly-note" style="margin-bottom:10px;">${escapeHtml(App.READ_ONLY_MESSAGE)}</div>`);
+                    `<div class="hint hint--locked readonly-note" style="margin-bottom:10px;">${escapeHtml(App.lockedMessage())}</div>`);
             }
         });
     },
@@ -1460,6 +1747,51 @@ const App = {
         });
     },
 
+    // ---- Several companies on one server (#358) ----------------------------
+    // A Server Edition host serving more than one company file: the topbar
+    // offers the others. One whose sign-in this one's password opened is a
+    // click away, with the role that company gives; the rest ask for their
+    // own password, this username chosen.
+    showCompanySwitch(companies) {
+        const old = document.getElementById('topbar-company-switch');
+        if (old) old.remove();
+        const brand = $('#topbar-company');
+        if (!brand) return;
+        const serves = Array.isArray(companies) && companies.length > 1;
+        // the switch names the company itself
+        brand.classList.toggle('hidden', serves);
+        if (!serves) return;
+        const select = document.createElement('select');
+        select.id = 'topbar-company-switch';
+        select.className = 'tb-company-switch';
+        select.setAttribute('aria-label', 'Switch company');
+        select.title = 'Switch company';
+        companies.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c.file;
+            o.textContent = c.current || c.opens ? c.name : `${c.name} (sign in)`;
+            o.selected = !!c.current;
+            select.appendChild(o);
+        });
+        select.addEventListener('change', () => App.switchServedCompany(select.value));
+        brand.insertAdjacentElement('afterend', select);
+    },
+
+    async switchServedCompany(file) {
+        try {
+            const r = await API.post('/auth/company', { file });
+            if (!r.authenticated && window.SlowbooksAuth) {
+                window.SlowbooksAuth.rememberUsername(r.username || App.username || '');
+            }
+        } catch (err) {
+            toast(err.message, 'error');
+            return;
+        }
+        // another company's books: start from its Home page
+        location.hash = '#/';
+        location.reload();
+    },
+
     showCompany(s) {
         App.settings = s || {};
         App.applyHiddenMenu(App.settings);
@@ -1635,14 +1967,16 @@ const App = {
         App.updateClock();
         setInterval(App.updateClock, 60000);
 
-        // Real version in the footer + optional update badge
-        App.initSystemInfo();
-
         // Settings first: the vocabulary and the nonprofit nav items must
         // be in place before the first page paints (no flash of "Customers"
-        // on a donor's screen). loadCompanySettings never rejects.
-        App.loadCompanySettings().then(() => {
+        // on a donor's screen). loadCompanySettings never rejects. The
+        // sign-in's state too (the version, the role, a one-time password
+        // to replace): the first page waited for neither, so a sign-in that
+        // must set its password got the dashboard's 403 painted over the
+        // form (2.24.0 round 2, NEW-149 on the Mac).
+        Promise.all([App.loadCompanySettings(), App.initSystemInfo()]).then(() => {
             App.applyTerminology();
+            App.renderOpenTabs();  // the session's open screens (#336)
             App.navigate(location.hash || '#/');
         });
     },
@@ -1657,8 +1991,11 @@ const App = {
     async initSystemInfo() {
         try {
             let res = await fetch('/api/system', { credentials: 'same-origin' });
-            if (!res.ok) return;
-            const info = await res.json();
+            // A refused /api/system (a sign-in that must set its password
+            // first, before 2.24.0 round 2) used to end here, before the
+            // sign-in's own state was read, so the password page never
+            // drew (W-18 / NEW-149): the version is skipped, the rest goes on.
+            const info = res.ok ? await res.json() : {};
             const label = info.version
                 ? (info.server_mode ? `v${info.version} · Server` : `v${info.version}`)
                 : null;
@@ -1680,7 +2017,29 @@ const App = {
             const auth = await fetch('/api/auth/status', { credentials: 'same-origin' });
             if (auth.ok) {
                 const a = await auth.json();
-                if (a.user) App.setRole(a.user.role);
+                if (a.user) App.setRole(a.user.role, a.user.username);
+                if (a.user && a.user.must_change_password) {
+                    // the first page (init awaits this) draws the form
+                    App.mustChangePassword = true;
+                }
+                // the copy itself takes journal entries and nothing else:
+                // the pages are locked the way the Accountant role's are
+                // (W-20), and the list of open screens is this company's
+                App.inCopy = !!a.accountants_copy;
+                App.copyDividingDate = a.accountants_copy ? a.accountants_copy.dividing_date : '';
+                if (App.inCopy) { App.setRole(App.role, App.username); }
+                App._tabsOwnerChanged(a);
+                App.showCompanySwitch(a.companies);
+                if (a.accountants_copy && !document.getElementById('ac-banner')) {
+                    // an accountant's copy says so on every page (#346)
+                    const banner = document.createElement('div');
+                    banner.id = 'ac-banner';
+                    banner.setAttribute('role', 'status');
+                    banner.style.cssText = 'background:var(--primary-light); border-bottom:1px solid var(--gray-300); padding:6px 16px; font-size:12px;';
+                    banner.innerHTML = `Accountant's copy of <strong>${escapeHtml(a.accountants_copy.company_name)}</strong>: journal entries dated on or before <strong>${escapeHtml(a.accountants_copy.dividing_date)}</strong> only. <a href="#/companies">Send changes back</a> when they are in.`;
+                    const main = document.getElementById('page-content');
+                    if (main && main.parentElement) main.parentElement.insertBefore(banner, main);
+                }
                 if (a.multi_user && a.user && a.user.role !== 'admin') {
                     // HR and payroll are admin functions; the server refuses
                     // them for other roles, so do not offer the pages.

@@ -40,6 +40,8 @@ from app.models.transactions import Transaction
 from app.services.accounting import create_journal_entry
 
 SOURCE_TYPE = "qb_ledger_import"
+# QuickBooks' Type for a journal entry on this report
+GENERAL_JOURNAL_TYPES = frozenset({"General Journal", "Journal", "Journal Entry"})
 LEDGER_COLUMNS = ("Type", "Date", "Num", "Name", "Memo", "Split", "Debit", "Credit")
 _DATE_FORMATS = ("%m/%d/%Y", "%m/%d/%y")
 _HOW = (
@@ -54,6 +56,48 @@ def is_ledger_header(cols: dict | None) -> bool:
     return (
         bool(cols) and all(c in cols for c in LEDGER_COLUMNS) and "Account" not in cols
     )
+
+
+def has_account_sections(rows: list[list[str]], header_at: int, cols: dict) -> bool:
+    """Recognize ledger grouping even when an added Account column masks it.
+
+    The section headings sit left of the report's own columns, so they are
+    looked for left of the first of those; the added Account column is left
+    out of that reach and of the heading read, wherever it was inserted (as
+    column A ahead of the headings, 2.24.1 gate W-27, or anywhere else)."""
+    heading = None
+    own = [v for k, v in cols.items() if k != "Account"]
+    first = min(own) if own else 0
+    skip = cols.get("Account")
+    for row in rows[header_at + 1 :]:
+        ttype = row[cols["Type"]].strip() if cols["Type"] < len(row) else ""
+        if not ttype:
+            label = next(
+                (
+                    c.strip()
+                    for i, c in enumerate(row[:first])
+                    if i != skip and c.strip()
+                ),
+                "",
+            )
+            if label:
+                heading = (
+                    None if label.startswith("Total ") or label == "TOTAL" else label
+                )
+            continue
+        account = row[cols["Account"]].strip() if cols["Account"] < len(row) else ""
+        # Sub-account sections carry a leaf name; Account may carry the full path.
+        if (
+            heading
+            and account
+            and heading.casefold()
+            in (
+                account.casefold(),
+                account.rsplit(":", 1)[-1].strip().casefold(),
+            )
+        ):
+            return True
+    return False
 
 
 def _money(raw: str) -> Decimal:
@@ -245,12 +289,53 @@ def _reference(journal: list[dict], seen: dict) -> str:
     return base[:100]
 
 
-def import_ledger_report(
-    db: Session, rows: list[list[str]], header_at: int, cols: dict
-) -> dict:
+OTHER_SECTION_SUFFIX = " - Other"
+
+
+def _parent_of_other_section(db: Session, path: str):
+    """The account a "<Parent> - Other" section belongs to. When a parent
+    account has sub-accounts, QuickBooks reports the parent's own postings
+    in a section it names "<Parent> - Other", though no such account
+    exists in its chart (a 16-year export on discussion #349 was refused
+    as "accounts not in the chart" for every one of them). Those lines
+    belong to the parent itself. The section sits under its parent in the
+    report ("Parent:Parent - Other"), or stands by its name alone when the
+    export carries one label column."""
     from app.services.iif_import import _find_account
 
-    result = {"journals": 0, "duplicates_skipped": 0, "errors": [], "warnings": []}
+    segments = [part.strip() for part in path.split(":") if part.strip()]
+    if not segments or not segments[-1].endswith(OTHER_SECTION_SUFFIX):
+        return None
+    leaf = segments[-1][: -len(OTHER_SECTION_SUFFIX)].strip()
+    if not leaf:
+        return None
+    parents = segments[:-1]
+    if parents and parents[-1].lower() == leaf.lower():
+        return _find_account(db, ":".join(parents))
+    return _find_account(db, ":".join(parents + [leaf]))
+
+
+def import_ledger_report(
+    db: Session,
+    rows: list[list[str]],
+    header_at: int,
+    cols: dict,
+    adjusting_only: bool = False,
+    posted_by: str = None,
+) -> dict:
+    """``adjusting_only`` (#344): the report is an accountant's adjustments
+    — General Journal rows only, refused whole when it holds anything
+    else, so a whole-ledger upload can never double the books — and what
+    posts is marked adjusting (#341), in ``posted_by``'s name."""
+    from app.services.iif_import import _find_account
+
+    result = {
+        "journals": 0,
+        "duplicates_skipped": 0,
+        "errors": [],
+        "warnings": [],
+        "adjusting": bool(adjusting_only),
+    }
     lines, errors, notes = parse_ledger(rows, header_at, cols)
     result["warnings"].extend(notes)
     if errors:
@@ -259,10 +344,29 @@ def import_ledger_report(
     if not lines:
         result["errors"].append("The report has no transactions in it. " + _HOW)
         return result
+    if adjusting_only:
+        others: dict[str, int] = {}
+        for ln in lines:
+            if ln["type"] not in GENERAL_JOURNAL_TYPES:
+                others[ln["type"]] = others.get(ln["type"], 0) + 1
+        if others:
+            named = ", ".join(
+                f"{n} {t} row{'s' if n != 1 else ''}" for t, n in others.items()
+            )
+            result["errors"].append(
+                "The adjusting-entries import takes General Journal rows only, and "
+                f"this report also holds {named}. Nothing was posted. In QuickBooks, "
+                "filter the report to Transaction Type = Journal (Customize Report > "
+                "Filters) and export it again, or untick the box to import the whole "
+                "report as ordinary journal entries."
+            )
+            return result
     accounts = {}
     missing = []
     for path in OrderedDict.fromkeys(ln["path"] for ln in lines):
         acct = _find_account(db, path)
+        if acct is None:
+            acct = _parent_of_other_section(db, path)
         if acct is None:
             missing.append(path)
         accounts[path] = acct
@@ -277,9 +381,10 @@ def import_ledger_report(
         return result
     journals, errors = group_journals(lines)
     if errors:
-        result["errors"] = errors[:20] + (
-            [f"… and {len(errors) - 20} more"] if len(errors) > 20 else []
-        )
+        # The whole list, however long: it stopped at twenty with "and 14,070
+        # more", and the person asked where the rest were (discussion #349).
+        # The page counts them and saves the list as a file.
+        result["errors"] = errors
         return result
     have = {
         ref
@@ -326,6 +431,8 @@ def import_ledger_report(
             posted,
             source_type=SOURCE_TYPE,
             reference=ref,
+            is_adjusting=bool(adjusting_only),
+            posted_by=posted_by,
         )
         have.add(ref)
         result["journals"] += 1

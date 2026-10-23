@@ -1297,10 +1297,23 @@ def _sale_kinds(rows, header_idx, cols, ar_names=_AR_NAMES) -> set:
 
 
 def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
-    """Identify which QB report a CSV is, by column signature; a Transaction
+    """Identify QB reports by grouping and column signature; a Transaction
     Detail export is receipts, invoices, or both, by what its header rows
     post to (#291)."""
     rows = _csv_rows(csv_text)
+    from app.services.qb_ledger_import import (
+        LEDGER_COLUMNS,
+        has_account_sections,
+        is_ledger_header,
+    )
+
+    ledger_at, ledger_cols = _find_header_for(rows, LEDGER_COLUMNS)
+    if (
+        ledger_cols
+        and "Account" in ledger_cols
+        and has_account_sections(rows, ledger_at, ledger_cols)
+    ):
+        return "ledger"
     header_idx, cols = _find_header_for(rows, REQUIRED_COLUMNS)
     if header_idx is not None:
         kinds = _sale_kinds(rows, header_idx, cols, _ar_names(db))
@@ -1313,22 +1326,31 @@ def detect_report_type(csv_text: str, db: Session | None = None) -> str | None:
         return "checks"
     if _find_header_for(rows, DEPOSIT_COLUMNS)[0] is not None:
         return "deposits"
-    from app.services.qb_ledger_import import LEDGER_COLUMNS, is_ledger_header
-
-    if is_ledger_header(_find_header_for(rows, LEDGER_COLUMNS)[1]):
+    if is_ledger_header(ledger_cols):
         return "ledger"
     from app.services.qb_time_import import TIME_COLUMNS, is_time_header
 
     if is_time_header(_find_header_for(rows, TIME_COLUMNS)[1]):
         return "time"
+    from app.services.categorized_import import is_categorized
+
+    if is_categorized(rows):
+        return "categorized"
     return None
 
 
-def import_qb_report(db: Session, csv_text: str) -> dict:
+def import_qb_report(
+    db: Session,
+    csv_text: str,
+    adjusting_only: bool = False,
+    posted_by: str = None,
+    outflow_positive: bool = False,
+) -> dict:
     """Import any supported QB report CSV, auto-detected by its columns.
 
-    Detection order (receipts, checks, deposits) is cosmetic: the three
-    column signatures are mutually exclusive on exact cell matches — the
+    Account-grouped ledgers are checked before document reports because an
+    added Account column overlaps the sales signature. For the remaining
+    receipts, checks and deposits, exact column names distinguish them — the
     deposit signature's bare "Amount" never appears in a check header
     ("Original Amount"/"Paid Amount" are distinct cells). (#62 review)
     """
@@ -1345,6 +1367,8 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
         "checks": 0,
         "journals": 0,
         "time_entries": 0,
+        "posted": 0,
+        "splits": 0,
         "report": None,
         "duplicates_skipped": 0,
         "errors": [],
@@ -1355,7 +1379,18 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
             "Unrecognized report layout. Supported exports: Transaction "
             "Detail (filtered to Sales Receipt or Invoice), Deposit Detail, "
             "Check Detail, Transaction Detail by Account and Time by Name by "
-            "Job detail — keep the report's default columns."
+            "Job detail — keep the report's default columns — or a categorized "
+            "bank sheet (Bank Account, Transaction Date, Memo, Payee, Account, "
+            "Amount)."
+        )
+        return base
+    if adjusting_only and kind != "ledger":
+        # an accountant's adjustments come on Transaction Detail by Account
+        # filtered to journal entries (#344); any other report is not that
+        base["errors"].append(
+            "The adjusting-entries import takes QuickBooks Desktop's Transaction "
+            "Detail by Account report filtered to Transaction Type = Journal; this "
+            "file is a different report. Nothing was posted."
         )
         return base
     if kind in ("sales_receipts", "invoices", "sales_and_invoices"):
@@ -1382,8 +1417,33 @@ def import_qb_report(db: Session, csv_text: str) -> dict:
 
         rows = _csv_rows(csv_text)
         header_at, cols = _find_header_for(rows, LEDGER_COLUMNS)
-        sub = import_ledger_report(db, rows, header_at, cols)
+        if "Account" in cols:
+            base["errors"].append(
+                "This appears to be Transaction Detail by Account with an added "
+                "Account column. Nothing was imported. Export again using the "
+                "default columns; set Customize Report > Filters > Account > "
+                "All accounts rather than adding an Account column."
+            )
+            return base
+        sub = import_ledger_report(
+            db,
+            rows,
+            header_at,
+            cols,
+            adjusting_only=adjusting_only,
+            posted_by=posted_by,
+        )
         base["journals"] = sub.pop("journals", 0)
+        base["adjusting"] = sub.pop("adjusting", False)
+    elif kind == "categorized":
+        # a categorized bank sheet (#328): posted transactions, not a feed
+        from app.services.categorized_import import import_sheet
+
+        sub = import_sheet(db, _csv_rows(csv_text), outflow_positive=outflow_positive)
+        base["posted"] = sub.pop("posted", 0)
+        base["splits"] = sub.pop("splits", 0)
+        base["report"] = sub.pop("report", None)
+        base["payees_added"] = sub.pop("payees_added", [])
     elif kind == "time":
         from app.services.qb_time_import import TIME_COLUMNS, import_time_report
 

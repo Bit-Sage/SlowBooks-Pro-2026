@@ -140,7 +140,9 @@ const TimeEntriesPage = {
 
     async approve(id) {
         try {
-            await API.post(`/time-entries/${id}/approve?approved_by=admin`, {});
+            // The approver is recorded from the signed-in user server-side
+            //; no name is sent from here.
+            await API.post(`/time-entries/${id}/approve`, {});
             toast('Time entry approved');
             App.navigate('#/hr/time-entries');
         } catch (err) { toast(err.message, 'error'); }

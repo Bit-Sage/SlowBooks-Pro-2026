@@ -273,6 +273,28 @@ const SettingsPage = {
                         Send Test Email</button>
                 </div>
 
+                <div class="settings-section" role="group" aria-labelledby="settings-h-direct-deposit">
+                    <h3 id="settings-h-direct-deposit">Direct Deposit (ACH)</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        What the bank prints on its ACH origination agreement. With these saved, a processed
+                        pay run has a <strong>Direct deposit file</strong> button; upload the file to the bank.
+                        Employees' own accounts are entered on the employee, under Direct Deposit.
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Bank Routing Number</label>
+                            <input name="ach_bank_routing" inputmode="numeric" maxlength="9" value="${escapeHtml(s.ach_bank_routing || '')}" placeholder="9 digits"></div>
+                        <div class="form-group"><label>Bank Name</label>
+                            <input name="ach_bank_name" maxlength="23" value="${escapeHtml(s.ach_bank_name || '')}"></div>
+                        <div class="form-group"><label>Company Account Number</label>
+                            <input name="ach_company_account" type="password" inputmode="numeric" maxlength="17" value="${escapeHtml(s.ach_company_account || '')}" autocomplete="off">
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">The account the net pay is paid from. Stored encrypted.</div></div>
+                        <div class="form-group"><label>Immediate Origin</label>
+                            <input name="ach_immediate_origin" maxlength="10" value="${escapeHtml(s.ach_immediate_origin || '')}" placeholder="1 + EIN unless the bank says otherwise"></div>
+                        <div class="form-group"><label>Company Identification</label>
+                            <input name="ach_company_id" maxlength="10" value="${escapeHtml(s.ach_company_id || '')}" placeholder="1 + EIN unless the bank says otherwise"></div>
+                    </div>
+                </div>
+
                 <div class="settings-section" role="group" aria-labelledby="settings-h-online-payments">
                     <h3 id="settings-h-online-payments">Online Payments</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
@@ -537,11 +559,13 @@ const SettingsPage = {
                         <div class="form-group"><label>Role</label>
                             <select id="user-new-role">
                                 <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                                <option value="accountant">Accountant — reads everything, posts journal entries</option>
                                 <option value="readonly">Read-only — reports and lookups</option>
                                 <option value="admin">Admin — everything</option>
                             </select></div>
                     </div>
                     <button type="button" class="btn btn-primary" onclick="SettingsPage.createUser()">Add User</button>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.showInvite()">Invite your accountant…</button>
                 </div>
 
                 <div class="settings-section" id="settings-api-tokens" data-admin style="display:none;" role="group" aria-labelledby="settings-h-api-tokens-agents-integrations">
@@ -568,6 +592,7 @@ const SettingsPage = {
                         <div class="form-group"><label>Role</label>
                             <select id="token-new-role">
                                 <option value="readonly">Read-only — reports and lookups</option>
+                                <option value="accountant">Accountant — reads everything, posts journal entries</option>
                                 <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
                                 <option value="admin">Admin — everything except identity management</option>
                             </select></div>
@@ -697,21 +722,44 @@ const SettingsPage = {
         } else if (!st.supported) {
             status.textContent = 'This build cannot encrypt the company file.';
         } else if (st.encrypted) {
-            status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}), `
-                + 'and so is every backup of it. The key comes from '
-                + (st.key_source === 'secret' ? 'COMPANY_FILE_ENCRYPTION_SECRET' : 'the launcher') + '.';
-            actions.innerHTML = '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
+            const ring = st.keyring;
+            let keyWords;
+            if (st.key_source === 'secret') keyWords = 'The key comes from COMPANY_FILE_ENCRYPTION_SECRET.';
+            else if (ring) {
+                const who = ring.admins.length ? ring.admins.map(escapeHtml).join(', ') : 'nobody yet';
+                keyWords = `An administrator's sign-in unlocks it (${who}${ring.stale.length ? `; ${ring.stale.map(escapeHtml).join(', ')} at their next sign-in` : ''}), `
+                    + `and so does the recovery key${ring.recovery_made_at ? ` made ${SettingsPage._when(ring.recovery_made_at)}` : ''}. `
+                    + 'Keep the recovery key where the backups are not: it opens the file, and every backup of it, if every administrator\'s password is lost.';
+            } else keyWords = 'The key comes from the launcher.';
+            // backups made before Turn on stay plain SQLite in the same list
+            // (NEW-158 / W-25): say so, and how many, from the list itself
+            // (loadBackups may not have run yet)
+            let backups = [];
+            try { backups = await API.get('/backups'); } catch (e) { backups = []; }
+            SettingsPage._backups = backups;
+            const plain = backups.filter(b => b.encrypted === false).length;
+            const backupWords = plain
+                ? `Backups made while it is on are encrypted; ${plain} backup${plain === 1 ? '' : 's'} in the list below ${plain === 1 ? 'was' : 'were'} made before and ${plain === 1 ? 'is' : 'are'} plain SQLite, readable with no key: delete ${plain === 1 ? 'it' : 'them'} once a newer backup exists. `
+                : 'Backups made while it is on are encrypted. ';
+            status.innerHTML = `<strong>On.</strong> ${escapeHtml(st.file)} is encrypted on disk (SQLCipher ${escapeHtml(st.cipher_version || '')}). `
+                + backupWords + keyWords;
+            actions.innerHTML = (ring ? '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmRecoveryKey()">New recovery key…</button> ' : '')
+                + '<button type="button" class="btn btn-secondary" onclick="SettingsPage.confirmEncryption(false)">Turn off…</button>';
         } else {
             status.innerHTML = `<strong>Off.</strong> ${escapeHtml(st.file)} is a plain SQLite file: anyone with the file can read the books. `
-                + (st.key_source
-                    ? 'A key is set, so encryption can be turned on.'
+                + (st.can_turn_on
+                    ? (st.desktop_key
+                        ? 'Turning it on makes a recovery key, shown once, and your sign-in unlocks the books from then on.'
+                        : 'A key is set, so encryption can be turned on.')
                     : 'To turn it on, set COMPANY_FILE_ENCRYPTION_SECRET where SlowBooks Pro starts, then start it again.');
-            actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.key_source ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
+            actions.innerHTML = `<button type="button" class="btn btn-primary" ${st.can_turn_on ? '' : 'disabled'} onclick="SettingsPage.confirmEncryption(true)">Turn on…</button>`;
         }
         section.hidden = false;
+        // the list marks the plain backups once the state is known
+        SettingsPage.loadBackups();
     },
 
-    async confirmEncryption(enable) {
+    async _companyNameNow() {
         // The company as it is now, not the shell's copy from when the
         // window opened (a rename since would name it wrong).
         let company = (App.settings && App.settings.company_name) || '';
@@ -719,22 +767,60 @@ const SettingsPage = {
             const now = await API.get('/settings');
             if (now && now.company_name) company = now.company_name;
         } catch (e) { /* the shell's copy will do */ }
+        return company;
+    },
+
+    _nameConfirmField(company) {
+        return `<div class="form-group">
+                    <label for="encryption-company-name">Company name</label>
+                    <input type="text" id="encryption-company-name" name="company_name" autocomplete="off" required
+                        placeholder="${escapeHtml(company)}"
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                </div>`;
+    },
+
+    // Submit opens once the name matches and, where the form asks for it,
+    // the password is typed.
+    _encryptionFormCheck(form) {
+        const named = form.company_name.value.trim().toLowerCase() === SettingsPage._encryptionName;
+        const pw = form.querySelector('[name=password]');
+        form.querySelector('button[type=submit]').disabled = !(named && (!pw || pw.value.length > 0));
+    },
+
+    async confirmEncryption(enable) {
+        const company = await SettingsPage._companyNameNow();
         SettingsPage._encryptionName = company.trim().toLowerCase();
+        const st = SettingsPage._companyFile || {};
+        const desktopKey = enable && st.desktop_key;
+        // Turn off proves the administrator the way Turn on does (the
+        // agents' question, round 1): the password is asked when a person
+        // is signed in
+        const asksPassword = desktopKey || (!enable && App.username);
         const what = enable
             ? `<p style="margin:0 0 8px;"><strong>This rewrites the company file encrypted.</strong> From then on the file, and every backup
                 of it, opens only with the key; without the key the books are unreadable, including to SlowBooks Pro.</p>`
+              + (desktopKey
+                ? `<p style="margin:0 0 8px;">SlowBooks Pro makes a <strong>recovery key</strong> and shows it once: write it down or save the file,
+                    and keep it where the backups are not. Your sign-in unlocks the books from then on; every other administrator's does
+                    after their next sign-in.</p>`
+                : '')
             : `<p style="margin:0 0 8px;"><strong>This rewrites the company file as plain SQLite.</strong> Anyone with the file can read
-                the books again.</p>`;
+                the books again${st.keyring ? ', and the recovery key is retired' : ''}.</p>`;
+        if (enable && desktopKey) {
+            // where the text file lands: a Save panel on the desktop, else the
+            // browser's download; never a synced Documents folder unasked
+        }
         openModal(enable ? 'Turn on company file encryption' : 'Turn off company file encryption', `
             <form id="encryption-form" onsubmit="SettingsPage.changeEncryption(event, ${enable})">
                 ${what}
                 <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name to confirm.</p>
-                <div class="form-group">
-                    <label for="encryption-company-name">Company name</label>
-                    <input type="text" id="encryption-company-name" name="company_name" autocomplete="off" required
-                        placeholder="${escapeHtml(company)}"
-                        oninput="this.form.querySelector('button[type=submit]').disabled = this.value.trim().toLowerCase() !== SettingsPage._encryptionName">
-                </div>
+                ${SettingsPage._nameConfirmField(company)}
+                ${asksPassword ? `<div class="form-group">
+                    <label for="encryption-password">Your password</label>
+                    <input type="password" id="encryption-password" name="password" autocomplete="current-password" required
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                    ${desktopKey ? '<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">The key is wrapped for it, so your sign-in unlocks the books.</div>' : ''}
+                </div>` : ''}
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn ${enable ? 'btn-primary' : 'btn-danger'}" disabled>${enable ? 'Encrypt the company file' : 'Remove the encryption'}</button>
@@ -749,10 +835,103 @@ const SettingsPage = {
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = enable ? 'Encrypting…' : 'Rewriting…';
+        const body = { enabled: enable, company_name: form.company_name.value };
+        if (form.password) body.password = form.password.value;
         try {
-            const result = await API.post('/company-file/encryption', { enabled: enable, company_name: form.company_name.value });
+            const result = await API.post('/company-file/encryption', body);
             closeModal();
-            toast(result.encrypted ? 'The company file is encrypted.' : 'The company file is plain SQLite again.');
+            if (result.recovery_key) SettingsPage.showRecoveryKey(result, 'The company file is encrypted.');
+            else toast(result.encrypted ? 'The company file is encrypted.' : 'The company file is plain SQLite again.');
+            SettingsPage.loadCompanyFile();
+        } catch (err) {
+            toast(err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = label;
+        }
+    },
+
+    // The recovery key, the one time it is shown (#290): copied, or saved
+    // as a text file (through the desktop bridge where there is one).
+    showRecoveryKey(result, lead) {
+        SettingsPage._recoveryFile = result.recovery_file || result.recovery_key;
+        openModal('Your recovery key', `
+            <p style="margin:0 0 8px;">${escapeHtml(lead)} <strong>This recovery key is shown once.</strong> It opens the company file,
+                and every backup of it, if every administrator's password is lost. Anyone holding it can read the books, so keep it
+                where the backups are not: a safe, a password manager, a sealed envelope.</p>
+            <p style="margin:0 0 12px; font-family:var(--mono, monospace); font-size:16px; letter-spacing:0.04em; text-align:center;
+                padding:10px; border:1px solid var(--gray-200); border-radius:4px; user-select:all;" id="recovery-key-words">${escapeHtml(result.recovery_key)}</p>
+            <div class="form-actions" style="justify-content:space-between;">
+                <div>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.copyRecoveryKey()">Copy</button>
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.saveRecoveryKey()">Save as a text file</button>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="closeModal()">I have kept it</button>
+            </div>`);
+    },
+
+    async copyRecoveryKey() {
+        const words = ($('#recovery-key-words') || {}).textContent || '';
+        await copyToClipboard(words, 'Recovery key');
+    },
+
+    async saveRecoveryKey() {
+        const company = ((App.settings && App.settings.company_name) || 'company').replace(/[^A-Za-z0-9 _-]+/g, '').trim() || 'company';
+        const name = `${company} recovery key.txt`;
+        const text = SettingsPage._recoveryFile || '';
+        // On the desktop the file goes where the person chooses, through a
+        // Save panel: the Reports folder every export lands in is synced to
+        // a cloud on many machines, and a recovery key should not be
+        // (macbase1 and skytech, round 1).
+        const api = window.pywebview && window.pywebview.api;
+        if (api && api.save_secret_file) {
+            const r = await api.save_secret_file(name, text);
+            if (r && r.success) toast(`Saved to ${r.path}`);
+            else if (r && r.cancelled) toast('Not saved: the key is still on screen.');
+            else toast(`Could not save the file: ${(r && r.error) || 'unknown error'}`, 'error');
+            return;
+        }
+        const blob = new Blob([text], { type: 'text/plain' });
+        if (window.SlowbooksDesktop && await window.SlowbooksDesktop.saveFile(blob, name)) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+    },
+
+    async confirmRecoveryKey() {
+        const company = await SettingsPage._companyNameNow();
+        SettingsPage._encryptionName = company.trim().toLowerCase();
+        openModal('Make a new recovery key', `
+            <form id="encryption-form" onsubmit="SettingsPage.newRecoveryKey(event)">
+                <p style="margin:0 0 8px;"><strong>This retires the recovery key you have.</strong> The company file is re-keyed under the
+                    new one and shown once; your sign-in unlocks it at once, every other administrator's after their next sign-in.
+                    Backups made before today open with the old recovery key only.</p>
+                <p style="margin:0 0 8px;">Nobody else should be using the company while this runs. Type the company's name and your password to confirm.</p>
+                ${SettingsPage._nameConfirmField(company)}
+                <div class="form-group">
+                    <label for="encryption-password">Your password</label>
+                    <input type="password" id="encryption-password" name="password" autocomplete="current-password" required
+                        oninput="SettingsPage._encryptionFormCheck(this.form)">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" disabled>Make a new recovery key</button>
+                </div>
+            </form>`);
+    },
+
+    async newRecoveryKey(e) {
+        e.preventDefault();
+        const form = e.target;
+        const btn = form.querySelector('button[type=submit]');
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Re-keying…';
+        try {
+            const result = await API.post('/company-file/encryption/recovery-key', { company_name: form.company_name.value, password: form.password.value });
+            closeModal();
+            SettingsPage.showRecoveryKey(result, 'The company file is re-keyed.');
             SettingsPage.loadCompanyFile();
         } catch (err) {
             toast(err.message, 'error');
@@ -778,11 +957,16 @@ const SettingsPage = {
                 <td>${escapeHtml(u.display_name)}</td>
                 <td>
                     <select onchange="SettingsPage.updateUser(${u.id}, {role: this.value})">
-                        ${['admin', 'bookkeeper', 'readonly'].map(r =>
+                        ${['admin', 'bookkeeper', 'accountant', 'readonly'].map(r =>
                             `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
                     </select>
                 </td>
-                <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}</td>
+                <td>${u.last_login_at ? formatDate(u.last_login_at) : '—'}${u.must_change_password ? '<div style="font-size:10px; color:var(--gray-500);">one-time password, not yet replaced</div>' : ''}</td>
+                <td>${u.expires_on
+                    ? `<input type="date" value="${escapeHtml(u.expires_on)}" aria-label="Day ${escapeHtml(u.username)}'s sign-in ends" style="font-size:11px; padding:2px 4px;"
+                        onchange="SettingsPage.updateUser(${u.id}, {expires_on: this.value || null})">${u.ended ? '<div style="font-size:10px; color:var(--danger);">ended</div>' : ''}`
+                    : `<span style="color:var(--text-muted);">none</span> <button type="button" class="btn btn-sm btn-secondary" aria-label="Set a day ${escapeHtml(u.username)}'s sign-in ends"
+                        onclick="SettingsPage.askEndDate(${u.id}, '${escapeHtml(u.username)}')">Set…</button>`}</td>
                 <td>${u.is_active
                     ? `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: false})">Deactivate</button>`
                     : `<button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.updateUser(${u.id}, {is_active: true})">Reactivate</button>`}
@@ -790,7 +974,7 @@ const SettingsPage = {
                 </td>
             </tr>`).join('');
             $('#users-list').innerHTML = `<div class="table-container"><table>
-                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col"></th></tr></thead>
+                <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Last login</th><th scope="col">Ends</th><th scope="col"></th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
         } catch (e) { /* non-admin or pre-upgrade server: section stays hidden */ }
     },
@@ -879,6 +1063,87 @@ const SettingsPage = {
             $('#user-new-password').value = '';
             SettingsPage.loadUsers();
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Invite your accountant (#345): a sign-in with a one-time password
+    // and, if the engagement has one, an end date; the answer is shown
+    // once, with the address to send.
+    showInvite() {
+        openModal('Invite your accountant', `
+            <form onsubmit="SettingsPage.sendInvite(event)">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">The sign-in gets a one-time password, shown once; the person chooses their own at the first sign-in. Leave the end date empty for a sign-in with no end.</p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Username *</label><input name="username" required autocomplete="off"></div>
+                    <div class="form-group"><label>Display name</label><input name="display_name" autocomplete="off"></div>
+                    <div class="form-group"><label>Role</label>
+                        <select name="role" data-no-search>
+                            <option value="accountant">Accountant — reads everything, posts journal entries</option>
+                            <option value="readonly">Read-only — reports and lookups</option>
+                            <option value="bookkeeper">Bookkeeper — daily books, no admin</option>
+                        </select></div>
+                    <div class="form-group"><label>Sign-in ends on <span style="font-weight:normal; color:var(--text-muted);">(optional)</span></label><input name="expires_on" type="date">
+                        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Leave it empty for a sign-in with no end date.</div></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create the invitation</button>
+                </div>
+            </form>`);
+    },
+
+    // An empty date box is drawn by WebKit with today's date greyed in, which
+    // read as "ends today" (NEW-151): a sign-in with no end date shows
+    // "none", and the box appears on request.
+    askEndDate(id, username) {
+        openModal(`When does ${username}'s sign-in end?`, `
+            <form onsubmit="event.preventDefault(); SettingsPage.updateUser(${id}, {expires_on: this.expires_on.value || null}); closeModal();">
+                <div class="form-group"><label for="user-end-date">Sign-in ends on</label>
+                    <input id="user-end-date" name="expires_on" type="date" required></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Set the end date</button>
+                </div>
+            </form>`);
+    },
+
+    async sendInvite(e) {
+        e.preventDefault();
+        const form = e.target;
+        try {
+            const r = await API.post('/users/invite', {
+                username: form.username.value.trim(),
+                display_name: form.display_name.value.trim(),
+                role: form.role.value,
+                expires_on: form.expires_on.value || null,
+            });
+            const note = `Address: ${r.address}${r.note ? ` (${r.note})` : ''}\nUsername: ${r.username}\nOne-time password: ${r.password}${r.expires_on ? `\nThe sign-in ends on ${r.expires_on}.` : ''}\n\nSign in once with this password; you will be asked to choose your own.`;
+            // Each line copies on its own (NEW-167): the password is typed at
+            // the sign-in, the rest goes in a message; the whole invitation
+            // sits under them, selectable like any text.
+            SettingsPage._invite = { address: r.address, username: r.username, password: r.password, note };
+            openModal('Send this to your accountant', `
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">The one-time password is shown here once; it is not stored anywhere readable. Each line copies on its own, or copy the whole invitation.</p>
+                <div style="display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; gap:6px 10px; align-items:center; margin-bottom:10px;">
+                    ${copyLineHtml('invite-address', 'Address', r.address, "SettingsPage.copyInvite('address')")}
+                    ${copyLineHtml('invite-username', 'Username', r.username, "SettingsPage.copyInvite('username')")}
+                    ${copyLineHtml('invite-password', 'One-time password', r.password, "SettingsPage.copyInvite('password')")}
+                </div>
+                <textarea id="invite-note" readonly rows="7" aria-label="The whole invitation" style="width:100%; font-family:var(--font-mono); font-size:12px;">${escapeHtml(note)}</textarea>
+                <div class="form-actions" style="justify-content:space-between;">
+                    <button type="button" class="btn btn-secondary" onclick="SettingsPage.copyInvite('note')">Copy the whole invitation</button>
+                    <button type="button" class="btn btn-primary" onclick="closeModal()">Done</button>
+                </div>`);
+            SettingsPage.loadUsers();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // One line of the invitation, or all of it, to the clipboard; where the
+    // page may not write it (plain HTTP on a network address) the text is
+    // selected for the copy shortcut instead.
+    async copyInvite(which) {
+        const inv = SettingsPage._invite || {};
+        const labels = { address: 'Address', username: 'Username', password: 'One-time password', note: 'Invitation' };
+        await copyToClipboard(inv[which] || '', labels[which] || 'Text', $(`#invite-${which}`));
     },
 
     async updateUser(id, patch) {
@@ -1189,7 +1454,8 @@ const SettingsPage = {
                 <thead><tr><th scope="col">Filename</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
                 <tbody>${backups.map(b => `<tr>
                     <td>${escapeHtml(b.filename)}${b.backup_type === 'pre-restore'
-                        ? ' <span style="font-size:10px; color:var(--text-muted);">(taken before a restore)</span>' : ''}</td>
+                        ? ' <span style="font-size:10px; color:var(--text-muted);">(taken before a restore)</span>' : ''}${b.encrypted === false && SettingsPage._companyFile && SettingsPage._companyFile.encrypted
+                        ? ' <span style="font-size:10px; color:var(--danger);">(plain SQLite, made before encryption: readable with no key)</span>' : ''}</td>
                     <td>${(b.file_size / 1024).toFixed(1)} KB</td>
                     <td>${escapeHtml(SettingsPage._when(b.created_at))}</td>
                     <td class="actions">
@@ -1315,21 +1581,39 @@ const SettingsPage = {
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Restoring…';
-        const send = allowOther => API.post('/backups/restore',
-            allowOther ? { filename, allow_other_company: true } : { filename });
+        const body = { filename };
+        const send = () => API.post('/backups/restore', body);
         try {
             let result;
-            try {
-                result = await send(false);
-            } catch (err) {
-                // Another company's backup: say whose, and ask a second time.
-                if (!(err.status === 409 && err.detail && err.detail.code === 'other_company')) throw err;
-                if (!confirm(`${err.message}\n\nRestore it over this company anyway?`)) {
-                    btn.disabled = false;
-                    btn.textContent = label;
-                    return;
+            // Another company's backup: say whose, and ask a second time. A
+            // backup encrypted under another key (#290): ask for the
+            // recovery key it was made under, and send again with it.
+            for (;;) {
+                try {
+                    result = await send();
+                    break;
+                } catch (err) {
+                    if (err.status === 409 && err.detail && err.detail.code === 'other_company') {
+                        if (!confirm(`${err.message}\n\nRestore it over this company anyway?`)) {
+                            btn.disabled = false;
+                            btn.textContent = label;
+                            return;
+                        }
+                        body.allow_other_company = true;
+                        continue;
+                    }
+                    if (err.status === 409 && err.detail && (err.detail.code === 'other_key' || err.detail.code === 'wrong_recovery_key')) {
+                        const typed = prompt(`${err.message}\n\nRecovery key:`, '');
+                        if (!typed) {
+                            btn.disabled = false;
+                            btn.textContent = label;
+                            return;
+                        }
+                        body.recovery_key = typed.trim();
+                        continue;
+                    }
+                    throw err;
                 }
-                result = await send(true);
             }
             closeModal();
             SettingsPage._leaving = true;  // the books were replaced; nothing here to keep

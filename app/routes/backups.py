@@ -34,6 +34,9 @@ class RestoreRequest(StrictModel):
     # A backup that belongs to another company is refused (409, code
     # "other_company") unless the person has confirmed it a second time.
     allow_other_company: bool = False
+    # A backup encrypted under another key (409, code "other_key") is
+    # opened with the recovery key it was made under (#290).
+    recovery_key: Optional[str] = None
 
 
 @router.get("")
@@ -120,6 +123,9 @@ def restore(data: RestoreRequest, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=409, detail={"code": "newer_version", "message": newer}
         )
+    locked = backup_service.backup_key_problem(filepath.name, data.recovery_key)
+    if locked:
+        raise HTTPException(status_code=409, detail=locked)
 
     # Restore overwrites the entire database — leave a breadcrumb BEFORE the
     # operation. The audit_log itself may be replaced by the restore, so this
@@ -154,7 +160,7 @@ def restore(data: RestoreRequest, db: Session = Depends(get_db)):
             ).strip(),
         )
 
-    result = restore_backup(db, filepath.name)
+    result = restore_backup(db, filepath.name, data.recovery_key)
     if not result.get("success"):
         # Map the service's error string to the right HTTP code so a missing
         # backup file is a 404 (operator can fix it) and a bad name is a 400,

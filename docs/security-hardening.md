@@ -176,9 +176,25 @@ ciphertext under the same key.
   lock.
 - PostgreSQL deployments are the database host's job, and the Settings
   page says so.
-- Not yet: the desktop's own key management (per-administrator wrapping, a
-  recovery key). Until it lands, a desktop company uses the operator-set
-  secret too.
+- The desktop's own key (2.24.0): with no operator secret set, turning
+  encryption on makes a **recovery key** (160 random bits, shown once as
+  eight groups of four characters, downloadable as a text file) and derives
+  the file's key from it (PBKDF2-HMAC-SHA256, 480,000 rounds, salt
+  `slowbooks-company-recovery-v1`), so the recovery key alone opens the
+  file, and every backup of it, on any machine. The key is wrapped for each
+  administrator's password (PBKDF2 under a per-wrapping salt, then Fernet)
+  in `<company>.db.keyring` beside the file; the keyring holds nothing
+  secret. The picker unlocks the file with an administrator's sign-in or
+  the recovery key and hands the key to the server child the way it hands
+  any key (`SLOWBOOKS_COMPANY_FILE_KEY`); the key is never written to
+  disk. An administrator with no wrapping (added later, or after a
+  password change) gets one at their next sign-in from the running
+  process; one removed, demoted or reset loses theirs. A new recovery key
+  re-keys the file in place (`PRAGMA rekey`) and retires the old one; a
+  wrapping names the key it holds, so a stale one is told from a current
+  one. A restore of a backup made under another key asks for the recovery
+  key it was made under and re-keys a staged copy; the backup is never
+  changed. `docs/company-file-encryption.md` is the owner's page.
 
 ---
 

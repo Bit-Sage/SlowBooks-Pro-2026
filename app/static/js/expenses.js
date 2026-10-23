@@ -241,9 +241,11 @@ const ExpensesPage = {
                 </div>
             </div>
             <div class="form-actions">
+                ${x.printable ? `<button type="button" class="btn btn-secondary" onclick="window.open('/api/checks/print?transaction_id=${x.id}','_blank')">Print Check</button>` : ''}
                 ${isVoid ? '' : `<button data-destructive type="button" class="btn btn-danger" onclick="ExpensesPage.void(${x.id})">Void</button>`}
                 <button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
+        if (App.documentAddress) App.documentAddress(`#/expenses/${Number(id)}`);  // the document's own address (NEW-164)
         ExpensesPage.loadAttachments(x.id);
     },
 

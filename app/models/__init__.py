@@ -181,3 +181,4 @@ __all__ = [
 ]
 from app.models.ocr_templates import OcrTemplate  # noqa: F401
 from app.models.request_keys import RequestKey  # noqa: F401
+from app.models.accountants_copies import AccountantsCopy  # noqa: E402,F401

@@ -52,10 +52,13 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          # ntldd comes from the UCRT64 repo: MSYS2 ships mingw-w64-ntldd for
+          # ucrt64/clang64/mingw32 only (the mingw64 ntldd-git package is
+          # gone, 2026-10-19), and the tool reads any PE whatever repo built it
           install: >-
             mingw-w64-x86_64-pango
             mingw-w64-x86_64-fontconfig
-            mingw-w64-x86_64-ntldd-git
+            mingw-w64-ucrt-x86_64-ntldd
 
       - name: Stage WeasyPrint native DLLs
         shell: msys2 {0}
@@ -85,7 +88,7 @@ jobs:
             cp "/mingw64/bin/$lib.dll" . 2>/dev/null || true
           done
           for _ in 1 2 3; do  # iterate until the closure stops growing
-            deps=$( (for d in *.dll; do ntldd -R "$d" 2>/dev/null || true; done) \
+            deps=$( (for d in *.dll; do /ucrt64/bin/ntldd -R "$d" 2>/dev/null || true; done) \
               | tr '\\' '/' \
               | grep -Eio '[a-z]:/[a-z0-9_./+-]*/mingw64/bin/[a-z0-9_.+-]+\.dll' \
               | sort -u || true)

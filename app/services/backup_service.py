@@ -37,7 +37,13 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 # class with a known backup extension. NO path separators, NO ".."
 # components -- this is the trust boundary that CodeQL needs to see at the
 # start of restore_backup() before BACKUP_DIR / filename is constructed.
-_BACKUP_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(sql|dump|backup|db)$")
+# Matched with re.fullmatch (not .match + ^...$): in Python `$` also matches
+# just before a trailing "\n", so "evil.db\n" would slip through .match.
+# The extension is split off first and the stem matched on its own: one
+# pattern holding both a "." in the class and a literal "\." before the
+# extension backtracks polynomially on a long run of those characters.
+_BACKUP_STEM_RE = re.compile(r"[A-Za-z0-9_.-]+")
+_BACKUP_EXTENSIONS = frozenset({"sql", "dump", "backup", "db"})
 
 # Every company's backups share one folder, and the old names said nothing
 # about whose they were (explore 2.17.3, macbase1 F25: Riverbend x3,
@@ -105,7 +111,10 @@ def _safe_backup_filename(filename: str) -> str | None:
         return None
     if base.startswith(".") or ".." in base:
         return None
-    if not _BACKUP_FILENAME_RE.match(base):
+    stem, dot, extension = base.rpartition(".")
+    if not dot or extension not in _BACKUP_EXTENSIONS:
+        return None
+    if not _BACKUP_STEM_RE.fullmatch(stem):
         return None
     return base
 
@@ -116,10 +125,14 @@ def _is_sqlite() -> bool:
 
 def _sqlite_db_path() -> Path | None:
     """Filesystem path of the active SQLite database, or None when the URL
-    isn't a file-backed SQLite database (e.g. sqlite:///:memory:)."""
-    if not DATABASE_URL.startswith("sqlite:///"):
+    isn't a file-backed SQLite database (e.g. sqlite:///:memory:). On a
+    Server Edition server, the company this request works in (#358)."""
+    from app.database import another_company_url
+
+    url = another_company_url() or DATABASE_URL
+    if not url.startswith("sqlite:///"):
         return None
-    raw = DATABASE_URL[len("sqlite:///") :]
+    raw = url[len("sqlite:///") :]
     if not raw or raw == ":memory:":
         return None
     return Path(raw)
@@ -186,8 +199,56 @@ def _create_sqlite_backup(
     return {"success": True, "filename": filename, "file_size": file_size}
 
 
-def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
-    """Copy a backup .db over the active company's database file."""
+OTHER_KEY_MESSAGE = (
+    "This backup was made under another key (another recovery key, or "
+    "another install's secret). Enter the recovery key it was made under "
+    "to restore it."
+)
+
+
+def is_encrypted_backup(path: Path | str | None) -> bool:
+    """Whether a backup is an encrypted company file. Only a SQLite backup
+    (.db) can be one: a Postgres backup is pg_dump's own format, which is
+    not SQLite either but is not encrypted, and restoring it needs no key."""
+    if path is None or Path(path).suffix != ".db":
+        return False
+    return company_file.is_encrypted_file(path)
+
+
+def backup_key_problem(filename: str, recovery_key: str | None = None) -> dict | None:
+    """Whether a backup can be opened here: None when it can (plain, or
+    encrypted under this company's key, or under the recovery key given),
+    else {"code", "message"}. Asked before anything is written."""
+    from app.services import company_keyring
+
+    path = backup_path(filename)
+    if not is_encrypted_backup(path):
+        return None
+    key = company_file.resolve_key()
+    if key is not None:
+        try:
+            company_file.verify_key(path, key)
+            return None
+        except company_file.CompanyFileLocked:
+            pass
+    if (recovery_key or "").strip():
+        try:
+            company_keyring.unlock_with_recovery(path, recovery_key)
+            return None
+        except company_file.CompanyFileLocked:
+            return {
+                "code": "wrong_recovery_key",
+                "message": company_keyring.WRONG_RECOVERY_MESSAGE,
+            }
+    return {"code": "other_key", "message": OTHER_KEY_MESSAGE}
+
+
+def _restore_sqlite_backup(
+    filepath: Path, safe_name: str, recovery_key: str | None = None
+) -> dict:
+    """Copy a backup .db over the active company's database file. A backup
+    encrypted under another key is opened with the recovery key it was made
+    under (#290) and re-keyed, on a staged copy, to this company's key."""
     dest = _sqlite_db_path()
     if dest is None:
         return {
@@ -199,19 +260,46 @@ def _restore_sqlite_backup(filepath: Path, safe_name: str) -> dict:
     # rewritten (SQLite locking; also matters for Windows file semantics).
     import app.database as db_module
 
-    db_module.engine.dispose()
+    db_module.current_engine().dispose()
 
     live_encrypted = company_file.is_encrypted_file(dest)
     backup_encrypted = company_file.is_encrypted_file(filepath)
     key = None
     if live_encrypted or backup_encrypted:
         key = company_file.resolve_key()
-        if key is None:
+        if key is None and live_encrypted:
             return {"success": False, "error": company_file.NO_KEY_MESSAGE}
     staged = None
     try:
         source_path = filepath
+        if backup_encrypted:
+            problem = backup_key_problem(filepath.name, recovery_key)
+            if problem is not None:
+                return {"success": False, "error": problem["message"], **problem}
+            opens_here = key is not None
+            if opens_here:
+                try:
+                    company_file.verify_key(filepath, key)
+                except company_file.CompanyFileLocked:
+                    opens_here = False
+            if not opens_here:
+                # another key: a staged copy is brought to this company's
+                # key (or made plain, for a plain company); the backup file
+                # itself is never changed
+                from app.services import company_keyring
+
+                other = company_keyring.key_from_recovery(recovery_key or "")
+                staged = BACKUP_DIR / (filepath.name + ".restoring")
+                shutil.copy2(filepath, staged)
+                if live_encrypted:
+                    company_file.rekey(staged, other, key)
+                else:
+                    company_file.convert(staged, other, encrypt=False)
+                source_path = staged
+                backup_encrypted = live_encrypted
         if backup_encrypted != live_encrypted:
+            if key is None:
+                return {"success": False, "error": company_file.NO_KEY_MESSAGE}
             # The books stay in the state they are in: a plain backup
             # restored into an encrypted company arrives encrypted, and
             # the other way around. The backup file itself is never
@@ -297,7 +385,7 @@ def create_backup(
         }
 
 
-def restore_backup(db: Session, filename: str) -> dict:
+def restore_backup(db: Session, filename: str, recovery_key: str | None = None) -> dict:
     """Restore a database from a backup file."""
     # Trust boundary: validate filename as a safe basename BEFORE using it
     # to construct any filesystem path. is_relative_to is the
@@ -317,7 +405,7 @@ def restore_backup(db: Session, filename: str) -> dict:
         return {"success": False, "error": f"Backup file not found: {safe_name}"}
 
     if _is_sqlite():
-        return _restore_sqlite_backup(filepath, safe_name)
+        return _restore_sqlite_backup(filepath, safe_name, recovery_key)
 
     params = _parse_db_url(DATABASE_URL)
     env = {"PGPASSWORD": params["password"]}
@@ -369,6 +457,9 @@ def list_backup_files() -> list[dict]:
                 "filename": f.name,
                 "file_size": f.stat().st_size,
                 "created": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                # a backup made before encryption was turned on is plain
+                # SQLite (2.24.0 gate, NEW-158): the page says which
+                "encrypted": is_encrypted_backup(f),
             }
         )
     return files
@@ -481,6 +572,9 @@ def list_company_backups(db: Session) -> list[dict]:
         listed.append(
             {
                 "id": row.id if row is not None else None,
+                # a backup made before encryption was turned on is plain
+                # SQLite (2.24.0 gate, NEW-158 / W-25); the page says which
+                "encrypted": is_encrypted_backup(path),
                 "filename": filename,
                 "file_size": stat.st_size,
                 "backup_type": (
@@ -589,5 +683,5 @@ def bring_restored_books_up_to_date() -> dict:
         }
     import app.database as db_module
 
-    db_module.engine.dispose()
+    db_module.current_engine().dispose()
     return {"success": True}

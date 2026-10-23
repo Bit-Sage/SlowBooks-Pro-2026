@@ -1,4 +1,45 @@
 {
+  "2.26.0": {
+    "title": "Direct deposit from the page, and last year beside this one",
+    "items": [
+      "A processed pay run makes its direct deposit (ACH) file from the page: Settings → Direct Deposit keeps the bank's numbers, and the run's view has a Direct deposit file button.",
+      "Profit & Loss and Balance Sheet compare to last year: a Prior Year column with $ and % change, on screen and in the PDF and CSV.",
+      "A session ends when its user is deactivated, their role changes or their password changes, and Sign out ends a copied session too.",
+      "An import's whole error list is shown, and saved as a file.",
+      "On Mac, 2.26.0 needs macOS 15 or later."
+    ]
+  },
+  "2.25.0": {
+    "title": "Several companies on one server",
+    "items": [
+      "Server Edition serves every company file in the list: the sign-in screen asks which company, a session works in the company it chose, and two people work in two companies at once.",
+      "A sign-in whose password opens another company switches to it with one click from the topbar, with the role that company gives; the rest ask for their own password.",
+      "Audit log, backups, bank feeds and settings stay per company; a company made under Companies is set up by the administrator who opens it.",
+      "An API token's request names its company with the X-SlowBooks-Company header; --serve-lan brings every listed company up to date first."
+    ]
+  },
+  "2.24.1": {
+    "title": "Checks from the register, and a ledger export caught",
+    "items": [
+      "Print Check for a check written straight into the bank register or entered as an Expense paid from a bank account: the register row and the expense's view print the same 3-per-page voucher as a bill payment's check, each split line on the stub.",
+      "A QuickBooks Transaction Detail by Account export with an added Account column is refused with the export instructions, instead of being read as sales receipts and payments."
+    ]
+  },
+  "2.24.0": {
+    "title": "Working with your accountant",
+    "items": [
+      "An Accountant role: reads everything, posts and voids its own journal entries, nothing else; Settings → Users invites one with a one-time password and an end date.",
+      "Adjusting entries are marked with who posted them; the Adjusting Journal Entries report lists them, and the P&L and Trial Balance can run without them.",
+      "Closing Date Exceptions: every change made into a closed period with the password, before and after.",
+      "The Accountant's Package: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log in one zip.",
+      "The IIF export carries checks, card charges, transfers, bill payments and journal entries, and the import takes them back; an accountant's journals post as adjusting entries.",
+      "SlowBooks' own Accountant's Copy: Companies → Send to accountant, the accountant works in their own SlowBooks Pro, and Apply accountant's changes brings their entries back once.",
+      "A categorized bank sheet (the Transaction Pro / SaasAnt layout) imports as posted transactions.",
+      "Reclassify Transactions: move many lines to another account, or class, as one audited change.",
+      "Open screens: the pages, registers and reports opened this session are listed at the top of the sidebar.",
+      "Company file encryption on the desktop: a recovery key shown once, unlocked by an administrator's sign-in."
+    ]
+  },
   "2.23.5": {
     "title": "A bookkeeper's first hour",
     "items": [

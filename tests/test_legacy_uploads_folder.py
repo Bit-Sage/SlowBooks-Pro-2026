@@ -371,7 +371,11 @@ def test_a_company_file_another_program_is_writing_keeps_the_folder(
     _old_books(books_before, busy)
     _open_on_this_version(busy)
     _manifest(data_folder, ("Busy Books", "busy.db"))
-    with closing(sqlite3.connect(busy, isolation_level=None)) as writer:
+    # the other program's lock, held through the library the sweep reads with:
+    # in one process only the same SQLite library sees the lock (NEW-156)
+    from app.services.company_file import sqlite_module
+
+    with closing(sqlite_module().connect(busy, isolation_level=None)) as writer:
         writer.execute("BEGIN EXCLUSIVE")
         r = client.get("/api/uploads/legacy")
         writer.execute("ROLLBACK")

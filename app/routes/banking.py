@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.accounting import _q
-from app.routes._helpers import clamp_pagination
+from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.models.accounts import Account
 from app.models.banking import (
     BankAccount,
@@ -233,7 +233,7 @@ def update_bank_account(
     ba = db.query(BankAccount).filter(BankAccount.id == account_id).first()
     if not ba:
         raise HTTPException(status_code=404, detail="Bank account not found")
-    fields = data.model_dump(exclude_unset=True)
+    fields = reject_null_updates(BankAccount, data.model_dump(exclude_unset=True))
     if "account_id" in fields and fields["account_id"] != ba.account_id:
         linked = (
             db.query(BankTransaction.id)
@@ -768,6 +768,14 @@ def check_register(
             e["source_type"] in ("bank_entry", "transfer", "cc_charge")
             and not e["voided"]
             and e["reconciliation_id"] is None
+        )
+        # a check written here or as an expense prints (discussion #354):
+        # money out of a bank account, not a card, not void
+        row["printable"] = (
+            e["source_type"] in ("bank_entry", "expense")
+            and account.bank_kind == "bank"
+            and e["credit"] > 0
+            and not e["voided"]
         )
         entries.append(row)
     return {

@@ -101,21 +101,65 @@ lists again later (to pick up new customers or vendors, say) posts none; the
 result names any account it created that carries a balance in the file, so
 you can enter the real ones by hand.
 
+An IIF that carries transaction blocks imports those too (a file another
+program wrote, or SlowBooks' own export brought back): invoices, payments,
+sales receipts, estimates, bills and deposits as documents, and since 2.24.0
+checks, card charges, transfers, bill payments and general journal entries
+as the journal-only entries they are here (a BILLPMT lands on the bank
+account and Accounts Payable with the vendor named; the bills it paid stay
+open, since the file does not say which they were). A block already in the
+books, same day and same lines, posts nothing twice, and two genuinely
+identical blocks in one file both post. Tick **This is an accountant's
+file** to post the GENERAL JOURNAL blocks as adjusting entries.
+
+Going the other way, **Interoperability → Export to IIF** writes the whole
+ledger since 2.24.0: the lists, invoices, sales receipts, payments, bills and
+deposits as before, and now checks and register deposits, card charges,
+transfers, bill payments and journal entries, each in the block QuickBooks
+keeps it in. Exported from one company and imported into a fresh one, the
+two trial balances match.
+
 ### Transactions: the Transaction Detail by Account report
 
 The simplest way to bring every transaction across: in QuickBooks Desktop,
 **Reports > Accountant & Taxes > Transaction Detail by Account**, set the
 dates to **All**, and save it as CSV (keep the report's default columns).
+In **Customize Report → Filters → Account**, choose **All accounts**.
+That is a filter, not a column: do **not** add an **Account** column. The
+account-grouped report already names each account above its transactions.
+An account-grouped report with that added column is refused before import;
+export it again with the default columns and the All accounts filter.
+The refusal says:
+
+> This appears to be Transaction Detail by Account with an added Account column.
+> Nothing was imported. Export again using the default columns; set Customize
+> Report > Filters > Account > All accounts rather than adding an Account column.
+
 Import your lists IIF first, then upload the report under
 **Interoperability → Import from Report CSV**. Every deposit, check,
 transfer, general journal entry and opening balance comes across as a
 journal entry with its date, number, name and memo, and each account ends
 with the balance QuickBooks shows. The file is checked first and refused
-whole if anything is off, and uploading it again posts nothing twice.
+whole if anything is off, and uploading it again posts nothing twice. A
+refusal lists every transaction that is off, however many; **Save the
+list** under the box writes them to a text file to work from.
 
 Journal entries carry the history; the A/R and A/P aging read invoices and
 bills, so a company that invoices in QuickBooks brings its open invoices in
 from the invoice report below.
+
+**Parent accounts with sub-accounts.** QuickBooks reports a parent account's
+own postings in a section it names "<Parent> - Other" (for example "Advertising
+and Promotion - Other"). That is not an account in its chart, and the import
+posts those lines to the parent account itself.
+
+**Long histories.** QuickBooks' Save as CSV stops a report at 32,768 rows with
+no warning: the last section ends without its Total line, and the income and
+expense accounts, which come after the balance sheet accounts, may be missing
+altogether. Export in date ranges (set From and To, keep All accounts and the
+default columns) so each file stays under that, and import them oldest first;
+a transaction's lines share a date, so a range never splits one, and a line
+already posted is skipped on the next file.
 
 ### Time: the Time by Name by Job detail report
 
@@ -136,6 +180,30 @@ Employees page. Imported time is history: HR → Time Entries shows it marked
 as QuickBooks', and a pay run never picks it up. The whole file is checked
 against QuickBooks' own Total rows before anything is written, and refused
 whole if it does not add up; a second upload posts nothing twice.
+
+### A categorized bank sheet (the Transaction Pro / SaasAnt layout)
+
+A bookkeeper catching up a client's books often cleans the bank export in a
+spreadsheet, adds the account each line belongs to, and bulk-posts the sheet
+with a paid importer. The sheet is the finished work, and **Interoperability →
+Import from Report CSV** takes it as it is. Its columns, in any order:
+
+| Column | Meaning |
+|---|---|
+| Bank Account | the bank or card account the money moved through: named in the header itself ("Bank Account BofA 9959", the cells left empty), or on each row; the whole name, part of it, or the digits a statement shows |
+| Transaction Date | the date |
+| Memo | the line's memo |
+| Payee | who was paid, or who paid |
+| Account | the other side: the expense, income or other account, by number, name or Parent:Child path; another bank or card account makes the row a transfer |
+| Amount | money out negative, money in positive; tick *In this sheet money out is positive* when yours is the other way round |
+
+Each row posts as the register entry it is. Rows that share the bank account,
+date, payee and memo post as one entry split across their accounts (a loan
+payment's principal and interest). The whole file is checked first and refused
+whole with the reasons if a bank account or an account is not found or a date
+or amount cannot be read. A row already in the books posts nothing twice.
+Payees not on the Vendors (money out) or Customers (money in) list are added
+and named in the result. CSV or Excel.
 
 ### What does not come across yet
 

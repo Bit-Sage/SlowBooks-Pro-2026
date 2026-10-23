@@ -64,6 +64,12 @@ const IIFPage = {
                             <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('bills')">Bills</button>
                             <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('deposits')">Deposits</button>
                         </div>
+                        <div style="display:flex; gap:6px; margin-top:6px;">
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('register-entries')">Checks &amp; Card Charges</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('transfers')">Transfers</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('bill-payments')">Bill Payments</button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="IIFPage.exportSection('journal-entries')">Journal Entries</button>
+                        </div>
                     </div>
                 </div>
 
@@ -72,8 +78,16 @@ const IIFPage = {
                     <h3>&#9650; Import from IIF</h3>
                     <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
                         Upload .iif files exported from QuickBooks Desktop
-                        via File &gt; Utilities &gt; Export &gt; Lists to IIF Files.
+                        via File &gt; Utilities &gt; Export &gt; Lists to IIF Files. Transaction
+                        blocks come in too: invoices, payments, sales receipts, estimates, bills,
+                        deposits, checks, card charges, transfers, bill payments (as journal
+                        entries on the bank and Accounts Payable) and general journal entries.
+                        A block already here posts nothing twice.
                     </p>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="iif-adjusting">
+                        This is an accountant's file: post its GENERAL JOURNAL blocks as adjusting entries
+                    </label>
 
                     <div id="iif-dropzone" class="iif-dropzone"
                          onclick="document.getElementById('iif-file-input').click()"
@@ -116,8 +130,17 @@ const IIFPage = {
                         by Account</strong> with the dates set to All (every transaction of every type
                         as a journal entry; import the lists IIF first); or, for timesheets, <strong>Time by Name by Job detail</strong> or <strong>Time by Job by Name detail</strong> (Reports > Jobs, Time &amp; Mileage), saved as CSV or Excel: every entry becomes an approved time entry under its employee, marked as QuickBooks' so no pay run picks it up. Keep the report's default
                         columns. Safe to re-upload — what is already here is skipped.
+                        <strong>A categorized bank sheet</strong> (the Transaction Pro / SaasAnt layout: Bank Account, Transaction Date, Memo, Payee, Account, Amount) posts each row as the register entry it is, rows sharing the date, payee and memo as one split entry; payees not on the lists are added.
                     </p>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="qbcsv-outflow-positive">
+                        In this sheet money out is positive (the usual way round is money out negative)
+                    </label>
                     <input type="file" id="qbcsv-file-input" aria-label="QuickBooks report file (CSV or Excel)" accept=".csv,.xlsx" style="font-size:11px; margin-bottom:8px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
+                        <input type="checkbox" id="qbcsv-adjusting-only">
+                        Adjusting entries only: an accountant's Transaction Detail by Account filtered to journal entries. Anything else in the file is refused, and what posts is marked adjusting.
+                    </label>
                     <div>
                         <button class="btn btn-primary" onclick="IIFPage.importQbReportCsv()">Import Report CSV</button>
                     </div>
@@ -129,6 +152,43 @@ const IIFPage = {
     // What an import says when it's done (#197). One that came back with
     // errors said "Imported 0 records" in green and "Import complete", and the
     // red box below was the only sign of them.
+    // The error lists of the last import, by box, for Save the list.
+    _errors: {},
+
+    // The whole list in the box, however long, with its count and a button
+    // that saves it as a text file: the box showed twenty and "and 14,070
+    // more", and the person asked where the rest were (discussion #349).
+    _errorBox(errors, box) {
+        IIFPage._errors[box] = errors;
+        const n = errors.length;
+        let html = '<div class="iif-errors">';
+        if (n > 1) {
+            html += `<div style="margin-bottom:4px;"><strong>${n.toLocaleString()} problems.</strong> `
+                + `<button type="button" class="btn btn-sm btn-secondary" onclick="IIFPage.saveErrors('${box}')" title="Every line of this list, as a text file">Save the list</button></div>`;
+        }
+        errors.forEach(e => { html += `${escapeHtml(e)}<br>`; });
+        return html + '</div>';
+    },
+
+    // The desktop app saves it to Documents/SlowBooks Pro/Reports and says
+    // where; a browser downloads it.
+    async saveErrors(box) {
+        const errors = IIFPage._errors[box] || [];
+        if (!errors.length) return;
+        const day = todayISO();  // the local date: UTC is tomorrow on a US evening
+        const filename = `Import-problems_${day}.txt`;
+        const blob = new Blob([errors.join('\n') + '\n'], { type: 'text/plain' });
+        const desktop = window.SlowbooksDesktop;
+        if (!(desktop && await desktop.saveFile(blob, filename))) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+            toast(`Saved ${filename}`);
+        }
+    },
+
     _reportImport(total, errors, unsupported = 0, words = null) {
         const records = words || `Imported ${total} record${total === 1 ? '' : 's'}`;
         const left = unsupported > 0 ? `, ${unsupported} not imported (type not supported)` : '';
@@ -146,20 +206,23 @@ const IIFPage = {
         if (!input?.files[0]) { toast('Choose a file first', 'error'); return; }
         const formData = new FormData();
         formData.append('file', input.files[0]);
+        formData.append('adjusting_only', $('#qbcsv-adjusting-only')?.checked ? 'true' : 'false');
+        formData.append('outflow_positive', $('#qbcsv-outflow-positive')?.checked ? 'true' : 'false');
         try {
             App.setStatus('Importing QuickBooks report CSV...');
             const res = await fetch('/api/csv/import/qb-report', { method: 'POST', body: formData });
             if (!res.ok) throw new Error(await API.responseError(res, 'Import failed'));
             const result = await res.json();
 
-            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries', time: 'Time by Name by Job detail', time_entries: 'Time entries' };
+            const kindLabel = { sales_receipts: 'Sales Receipts', invoices: 'Invoices', sales_and_invoices: 'Sales Receipts and Invoices', deposits: 'Deposits', checks: 'Checks', ledger: 'Transaction Detail by Account', journals: 'Journal entries', time: 'Time by Name by Job detail', time_entries: 'Time entries', categorized: 'Categorized bank sheet', posted: 'Register entries', splits: 'Split entries' };
             let html = '<div class="iif-results"><h4>Results</h4>';
             if (result.detected) {
                 html += `<div class="result-row"><span>Detected report</span><span class="result-count">${escapeHtml(result.report || kindLabel[result.detected] || result.detected)}</span></div>`;
             }
-            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries']) {
+            for (const key of ['sales_receipts', 'invoices', 'deposits', 'checks', 'journals', 'time_entries', 'posted', 'splits']) {
                 if (result[key] > 0) {
-                    html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]} imported</span></div>`;
+                    const how = key === 'journals' && result.adjusting ? ' imported as adjusting entries' : ' imported';
+                    html += `<div class="result-row"><span>${kindLabel[key]}</span><span class="result-count">${result[key]}${how}</span></div>`;
                 }
             }
             if (result.invoices > 0) {
@@ -180,12 +243,10 @@ const IIFPage = {
                 html += '</div>';
             }
             if (result.errors?.length) {
-                html += '<div class="iif-errors">';
-                result.errors.forEach(e => { html += `${escapeHtml(typeof e === 'string' ? e : JSON.stringify(e))}<br>`; });
-                html += '</div>';
+                html += IIFPage._errorBox(result.errors.map(e => typeof e === 'string' ? e : JSON.stringify(e)), 'qbcsv');
             }
             $('#qbcsv-import-result').innerHTML = html;
-            const total = (result.sales_receipts || 0) + (result.invoices || 0) + (result.deposits || 0) + (result.checks || 0) + (result.journals || 0) + (result.time_entries || 0);
+            const total = (result.sales_receipts || 0) + (result.invoices || 0) + (result.deposits || 0) + (result.checks || 0) + (result.journals || 0) + (result.time_entries || 0) + (result.posted || 0);  // + the categorized sheet's register entries (W-21)
             IIFPage._reportImport(total, (result.errors || []).length);
         } catch (err) {
             toast(err.message, 'error');
@@ -202,7 +263,7 @@ const IIFPage = {
     exportSection(section) {
         let url = `/api/iif/export/${section}`;
         // Add date range for invoices/payments
-        if (['invoices', 'payments', 'sales-receipts', 'bills', 'deposits'].includes(section)) {
+        if (['invoices', 'payments', 'sales-receipts', 'bills', 'deposits', 'register-entries', 'transfers', 'bill-payments', 'journal-entries'].includes(section)) {
             const from = $('#iif-date-from')?.value;
             const to = $('#iif-date-to')?.value;
             const params = [];
@@ -420,6 +481,7 @@ const IIFPage = {
         const formData = new FormData();
         formData.append('file', IIFPage._selectedFile);
         formData.append('retitle_names', $('#iif-retitle-names')?.checked ? 'true' : 'false');
+        formData.append('adjusting', $('#iif-adjusting')?.checked ? 'true' : 'false');
 
         try {
             App.setStatus('Importing IIF file...');
@@ -446,7 +508,8 @@ const IIFPage = {
     // Transactions the import took, every type together.
     _transactionsImported(result) {
         return (result.invoices || 0) + (result.payments || 0) + (result.sales_receipts || 0)
-            + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0);
+            + (result.estimates || 0) + (result.bills || 0) + (result.deposits || 0)
+            + (result.ledger_entries || 0);
     },
 
     // What the IIF import brought in, in the panel's own terms (2.23.1 gate,
@@ -484,6 +547,8 @@ const IIFPage = {
             ['Estimates', result.estimates],
             ['Bills', result.bills],
             ['Deposits', result.deposits],
+            ['Checks, card charges, transfers and bill payments', (result.ledger_entries || 0) - (result.journal_entries || 0)],
+            ['Journal entries', result.journal_entries],
         ];
 
         let html = '<div class="iif-results"><h4>Import Results</h4>';
@@ -541,12 +606,7 @@ const IIFPage = {
         }
 
         if (result.errors && result.errors.length) {
-            html += '<div class="iif-errors">';
-            result.errors.forEach(e => {
-                const msg = typeof e === 'string' ? e : `Row ${e.row}: ${e.message}`;
-                html += `${escapeHtml(msg)}<br>`;
-            });
-            html += '</div>';
+            html += IIFPage._errorBox(result.errors.map(e => typeof e === 'string' ? e : `Row ${e.row}: ${e.message}`), 'iif');
         }
 
         $('#iif-import-result').innerHTML = html;

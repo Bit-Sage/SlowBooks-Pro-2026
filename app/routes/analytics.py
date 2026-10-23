@@ -548,7 +548,7 @@ def _ai_error_detail(exc: AIProviderError) -> str:
 
 
 # Tiny in-process cache so the UI can poll without hammering paid APIs.
-# Keyed by (provider, model, period_name) → (expiry_epoch, payload_dict).
+# Keyed by (company, provider, model, period_name) → (expiry_epoch, payload_dict).
 # Cache TTL is 10 minutes. Cleared on config changes.
 _AI_CACHE: dict = {}
 _AI_CACHE_TTL_SECONDS = 600
@@ -668,7 +668,7 @@ def put_ai_config(
     endpoint_url_raw = (payload.endpoint_url or "").strip()
 
     # SSRF guard #1: CF account_id must be exactly 32 hex chars.
-    if account_id and not CLOUDFLARE_ACCOUNT_ID_RE.match(account_id):
+    if account_id and not CLOUDFLARE_ACCOUNT_ID_RE.fullmatch(account_id):
         raise HTTPException(
             status_code=400,
             detail="cloudflare_account_id must be exactly 32 lowercase hex characters",
@@ -902,7 +902,10 @@ def ai_insights(
     s, e, label = _resolve_period(period, start_date, end_date)
 
     # Cache check
-    cache_key = (provider, model, label, s.isoformat(), e.isoformat())
+    # the company's too: a Server Edition server serves several (#358)
+    from app.database import current_url
+
+    cache_key = (current_url(), provider, model, label, s.isoformat(), e.isoformat())
     now = time.time()
     if not force and cache_key in _AI_CACHE:
         expiry, cached_payload = _AI_CACHE[cache_key]

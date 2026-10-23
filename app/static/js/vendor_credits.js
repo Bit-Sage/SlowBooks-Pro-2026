@@ -50,6 +50,8 @@ const VendorCreditsPage = {
             </table></div>
             <p style="margin-top:8px;">Total ${formatCurrency(c.total)} &middot; applied ${formatCurrency(c.amount_applied)} &middot; remaining <strong>${formatCurrency(c.balance_remaining)}</strong></p>
             <div class="form-actions"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`);
+        // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
+        if (App.documentAddress) App.documentAddress(`#/vendor-credits/${Number(id)}`);
         return '';
     },
 

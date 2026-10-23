@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
 from app.routes.payroll._router import router
+from app.services.direct_deposit import pays_by_direct_deposit
 from app.routes.payroll.ytd import _ytd_supplemental, employee_ytd
 from app.models.payroll import (
     PayRun,
@@ -40,6 +41,7 @@ def _with_employee_names(run: PayRun) -> PayRunResponse:
     for stub_resp, stub in zip(resp.stubs, run.stubs):
         if stub.employee:
             stub_resp.employee_name = stub.employee.full_name
+            stub_resp.direct_deposit = pays_by_direct_deposit(stub.employee)
     return resp
 
 
@@ -48,7 +50,11 @@ def list_pay_runs(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)
     skip, limit = clamp_pagination(skip, limit, max_limit=500)
     runs = (
         db.query(PayRun)
-        .options(joinedload(PayRun.stubs).joinedload(PayStub.employee))
+        .options(
+            joinedload(PayRun.stubs)
+            .joinedload(PayStub.employee)
+            .selectinload(Employee.bank_accounts)
+        )
         .order_by(PayRun.pay_date.desc(), PayRun.id.desc())
         .offset(skip)
         .limit(limit)
@@ -61,7 +67,11 @@ def list_pay_runs(skip: int = 0, limit: int = 200, db: Session = Depends(get_db)
 def get_pay_run(run_id: int, db: Session = Depends(get_db)):
     run = (
         db.query(PayRun)
-        .options(joinedload(PayRun.stubs).joinedload(PayStub.employee))
+        .options(
+            joinedload(PayRun.stubs)
+            .joinedload(PayStub.employee)
+            .selectinload(Employee.bank_accounts)
+        )
         .filter(PayRun.id == run_id)
         .first()
     )

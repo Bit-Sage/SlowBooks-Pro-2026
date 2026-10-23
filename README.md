@@ -55,21 +55,17 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.23 — Both ways with QuickBooks.** Invoices come in from a QuickBooks
-Desktop Transaction Detail report saved as CSV, with their lines, jobs and
-numbers, open or paid by the report's Open Balance column (#291); the IIF
-export carries an invoice's job, items and quantities the way Intuit's own
-sample files do, so a round trip keeps them (#199); the IIF import names
-the transaction types it doesn't take and counts them (#288). A payment or
-bill payment recorded with an Idempotency-Key is booked once however many
-times the request arrives (#292); editing a posted bill's or invoice's
-lines leaves a DELETE event for every old line (#289); the invoice form
-says that creating one posts it (#293); and the AI guide, the README and
-the docs say what stays on your machine and what a cloud model sees
-(#294). Line quantities keep four decimal places, so an imported 2.125
-stays 2.125 instead of reading 2.12 and losing cents on the next edit.
+**v2.26 — Direct deposit from the page, and last year beside this one.** A processed pay run makes its direct deposit
+(ACH) file from the page, with the bank's numbers kept under Settings →
+Direct Deposit (discussion #211); the Profit & Loss and Balance Sheet
+compare to last year, with $ and % change on screen and in the PDF and CSV
+(#347); and a security pass: a session ends when its user is deactivated,
+demoted or has a new password, account balances update atomically, a
+reverse proxy's real client address reaches the rate limits and the audit
+log, and hostile input is refused with a 422. An import's whole error list
+is shown and saved as a file. The Mac app now needs macOS 15 or later.
 
-Patch releases and everything before 2.23 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.26 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -84,7 +80,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (561 operations in v2.23.5) — built for Claude
+self-documenting local REST API (587 operations in v2.26.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
@@ -192,7 +188,7 @@ startup task, and machine-wide data location handled. Details in
 
 Download **[SlowBooksPro-macos-arm64.dmg](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-macos-arm64.dmg)**,
 drag **SlowBooks Pro** to Applications, launch. Signed and notarized with
-the project's Apple Developer ID on every release; macOS 14+, Apple
+the project's Apple Developer ID on every release; macOS 15+, Apple
 Silicon. Intel Macs: Docker.
 
 ### Docker (Linux servers, Intel Mac)
@@ -234,7 +230,9 @@ Production checklist: **[docs/release-checklist.md](docs/release-checklist.md)**
 | [docs/release-checklist.md](docs/release-checklist.md) | Production deployment checklist |
 | [docs/tls-proxy-setup.md](docs/tls-proxy-setup.md) | Real certs in front of Slowbooks (Caddy, nginx, Traefik) |
 | [docs/cloud-hosting.md](docs/cloud-hosting.md) | Your own books on a cloud server: VPS, Docker, Caddy, backups off the box, what it does and does not give you |
+| [docs/working-with-your-accountant.md](docs/working-with-your-accountant.md) | The Accountant role, adjusting entries, the package, the IIF round trip and the Accountant's Copy |
 | [docs/security-hardening.md](docs/security-hardening.md) | Security pass — what changed, why, how it's tested |
+| [docs/company-file-encryption.md](docs/company-file-encryption.md) | Encrypting the company file: the recovery key, who unlocks it, backups and restores |
 | [docs/hipaa-compliance.md](docs/hipaa-compliance.md) | HIPAA mapping — honest gap list included |
 | [docs/wiring-audit.md](docs/wiring-audit.md) | Frontend ↔ backend drift audit methodology |
 | [docs/banking.md](docs/banking.md) | The register is the ledger: entries, feeds as a review queue, transfers, reconciliation |

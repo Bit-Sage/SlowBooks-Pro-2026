@@ -33,6 +33,7 @@ Skipped, as one module, where playwright or its Chromium is not installed.
 """
 
 import re
+import sys
 
 import pytest
 
@@ -56,8 +57,10 @@ from tests.test_dialog_contrast import (  # noqa: E402,F401  (the dialogs)
     nonprofit,
 )
 from tests.test_theme_contrast import (  # noqa: E402,F401  (the fixtures)
+    HOST_PLATFORM,
     REDIRECTS,
     _open,
+    _platform,
     _theme,
     _visit,
     browser_fixture,
@@ -2134,7 +2137,8 @@ def test_a_sidebar_link_draws_the_ring_on_all_four_sides_as_painted(
     try:
         _no_splash(page)
         _sidebar(page, handled, "#/customers")
-        page.focus('#sidebar a[href="#/customers"]')
+        # the menu's own Customers link, not the Open group's (#336) above it
+        page.focus('#sidebar .nav-link[data-page="customers"]')
         page.keyboard.press("Shift+Tab")
         for href in ("#/", "#/customers", "#/jobs"):
             at = page.evaluate("() => document.activeElement.getAttribute('href')")
@@ -3265,10 +3269,13 @@ def test_a_click_that_opens_elsewhere_notes_nothing_and_steals_nothing(
     page, handled = _open(browser, company)
     try:
         _no_splash(page)
+        # the browser opens the tab, with its own host's key (⌘ on a Mac,
+        # Ctrl elsewhere): the page is told the platform it really is
+        _platform(page, HOST_PLATFORM)
         _visit(page, handled, "#/accounts")
         link = '#page-content a[data-row-key^="account:"]'
         key = page.get_attribute(link, "data-row-key")
-        for held in ("Control", "Shift"):
+        for held in ("ControlOrMeta", "Shift"):
             with page.context.expect_page() as opened:
                 page.click(link, modifiers=[held])
             opened.value.close()
@@ -3290,12 +3297,13 @@ def test_a_click_that_opens_elsewhere_notes_nothing_and_steals_nothing(
         page.close()
     page, handled = _open_at(browser, company, f"#/customers/{books['customer']}")
     try:
+        _platform(page, HOST_PLATFORM)
         report = '#modal-body a[data-row-key="report:ar-aging"]'
         page.wait_for_selector(report)
         settle(page, handled)
         here = page.evaluate("location.hash")
         with page.context.expect_page() as opened:
-            page.click(report, modifiers=["Control"])
+            page.click(report, modifiers=["ControlOrMeta"])
         opened.value.close()
         assert page.evaluate("location.hash") == here
         assert page.evaluate(NOTED) is None
@@ -3398,7 +3406,9 @@ def test_every_report_center_card_is_reached_and_opened_by_the_keyboard(
         _no_splash(page)
         _visit(page, handled, "#/reports")
         cards = page.evaluate(CARD_LIST)
-        assert len(cards) == 19, cards
+        assert (
+            len(cards) == 23
+        ), cards  # 2.24.0: four accountant's cards (#341–#343, #337)
         for c in cards:
             view = c["key"].split(":", 1)[1]
             assert c["href"] == f"#/reports/{view}", c
@@ -4079,6 +4089,12 @@ def test_the_new_tab_modifier_is_the_platforms_own(browser, company, books):
                 assert got is bool(opens.get(held)), (platform, held, got)
         page.evaluate("""() => Object.defineProperty(Navigator.prototype, 'platform',
                 { get: () => 'Linux x86_64', configurable: true })""")
+        if sys.platform == "darwin":
+            # the browser's own answer to ⌘-click on a Mac is a new tab, and
+            # to Ctrl-click the context menu: no key follows the link in
+            # place here, so the Super-click below is the Linux and Windows
+            # browsers' to show
+            return
         # a Super-click on Linux: the link is followed here, and noted
         link = '#page-content a[data-row-key^="account:"]'
         key = page.get_attribute(link, "data-row-key")

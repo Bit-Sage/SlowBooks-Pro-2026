@@ -116,6 +116,17 @@ DEFAULT_SETTINGS = {
     # sections ("section:Payroll & HR"). The pages stay reachable by
     # address. Empty = everything shows.
     "hidden_menu": "[]",
+    # Direct deposit (discussion #211): what the bank needs at the top of
+    # an ACH file, saved once so a processed pay run downloads its file
+    # from the page. The bank's routing number is the file's destination
+    # and the originating DFI; the two 10-character identifiers are the
+    # bank's to assign (usually "1" + EIN) and fall back to the EIN; the
+    # company account funds the credits and is encrypted at rest.
+    "ach_bank_routing": "",
+    "ach_bank_name": "",
+    "ach_immediate_origin": "",
+    "ach_company_id": "",
+    "ach_company_account": "",
     # Phase 10: Late Fee Automation
     "late_fee_enabled": "false",
     "late_fee_rate": "1.5",
