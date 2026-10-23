@@ -3,6 +3,7 @@
 # Feature 18: Upload → preview → confirm → auto-match by amount/date
 # ============================================================================
 
+import codecs
 import csv
 import json
 import logging
@@ -28,11 +29,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bank-import", tags=["bank_import"])
 
 
+# A byte-order mark names the encoding of a text export outright; decode by
+# it before the binary-file check, so a real UTF-16 CSV (whose bytes are full
+# of NULs) isn't mistaken for junk (Testing#101). UTF-16 covers both LE and
+# BE, each with its own BOM.
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8-sig"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
 async def _read_statement(file: UploadFile, label: str, bom: str = "utf-8") -> str:
     """The uploaded statement as text, or a 400 saying why it can't be:
-    an empty file, or a binary one (a PDF, a spreadsheet, a UTF-16 export,
-    random bytes) that no statement parser here reads (Testing#101)."""
+    an empty file, or a binary one (a PDF, a spreadsheet, random bytes)
+    that no statement parser here reads (Testing#101)."""
     content = await read_limited(file, label=label)
+    # Decode by a byte-order mark first: a UTF-16 export's bytes are full of
+    # NULs by design, so this has to happen before the NUL-padding strip and
+    # the binary-file guard below would ever see them.
+    for marker, encoding in _BOMS:
+        if content.startswith(marker):
+            try:
+                return content.decode(encoding)
+            except UnicodeDecodeError:
+                break
+    # A statement exported to a plain-text file sometimes carries trailing
+    # NUL padding; drop it so a complete file isn't taken for binary junk.
+    content = content.rstrip(b"\x00")
     if not content.strip():
         raise HTTPException(status_code=400, detail=EMPTY_TEXT)
     if b"\x00" in content[:8192] or content.startswith(b"%PDF"):

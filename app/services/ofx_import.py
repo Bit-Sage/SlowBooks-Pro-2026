@@ -39,6 +39,13 @@ _OFX_FAILURES = (
     ArithmeticError,  # decimal.InvalidOperation on a mangled amount
 )
 
+# A statement amount has to be an ordinary finite number we can store and
+# turn into JSON for the preview. NaN, Infinity and an absurd magnitude like
+# <TRNAMT>1e999999999 parse into a Decimal ofxparse hands back without
+# complaint, but float() of them is inf/nan and the preview's json.dumps
+# then 500s (Testing#101). A real bank line is well under this bound.
+_MAX_AMOUNT = Decimal("1e12")
+
 
 class UnreadableStatement(DataProblem):
     """The uploaded bank file can't be read as a statement."""
@@ -56,21 +63,42 @@ def _unreadable(exc: BaseException | None, reason: str = "") -> UnreadableStatem
     return UnreadableStatement()
 
 
+def _clean_amount(raw) -> Decimal:
+    """A statement amount as a Decimal, or UnreadableStatement for one that
+    can't be stored or turned into JSON: a non-number, NaN, Infinity, or an
+    absurd magnitude like <TRNAMT>1e999999999 (Testing#101)."""
+    try:
+        amount = Decimal(str(raw))
+    except InvalidOperation as exc:
+        raise _unreadable(exc, "amount is not a number") from None
+    if not amount.is_finite() or abs(amount) > _MAX_AMOUNT:
+        raise _unreadable(None, "amount is not an ordinary finite number")
+    return amount
+
+
 def parse_ofx(content: str) -> list[dict]:
     """Parse OFX/QFX file content into a list of transaction dicts.
     Uses ofxparse if available, falls back to simple regex parsing.
 
     Raises UnreadableStatement for a file that isn't a whole OFX statement:
-    junk, a PDF, a CSV, or one cut off before its closing </OFX>."""
-    if not re.search(r"</OFX>", content, re.IGNORECASE):
-        # ofxparse reads a truncated SGML file without complaint and
-        # returns nothing; every OFX file ends by closing its root.
-        raise _unreadable(None, "no closing </OFX>")
+    junk, a PDF, a CSV, or one cut off before any transaction and its
+    closing </OFX>."""
     try:
         from ofxparse import OfxParser
         from ofxparse.ofxparse import OfxParserException
     except ImportError:
         return _parse_ofx_fallback(content)
+
+    # bs4 (ofxparse's parser) raises ParserRejectedMarkup on markup it won't
+    # touch, e.g. a bogus CDATA section <![bogus[x]]>; it is a bare Exception
+    # subclass, so name it rather than widen the net to Exception.
+    net = (OfxParserException, *_OFX_FAILURES)
+    try:
+        from bs4 import ParserRejectedMarkup
+
+        net = (*net, ParserRejectedMarkup)
+    except ImportError:
+        pass
 
     transactions = []
     try:
@@ -85,7 +113,7 @@ def parse_ofx(content: str) -> list[dict]:
                         "date": (
                             txn.date.date() if hasattr(txn.date, "date") else txn.date
                         ),
-                        "amount": Decimal(str(txn.amount)),
+                        "amount": _clean_amount(txn.amount),
                         "payee": txn.payee or txn.memo or "",
                         "memo": txn.memo or "",
                         "type": txn.type or "",
@@ -93,8 +121,16 @@ def parse_ofx(content: str) -> list[dict]:
                 )
     except UnreadableStatement:
         raise
-    except (OfxParserException, *_OFX_FAILURES) as exc:
+    except net as exc:
         raise _unreadable(exc) from None
+
+    if not transactions and not re.search(r"</OFX>", content, re.IGNORECASE):
+        # ofxparse reads a truncated SGML file without complaint and returns
+        # nothing; every OFX file closes its root, so a file that parsed to
+        # no transactions and never closed </OFX> was cut off. A complete
+        # statement that happens to carry no transactions still closes, so
+        # this only fires when nothing was read.
+        raise _unreadable(None, "no transactions and no closing </OFX>")
     return transactions
 
 
@@ -112,9 +148,9 @@ def _parse_ofx_fallback(content: str) -> list[dict]:
         if dt and amt:
             try:
                 txn_date = date(int(dt[:4]), int(dt[4:6]), int(dt[6:8]))
-                amount = Decimal(amt)
             except (ValueError, InvalidOperation) as exc:
                 raise _unreadable(exc) from None
+            amount = _clean_amount(amt)
             transactions.append(
                 {
                     "fitid": fitid or "",
