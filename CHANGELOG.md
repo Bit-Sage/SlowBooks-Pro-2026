@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### Unreleased
 
 A recurring invoice that has made invoices can no longer be deleted. Deleting
 one answered 200 and left its invoices pointing at a template that no longer
@@ -19,6 +19,8 @@ invoice for every missed month, and a run no longer refuses every schedule
 because one back-dated installment fell inside the closing date. A schedule
 that has made nothing still deletes (found in PNWImport's fork,
 SlowBooks-Pro-Testing#101).
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
