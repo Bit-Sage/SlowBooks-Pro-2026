@@ -52,6 +52,7 @@ def start(
     recon = Reconciliation(
         account_id=acct.id,
         statement_date=statement_date,
+        max_statement_date=statement_date,
         statement_balance=Decimal(str(statement_balance)),
         beginning_balance=(
             Decimal(str(last.statement_balance)) if last else Decimal("0")
@@ -116,19 +117,28 @@ def update(
                 detail="This reconciliation predates 2.10 and has no ledger account",
             )
         _require_after_last(db, acct, statement_date, exclude_id=recon.id)
+        # Keep the session's high-water date so a later move earlier can tell
+        # which lines were in reach before (#400 review).
+        prior_high = recon.max_statement_date or recon.statement_date
         recon.statement_date = statement_date
+        recon.max_statement_date = max(prior_high, statement_date)
     if statement_balance is not None:
         recon.statement_balance = Decimal(str(statement_balance))
     return recon
 
 
 def ticked_after_statement_date(db: Session, recon: Reconciliation) -> int:
-    """How many lines are ticked on this account past the statement date
-    (#400 review). Completing a reconciliation only stamps the lines on or
-    before its date, so these are left ticked and carry into the next
-    session already ticked. They appear when the date is moved earlier past
-    lines that were ticked — a tick is a fact about the line, as Abandon
-    keeps them, but nothing on screen said they'd left this session."""
+    """How many ticked lines this session left behind by moving its date
+    earlier (#400 review). Only lines that were in reach of an earlier,
+    later statement date count — those dated after the current date but on
+    or before the session's high-water date. A line cleared by a bank-feed
+    match or a register clear, dated after the date without the date ever
+    moving, is not one of these: it was never in reach of this session, so a
+    fresh reconciliation reports 0. Completing stamps only lines on or before
+    the date, so these are left ticked and carry into the next session."""
+    high = recon.max_statement_date or recon.statement_date
+    if high <= recon.statement_date:
+        return 0
     return (
         db.query(TransactionLine)
         .join(Transaction, TransactionLine.transaction_id == Transaction.id)
@@ -136,6 +146,7 @@ def ticked_after_statement_date(db: Session, recon: Reconciliation) -> int:
         .filter(TransactionLine.cleared.is_(True))
         .filter(TransactionLine.reconciliation_id.is_(None))
         .filter(Transaction.date > recon.statement_date)
+        .filter(Transaction.date <= high)
         .count()
     )
 

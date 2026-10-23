@@ -101,6 +101,12 @@ class Reconciliation(Base):
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
     statement_date = Column(Date, nullable=False)
+    # The latest statement date this session has ever had (its high-water
+    # mark). Moving the date earlier leaves lines that were in reach before
+    # ticked but off the session; this remembers the old window so we can
+    # count only those lines, not every cleared line after the date (#400
+    # review). Set to statement_date at start; only ever raised.
+    max_statement_date = Column(Date, nullable=True)
     statement_balance = Column(Numeric(15, 2), nullable=False)
     # The prior completed statement's balance; cleared_total is stamped on
     # completion so the history reads without recomputing.

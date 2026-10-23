@@ -16,10 +16,14 @@ has a **Change…** button now, for the balance and the statement date
 ticks stay and the difference is refigured from them. A date moved later
 brings the lines up to it onto the session; one moved earlier leaves the
 lines after it off the session with their ticks kept, as Abandon keeps
-them. Lines ticked after the new date are reported back — a count, and a
-note that they carry to the next reconciliation still ticked — in the
-change response and on the reconcile screen, since completing this
-session won't stamp them. A date on or before the last completed
+them. The ticks an earlier move leaves behind — lines that were in reach
+of the old date but fall after the new one — are reported back as a count,
+with a note that they carry to the next reconciliation still ticked, in the
+change response and on the reconcile screen, since completing this session
+won't stamp them. The count is only those lines: a deposit cleared by a
+bank-feed match or a register clear, dated after a date that never moved,
+is not among them, so a fresh reconciliation of a feed-linked account
+reports none. A date on or before the last completed
 statement is refused as a fresh start is, and a completed reconciliation
 refuses the change. The change leaves an `UPDATE` row in the audit trail.
 

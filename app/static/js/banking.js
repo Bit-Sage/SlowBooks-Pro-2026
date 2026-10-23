@@ -1104,7 +1104,7 @@ const BankingPage = {
                 </div>
             </div>
             <div id="recon-finish-msg" role="alert" style="font-size:12px; color:var(--danger); margin-bottom:8px;"></div>
-            ${data.ticked_after_date > 0 ? `<div role="status" style="font-size:12px; color:var(--gray-600); margin-bottom:8px;">${data.ticked_after_date} ticked line${data.ticked_after_date === 1 ? '' : 's'} fall after the statement date and won't be stamped when you finish; ${data.ticked_after_date === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.</div>` : ''}
+            ${data.ticked_after_date > 0 ? `<div role="status" style="font-size:12px; color:var(--gray-600); margin-bottom:8px;">${data.ticked_after_date} ticked line${data.ticked_after_date === 1 ? '' : 's'} ${data.ticked_after_date === 1 ? 'falls' : 'fall'} after the statement date and won't be stamped when you finish; ${data.ticked_after_date === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.</div>` : ''}
             <div class="card-grid" style="margin-bottom:16px;">
                 <div class="card"><div class="card-header">Beginning Balance</div>
                     <div class="card-value">${formatCurrency(data.beginning_balance)}</div></div>
@@ -1175,7 +1175,7 @@ const BankingPage = {
             // not on this session and carry to the next one (#400 review).
             const n = res.ticked_after_date;
             toast(n > 0
-                ? `Statement changed. ${n} ticked line${n === 1 ? '' : 's'} fall after the new date; ${n === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.`
+                ? `Statement changed. ${n} ticked line${n === 1 ? '' : 's'} ${n === 1 ? 'falls' : 'fall'} after the new date; ${n === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.`
                 : 'Statement changed');
             BankingPage.showReconcileView(reconId);
         } catch (err) { toast(err.message, 'error'); }

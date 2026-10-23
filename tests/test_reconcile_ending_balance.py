@@ -212,6 +212,38 @@ def test_an_earlier_date_reports_the_ticks_that_carry_to_the_next_session(
     assert carried and carried[0]["reconciled"] is True
 
 
+def test_a_fresh_reconcile_ignores_a_feed_cleared_line_after_the_date(
+    client, db_session, seed_accounts, vendor, statement
+):
+    """A deposit dated after the statement date, cleared by a bank-feed match
+    or a register clear (both just set cleared=True), is not a tick this
+    session left behind: the date never moved, so the line was never in reach
+    (#400 review). The old count, which took every cleared, unreconciled line
+    after the date, reported 1 here and showed the note on nearly every
+    reconcile of a feed-linked account."""
+    from datetime import date
+
+    from app.models.transactions import Transaction, TransactionLine
+
+    # The 25th's deposit line is after the 20th statement date. Tick it the
+    # way the feed does, outside any reconciliation.
+    line = (
+        db_session.query(TransactionLine)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id == seed_accounts["1000"].id)
+        .filter(Transaction.date == date(2026, 9, 25))
+        .first()
+    )
+    line.cleared = True
+    db_session.commit()
+
+    s = _session(client, statement["id"])
+    assert s["ticked_after_date"] == 0
+    # It is genuinely cleared in the register, just not attributed to this
+    # fresh session.
+    assert line.cleared is True
+
+
 def test_the_reconcile_screen_warns_about_ticks_past_the_date():
     src = open("app/static/js/banking.js", encoding="utf-8").read()
     # The Change… button is named for a screen reader (#400 review).
