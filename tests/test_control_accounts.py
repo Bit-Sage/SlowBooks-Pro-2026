@@ -629,3 +629,75 @@ def test_a_restored_control_account_matches_the_seed_is_system(
         db_session.query(Account).filter(Account.account_number == "1100").first()
     )
     assert restored.is_system is True
+
+
+# --- #425 fold-ins: the article, and renumbering the control account back ---
+
+
+def test_the_reserved_number_message_uses_the_right_article(client, seed_accounts):
+    for number, name, wrong, want in (
+        ("5900", "Inventory Adjustments", "income", "must be an expense account"),
+        ("4800", "Late Fee Income", "expense", "must be an income account"),
+    ):
+        r = client.post(
+            "/api/accounts",
+            json={"name": name, "account_number": number, "account_type": wrong},
+        )
+        assert r.status_code == 400, r.text
+        assert want in r.json()["detail"]
+        assert "must be a expense" not in r.json()["detail"]
+        assert "must be a income" not in r.json()["detail"]
+
+
+def test_renumbering_the_control_account_itself_into_its_empty_slot(
+    client, seed_accounts
+):
+    # the real Inventory Adjustments (expense, that name) sitting on another
+    # number goes back to the empty 5900: that restores the control account
+    made = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "5990",
+            "account_type": "expense",
+        },
+    )
+    assert made.status_code == 201, made.text
+    r = client.put(
+        f"/api/accounts/{made.json()['id']}", json={"account_number": "5900"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["account_number"] == "5900"
+    assert r.json()["is_control"] is True
+
+
+def test_renumbering_a_foreign_account_into_a_control_slot_is_still_refused(
+    client, seed_accounts
+):
+    other = client.post(
+        "/api/accounts",
+        json={"name": "Marketing", "account_number": "5991", "account_type": "expense"},
+    ).json()
+    r = client.put(f"/api/accounts/{other['id']}", json={"account_number": "5900"})
+    assert r.status_code == 409, r.text
+    assert "reserved for Inventory Adjustments" in r.json()["detail"]
+
+    # the right name with the wrong type says which type it must be
+    wrong = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "4990",
+            "account_type": "income",
+        },
+    ).json()
+    r = client.put(f"/api/accounts/{wrong['id']}", json={"account_number": "5900"})
+    assert r.status_code == 400, r.text
+    assert "must be an expense account" in r.json()["detail"]
+
+    # renaming in the same PUT counts: the name it will have is the one checked
+    r = client.put(
+        f"/api/accounts/{other['id']}",
+        json={"account_number": "5900", "name": "Inventory Adjustments"},
+    )
+    assert r.status_code == 200, r.text

@@ -182,6 +182,10 @@ def describe(number: str) -> tuple[str, str]:
     return (entry[0], entry[2]) if entry else ("", "")
 
 
+def _article(word: str) -> str:
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
 def restore_conflict(number, name, account_type) -> str:
     """Why a new account of this number/name/type may not take a control-account
     slot — "" when it is allowed.
@@ -194,8 +198,8 @@ def restore_conflict(number, name, account_type) -> str:
     silently become where that posting path resolves.
 
     Returns one of two reasons so a caller can pick a status code: a name
-    mismatch ("reserved …") or a right-name/wrong-type mismatch ("… must be a
-    <type> account"). Shared by the accounts API and the chart importer so
+    mismatch ("reserved …") or a right-name/wrong-type mismatch ("… must be
+    a(n) <type> account"). Shared by the accounts API and the chart importer so
     both refuse the same thing for the same reason.
     """
     entry = CONTROL_ACCOUNTS.get(str(number)) if number else None
@@ -208,7 +212,8 @@ def restore_conflict(number, name, account_type) -> str:
         return ""
     if name_ok and not type_ok:
         return (
-            f"{number} {control_name} must be a {control_type} account — the "
+            f"{number} {control_name} must be {_article(control_type)} "
+            f"{control_type} account — the "
             f"software posts to it by number for {purpose}. Give it that type, "
             f"or use a different number."
         )
