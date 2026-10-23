@@ -7,6 +7,63 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.27.0
 
+**A register deposit splits like a check, with a fee line** (#387, from a
+bookkeeper's notes). A card processor pays over the gross it collected less
+its fee, and only the net reaches the bank; a check could be split across
+lines since 2.23.5, a deposit could not, so it never matched the statement.
+A split line may now go the other way from its entry: the dialog's split
+table has a **Taken out** box per line, so the fee is typed as the positive
+number the statement shows, and a 97.00 deposit is Income 100.00, Bank
+Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
+3, DR bank 97). A ticked line always runs opposite the entry, whichever way
+the entry goes, so the same box on a check is a refund netted against it (a
+−500 check paying Insurance 620 less a 120 refund), and the check's printed
+stub lists that refund as a negative line so the stub still totals the
+check. On the API each split line is signed on its own, and a line of 0.00
+is refused rather than dropped.
+
+**A register entry opens for editing** (part of #388, from a bookkeeper's
+notes). A typo in an entry made from the bank register meant voiding it and
+entering it again; now the row has **Edit**, which opens the + Entry form
+filled in (the split lines included), and Save rewrites the entry in place
+— the same journal entry, so its links, statement match and audit trail
+stay with it (`GET` and `PUT /api/banking/entries/{id}`). A fix that leaves
+every line's account and amount alone (payee, memo, check number, date,
+class, job) updates the entry where it is, and saving it unchanged writes
+nothing; a new amount or category replaces the lines the way a bill's are
+on edit, each old line a DELETE in the audit log and each new one an
+INSERT. A field the PUT leaves out keeps what the entry has, and the form
+carries back what it has no box for: the entry's job, a split line's own
+class or job, and a class archived since. A line with its own class (an
+imported check's lines can have one) keeps it through an edit. A memo-only
+entry (a memo, no payee) now reopens with the memo in Memo, not in Payee: no
+payee carries the sentinel "Bank entry" on the entry's header instead of the
+memo, so a memo-only entry is told apart from a payee-only one, and the
+register shows its Payee column blank rather than the memo or the sentinel.
+This needs no migration and changes only new entries; a memo-only entry
+posted before this release was stored the same as a payee-only one, so it
+still reopens with its text in Payee.
+
+An entry a completed reconciliation holds says so as it opens, and its
+amount and date stay as the statement has them: a change to either is
+refused, as voiding it is ("so its amount and date cannot be changed, just
+as it cannot be voided. Correct the difference with a new entry."). Its
+payee, memo, check number, class and job can be fixed without a word; a
+new category or split asks first — "Changing its category moves its amount
+between accounts in a period already reconciled." — with **Change it
+anyway**, which saves the form as it is then (`confirm_reconciled`, and the
+audit log says the edit moved past that reconciliation). On an entry that
+is only cleared, a changed amount loses the tick and the answer says so.
+An entry added from a statement line keeps that link through an edit (on
+PostgreSQL too, where the edit failed); one whose amount changed sends the
+statement line back to review without its category, so **Add all
+categorised** cannot post it a second time. A void entry is not edited, an
+edit that would turn the entry into a transfer is refused (void it and post
+the transfer), the closing date holds for the old date and the new one, and
+a read-only or accountant's sign-in is not offered Edit. Journal entries
+and deposits still open their own views from the row; editing them in
+place is still to come.
+
 **The macOS build's Pillow moves to 13.0.0.** Dependabot had ten open alerts
 on the 12.3.0 pin in `packaging/macos/requirements-build.txt`, two of them
 high (a JPEG comment heap overflow and a libopenjp2 heap overflow), all

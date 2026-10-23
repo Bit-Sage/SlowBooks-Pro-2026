@@ -62,6 +62,34 @@ Register entries, transfers and card charges have **Void** (a mirror-image
 reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
 
+A register entry's row has **Edit** (part of #388): the same form, filled in, and
+Save rewrites the entry on the same journal entry (its links, statement
+match and audit trail stay with it). A fix that leaves every line's account
+and amount alone (payee, memo, check number, date, class, job) updates the
+entry where it is, and saving it unchanged writes nothing; a new amount or
+category replaces the lines (each old line a DELETE in the audit log, each
+new one an INSERT). The form carries back what it has no box for: the
+entry's job, a split line's own class or job, a class archived since; a
+line with a class of its own (an imported check's) keeps it. A memo-only
+entry (a memo, no payee) reopens with the memo in Memo, not in Payee: no
+payee is stored as the sentinel "Bank entry" on the header, which tells a
+memo-only entry from a payee-only one and shows a blank Payee in the
+register. No migration; entries posted before this still read their memo as
+the payee.
+
+An entry a completed reconciliation holds says so when it opens: its
+amount and date stay as the statement has them (refused, as its void is;
+correct the difference with a new entry). Its payee, memo, check number,
+class and job can change; a new category or split asks first, with
+**Change it anyway**. On an entry that is only cleared, a changed amount
+loses the tick, and the page says so. An entry added from a statement line
+stays linked to it; when its amount changes, the statement line goes back
+to review without its category, so **Add all categorised** doesn't post it
+again. A void entry is not edited; an edit that would make the entry a
+transfer is refused (void it and post the transfer). Read-only and
+accountant sign-ins don't see Edit. Journal entries and deposits open
+their own views from the row.
+
 The entry row at the foot of the register posts the same way (Enter or
 Post). A payee typed there, or in + Entry, that is not already a customer's
 or a vendor's name is offered as one — a customer for money in (a deposit),
@@ -78,11 +106,21 @@ selects it.
 
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,
-job_id?, splits?: [{category_account_id, amount, description?}]}` → the
+job_id?, splits?: [{category_account_id, amount, description?, class_id?,
+job_id?}]}` → the
 journal entry (the split lines add up to `amount`; none is zero; no bank or
-card account among them). `GET /api/banking/check-register?account_id=`
-is the register (`start_date`/`end_date` optional; an opening balance is
-carried in for a range).
+card account among them; a split line may name its own `class_id` and
+`job_id`). `GET /api/banking/entries/{id}` is a register entry in that
+shape (plus `class_id`, `class_name`, `job_id`, each split's own class and
+job, `reconciled_on` and `reconciled_note`); `PUT
+/api/banking/entries/{id}` takes the same fields, any left out keeping what
+the entry has, and rewrites it (on a reconciled entry: 400 for a new amount
+or date, 409 with the statement date for a new category or split until
+`confirm_reconciled` is true; the answer's `uncleared` names the lines that
+lost their mark). `GET
+/api/banking/check-register?account_id=` is the register
+(`start_date`/`end_date` optional; an opening balance is carried in for a
+range); its rows say `editable`.
 
 A check written here, or an Expense paid from a bank account, prints from
 its register row (Print Check) and from the expense's view: `GET
