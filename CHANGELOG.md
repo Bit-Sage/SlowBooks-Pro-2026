@@ -33,6 +33,16 @@ with "Could not find base64 encoded ticket" or "Record not found" (three of
 the four 2.26.0 sign jobs; each passed on rerun). The staple and validate pair
 is retried, up to six attempts over about five minutes, and the final error
 names the attempts. Any other staple error stops the run on the first try.
+**The Interoperability page says where a bank statement goes** (#396, from
+a bookkeeper's notes). Its CSV imports take lists and reports; a bank or
+credit card statement (CSV, OFX, QFX) is imported from the account itself,
+under Banking → the account → Import file, and the Report CSV section now
+says so with a link, as does the QuickBooks migration guide. The guide also
+answers whether the vendors and accounts on a statement must be entered
+first: they need not — each line comes in as a statement line with its
+payee as text, and waits in the account's To review list to match or
+categorize unless it matches one entry already in the books, which it is
+matched to on import.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

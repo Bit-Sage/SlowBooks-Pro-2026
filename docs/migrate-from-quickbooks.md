@@ -246,6 +246,16 @@ Desktop does not export transactions to IIF natively. Two other options:
   IIF) so account and item names resolve — deposit and check blocks
   whose accounts are missing are reported with a pointer to do exactly
   that. All three are safe to re-upload; duplicates are skipped.
+- **A bank or credit card statement (CSV, OFX, QFX) is not an
+  Interoperability import.** It goes in from the account itself, under
+  **Banking → the account → Import file**. The vendors and accounts on the
+  statement do not need to exist first: each line comes in as a statement
+  line with its payee kept as text. A line that matches exactly one entry
+  already in the books is matched to it on import; every other line waits in
+  the account's **To review** list, to be matched or categorized from there
+  (a bank rule can suggest the category from the payee). Nothing new posts
+  until you add it. See
+  [docs/banking.md](banking.md).
 
   The messy-report trap is exporting a summary report; the sales
   receipt path uses a detail report filtered to one transaction type:
