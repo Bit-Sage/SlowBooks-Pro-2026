@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.27.0
 
 **The register adds a payee or a category as it is typed** (#386, from a
 bookkeeper's notes). A payee typed into the register's entry row or the +
