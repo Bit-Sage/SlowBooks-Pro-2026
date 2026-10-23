@@ -193,17 +193,21 @@ def test_notarize_inspects_accepted_log_and_staples(monkeypatch, tmp_path, issue
     assert any(args[1:3] == ("stapler", "validate") for args in calls)
 
 
-def test_staple_fails_when_validate_fails(monkeypatch, tmp_path):
+def test_staple_fails_when_validate_keeps_failing(monkeypatch, tmp_path):
     app = tmp_path / "SlowBooks Pro.app"
     app.mkdir()
+    calls = []
 
     def fake_run(*args, check=True):
+        calls.append(args)
         rc = 65 if args[1:3] == ("stapler", "validate") else 0
         return subprocess.CompletedProcess(args, rc, stdout="", stderr="no ticket")
 
     monkeypatch.setattr(release, "_run", fake_run)
-    with pytest.raises(RuntimeError, match="no notarization ticket"):
+    monkeypatch.setattr(release, "_sleep", lambda s: None)
+    with pytest.raises(RuntimeError, match="no notarization ticket on .* after 6"):
         release._staple(app, tmp_path)
+    assert sum(c[1:3] == ("stapler", "staple") for c in calls) == 6
 
 
 def test_notarize_rejects_log_with_errors(monkeypatch, tmp_path):
@@ -382,12 +386,34 @@ def test_staple_retries_until_ticket_propagates(monkeypatch, tmp_path):
     assert slept == [20, 40]
 
 
+def test_staple_retries_when_validate_fails_after_staple_succeeds(
+    monkeypatch, tmp_path
+):
+    """2.26.0 job 120228067070: staple exit 0, validate failed a second later."""
+    validates = [65, 65, 0]
+    slept = []
+    calls = []
+
+    def fake_run(*args, check=True):
+        calls.append(args)
+        rc = validates.pop(0) if args[1:3] == ("stapler", "validate") else 0
+        return subprocess.CompletedProcess(args, rc, stdout="", stderr="")
+
+    monkeypatch.setattr(release, "_run", fake_run)
+    monkeypatch.setattr(release, "_sleep", slept.append)
+    release._staple(tmp_path / "x.app", tmp_path)
+    assert sum(c[1:3] == ("stapler", "staple") for c in calls) == 3
+    assert slept == [20, 40]
+
+
 def test_staple_gives_up_naming_attempts(monkeypatch, tmp_path):
     fake_run, calls = _staple_runner([(65, MISSING)] * release.STAPLE_ATTEMPTS)
     slept = []
     monkeypatch.setattr(release, "_run", fake_run)
     monkeypatch.setattr(release, "_sleep", slept.append)
-    with pytest.raises(RuntimeError, match="after 6 stapling attempts"):
+    with pytest.raises(
+        RuntimeError, match="no notarization ticket on x.dmg after 6 stapling attempts"
+    ):
         release._staple(tmp_path / "x.dmg", tmp_path)
     assert len(slept) == release.STAPLE_ATTEMPTS - 1
     assert sum(slept) == 300
