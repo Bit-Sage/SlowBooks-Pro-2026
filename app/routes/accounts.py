@@ -172,7 +172,9 @@ def _sub_account_refusal(
 ) -> HTTPException:
     label = detail_label(parent.detail_type)
     detail = (
-        f"a sub-account of {_named(parent)} ({label}) must be "
+        f"a sub-account shares its parent's detail type, except under a bank, "
+        f"card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        f"of {_named(parent)} ({label}) must be "
         f"a{'n' if label[0] in 'AEIOU' else ''} {label} too"
     ) + (f": {why}" if why else "")
     base = BASE_TYPE_OF[DetailType(parent.detail_type)]

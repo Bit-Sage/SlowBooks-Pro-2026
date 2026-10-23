@@ -194,8 +194,12 @@ class Account(Base):
     bank_kind = Column(String(20), nullable=True)
     # A DetailType value (#390). NOT NULL; an Account(...) built without one
     # gets it from _settle_detail_type below, so the ten-odd paths that
-    # create accounts directly need not know about it.
-    detail_type = Column(String(30), nullable=False)
+    # create accounts directly need not know about it. The server_default
+    # keeps a raw SQL insert (another tool, a manual fix) from failing the
+    # NOT NULL; the ORM hook still sets the type-correct value.
+    detail_type = Column(
+        String(30), nullable=False, server_default="other_current_asset"
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -405,12 +405,16 @@ def test_a_sub_account_shares_its_parents_detail_type(client, seed_accounts):
     )
     assert r.status_code == 400
     assert r.json()["detail"] == (
-        "a sub-account of 1500 Equipment (Fixed Asset) must be a Fixed Asset too"
+        "a sub-account shares its parent's detail type, except under a bank, "
+        "card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        "of 1500 Equipment (Fixed Asset) must be a Fixed Asset too"
     )
     r = _create(client, name="Fuel", account_type="expense", parent_id=equipment.id)
     assert r.status_code == 400
     assert r.json()["detail"].startswith(
-        "a sub-account of 1500 Equipment (Fixed Asset) must be a Fixed Asset too: "
+        "a sub-account shares its parent's detail type, except under a bank, "
+        "card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        "of 1500 Equipment (Fixed Asset) must be a Fixed Asset too: "
     )
     # changing the sub-account's own detail type away from its parent's
     r = client.put(
@@ -449,7 +453,9 @@ def test_a_control_account_cannot_go_under_a_parent_of_another_detail_type(
     )
     assert r.status_code == 400
     assert r.json()["detail"] == (
-        "a sub-account of Current Assets (Other Current Asset) must be an Other "
+        "a sub-account shares its parent's detail type, except under a bank, "
+        "card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        "of Current Assets (Other Current Asset) must be an Other "
         "Current Asset too: 1100 Accounts Receivable is a control account; its "
         "detail type is Accounts Receivable"
     )

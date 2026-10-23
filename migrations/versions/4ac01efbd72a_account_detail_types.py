@@ -274,8 +274,15 @@ def upgrade() -> None:
             result[parent["id"]],
         )
 
+    # server_default so a raw SQL insert that omits the column can't fail the
+    # NOT NULL (the ORM hook still writes the type-correct value for app rows).
     with op.batch_alter_table("accounts") as batch:
-        batch.alter_column("detail_type", existing_type=sa.String(30), nullable=False)
+        batch.alter_column(
+            "detail_type",
+            existing_type=sa.String(30),
+            nullable=False,
+            server_default="other_current_asset",
+        )
 
 
 def downgrade() -> None:

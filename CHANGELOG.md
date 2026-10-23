@@ -17,12 +17,15 @@ Accounts lists each type's accounts under a heading per detail type, so a
 loan sitting among the current liabilities shows in the first scroll. The
 detail type cannot contradict the type, a bank or card account is Bank or
 Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
-fifteen control accounts keep theirs, and a sub-account shares its parent's
+fifteen control accounts keep theirs. A sub-account shares its parent's
+detail type, except under a bank, card, Accounts Receivable or Accounts
+Payable parent, where it is set on its own — QuickBooks' rule. So a Savings
+account (bank kind bank) under an Other Current Asset folder is a 400 here
+where it was allowed before; an existing one is kept and logged
 (`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
-`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`).
-Under 1100, 2000, a bank or a card a sub-account keeps its own. A bank or
-card account with reconciliations, feed rows or register entries keeps its
-bank kind: changing it would take the register away.
+`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`). A bank
+or card account with reconciliations, feed rows or register entries keeps
+its bank kind: changing it would take the register away.
 
 The upgrade fills the detail type in from where the cash flow statement
 already puts each account: the fixed-asset register's accounts, accumulated

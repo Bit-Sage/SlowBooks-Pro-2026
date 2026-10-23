@@ -243,6 +243,42 @@ def test_the_backfill_on_postgresql(postgres_url):
     _scenario(postgres_url)
 
 
+def _raw_insert_without_detail_type(url: str) -> None:
+    """A raw SQL insert that omits detail_type must not fail the NOT NULL:
+    the migration gives the column a server_default, so another tool or a
+    manual fix can add a row and get a value rather than an error."""
+    command.upgrade(_cfg(url), REVISION)
+    engine = sa.create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO accounts (name, account_number, account_type, "
+                    "is_active, is_system, balance) VALUES "
+                    "('Raw row', '9001', 'EXPENSE', :t, :f, 0)"
+                ),
+                {"t": True, "f": False},
+            )
+            got = conn.execute(
+                sa.text(
+                    "SELECT detail_type FROM accounts WHERE account_number = '9001'"
+                )
+            ).scalar()
+        assert got == "other_current_asset"
+    finally:
+        engine.dispose()
+
+
+def test_a_raw_insert_without_detail_type_gets_the_server_default_on_sqlite(tmp_path):
+    _raw_insert_without_detail_type("sqlite:///" + (tmp_path / "raw.db").as_posix())
+
+
+def test_a_raw_insert_without_detail_type_gets_the_server_default_on_postgresql(
+    postgres_url,
+):
+    _raw_insert_without_detail_type(postgres_url)
+
+
 def _migration():
     from tests.cash_flow_2_26 import migration
 
