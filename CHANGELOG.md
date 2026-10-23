@@ -405,6 +405,14 @@ back. Save PDF and
 Save CSV as the other reports. Read-only and accountant sign-ins read it;
 dismissing is refused to them. The QuickBooks migration guide's *After the
 import* suggests running it once. It never voids anything by itself.
+### Unreleased
+
+**A deposit QuickBooks prints under several numbers imports** (discussion #349). In a
+Transaction Detail by Account export, a bank deposit of several customer checks
+shows its bank line with no number and each income line with that check's own
+number. The ledger import grouped by number, so the deposit came apart into
+halves that only balance together and the file was refused. An unnumbered half
+and the same-day numbered halves that add up to it now post as one journal entry.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

@@ -156,10 +156,14 @@ posts those lines to the parent account itself.
 **Long histories.** QuickBooks' Save as CSV stops a report at 32,768 rows with
 no warning: the last section ends without its Total line, and the income and
 expense accounts, which come after the balance sheet accounts, may be missing
-altogether. Export in date ranges (set From and To, keep All accounts and the
-default columns) so each file stays under that, and import them oldest first;
-a transaction's lines share a date, so a range never splits one, and a line
-already posted is skipped on the next file.
+altogether. Export **one calendar year per file** (set From and To to January 1
+and December 31, keep All accounts and the default columns) and import them
+oldest first; a transaction's lines share a date, so a year never splits one,
+and a line already posted is skipped on the next file. Keep to one year even
+when a longer range would fit under the cap: in a range that spans several
+years, QuickBooks prints the balance sheet accounts for the whole range but the
+income and expense accounts for its last year only, so every earlier sale and
+expense arrives without its other half and the file is refused.
 
 ### Time: the Time by Name by Job detail report
 
