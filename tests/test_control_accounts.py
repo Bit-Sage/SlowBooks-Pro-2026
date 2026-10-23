@@ -436,3 +436,21 @@ def test_update_notice_takes_no_space_when_up_to_date():
         encoding="utf-8"
     )
     assert "#sidebar-update:empty" in css and "display: none" in css
+
+
+def test_restoring_a_missing_control_account_by_its_number_and_name_works(
+    client, seed_accounts
+):
+    """MissingControlAccount tells the operator to restore the account with
+    that exact number and name from New Account; the guard lets that through
+    while the slot is empty."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "5900",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["account_number"] == "5900"

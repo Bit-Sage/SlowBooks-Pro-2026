@@ -61,7 +61,7 @@ def _check_account_number(number) -> None:
         )
 
 
-def _reject_reserved_number(number) -> None:
+def _reject_reserved_number(number, name=None) -> None:
     """A new or renumbered account may not land on a control-account number.
 
     The posting code resolves the control accounts BY NUMBER (see
@@ -76,7 +76,13 @@ def _reject_reserved_number(number) -> None:
     through this route, so only the user-facing form is guarded."""
     if not number or not control_accounts.is_control_number(number):
         return
-    name, purpose = control_accounts.describe(number)
+    control_name, purpose = control_accounts.describe(number)
+    # Restoring the control account itself, as MissingControlAccount tells
+    # the operator to (that exact number and name, with the slot empty), is
+    # allowed; the duplicate check has already refused an occupied slot.
+    if name and name.strip().casefold() == control_name.casefold():
+        return
+    name = control_name
     raise HTTPException(
         status_code=409,
         detail=(
@@ -251,7 +257,7 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_bank_kind(data.bank_kind, data.account_type)
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
-    _reject_reserved_number(data.account_number)
+    _reject_reserved_number(data.account_number, data.name)
     account = Account(**data.model_dump())
     db.add(account)
     try:

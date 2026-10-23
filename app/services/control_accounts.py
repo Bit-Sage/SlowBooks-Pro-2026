@@ -58,8 +58,8 @@ class MissingControlAccount(LookupError):
         if purpose:
             detail += f" It is used for {purpose}."
         detail += (
-            " Restore it with that exact number (Chart of Accounts → New "
-            "Account), then try again. Nothing was posted."
+            " Restore it with that exact number and name (Chart of Accounts → "
+            "New Account), then try again. Nothing was posted."
         )
         super().__init__(detail)
         # This sentence is for the operator: safe_message passes it on
