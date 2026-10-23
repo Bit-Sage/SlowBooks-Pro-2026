@@ -1004,7 +1004,7 @@ const BankingPage = {
         if (onList || BankingPage._payeesAsked.has(key)) return;
         if (moneyIn === null || moneyIn === undefined) return; // the post will ask once the side is known
         BankingPage._payeesAsked.add(key);
-        const noun = moneyIn ? 'customer' : 'vendor';
+        const noun = moneyIn ? T('customer') : 'vendor';
         toastAction(
             `Add "${name}" as a ${noun}?`, 'Add',
             () => BankingPage.addParty(name, moneyIn), 15000, 'Not now',
@@ -1018,8 +1018,8 @@ const BankingPage = {
     // as the categorized import's is).
     async addParty(name, moneyIn) {
         const path = moneyIn ? '/customers' : '/vendors';
-        const list = moneyIn ? 'Customers' : 'Vendors';
-        const noun = moneyIn ? 'customer' : 'vendor';
+        const list = moneyIn ? T('Customers') : 'Vendors';
+        const noun = moneyIn ? T('customer') : 'vendor';
         const names = moneyIn ? BankingPage._customerNames : BankingPage._vendorNames;
         try {
             await API.post(path, { name });

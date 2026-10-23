@@ -109,7 +109,7 @@ def test_the_payee_is_offered_by_the_money_side_and_checks_both_lists():
     # an unknown side (no amount yet) waits for the post, which knows it
     assert "if (moneyIn === null || moneyIn === undefined) return;" in ask
     # customer for money in, vendor for money out
-    assert "const noun = moneyIn ? 'customer' : 'vendor';" in ask
+    assert "const noun = moneyIn ? T('customer') : 'vendor';" in ask
     assert '`Add "${name}" as a ${noun}?`' in ask
     assert (
         "{ focusOnShow: true, returnFocus: () => document.getElementById(returnFocusId) }"
