@@ -886,7 +886,7 @@ const BankingPage = {
             if (![...sel.options].some(o => o.value === want)) {
                 const opt = document.createElement('option');
                 opt.value = want;
-                opt.textContent = want ? `${entry.class_name || 'Class ' + want} (archived)` : '—';
+                opt.textContent = want ? `${entry.class_name || T('Class') + ' ' + want} (archived)` : '—';
                 sel.appendChild(opt);
             }
             sel.value = want;
