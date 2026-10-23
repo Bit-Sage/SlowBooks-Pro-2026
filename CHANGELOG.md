@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### Unreleased
 
 **Saved invoice messages, one the default, chosen on the invoice** (#392,
 from a bookkeeper's notes). The note that says how to pay — Zelle to this
@@ -27,6 +27,8 @@ PDF and email print it where they printed Notes.
 setting one message's `is_default` clears the others in the same
 transaction, each through the ORM so the old default turning off is
 audited. The email templates are unchanged.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
