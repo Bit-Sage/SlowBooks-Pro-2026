@@ -558,8 +558,14 @@ because both change how the statements present accounts.
 - **Grids** (decision 3): `_pl_pivot` buckets by `_pl_section_of` (type,
   then detail type for Other Income / Other Expense); every column and the
   Total carry the new totals; `_grid_layout` lists the rows once for the
-  PDF and the CSV. The Classes list adds other income / expense back into
-  its income / expenses columns, so its four figures still add to net.
+  PDF and the CSV. `/api/classes/activity` carries the grid's figures
+  (operating income and expenses, `other_income`, `other_expense`); the
+  Classes list and a class page's stat cards add the other two back for
+  display, so their four figures still add to net. `has_other` needs an
+  Other line with a figure on the P&L and the grids alike.
+- **One chart read per statement**: `_chart_index` (number, name, parent,
+  type, detail type) is built once in `profit_loss` / `balance_sheet` and
+  handed to every helper; `_chain` and `family_rows` share `MAX_DEPTH`.
 - **Statement of Activities** stays on base type (no Other block), as
   proposed; it gets #416's families.
 - **Cash flow**: `_place` reads the detail type; the register (asset and
