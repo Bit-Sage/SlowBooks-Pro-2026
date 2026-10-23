@@ -2624,7 +2624,7 @@ ReportsPage.reconciliationReports = async function () {
             <td class="amount">${r.cleared_total === null ? '' : formatCurrency(r.cleared_total)}</td>
             <td>${r.completed_at ? formatDate(r.completed_at) : ''}</td>
             <td class="actions" style="white-space:nowrap;">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.showReconReport(${r.id})">View</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.showReconReport(${r.id}, ReportsPage.reconciliationReports)">View</button>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="window.open('/api/banking/reconciliations/${r.id}/pdf', '_blank')">Save PDF</button>
             </td>
         </tr>`).join('')}</tbody></table></div>`

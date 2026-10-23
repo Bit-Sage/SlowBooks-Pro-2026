@@ -1196,7 +1196,10 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    async showReconReport(reconId) {
+    // `onClose` reopens whatever list View came from (the Report Center's
+    // Reconciliation Reports card, #395): the report replaces that modal, so
+    // without it Close would land past the list. None → a plain Close.
+    async showReconReport(reconId, onClose) {
         try {
             const r = await API.get(`/banking/reconciliations/${reconId}/report`);
             const L = r.labels;
@@ -1223,13 +1226,22 @@ const BankingPage = {
                             <td>${escapeHtml(i.payee || i.description || '')}</td><td class="amount">${formatCurrency(i.amount)}</td>
                         </tr>`).join('')}</tbody>
                     </table></div>`).join('')).join('');
+            BankingPage._reconReportBack = typeof onClose === 'function' ? onClose : null;
             openModal(`Reconciliation — ${r.account_name}, statement of ${formatDate(r.statement_date)}`, `
                 ${summary}${detail}
                 <div class="form-actions">
-                    <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                    <button class="btn btn-secondary" onclick="BankingPage._closeReconReport()">Close</button>
                     <button class="btn btn-primary" onclick="window.open('/api/banking/reconciliations/${reconId}/pdf', '_blank')">Save PDF</button>
                 </div>`);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Close the report: back to the list it was opened from (#395), or a
+    // plain close when it was opened on its own.
+    _closeReconReport() {
+        const back = BankingPage._reconReportBack;
+        BankingPage._reconReportBack = null;
+        if (back) back(); else closeModal();
     },
 
     async abandonReconcile(reconId, accountId) {

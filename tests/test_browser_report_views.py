@@ -1286,3 +1286,23 @@ def test_a_pinned_card_leads_the_report_center_and_a_reload_keeps_it(
         assert page.get_attribute(PIN, "aria-pressed") == "false"
     finally:
         page.close()
+
+
+def test_close_from_a_viewed_reconciliation_returns_to_the_card_list(
+    browser, company, books
+):
+    """View on the Reconciliation Reports card opens a report in place of the
+    list; Close goes back to the list (#395 review), not past it to the
+    Report Center. The bakery has one completed reconciliation."""
+    page = _open_at(browser, company, "#/reports/reconciliation-reports")[0]
+    try:
+        page.wait_for_function(f"() => ({TITLE})() === 'Reconciliation Reports'")
+        page.click("#modal-overlay button:has-text('View')")
+        page.wait_for_function(
+            f"() => ({TITLE})().startsWith('Reconciliation \\u2014')"
+        )
+        page.click("#modal-overlay .form-actions button:has-text('Close')")
+        page.wait_for_function(f"() => ({TITLE})() === 'Reconciliation Reports'")
+        assert page.evaluate(MODAL_SHOWN)
+    finally:
+        page.close()

@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### v2.27.0
 
 **A Reconciliation Reports card, and pinned cards first on the Report
 Center** (#395, from a bookkeeper's notes). CPAs ask for bank reconciliation
@@ -14,14 +14,20 @@ of its own. Reports → Reconciliation Reports lists every completed
 reconciliation by account and statement date, with the statement balance,
 the cleared total and the day it was finished, each to the on-screen report
 or its PDF (`GET /api/banking/reconciliations?status=completed`, which now
-takes `status` and carries `account_name`; nothing new is generated). And
-the cards can be arranged: each has a star, a toggle button reached by Tab
-after the card, and pinned cards lead the grid in the order they were
-pinned, the rest in their fixed order. The pins are the preference
-`report_center_pins` (`{"pinned": [view, …]}`), kept per company file and,
-once the company has users, per user, as the dashboard's layout is; the star
-is hidden from a read-only sign-in, whose preference writes the server
-refuses. The saved reports strip is as it was.
+takes `status` and carries `account_name`; nothing new is generated). A
+reconciliation from before 2.10 whose ledger account is gone has no account
+to name and no report, so it is left off the list, as the Accountant's
+Package already leaves it out. Close on an on-screen report opened from the
+card returns to that list, not past it to the Report Center. And the cards
+can be arranged: each has a star, a toggle button reached by Tab after the
+card, and pinned cards lead the grid in the order they were pinned, the rest
+in their fixed order. The pins are the preference `report_center_pins`
+(`{"pinned": [view, …]}`), kept per company file and, once the company has
+users, per user, as the dashboard's layout is; the star is hidden from a
+read-only sign-in, whose preference writes the server refuses. The saved
+reports strip is as it was.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off

@@ -613,9 +613,18 @@ def list_reconciliations(
         q = q.filter(Reconciliation.bank_account_id == bank_account_id)
     if status is not None:
         q = q.filter(Reconciliation.status == status)
-    return q.order_by(
+    rows = q.order_by(
         Reconciliation.statement_date.desc(), Reconciliation.id.desc()
     ).all()
+    # A completed reconciliation whose ledger account is gone (one from
+    # before 2.10) has no account to name and no report — its PDF is a raw
+    # 400. The accountant's package skips it (reports/package.py: rc.report
+    # raises, and the loop continues), and the Report Center's cross-account
+    # list does too. A per-account query is left alone: it was asked for that
+    # account, and an account-less row can't match an account_id anyway.
+    if account_id is None and bank_account_id is None:
+        rows = [r for r in rows if r.account is not None]
+    return rows
 
 
 @router.post("/reconciliations", response_model=ReconciliationResponse, status_code=201)
