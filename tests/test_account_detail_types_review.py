@@ -322,3 +322,66 @@ def test_the_iif_export_tolerates_a_stray_stored_detail_type():
     assert account_to_iif_type(acct("FIXED_ASSET")) == "FIXASSET"  # the NAME form
     assert account_to_iif_type(acct("garbage")) == "OCASSET"
     assert account_to_iif_type(acct(None, AccountType.LIABILITY, "2000")) == "AP"
+
+
+# --- review follow-up: preview matches import, 3900 lock -----------------------
+
+
+def test_the_dry_run_preview_matches_the_import_for_a_misplaced_detail(client):
+    # A file that marks 1150 Accounts Receivable: AR is kept for 1100, so the
+    # row comes in as Other Current Asset. The dry run must say that too, with
+    # the same note, not preview as AR and then import as something else.
+    csv = (
+        "Number,Name,Type,Detail type\n"
+        "1150,Customer Receivables,asset,Accounts Receivable\n"
+    )
+    preview = _chart(client, csv, dry_run=1)
+    row = next(r for r in preview["rows"] if r["number"] == "1150")
+    assert row["action"] == "create"
+    assert row["detail_type"] == "other_current_asset"
+    assert "came in as Other Current Asset" in row["note"]
+
+    applied = _chart(client, csv, dry_run=0)
+    arow = next(r for r in applied["rows"] if r["number"] == "1150")
+    assert arow["detail_type"] == row["detail_type"]
+    assert arow["note"] == row["note"]  # the note is not doubled on import
+
+
+def test_3900_is_locked_once_it_joins_the_control_registry(client, monkeypatch):
+    # #413 adds 3900 Opening Balance Equity to the control registry. The lock
+    # is registry-driven, so this patches the registry to include 3900 and
+    # tests the mechanism: once 3900 is a control number its type and number
+    # are locked and the chart marks it control (which locks its detail type).
+    from app.services import control_accounts
+
+    registry = dict(control_accounts.CONTROL_ACCOUNTS)
+    registry.setdefault(
+        "3900",
+        ("Opening Balance Equity", "the balancing account for opening balances"),
+    )
+    monkeypatch.setattr(control_accounts, "CONTROL_ACCOUNTS", registry)
+
+    acct = _ok(
+        client.post(
+            "/api/accounts",
+            json={
+                "name": "Opening Balance Equity",
+                "account_number": "3900",
+                "account_type": "equity",
+            },
+        ),
+        201,
+    )
+    assert acct["detail_type"] == "equity"
+    assert acct["is_control"] is True
+
+    # renumbering it is refused: the posting code finds it by number
+    r = client.put(f"/api/accounts/{acct['id']}", json={"account_number": "3950"})
+    assert r.status_code == 400
+    assert "control account" in r.json()["detail"]
+
+    # and changing its type away from equity is refused, which is what locks
+    # its detail type (a control account's detail type cannot be contradicted)
+    r = client.put(f"/api/accounts/{acct['id']}", json={"account_type": "expense"})
+    assert r.status_code == 400
+    assert "control account" in r.json()["detail"]

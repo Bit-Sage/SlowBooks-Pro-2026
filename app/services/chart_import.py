@@ -44,6 +44,7 @@ from app.models.accounts import (
     DetailType,
     default_detail_type,
     detail_label,
+    detail_type_problem,
 )
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
@@ -695,11 +696,25 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
     return plan
 
 
+def _note_detail_fallback(entry: dict, declared: str, actual: str) -> None:
+    """One wording, used by the dry run and the apply, so the preview and
+    the import read the same when a declared detail type cannot stand."""
+    note = (
+        f"detail type {detail_label(declared)} in the file; came in "
+        f"as {detail_label(actual)}"
+    )
+    if note not in (entry.get("note") or ""):
+        entry["note"] = (entry["note"] + "; " if entry["note"] else "") + note
+
+
 def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
     """The detail type the row will have (#390): the chart's own for an
     account already there (an import never changes it, unless its type
     changes), else the file's, else the default. A sub-account given none
-    takes its parent's when applied."""
+    takes its parent's when applied. A file detail type the account cannot
+    carry (Accounts Receivable away from 1100, Bank without a bank kind)
+    falls back to the default here exactly as the apply path does, so the
+    preview shows what the import will actually write, with the same note."""
     retyped = any(c.startswith("type ") for c in entry.get("changes", []))
     if target is not None and not retyped:
         if r.detail_type and r.detail_type != target.detail_type:
@@ -709,7 +724,14 @@ def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
             )
         return target.detail_type
     if r.detail_type:
-        return r.detail_type
+        problem = detail_type_problem(
+            r.detail_type, r.type, r.bank_kind, entry.get("number")
+        )
+        if problem is None:
+            return r.detail_type
+        fell_back = default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+        _note_detail_fallback(entry, r.detail_type, fell_back)
+        return fell_back
     return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
 
 
@@ -783,10 +805,7 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
         ):
             continue
         if a.detail_type != r.detail_type:
-            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
-                f"detail type {detail_label(r.detail_type)} in the file; came in "
-                f"as {detail_label(a.detail_type)}"
-            )
+            _note_detail_fallback(entry, r.detail_type, a.detail_type)
         entry["detail_type"] = a.detail_type
     db.commit()
 

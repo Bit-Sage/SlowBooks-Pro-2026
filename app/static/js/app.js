@@ -1288,7 +1288,7 @@ const App = {
                         <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint"${locked ? ' disabled' : ''}>
                             ${picker}
                         </select>
-                        <span id="account-type-hint" class="hint">A bank or card account gets a register; a sub-account shares its parent's type.</span></div>
+                        <span id="account-type-hint" class="hint">A bank or card account gets a register. A sub-account shares its parent's detail type, except under a bank, card, or a 1100 or 2000 parent, where it is set on its own.</span></div>
                     <div class="form-group full-width"><label>Description</label>
                         <textarea name="description">${escapeHtml(acct.description || '')}</textarea></div>
                 </div>
