@@ -171,9 +171,57 @@ def _move_out_first(child: Account, parent: Account) -> str:
     each other: base types are not cascaded."""
     return (
         f" Move {_named(child) or 'the sub-account'} out from under "
-        f"{_named(parent)} first (set its parent to none), change the types, "
-        f"then put it back."
+        f"{_named(parent)} first (Parent account: none, on its form), change "
+        f"the types, then put it back."
     )
+
+
+_BASE_WORDS = {
+    "asset": "an asset",
+    "liability": "a liability",
+    "equity": "an equity account",
+    "income": "an income account",
+    "cogs": "a cost of goods sold account",
+    "expense": "an expense",
+}
+
+
+def _check_pinned_parent_base(
+    parent: Account | None, atype, child: Account | None = None
+) -> None:
+    """Under 1100, 2000, a bank or a card a sub-account keeps its own detail
+    type, but not another base type (#416): an expense under a bank account
+    would be listed, and later totalled, under a parent in another section
+    of the statements. Other parents already refuse it (_sub_account_refusal)."""
+    if parent is None or parent.detail_type not in PINNED_DETAIL_TYPES:
+        return
+    want = getattr(parent.account_type, "value", parent.account_type)
+    if getattr(atype, "value", atype) == want:
+        return
+    detail = (
+        f"a sub-account of {_named(parent)} ({detail_label(parent.detail_type)}) "
+        f"must be {_BASE_WORDS[want]} too"
+    )
+    if child is not None:
+        detail += "." + _move_out_first(child, parent)
+    raise HTTPException(status_code=400, detail=detail)
+
+
+def _check_children_base(account: Account, atype) -> None:
+    """A parent whose type changes would leave a sub-account of the old type
+    under it; the shared-detail-type ones are refused by the cascade, this
+    catches the rest (a pinned parent's own-type sub-accounts)."""
+    have = getattr(atype, "value", atype)
+    for child in account.children:
+        if getattr(child.account_type, "value", child.account_type) != have:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"its sub-account {_named(child)} is "
+                    f"{_BASE_WORDS[getattr(child.account_type, 'value', child.account_type)]}."
+                    + _move_out_first(child, account)
+                ),
+            )
 
 
 def _sub_account_refusal(
@@ -474,6 +522,9 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
     _check_parent_exists(db, data.parent_id)
+    _check_pinned_parent_base(
+        db.get(Account, data.parent_id) if data.parent_id else None, data.account_type
+    )
     account = Account(**data.model_dump())
     db.add(account)
     try:
@@ -540,6 +591,19 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
         )
     _check_bank_kind_kept(db, account, fields)
     _update_detail_type(db, account, fields)
+    # only on a move or a real type change: the form sends the type on
+    # every save, and a chart imported with a mixed pair stays editable
+    atype = fields.get("account_type", account.account_type)
+    retyped = getattr(atype, "value", atype) != account.account_type.value
+    if "parent_id" in fields or retyped:
+        parent_id = fields.get("parent_id", account.parent_id)
+        _check_pinned_parent_base(
+            db.get(Account, parent_id) if parent_id else None,
+            atype,
+            account if "parent_id" not in fields else None,
+        )
+    if retyped:
+        _check_children_base(account, atype)
 
     for key, val in fields.items():
         setattr(account, key, val)

@@ -60,6 +60,26 @@ sentence as the row's note, shown in the dry-run preview and when applied
 alike. The report paths and IIF names stop at a loop saved before this
 release. The same one walk now guards the cost-code tree too.
 
+**Sub-accounts show and move on the Chart of Accounts** (#416, from Chris
+Cree; the chart half — the statements' family subtotals are a separate
+change). An imported Travel › Hotel was kept in the books but listed flat,
+and the account form had no way to see or change a parent. The chart now
+lists each sub-account indented under its parent within its detail type,
+says "sub-account of Travel" to a screen reader, gives the full path
+("Travel: Hotel") on hover, and writes it beside the name where two accounts
+share a leaf name or the parent is listed elsewhere; the filter matches the
+path. The form has a **Sub-account of** picker, opened on the current
+parent, offering active accounts of the same type and never the account
+itself or one under it; a parent other than 1100, 2000, a bank or a card
+sets the Type to its own. Choosing a type the parent cannot take lets the
+parent go in the same save, so the base-type change the detail types refuse
+under a parent is now done from the form, and that 400 says "(Parent
+account: none, on its form)". The server's refusals show in the form, where
+a passing toast had them. One new rule: under 1100, 2000, a bank or a card a
+sub-account keeps its own detail type but not another base type — an expense
+under a bank account is refused on create, on a move and on a type change,
+either side of the pair; a pair saved before stays editable.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open

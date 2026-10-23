@@ -170,7 +170,9 @@ jobs:
           # 128 with account detail types (#390): the chart page's browser
           # module (no Playwright here) and the migration's PostgreSQL run
           # (no SLOWBOOKS_TEST_POSTGRES_URL here)
-          MAX_SKIPS: "128"
+          # 129 with sub-accounts on the chart (#416): its browser module,
+          # skipped here like the other Playwright modules
+          MAX_SKIPS: "129"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
