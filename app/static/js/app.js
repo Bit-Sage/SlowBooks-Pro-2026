@@ -1380,7 +1380,7 @@ const App = {
                         <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint" onchange="App.accountTypeChanged()"${locked ? ' disabled' : ''}>
                             ${picker}
                         </select>
-                        <span id="account-type-hint" class="hint">A bank or card account gets a register; a sub-account shares its parent's type.</span></div>
+                        <span id="account-type-hint" class="hint">A bank or card account gets a register. A sub-account shares its parent's detail type, except under a bank, card, or a 1100 or 2000 parent, where it is set on its own.</span></div>
                     <div class="form-group"><label for="account-parent">Sub-account of</label>
                         <select name="parent_id" id="account-parent" data-was="${acct.parent_id == null ? '' : Number(acct.parent_id)}" aria-describedby="account-parent-hint" onchange="App.accountParentChanged()">
                             ${App._accountParentOptions(acct.parent_id)}

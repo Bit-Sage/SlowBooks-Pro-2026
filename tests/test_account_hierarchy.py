@@ -50,7 +50,11 @@ def test_a_parent_of_another_type_is_refused(client, seed_accounts):
     hotel = _new(client, "Hotel")
     r = client.put(f"/api/accounts/{hotel['id']}", json={"parent_id": sales["id"]})
     assert r.status_code == 400
-    assert r.json()["detail"].startswith("a sub-account of Sales (Income) must be")
+    assert r.json()["detail"].startswith(
+        "a sub-account shares its parent's detail type, except under a bank, "
+        "card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        "of Sales (Income) must be"
+    )
 
 
 def test_a_sub_account_takes_its_parents_detail_type(client, seed_accounts):
