@@ -14,15 +14,19 @@ hand. Settings → Invoice Messages keeps a short list of them now (name,
 text, a Default radio; add, edit, delete, an administrator's writes like
 the settings around it), and the invoice form offers the list in a
 **Message** select above Notes, "(none)" first: choosing one copies its
-text into Notes, where it can still be edited, and a new invoice starts
-with the default message's text (with no default, the Default Invoice
-Notes setting as before; an estimate converted with no notes of its own
-starts the same way). The invoice keeps the text, not the choice, so a
-message edited later leaves old invoices alone, and the PDF and email
-print it where they printed Notes. `GET/POST /api/invoice-messages`,
-`PUT/DELETE /api/invoice-messages/{id}`; setting one message's
-`is_default` clears the others in the same transaction. The email
-templates are unchanged.
+text into Notes, where it can still be edited — appended on a new line
+when Notes already hold something typed by hand, so nothing is thrown
+away, and replacing them only when they are empty or still hold a saved
+message's text; "(none)" clears Notes only in that same last case. A new
+invoice starts with the default message's text (with no default, the
+Default Invoice Notes setting as before; an estimate converted with no
+notes of its own starts the same way). The invoice keeps the text, not
+the choice, so a message edited later leaves old invoices alone, and the
+PDF and email print it where they printed Notes.
+`GET/POST /api/invoice-messages`, `PUT/DELETE /api/invoice-messages/{id}`;
+setting one message's `is_default` clears the others in the same
+transaction, each through the ORM so the old default turning off is
+audited. The email templates are unchanged.
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off

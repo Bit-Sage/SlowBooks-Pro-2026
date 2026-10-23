@@ -128,6 +128,48 @@ def test_one_default_at_a_time(client):
     assert _defaults(client) == []
 
 
+def _audit(client, record_id):
+    rows = client.get(
+        f"/api/audit?table_name=invoice_messages&record_id={record_id}&limit=50"
+    ).json()
+    if not isinstance(rows, list):
+        rows = rows.get("items", rows.get("entries", []))
+    return rows
+
+
+def test_the_old_default_turning_off_is_audited(client):
+    # #407 review: _clear_default flips each row through the ORM, not a bulk
+    # Query.update, so the after_flush hook logs the old default going false.
+    a = _make(client, "A", is_default=True)
+    b = _make(client, "B")
+    # setting B as default must clear A — and that change is in A's audit log
+    client.put(f"/api/invoice-messages/{b['id']}", json={"is_default": True})
+    cleared = [
+        r
+        for r in _audit(client, a["id"])
+        if r.get("action", "").lower() == "update"
+        and "is_default" in (r.get("changed_fields") or [])
+    ]
+    assert cleared, [
+        (r.get("action"), r.get("changed_fields")) for r in _audit(client, a["id"])
+    ]
+    assert cleared[0]["old_values"]["is_default"] in (True, 1)
+    assert cleared[0]["new_values"]["is_default"] in (False, 0)
+
+
+def test_default_message_body_is_deterministic_with_two_defaults(client, db_session):
+    # #407 review: default_message_body has an ORDER BY now, so if a row
+    # somehow carries two defaults (the one-default rule is app-level) the
+    # lowest id wins rather than whatever the DB hands back.
+    from app.models.invoice_messages import InvoiceMessage
+    from app.routes.invoice_messages import default_message_body
+
+    db_session.add(InvoiceMessage(name="First", body="first body", is_default=True))
+    db_session.add(InvoiceMessage(name="Second", body="second body", is_default=True))
+    db_session.commit()
+    assert default_message_body(db_session) == "first body"
+
+
 # ---------------------------------------------------------------------------
 # Who may write
 # ---------------------------------------------------------------------------

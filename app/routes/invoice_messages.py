@@ -29,6 +29,7 @@ def default_message_body(db: Session) -> Optional[str]:
     row = (
         db.query(InvoiceMessage.body)
         .filter(InvoiceMessage.is_default.is_(True))
+        .order_by(InvoiceMessage.id)
         .first()
     )
     return row[0] if row else None
@@ -36,11 +37,16 @@ def default_message_body(db: Session) -> Optional[str]:
 
 def _clear_default(db: Session, keep_id: Optional[int] = None) -> None:
     """One default at a time: unset every other row in the same
-    transaction as the one being set, so the list never shows two."""
+    transaction as the one being set, so the list never shows two.
+
+    Each row is flipped through the ORM, not a bulk Query.update, so the
+    after_flush audit hook logs the old default turning off (it only sees
+    rows that pass through session.dirty)."""
     q = db.query(InvoiceMessage).filter(InvoiceMessage.is_default.is_(True))
     if keep_id is not None:
         q = q.filter(InvoiceMessage.id != keep_id)
-    q.update({InvoiceMessage.is_default: False}, synchronize_session=False)
+    for row in q.all():
+        row.is_default = False
 
 
 def _name_taken(db: Session, name: str, except_id: Optional[int] = None) -> bool:

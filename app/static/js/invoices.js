@@ -598,16 +598,22 @@ const InvoicesPage = {
     _messages: [],
 
     // A saved message copies its text into Notes, where it can still be
-    // edited; the invoice keeps the text, not the choice (#392). "(none)"
-    // clears Notes only when it holds a saved message's text as it is, so
-    // something typed by hand is never thrown away.
+    // edited; the invoice keeps the text, not the choice (#392). Picking a
+    // message replaces Notes when they are empty or still hold a saved
+    // message's text as it is; when they hold something typed by hand the
+    // chosen text is appended on a new line, so nothing is thrown away.
+    // "(none)" clears Notes only when they hold a saved message's text.
     messageChosen(id) {
         const notes = $('#invoice-form [name="notes"]');
         if (!notes) return;
-        const chosen = InvoicesPage._messages.find(m => String(m.id) === String(id));
-        if (chosen) { notes.value = chosen.body; return; }
         const current = notes.value.trim();
-        if (InvoicesPage._messages.some(m => m.body.trim() === current)) notes.value = '';
+        const isSaved = current === '' || InvoicesPage._messages.some(m => m.body.trim() === current);
+        const chosen = InvoicesPage._messages.find(m => String(m.id) === String(id));
+        if (chosen) {
+            notes.value = isSaved ? chosen.body : `${notes.value.replace(/\s+$/, '')}\n${chosen.body}`;
+            return;
+        }
+        if (isSaved && current !== '') notes.value = '';
     },
 
     async showForm(id = null, prefillCustomerId = null) {
