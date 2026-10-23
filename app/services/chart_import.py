@@ -412,7 +412,10 @@ class _Numbers:
             n = lo
             while n <= hi:
                 s = str(n)
-                if s not in self.used:
+                # never hand a numberless row a control account's number:
+                # the reserved-number guard (#425) would refuse it, and on an
+                # empty chart nothing else holds the slot
+                if s not in self.used and not control_accounts.is_control_number(s):
                     self.used.add(s)
                     return s
                 n += step
