@@ -3,14 +3,17 @@ bookkeeper's notes).
 
 Typing a payee or a category that was not on the list meant leaving the
 check, adding the vendor or the account on its own page, and coming back.
-Now the entry row and the + Entry form offer to add the payee as a vendor
-(Add / Not now, the entry posts either way) and open with "+ Add a new
-account…" in the category picker: a panel under the picker, not a dialog,
-since the form itself lives in the one dialog.
+Now the entry row and the + Entry form offer to add the payee — a customer
+for money in, a vendor for money out — and make a new account from an Add
+button beside the category picker (not an option on the native select,
+which trapped the keyboard: one ArrowDown from the top opened it, #386
+review). A panel under the picker, not a dialog, since the form itself
+lives in the one dialog.
 
-The page side is source-checked here; the browser walks the panel in
-test_browser_register_quick_add.py. The server is unchanged: the vendor
-route takes a name alone, and the account route a blank number.
+The page side is source-checked here; the browser walks the panel and the
+keyboard in test_browser_register_quick_add.py. The server is unchanged:
+the vendor and customer routes take a name alone, and the account route a
+blank number.
 """
 
 import re
@@ -27,37 +30,23 @@ def _select(html_id):
     return m.group(0)
 
 
-def test_both_category_pickers_open_with_add_a_new_account():
-    assert (
-        "ADD_ACCOUNT_OPTION: '<option value=\"__new__\">+ Add a new account…</option>'"
-        in BANKING_JS
-    )
+def test_the_category_pickers_are_plain_selects_with_an_add_button():
+    # the trap option is gone: arrowing the select never opens the panel
+    assert "ADD_ACCOUNT_OPTION" not in BANKING_JS
+    assert "__new__" not in _select("qe-category")
+    assert "__new__" not in _select("entry-category")
+    assert "BankingPage.categoryChanged" not in BANKING_JS
     for sel_id in ("qe-category", "entry-category"):
-        sel = _select(sel_id)
-        # the blank choice first, the add second, the chart after
-        assert re.search(
-            r'<option value="">[^<]*</option>\$\{BankingPage\.ADD_ACCOUNT_OPTION\}', sel
+        # a button beside the picker opens the panel
+        assert (
+            f"BankingPage.openNewAccount('{sel_id}', ${{accountId}})" in BANKING_JS
         ), sel_id
-        assert "BankingPage.categoryChanged(this, ${accountId})" in sel, sel_id
-        # the panel is drawn beside its picker, named for it
         assert f"BankingPage._newAccountPanel('{sel_id}', accountId)" in BANKING_JS
-
-
-def test_the_add_choice_cannot_post_as_the_category():
-    # the row and the form both refuse to post with the add choice still chosen
-    assert (
-        BANKING_JS.count(
-            "=== '__new__') { toast('Add the account, or choose one', 'error'); return; }"
-        )
-        == 2
-    )
-    # the split lines keep the chart alone, without the add choice
-    assert "BankingPage._splitCats = catOpts;" in BANKING_JS
 
 
 def test_the_panel_asks_for_name_type_parent_and_number():
     panel = BANKING_JS[BANKING_JS.index("_newAccountPanel(selectId, accountId) {") :]
-    panel = panel[: panel.index("categoryChanged(sel, accountId) {")]
+    panel = panel[: panel.index("openNewAccount(selectId, accountId) {")]
     for part in ("-name", "-type", "-parent", "-number"):
         assert f'id="${{id}}{part}"' in panel, part
     # the name is required by the script, not the attribute: a hidden
@@ -70,8 +59,15 @@ def test_the_panel_asks_for_name_type_parent_and_number():
         "CATEGORY_TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity']"
         in BANKING_JS
     )
-    # the parents offered are of the chosen type
-    assert "a.account_type === type && a.id !== accountId && !a.bank_kind" in BANKING_JS
+
+
+def test_the_parent_list_leaves_out_control_accounts():
+    # a control account (1100, 1200, 2000, 2200, 3200 …) is found by number
+    # when a document posts, so it is never offered as a new account's parent
+    assert (
+        "a.account_type === type && a.id !== accountId && !a.bank_kind && !a.is_control"
+        in BANKING_JS
+    )
 
 
 def test_the_new_account_goes_into_every_picker_and_is_chosen():
@@ -85,27 +81,68 @@ def test_the_new_account_goes_into_every_picker_and_is_chosen():
     assert 'input[name="description"]' in save
 
 
-def test_the_payee_is_offered_as_a_vendor_on_blur_and_on_post():
-    assert BANKING_JS.count('onblur="BankingPage.payeeTyped(this.value)"') == 2
-    assert BANKING_JS.count("BankingPage.payeeTyped(data.payee);") == 2
-    assert "API.get('/vendors?active_only=true').catch(() => null)" in BANKING_JS
-    ask = BANKING_JS[BANKING_JS.index("payeeTyped(payee) {") :]
-    ask = ask[: ask.index("async addVendor(name) {")]
+def test_the_payee_is_offered_by_the_money_side_and_checks_both_lists():
+    # on blur the side comes from the amount boxes, on post from the entry
     assert (
-        "BankingPage._vendorNames.has(key) || BankingPage._payeesAsked.has(key)" in ask
+        "onblur=\"BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')\""
+        in BANKING_JS
     )
     assert (
-        "toastAction(`Add \"${name}\" as a vendor?`, 'Add', () => BankingPage.addVendor(name), 15000, 'Not now')"
+        "onblur=\"BankingPage.payeeTyped(this.value, BankingPage._formMoneyIn(), 'entry-payee')\""
+        in BANKING_JS
+    )
+    assert "BankingPage.payeeTyped(data.payee, inn > 0, 'qe-payee')" in BANKING_JS
+    assert (
+        "BankingPage.payeeTyped(data.payee, parseFloat(data.amount) > 0, 'qe-payee')"
+        in BANKING_JS
+    )
+    # both lists are loaded on the register and on the + Entry form
+    assert "API.get('/vendors?active_only=true').catch(() => null)" in BANKING_JS
+    assert "API.get('/customers?active_only=true').catch(() => null)" in BANKING_JS
+
+    ask = BANKING_JS[BANKING_JS.index("payeeTyped(payee, moneyIn, returnFocusId) {") :]
+    ask = ask[: ask.index("async addParty(name, moneyIn) {")]
+    # a name already a customer OR a vendor is not offered again
+    assert "BankingPage._vendorNames.has(key)" in ask
+    assert "BankingPage._customerNames.has(key)" in ask
+    assert "BankingPage._payeesAsked.has(key)" in ask
+    # an unknown side (no amount yet) waits for the post, which knows it
+    assert "if (moneyIn === null || moneyIn === undefined) return;" in ask
+    # customer for money in, vendor for money out
+    assert "const noun = moneyIn ? 'customer' : 'vendor';" in ask
+    assert '`Add "${name}" as a ${noun}?`' in ask
+    assert (
+        "{ focusOnShow: true, returnFocus: () => document.getElementById(returnFocusId) }"
         in ask
     )
+
     assert "window.confirm" not in BANKING_JS
-    assert "await API.post('/vendors', { name });" in BANKING_JS
-    # the question's second button only closes the toast
+
+
+def test_the_party_is_made_against_the_matching_route():
+    assert "const path = moneyIn ? '/customers' : '/vendors';" in BANKING_JS
+    assert "await API.post(path, { name });" in BANKING_JS
     assert (
-        "function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null)"
+        "const names = moneyIn ? BankingPage._customerNames : BankingPage._vendorNames;"
+        in BANKING_JS
+    )
+
+
+def test_the_question_toast_is_answerable_by_keyboard():
+    assert (
+        "function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null, opts = {})"
         in UTILS_JS
     )
-    assert "no.addEventListener('click', () => el.remove());" in UTILS_JS
+    # focus moves to the action button, then back to the row it closes
+    assert "if (opts.focusOnShow) focusFor(btn, true);" in UTILS_JS
+    assert (
+        "typeof opts.returnFocus === 'function' ? opts.returnFocus() : opts.returnFocus"
+        in UTILS_JS
+    )
+    # the auto-dismiss holds while focused or hovered
+    assert "el.matches(':hover') || el.contains(document.activeElement)" in UTILS_JS
+    # the row does not yank focus back out of the toast
+    assert "active.closest('#toast-container')" in BANKING_JS
 
 
 def test_a_vendor_is_made_from_its_name_alone(client):
@@ -116,6 +153,16 @@ def test_a_vendor_is_made_from_its_name_alone(client):
     assert [x["name"] for x in client.get("/api/vendors?active_only=true").json()] == [
         "Acme Supply"
     ]
+
+
+def test_a_customer_is_made_from_its_name_alone(client):
+    r = client.post("/api/customers", json={"name": "Jane Homeowner"})
+    assert r.status_code == 201, r.text
+    c = r.json()
+    assert c["name"] == "Jane Homeowner" and c["is_active"]
+    assert [
+        x["name"] for x in client.get("/api/customers?active_only=true").json()
+    ] == ["Jane Homeowner"]
 
 
 def test_an_account_is_made_with_a_blank_number_and_a_parent(client, seed_accounts):

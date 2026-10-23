@@ -56,10 +56,15 @@ reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
 
 The entry row at the foot of the register posts the same way (Enter or
-Post). A payee typed there, or in + Entry, that is not a vendor's name is
-offered as one (Add / Not now; the entry posts either way), and the
-category picker's first choice, **+ Add a new account…**, makes the account
-in place — name, type, an optional parent and number — and selects it.
+Post). A payee typed there, or in + Entry, that is not already a customer's
+or a vendor's name is offered as one — a customer for money in (a deposit),
+a vendor for money out, matching the categorized import — with Add / Not
+now; the entry posts either way, and Add names the party so the entry's
+payee resolves to it. The question's toast takes focus and returns it to the
+row, and holds while focused or hovered, so it answers by keyboard. An
+**Add** button beside the category picker makes a new account in place —
+name, type, an optional parent (never a control account) and number — and
+selects it.
 
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,

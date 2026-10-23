@@ -395,7 +395,14 @@ function chartFigures(opts = {}) {
 // Stays longer than a plain toast because the user has to read a path.
 // With dismissLabel it is a question ("Add … as a vendor?" Add / Not now):
 // the second button only closes it, as the timeout does.
-function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null) {
+//
+// opts (#386 review — a question has to be answerable by keyboard):
+//   focusOnShow  move focus to the action button when the toast appears
+//   returnFocus  an element, or a function returning one, to focus when the
+//                toast goes (the row the question is about)
+// The auto-dismiss never fires while the toast has focus or the pointer is
+// over it, so a keyboard user is not raced; it re-arms when both leave.
+function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null, opts = {}) {
     const container = $('#toast-container');
     const el = document.createElement('div');
     el.className = 'toast toast-success';
@@ -409,7 +416,15 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
     btn.type = 'button';
     btn.className = 'btn btn-sm btn-secondary';
     btn.textContent = actionLabel;
-    btn.addEventListener('click', () => { try { onClick(); } finally { el.remove(); } });
+    let gone = false;
+    const remove = () => {
+        if (gone) return;
+        gone = true;
+        el.remove();
+        const back = typeof opts.returnFocus === 'function' ? opts.returnFocus() : opts.returnFocus;
+        if (back && document.contains(back) && typeof back.focus === 'function') focusFor(back, true);
+    };
+    btn.addEventListener('click', () => { try { onClick(); } finally { remove(); } });
     el.appendChild(text);
     el.appendChild(btn);
     if (dismissLabel) {
@@ -417,11 +432,18 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
         no.type = 'button';
         no.className = 'btn btn-sm btn-secondary';
         no.textContent = dismissLabel;
-        no.addEventListener('click', () => el.remove());
+        no.addEventListener('click', remove);
         el.appendChild(no);
     }
     container.appendChild(el);
-    setTimeout(() => el.remove(), ms);
+    if (opts.focusOnShow) focusFor(btn, true);
+    // auto-dismiss, but hold while the pointer or the keyboard is on it
+    const arm = () => setTimeout(() => {
+        if (gone) return;
+        if (el.matches(':hover') || el.contains(document.activeElement)) { arm(); return; }
+        remove();
+    }, ms);
+    arm();
 }
 
 // Modal accessibility: the dialog takes focus when it opens, Tab and
