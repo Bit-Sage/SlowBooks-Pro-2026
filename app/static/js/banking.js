@@ -1005,9 +1005,12 @@ const BankingPage = {
         if (moneyIn === null || moneyIn === undefined) return; // the post will ask once the side is known
         BankingPage._payeesAsked.add(key);
         const noun = moneyIn ? T('customer') : 'vendor';
+        // 15 s, or a short override a browser test sets so it need not wait it
+        // out (window.__payeeToastMs; test-only, never set in the app).
+        const ms = (typeof window !== 'undefined' && window.__payeeToastMs) || 15000;
         toastAction(
             `Add "${name}" as a ${noun}?`, 'Add',
-            () => BankingPage.addParty(name, moneyIn), 15000, 'Not now',
+            () => BankingPage.addParty(name, moneyIn), ms, 'Not now',
             { focusOnShow: true, returnFocus: () => document.getElementById(returnFocusId) },
         );
     },

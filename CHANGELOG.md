@@ -16,9 +16,13 @@ categorized import's rule — with Add and Not now. Add makes the customer or
 the vendor (`POST /api/customers` or `/api/vendors`, the name alone), so the
 entry's payee resolves to it by name; either way the entry posts with the
 text as before, and a name answered Not now is not asked about again that
-session. The toast moves focus to itself and gives it back to the row when
-it closes, and holds its auto-dismiss while it has focus or the pointer, so
-the keyboard can answer it. A new account is added from an **Add** button
+session. The toast moves focus to itself and gives it back to the row only
+when it is answered (or still has the focus as it goes), and holds its
+auto-dismiss while it has focus or the pointer, so the keyboard can answer
+it; a toast left to time out does not take the caret back from wherever the
+typing moved on to. In the + Entry dialog, whose Tab is trapped, the toast's
+buttons are folded into the dialog's Tab cycle so the keyboard reaches and
+answers the offer. A new account is added from an **Add** button
 beside the category picker (not an option on the select, which trapped the
 keyboard) — name, type, an optional parent of that type and an optional
 number, in a panel under the picker; the parent list leaves out the control

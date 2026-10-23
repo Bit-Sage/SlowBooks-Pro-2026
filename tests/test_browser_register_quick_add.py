@@ -238,6 +238,95 @@ def test_a_deposit_offers_a_customer_and_the_toast_answers_by_keyboard(browser):
         page.close()
 
 
+def test_an_ignored_toast_times_out_without_stealing_focus(browser):
+    """#386 review: ignore the toast, type in Memo, and after the timeout the
+    cursor must stay in Memo — the auto-dismiss used to hand focus to Payee."""
+    page = _open(browser, 1280, 800, "#/")
+    try:
+        page.route("**/api/banking/check-register*", lambda r: r.fulfill(json=REGISTER))
+        page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+        page.route("**/api/vendors*", lambda r: r.fulfill(json=[]))
+        page.route("**/api/customers*", lambda r: r.fulfill(json=[]))
+        page.goto(page.url.split("#")[0] + "#/banking/1")
+        page.wait_for_selector("#qe-payee")
+        # a short timeout so the test need not wait the real 15 s (test-only)
+        page.evaluate("() => { window.__payeeToastMs = 300; }")
+
+        page.fill("#qe-out", "80")
+        page.fill("#qe-payee", "Pine Street Lumber")
+        page.press("#qe-payee", "Tab")
+        page.locator("#toast-container .toast").wait_for()
+
+        # ignore the toast: move to Memo and type, char by char
+        page.focus("#qe-memo")
+        page.type("#qe-memo", "Fuel")
+        page.wait_for_timeout(500)  # past the 300 ms auto-dismiss
+        # the toast is gone and it did NOT yank the caret to Payee
+        assert page.locator("#toast-container .toast").count() == 0
+        assert page.evaluate("() => document.activeElement.id") == "qe-memo"
+        # the rest of the typing still lands in Memo, not Payee
+        page.type("#qe-memo", " receipt")
+        assert page.input_value("#qe-memo") == "Fuel receipt"
+        assert page.input_value("#qe-payee") == "Pine Street Lumber"
+    finally:
+        page.close()
+
+
+def test_the_entry_dialog_toast_is_reachable_and_answerable_by_keyboard(browser):
+    """#386 review: in + Entry (Amount before Payee) the offer fires on blur
+    and the dialog traps Tab; the toast must still be Tab-reachable there."""
+    posted = []
+
+    def _vendors(route):
+        if route.request.method == "POST":
+            posted.append(route.request.post_data_json)
+            return route.fulfill(status=201, json={**posted[-1], "id": 5})
+        return route.fulfill(json=[])
+
+    page = _open(browser, 1280, 800, "#/")
+    try:
+        page.route("**/api/banking/check-register*", lambda r: r.fulfill(json=REGISTER))
+        page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+        page.route("**/api/customers*", lambda r: r.fulfill(json=[]))
+        page.route("**/api/vendors*", _vendors)
+        page.goto(page.url.split("#")[0] + "#/banking/1")
+        page.wait_for_selector("#qe-payee")
+
+        page.click("text=+ Entry")
+        page.wait_for_selector("#entry-payee")
+        page.fill("[name='amount']", "-80")  # money out -> a vendor
+        page.fill("#entry-payee", "Pine Street Lumber")
+        page.press("#entry-payee", "Tab")
+        toast = page.locator("#toast-container .toast")
+        toast.wait_for()
+        assert "as a vendor?" in toast.inner_text()
+
+        # from a form field, Tab must walk out to the toast's Add button and
+        # wrap back; it was unreachable in 12 Tabs before the fix
+        page.focus("#entry-payee")
+        reached = False
+        for _ in range(20):
+            page.keyboard.press("Tab")
+            if page.evaluate(
+                "() => { const a = document.activeElement;"
+                " return !!a && a.closest('#toast-container') !== null"
+                " && a.textContent === 'Add'; }"
+            ):
+                reached = True
+                break
+        assert reached, "the toast's Add button was not reachable by Tab"
+
+        # answer it from the keyboard
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#toast-container .toast')]"
+            ".some(t => t.textContent.includes('added to Vendors'))"
+        )
+        assert posted == [{"name": "Pine Street Lumber"}]
+    finally:
+        page.close()
+
+
 def test_money_out_offers_a_vendor_and_add_posts_it(browser):
     posted = []
 

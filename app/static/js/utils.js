@@ -417,14 +417,21 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
     btn.className = 'btn btn-sm btn-secondary';
     btn.textContent = actionLabel;
     let gone = false;
-    const remove = () => {
+    // answered: the action or dismiss button was clicked. Focus goes back to
+    // the row only when the toast is answered, or the toast itself still had
+    // focus as it went — never on a plain auto-dismiss, which would yank the
+    // caret out of whatever the user moved on to (#386 review: typing in Memo
+    // past the timeout jumped to Payee).
+    const remove = (answered) => {
         if (gone) return;
         gone = true;
+        const hadFocus = el.contains(document.activeElement);
         el.remove();
+        if (!answered && !hadFocus) return;
         const back = typeof opts.returnFocus === 'function' ? opts.returnFocus() : opts.returnFocus;
         if (back && document.contains(back) && typeof back.focus === 'function') focusFor(back, true);
     };
-    btn.addEventListener('click', () => { try { onClick(); } finally { remove(); } });
+    btn.addEventListener('click', () => { try { onClick(); } finally { remove(true); } });
     el.appendChild(text);
     el.appendChild(btn);
     if (dismissLabel) {
@@ -432,7 +439,7 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
         no.type = 'button';
         no.className = 'btn btn-sm btn-secondary';
         no.textContent = dismissLabel;
-        no.addEventListener('click', remove);
+        no.addEventListener('click', () => remove(true));
         el.appendChild(no);
     }
     container.appendChild(el);
@@ -441,7 +448,7 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
     const arm = () => setTimeout(() => {
         if (gone) return;
         if (el.matches(':hover') || el.contains(document.activeElement)) { arm(); return; }
-        remove();
+        remove(false);
     }, ms);
     arm();
 }
@@ -657,7 +664,13 @@ function modalKeydown(e) {
     clearTimeout(_tabFix);
     const modal = document.getElementById('modal');
     const active = document.activeElement;
-    const stops = _tabStops(modal, active);
+    // A toastAction toast sits outside the dialog (in #toast-container), so
+    // the dialog's trapped Tab could never reach its buttons: the + Entry
+    // form's "Add this payee?" offer was unanswerable by keyboard (#386
+    // review). Fold the toast's stops into the cycle so Tab walks out to it
+    // and wraps back into the form.
+    const toasts = document.getElementById('toast-container');
+    const stops = _tabStops(modal, active).concat(toasts ? _tabStops(toasts, active) : []);
     if (!stops.length) { e.preventDefault(); modal.focus(); return; }
     const back = e.shiftKey;
     const i = stops.indexOf(active);
