@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.27.0
 
 **A register deposit splits like a check, with a fee line** (#387, from a
 bookkeeper's notes). A card processor pays over the gross it collected less
