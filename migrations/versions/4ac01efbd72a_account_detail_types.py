@@ -42,7 +42,7 @@ financing:
 The name rules are copied here, not imported, so this revision does the
 same thing however cash_flow.py changes later.
 
-Revision ID: e4f5a6b7c8d9
+Revision ID: 4ac01efbd72a
 Revises: d3e4f5a6b7c8
 Create Date: 2026-10-23
 """
@@ -54,7 +54,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "e4f5a6b7c8d9"
+revision: str = "4ac01efbd72a"
 down_revision: Union[str, None] = "d3e4f5a6b7c8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

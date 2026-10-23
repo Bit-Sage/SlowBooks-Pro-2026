@@ -1,4 +1,4 @@
-"""The account detail types migration (#390, e4f5a6b7c8d9) on a 2.26 chart.
+"""The account detail types migration (#390, 4ac01efbd72a) on a 2.26 chart.
 
 The backfill must leave every account where the cash flow statement puts
 it today: a register-linked fixed asset, imported equipment and an
@@ -20,7 +20,7 @@ from alembic.config import Config
 
 ROOT = Path(__file__).resolve().parents[1]
 BEFORE = "d3e4f5a6b7c8"
-REVISION = "e4f5a6b7c8d9"
+REVISION = "4ac01efbd72a"
 
 # (key, number, name, type as stored, bank_kind, parent key)
 CHART = [
