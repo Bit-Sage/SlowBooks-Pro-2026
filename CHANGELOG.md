@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.27.0
 
 **A file the bank import can't read is said so, not a 500** (found in
 PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV, a
