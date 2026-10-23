@@ -5,15 +5,25 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### v2.27.0
 
-**A negative number in a CSV stays a number** (found in PNWImport's fork,
-SlowBooks-Pro-Testing#101). The formula guard every CSV export shares put
-an apostrophe in front of any cell starting with `-`, so a Schedule C loss
-(`-1234.56`) opened as text and would not sum. A cell that is only a signed
-number (`-1234.56`, `-0.5`, the reconciliation's `-$1,234.56`) is now
-written as is; `=1+1`, `-1+1`, `-SUM(A1)`, `@x` and the like keep the
-apostrophe.
+**A negative number in a CSV stays a number, an identifier stays text**
+(found in PNWImport's fork, SlowBooks-Pro-Testing#101; reviewer follow-up,
+#410). The formula guard every CSV export shares put an apostrophe in front
+of any cell starting with `-`, so a Schedule C loss (`-1234.56`) opened as
+text and would not sum. A cell that is only a signed amount (`-1234.56`,
+`-0.5`, the reconciliation's `-$1,234.56`) is now written as is; `=1+1`,
+`-1+1`, `-SUM(A1)`, `@x` and the like keep the apostrophe. A value that only
+looks like a number but is really an identifier keeps its apostrophe too, so
+a spreadsheet shows it verbatim: a phone like `+15551234567` or
+`+447911123456` (the Phone columns on the customer and vendor exports are
+marked identifiers), a leading-`+` code with no decimal point, and a
+leading-zero reference like `-0001`. Nothing that goes through the IIF
+export's text path is an amount, so its names, memos and descriptions always
+stay text; the audit log's and closing-date-exceptions' before/after columns
+stay text as well.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off

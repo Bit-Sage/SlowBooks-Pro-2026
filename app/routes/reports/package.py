@@ -27,7 +27,7 @@ from app.database import get_db
 from app.models.audit import AuditLog
 from app.models.banking import Reconciliation, ReconciliationStatus
 from app.routes.reports._router import router
-from app.services.csv_export import _SafeWriter
+from app.services.csv_export import _Identifier, _SafeWriter
 from app.services.terminology import terms_from_db
 
 
@@ -150,8 +150,11 @@ def audit_csv(
                     record,
                     row.action.lower(),
                     f["field"],
-                    f["before"],
-                    f["after"],
+                    # a before/after snapshot is a record to read, not a
+                    # column to sum: keep it text so "-0001" or a phone stays
+                    # verbatim (reviewer, #410)
+                    _Identifier(f["before"]),
+                    _Identifier(f["after"]),
                 ]
             )
     return out.getvalue()
