@@ -25,6 +25,14 @@ with Pillow.
   Content-Disposition header: the header sends an ASCII fallback
   (`Payments_Lodz-Supply.csv`) plus `filename*=UTF-8''…` with the exact name.
   The desktop shim's inline header is honored too.
+**macOS release tooling (testing-repo #104).** `release.py` now waits for
+Apple's notarization ticket before giving up. Right after notarization is
+accepted, the ticket may not have reached Apple's CDN yet: `stapler staple`
+exits 0 and `stapler validate` fails a second later, or staple itself fails
+with "Could not find base64 encoded ticket" or "Record not found" (three of
+the four 2.26.0 sign jobs; each passed on rerun). The staple and validate pair
+is retried, up to six attempts over about five minutes, and the final error
+names the attempts. Any other staple error stops the run on the first try.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
