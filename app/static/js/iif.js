@@ -178,7 +178,7 @@ const IIFPage = {
     async saveErrors(box) {
         const errors = IIFPage._errors[box] || [];
         if (!errors.length) return;
-        const day = new Date().toISOString().slice(0, 10);
+        const day = todayISO();  // the local date: UTC is tomorrow on a US evening
         const filename = `Import-problems_${day}.txt`;
         const blob = new Blob([errors.join('\n') + '\n'], { type: 'text/plain' });
         const desktop = window.SlowbooksDesktop;

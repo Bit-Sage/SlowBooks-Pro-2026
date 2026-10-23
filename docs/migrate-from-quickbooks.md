@@ -250,9 +250,11 @@ Desktop does not export transactions to IIF natively. Two other options:
   Interoperability import.** It goes in from the account itself, under
   **Banking → the account → Import file**. The vendors and accounts on the
   statement do not need to exist first: each line comes in as a statement
-  line with its payee kept as text, waits in the account's **To review**
-  list, and is matched or categorized from there (a bank rule can suggest
-  the category from the payee); nothing posts until you add it. See
+  line with its payee kept as text. A line that matches exactly one entry
+  already in the books is matched to it on import; every other line waits in
+  the account's **To review** list, to be matched or categorized from there
+  (a bank rule can suggest the category from the payee). Nothing new posts
+  until you add it. See
   [docs/banking.md](banking.md).
 
   The messy-report trap is exporting a summary report; the sales
