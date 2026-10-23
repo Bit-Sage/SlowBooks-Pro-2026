@@ -279,6 +279,78 @@ def test_a_dialect_child_takes_its_parents_detail_type(db_session, seed_accounts
     )
 
 
+def test_the_dry_run_previews_the_parent_rules(db_session, seed_accounts):
+    """The migration dry run previews the inheritance and the link refusals
+    the import applies, in identical words (#416): factored into one
+    _parent_decision the dry run and the apply both call."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.migration_common import dry_run_bundle, run_import_bundle
+
+    chart = [
+        {
+            "name": "Penalties",
+            "code": "8900",
+            "type": AccountType.EXPENSE,
+            "description": "",
+            "detail_type": "other_expense",
+            "parent": None,
+        },
+        {
+            "name": "Late fees",
+            "code": "8910",
+            "type": AccountType.EXPENSE,
+            "description": "",
+            "detail_type": "expense",
+            "parent": "Penalties",
+        },
+        {
+            "name": "Spare cash",
+            "code": "1850",
+            "type": AccountType.ASSET,
+            "description": "",
+            "bank_kind": "bank",
+            "parent": "Penalties",
+        },
+    ]
+    gl = [
+        [
+            {
+                "account": "Penalties",
+                "date": date(2026, 1, 15),
+                "debit": Decimal("100"),
+                "credit": Decimal("0"),
+                "reference": "J1",
+            },
+            {
+                "account": "Late fees",
+                "date": date(2026, 1, 15),
+                "debit": Decimal("0"),
+                "credit": Decimal("100"),
+                "reference": "J1",
+            },
+        ]
+    ]
+    parsers = {"coa": lambda _t: (chart, []), "gl": lambda _t: (gl, [])}
+    bundle = {"coa": "x", "gl": "x"}
+
+    inherit = (
+        "'Late fees' takes Other Expense, the detail type of its parent "
+        "'Penalties' (the file said Expense)"
+    )
+    refusal = (
+        "'Spare cash' was not made a sub-account of 'Penalties': "
+        "a sub-account of Penalties must be an expense too"
+    )
+    preview = dry_run_bundle(db_session, bundle, parsers, "Test", "test_preview")
+    assert inherit in preview["warnings"]
+    assert refusal in preview["warnings"]
+    applied = run_import_bundle(db_session, bundle, parsers, "test_preview", "Test")
+    assert inherit in applied["warnings"]
+    assert refusal in applied["warnings"]
+
+
 # ── Readiness metadata via the generic route ─────────────────────────────
 
 

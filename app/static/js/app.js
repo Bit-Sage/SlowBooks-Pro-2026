@@ -1225,8 +1225,26 @@ const App = {
             walk(a.id);
             return out;
         };
+        // the sub-accounts a detail-type change cascades to: descendants
+        // reached through sub-accounts that all share `detail`, in tree order
+        // (self excluded). A sub-account of another type stops the walk, as
+        // _cascade_detail_type stops — so a pinned child, or one of another
+        // type, and anything under it are left out (#416).
+        const sharing = (a, detail) => {
+            const out = [], seen = new Set([a.id]);
+            const walk = id => {
+                for (const c of children.get(id) || []) {
+                    if (seen.has(c.id) || c.detail_type !== detail) continue;
+                    seen.add(c.id);
+                    out.push(c);
+                    walk(c.id);
+                }
+            };
+            walk(a.id);
+            return out;
+        };
         const collides = a => names[a.name.trim().toLowerCase()] > 1;
-        return { byId, children, path, family, descendants, collides };
+        return { byId, children, path, family, descendants, sharing, collides };
     },
 
     // Each detail type's accounts in tree order (the list sorted by detail
@@ -1486,7 +1504,14 @@ const App = {
         state.wanted = parent ? parent.id : null;
         const status = $('#account-parent-status');
         const name = (state.acct.name || '').trim() || 'This account';
-        const subs = state.acct.id ? state.tree.descendants(state.acct) : [];
+        // the sub-accounts that follow are the ones _cascade_detail_type
+        // retypes: those sharing the account's own detail type, the "old" the
+        // cascade starts from (not the picker's, which may already hold the
+        // parent's). A child of another type, and anything under it, is left
+        // out (#416).
+        const subs = state.acct.id
+            ? state.tree.sharing(state.acct, state.acct.detail_type)
+            : [];
 
         if (parent && picker && !picker.disabled
             && !App._PINNED_DETAILS.includes(parent.detail_type)
@@ -1505,8 +1530,7 @@ const App = {
         const toNoneOrPinned = !parent || App._PINNED_DETAILS.includes(parent.detail_type);
         const cameFromParent = picker && !picker.disabled
             && !App._PINNED_DETAILS.includes(picker.value)
-            && (picker.value !== picker.dataset.was
-                || subs.some(s => s.detail_type === picker.value));
+            && (picker.value !== picker.dataset.was || subs.length > 0);
         if (toNoneOrPinned && cameFromParent) {
             const label = (picker.selectedOptions[0]
                 ? picker.selectedOptions[0].textContent : picker.value).trim();

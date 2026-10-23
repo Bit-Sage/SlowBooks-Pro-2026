@@ -28,7 +28,12 @@ from app.services.account_tree import (
     takes_no_new_parent,
 )
 from app.models.transactions import TransactionLine
-from app.schemas.accounts import AccountCreate, AccountUpdate, AccountResponse
+from app.schemas.accounts import (
+    AccountCreate,
+    AccountUpdate,
+    AccountResponse,
+    RetypedSubAccount,
+)
 from app.routes._helpers import get_or_404, reject_null_updates
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -290,11 +295,14 @@ def _create_detail_type(db: Session, data: AccountCreate) -> str:
     return getattr(detail, "value", detail)
 
 
-def _cascade_detail_type(account: Account, old: str, new: str, seen: set) -> None:
+def _cascade_detail_type(account: Account, old: str, new: str, seen: set) -> list[dict]:
     """A parent's new detail type goes down to the sub-accounts that shared
-    the old one; one that cannot take it refuses the change."""
+    the old one; one that cannot take it refuses the change. Returns the
+    sub-accounts it retyped (#416), each with its from/to, so the PUT can name
+    them."""
+    retyped: list[dict] = []
     if new in PINNED_DETAIL_TYPES:
-        return  # under a pinned detail type each sub-account stands alone
+        return retyped  # under a pinned detail type each sub-account stands alone
     if old in PINNED_DETAIL_TYPES:
         # Nothing shared the pinned one; under a plain parent every
         # sub-account must share the new one (#416), so one that does not
@@ -310,7 +318,7 @@ def _cascade_detail_type(account: Account, old: str, new: str, seen: set) -> Non
                         f"{detail_label(new)} too." + _move_out_first(child, account)
                     ),
                 )
-        return
+        return retyped
     for child in account.children:
         if child.id in seen or child.detail_type != old:
             continue
@@ -326,11 +334,21 @@ def _cascade_detail_type(account: Account, old: str, new: str, seen: set) -> Non
             if BASE_TYPE_OF[DetailType(new)] != BASE_TYPE_OF[DetailType(old)]:
                 detail += _move_out_first(child, account)
             raise HTTPException(status_code=400, detail=detail)
-        _cascade_detail_type(child, old, new, seen)
+        retyped.extend(_cascade_detail_type(child, old, new, seen))
         child.detail_type = new
+        retyped.append(
+            {
+                "id": child.id,
+                "name": child.name,
+                "account_number": child.account_number,
+                "from_detail_type": old,
+                "to_detail_type": new,
+            }
+        )
+    return retyped
 
 
-def _update_detail_type(db: Session, account: Account, fields: dict) -> None:
+def _update_detail_type(db: Session, account: Account, fields: dict) -> list[dict]:
     """Settle fields["detail_type"] for a PUT (#390). Omitted, the current
     detail type stays while it still fits; a type or bank-kind change that
     it no longer fits resets it to the default, and a new parent's is taken.
@@ -377,10 +395,12 @@ def _update_detail_type(db: Session, account: Account, fields: dict) -> None:
     why = detail_type_problem(detail, atype, kind, number)
     if why:
         raise HTTPException(status_code=400, detail=why)
+    retyped: list[dict] = []
     if detail != current:
-        _cascade_detail_type(account, current, detail, {account.id})
+        retyped = _cascade_detail_type(account, current, detail, {account.id})
     if detail != current or "detail_type" in fields:
         fields["detail_type"] = detail
+    return retyped
 
 
 @router.get("", response_model=list[AccountResponse])
@@ -641,7 +661,7 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
             fields.get("account_type", account.account_type),
         )
     _check_bank_kind_kept(db, account, fields)
-    _update_detail_type(db, account, fields)
+    retyped_subs = _update_detail_type(db, account, fields)
     # 1100, 2000 and the other control accounts are found by number and
     # stand alone: they take no new parent (#416); out from under one they
     # have is still allowed. After the detail-type checks, whose sentence
@@ -681,7 +701,12 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
             detail="Update violates a uniqueness or reference constraint.",
         )
     db.refresh(account)
-    return account
+    # name the sub-accounts the cascade retyped (#416); None on a PUT that
+    # did not cascade, so a client can tell the two apart
+    response = AccountResponse.model_validate(account)
+    if retyped_subs:
+        response.retyped_sub_accounts = [RetypedSubAccount(**r) for r in retyped_subs]
+    return response
 
 
 def _referencing_rows(db: Session, account_id: int) -> list[tuple[str, int]]:

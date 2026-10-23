@@ -258,6 +258,76 @@ def test_a_child_under_a_pinned_parent_keeps_its_own_detail(
     assert child.parent.account_number == "1100"
 
 
+def test_a_grandchild_listed_before_its_parent_still_inherits(
+    client, db_session, seed_accounts
+):
+    """Trent's order (#416): the file lists the grandchild above its parent
+    above the root. The inheritance walks the tree from the roots, not the
+    rows top to bottom, so Child and Grand both take the root's Other Expense
+    — in the dry run and the import — and a full PUT of Grand resending its
+    parent is still 200."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "8920,Grand,Expense,Expense,8910\n"
+        "8910,Child,Expense,Expense,8900\n"
+        "8900,Root,Expense,Other Expense,\n"
+    )
+    plan = _upload(client, text).json()
+    rows = {r["name"]: r for r in plan["rows"]}
+    assert rows["Child"]["detail_type"] == "other_expense"
+    assert rows["Grand"]["detail_type"] == "other_expense"
+    assert "Expense in the file" in (rows["Grand"]["note"] or "")
+
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    nums = _by_number(db_session)
+    root, child, grand = nums["8900"], nums["8910"], nums["8920"]
+    assert child.detail_type == "other_expense" and child.parent_id == root.id
+    assert grand.detail_type == "other_expense" and grand.parent_id == child.id
+
+    got = client.get(f"/api/accounts/{grand.id}").json()
+    body = {
+        k: got[k]
+        for k in (
+            "name",
+            "account_number",
+            "account_type",
+            "detail_type",
+            "parent_id",
+            "description",
+        )
+    }
+    assert client.put(f"/api/accounts/{grand.id}", json=body).status_code == 200
+
+
+def test_the_chart_import_leaves_off_an_inactive_parent(
+    client, db_session, seed_accounts
+):
+    """An inactive account takes no sub-accounts, as the account API refuses
+    one (#416); the chart import leaves the link off with the same words,
+    minus the "Reactivate it" an importer cannot do, in dry run and import."""
+    made = client.post(
+        "/api/accounts",
+        json={
+            "name": "Old travel",
+            "account_number": "8810",
+            "account_type": "expense",
+        },
+    ).json()
+    assert (
+        client.put(f"/api/accounts/{made['id']}", json={"is_active": False}).status_code
+        == 200
+    )
+    text = "Number,Name,Type,Parent\n8820,Tolls,Expense,8810\n"
+    for dry_run in (1, 0):
+        out = _upload(client, text, dry_run=dry_run).json()
+        note = next(r for r in out["rows"] if r["name"] == "Tolls")["note"] or ""
+        assert "8810 Old travel is inactive and cannot take sub-accounts" in note
+        assert "left off" in note.lower()
+        assert "Reactivate" not in note
+    assert _by_number(db_session)["8820"].parent_id is None
+
+
 # --- replace mode -------------------------------------------------------------
 
 

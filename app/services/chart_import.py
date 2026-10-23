@@ -786,6 +786,25 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
         acct = db.get(Account, ref)
         return planned(by_existing.get(ref), acct) if acct else None
 
+    def parent_inactive(hit) -> bool:
+        """The parent an importer cannot link under: an existing account
+        already inactive (or a plan row deactivating it), or a new row the
+        file marks inactive. Same rule as the API's _check_parent_usable."""
+        kind, ref = hit
+        if kind == "new":
+            r = plan.rows[ref].get("_row")
+            return getattr(r, "active", None) is False
+        pe = by_existing.get(ref)
+        if pe is not None:
+            if pe.get("action") == "deactivate" or "deactivate" in pe.get(
+                "changes", []
+            ):
+                return True
+            if "reactivate" in pe.get("changes", []):
+                return False
+        acct = db.get(Account, ref)
+        return acct is not None and not acct.is_active
+
     for entry in plan.rows:
         hit = entry.get("_parent")
         if not hit or entry["action"] in ("error", "deactivate", "keep"):
@@ -796,8 +815,18 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
         if parent is None:
             continue
         problem = None
+        # an inactive parent takes no sub-accounts, as the API refuses one
+        # (#416); the same words, minus the "Reactivate it" an importer cannot
+        if parent_inactive(hit):
+            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            problem = f"{label} is inactive and cannot take sub-accounts"
         moved = acct is None or hit != ("existing", acct.parent_id)
-        if acct is not None and moved and takes_no_new_parent(child[2], child[4]):
+        if (
+            problem is None
+            and acct is not None
+            and moved
+            and takes_no_new_parent(child[2], child[4])
+        ):
             problem = f"{child[0]} is found by its number and takes no parent"
         if problem is None:
             label = " ".join(p for p in (parent[4], parent[0]) if p)
@@ -895,33 +924,50 @@ def _flag_inherited_detail(db: Session, plan: Plan) -> None:
     """A sub-account whose link stands takes its parent's detail type (#390),
     exactly as the account API sets it, even when the file declared a
     different one that would fit on its own. Run after the parent links are
-    settled (refusals and loops already dropped) and in row order, so a
-    parent's inherited type is in hand before its children read it, and the
-    dry run and the apply agree on the detail type and its note."""
+    settled (refusals and loops already dropped). Walk the parent graph from
+    the roots, not the rows top to bottom (Trent, #416): a file can list a
+    grandchild above its parent, so settle each parent's inherited type —
+    however deep — before any child reads it, and the dry run and the apply
+    then agree on the detail type and its note."""
+
+    # the plan entry that is each parent node, for a parent that is a plan row
+    entry_of: dict[tuple, dict] = {}
+    for i, entry in enumerate(plan.rows):
+        if entry["action"] == "create":
+            entry_of[("new", i)] = entry
+        elif "existing_id" in entry and "_row" in entry:
+            entry_of[("existing", entry["existing_id"])] = entry
+
+    def eligible(entry: dict) -> bool:
+        return bool(entry.get("_parent")) and entry["action"] not in (
+            "error",
+            "deactivate",
+            "keep",
+        )
 
     def parent_detail(hit):
-        kind, ref = hit
-        if kind == "new":
-            return plan.rows[ref].get("detail_type")
-        acct = db.get(Account, ref)
-        if acct is None:
-            return None
-        entry = next(
-            (e for e in plan.rows if e.get("existing_id") == ref and "_row" in e),
-            None,
-        )
-        retyped = entry is not None and any(
-            c.startswith("type ") for c in entry.get("changes", [])
-        )
-        return entry["_row"].detail_type if retyped else acct.detail_type
+        """The settled detail type of a parent node, its own walk done first."""
+        entry = entry_of.get(hit)
+        if entry is not None:
+            if eligible(entry):
+                settle(entry)
+            return entry.get("detail_type")
+        if hit[0] == "existing":  # a parent not in the plan: the chart's own
+            acct = db.get(Account, hit[1])
+            return acct.detail_type if acct else None
+        return None
 
-    for entry in plan.rows:
-        hit = entry.get("_parent")
-        if not hit or entry["action"] in ("error", "deactivate", "keep"):
-            continue
-        inherited = inherited_detail_type(parent_detail(hit), entry.get("detail_type"))
+    settled: set[int] = set()
+
+    def settle(entry: dict) -> None:
+        if id(entry) in settled:
+            return
+        settled.add(id(entry))  # DAG (loops already dropped): safe before recursing
+        inherited = inherited_detail_type(
+            parent_detail(entry["_parent"]), entry.get("detail_type")
+        )
         if not inherited or inherited == entry.get("detail_type"):
-            continue
+            return
         # note only when the file named a type that gives way; one built
         # with none takes the parent's silently, as the model does
         r = entry.get("_row")
@@ -929,8 +975,49 @@ def _flag_inherited_detail(db: Session, plan: Plan) -> None:
             _note_detail_fallback(entry, entry["detail_type"], inherited)
         entry["detail_type"] = inherited
 
+    for entry in plan.rows:
+        if eligible(entry):
+            settle(entry)
+
 
 # --- applying ---------------------------------------------------------------
+
+
+def _apply_order(plan: Plan) -> list[int]:
+    """Row indices with every parent before its children (Trent, #416), so a
+    grandchild reads its parent's settled detail type however the file ordered
+    the rows. Loops are already dropped, so the parent links form a forest;
+    any remnant is appended in row order."""
+    index_of_existing = {
+        e["existing_id"]: i for i, e in enumerate(plan.rows) if "existing_id" in e
+    }
+    children: dict[int, list[int]] = {}
+    parent_of: dict[int, int] = {}
+    for i, entry in enumerate(plan.rows):
+        hit = entry.get("_parent")
+        if not hit:
+            continue
+        pi = hit[1] if hit[0] == "new" else index_of_existing.get(hit[1])
+        if pi is not None and pi != i:
+            children.setdefault(pi, []).append(i)
+            parent_of[i] = pi
+    order: list[int] = []
+    seen: set[int] = set()
+
+    def visit(i: int) -> None:
+        if i in seen:
+            return
+        seen.add(i)
+        order.append(i)
+        for c in children.get(i, []):
+            visit(c)
+
+    for i in range(len(plan.rows)):
+        if i not in parent_of:  # a root: no parent that is also a plan row
+            visit(i)
+    for i in range(len(plan.rows)):  # a loop remnant, should not happen
+        visit(i)
+    return order
 
 
 def apply_chart_import(db: Session, plan: Plan) -> None:
@@ -953,7 +1040,10 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
         db.add(a)
         created[i] = a
     db.flush()  # ids for the parent links
-    for i, entry in enumerate(plan.rows):
+    # parents before children, so a grandchild reads its parent's settled
+    # detail type whatever order the file listed the rows in (Trent, #416)
+    for i in _apply_order(plan):
+        entry = plan.rows[i]
         r = entry.get("_row")
         if entry["action"] == "create":
             a = created[i]

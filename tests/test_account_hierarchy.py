@@ -194,6 +194,52 @@ def test_a_mixed_pair_saved_before_stays_editable(client, db_session, seed_accou
     assert (renamed["name"], renamed["parent_id"]) == ("Bank fees", bank.id)
 
 
+def test_a_put_that_cascades_names_the_retyped_sub_accounts(
+    client, db_session, seed_accounts
+):
+    """A PUT whose detail-type change cascades returns retyped_sub_accounts
+    naming each one with from/to; a PUT that does not cascade returns null,
+    and a sub-account of another type (a divergent pair an import can leave
+    behind) is not listed (#416)."""
+    travel = _new(client, "Travel", detail_type="other_expense")
+    lodging = _new(client, "Lodging", parent_id=travel["id"])  # takes other_expense
+    _new(client, "Hotel", parent_id=lodging["id"])  # takes other_expense, deeper
+    # a divergent sub-account (Expense under an Other Expense parent): the API
+    # forbids making one, but an import or legacy data can, and the cascade
+    # stops at it
+    odd = Account(
+        name="Oddment",
+        account_type=AccountType.EXPENSE,
+        detail_type="expense",
+        parent_id=travel["id"],
+        is_system=False,
+    )
+    db_session.add(odd)
+    db_session.commit()
+
+    out = _ok(
+        client.put(f"/api/accounts/{travel['id']}", json={"detail_type": "expense"})
+    )
+    retyped = out["retyped_sub_accounts"]
+    assert retyped is not None
+    named = {r["name"]: r for r in retyped}
+    assert set(named) == {"Lodging", "Hotel"}
+    assert named["Lodging"] == {
+        "id": lodging["id"],
+        "name": "Lodging",
+        "account_number": None,
+        "from_detail_type": "other_expense",
+        "to_detail_type": "expense",
+    }
+    assert "Oddment" not in named
+
+    # a PUT that cascades nothing: the field is null
+    plain = _ok(
+        client.put(f"/api/accounts/{travel['id']}", json={"name": "Travel costs"})
+    )
+    assert plain["retyped_sub_accounts"] is None
+
+
 # --- the review's points (#416) ----------------------------------------------
 
 

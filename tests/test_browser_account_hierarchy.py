@@ -220,5 +220,31 @@ def test_moving_a_subtree_says_how_far_the_retype_reaches(browser, company, book
         assert "Travel keeps Other Expense" in status
         assert "2 sub-accounts" in status
         assert "above the Other lines" in status
+
+        # the count is of the sub-accounts the cascade retypes — those sharing
+        # the account's detail type. A sub-account of another type (a pinned
+        # bank, or a divergent pair an import left behind) stops the walk and
+        # is not counted, as _cascade_detail_type stops (#416). The account
+        # API forbids making a divergent pair, so this exercises the tree
+        # helper against the shape legacy/imported data can take.
+        counts = page.evaluate("""() => {
+                const accts = [
+                    {id: 1, name: 'Reserves', parent_id: null,
+                     detail_type: 'other_current_asset'},
+                    {id: 2, name: 'Float', parent_id: 1,
+                     detail_type: 'other_current_asset'},
+                    {id: 3, name: 'Vault', parent_id: 1, detail_type: 'bank'},
+                    {id: 4, name: 'Coins', parent_id: 3,
+                     detail_type: 'other_current_asset'},
+                ];
+                const t = App._accountTree(accts);
+                const a = accts[0];
+                return {
+                    sharing: t.sharing(a, a.detail_type).map(s => s.name),
+                    descendants: t.descendants(a).map(s => s.name),
+                };
+            }""")
+        assert counts["sharing"] == ["Float"]
+        assert counts["descendants"] == ["Float", "Vault", "Coins"]
     finally:
         page.close()
