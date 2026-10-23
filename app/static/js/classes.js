@@ -366,6 +366,7 @@ const ClassesPage = {
                             <tr><td><strong>Expenses</strong></td><td></td></tr>
                             ${section(d.expenses)}
                             ${subtotal('Total Expenses', d.total_expenses)}
+                            ${ReportsPage._plOther(d, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, d[key]))}
                             <tr style="font-weight:700; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${ClassesPage.money(d.net_income)}</td></tr>
                         </tbody>
                     </table></div>

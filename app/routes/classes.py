@@ -85,6 +85,12 @@ def classes_activity(
     uncategorized_class_id(db)
     db.commit()
     report = profit_loss_by_class(start_date, end_date, db)
+    # The list keeps its four figures: Other Income / Other Expense (#390),
+    # apart on the grid, count here with income and expenses, so each row
+    # still reads income - cost of goods - expenses = net.
+    for c in report["classes"]:
+        c["income"] += c["other_income"]
+        c["expenses"] += c["other_expense"]
     by_id = {c["class_id"]: c for c in report["classes"]}
     keys = ("income", "cogs", "gross_profit", "expenses", "net_income")
     rows = []
@@ -112,10 +118,10 @@ def classes_activity(
             )
     totals = {k: float(sum(Decimal(str(r[k])) for r in rows)) for k in keys}
     company = {
-        "income": float(report["total_income"]),
+        "income": float(report["total_income"] + report["total_other_income"]),
         "cogs": float(report["total_cogs"]),
         "gross_profit": float(report["total_gross_profit"]),
-        "expenses": float(report["total_expenses"]),
+        "expenses": float(report["total_expenses"] + report["total_other_expense"]),
         "net_income": float(report["total_net_income"]),
     }
     return {

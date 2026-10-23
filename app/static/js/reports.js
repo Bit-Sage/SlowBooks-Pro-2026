@@ -1104,10 +1104,27 @@ const ReportsPage = {
                         ${head('Expenses')}
                         ${section(data.expenses)}
                         ${total('Total Expenses', 'total_expenses', sub)}
+                        ${ReportsPage._plOther(data, head, section, (label, key) => total(label, key, sub))}
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+    },
+
+    // Other Income / Other Expense below Net Operating Income (#390): only
+    // when either has a line (`has_other`, the server's one flag), so a P&L
+    // without them reads as it did. `head`, `section` and `total` are the
+    // calling view's own row writers.
+    _plOther(data, head, section, total) {
+        if (!data.has_other) return '';
+        let html = total(T('Net Operating Income'), 'net_operating_income');
+        if ((data.other_income || []).length) {
+            html += head(T('Other Income')) + section(data.other_income, 'other_income') + total(T('Total Other Income'), 'total_other_income');
+        }
+        if ((data.other_expense || []).length) {
+            html += head('Other Expense') + section(data.other_expense, 'other_expense') + total('Total Other Expense', 'total_other_expense');
+        }
+        return html + total(T('Net Other Income'), 'net_other_income');
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -2004,6 +2021,17 @@ ReportsPage._grid = { current: -1, count: 0, names: [] };
 // → call for an amount, head(col) → call for a heading, sum(col, key) →
 // call for a subtotal cell (or null), note (html above the table),
 // totalLabel }
+// The grid's Total column, by the column keys the rows read (#390: the
+// Other Income / Other Expense rows the P&L has).
+ReportsPage._gridTotals = function (data) {
+    return {
+        income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit,
+        expenses: data.total_expenses, net_operating_income: data.total_net_operating_income,
+        other_income: data.total_other_income, other_expense: data.total_other_expense,
+        net_other_income: data.total_net_other_income, net_income: data.total_net_income,
+    };
+};
+
 ReportsPage._pivotGrid = function (spec) {
     const cols = spec.columns;
     const n = cols.length;
@@ -2051,6 +2079,10 @@ ReportsPage._pivotGrid = function (spec) {
                     ${sum('Gross Profit', 'gross_profit', subtotal)}
                     ${section('Expenses', spec.accounts.expenses)}
                     ${sum('Total Expenses', 'expenses', subtotal)}
+                    ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
+                        + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income) + sum(T('Total Other Income'), 'other_income', subtotal) : '')
+                        + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense) + sum('Total Other Expense', 'other_expense', subtotal) : '')
+                        + sum(T('Net Other Income'), 'net_other_income', subtotal) : ''}
                     ${sum(T('Net Income'), 'net_income', 'font-weight:700; background:var(--primary-light);')}
                 </tbody>
             </table>
@@ -2310,7 +2342,7 @@ ReportsPage.profitLossByClass = async function (prefill) {
                 kind: 'class',
                 columns: columns.map(c => ({ ...c, id: c.class_id, name: c.archived ? `${c.class_name} (archived)` : c.class_name })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('classes')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
                 drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
@@ -2362,7 +2394,7 @@ ReportsPage.profitLossByJob = async function (prefill) {
                 kind: 'job',
                 columns: columns.map(c => ({ ...c, id: jobKey(c), name: `${jobKey(c) ? jobLabel(c.job_name, c.customer_name) : c.job_name}${c.inactive ? ' (inactive)' : ''}` })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('jobs')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
                 drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
@@ -2465,6 +2497,7 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
                     ${section(data.expenses)}
                     ${subtotal('Total Expenses', data.total_expenses)}
+                    ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                 </tbody>
             </table></div></div>`;

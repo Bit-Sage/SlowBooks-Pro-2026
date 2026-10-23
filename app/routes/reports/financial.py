@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
 from app.database import get_db
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
 from app.services.statement_layout import (
@@ -227,39 +227,89 @@ def profit_loss(
             sort=sort,
             exclude_adjusting=exclude_adjusting,
         )
-        return _pl_with_prior(db, current, prior, sort)
+        return _pl_layout(_pl_with_prior(db, current, prior, sort))
     cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
 
-    income = _totals_by_account(
-        db, AccountType.INCOME, start_date, end_date, in_class, sort, exclude_adjusting
+    income, other_income = _split_other(
+        _totals_by_account(
+            db,
+            AccountType.INCOME,
+            start_date,
+            end_date,
+            in_class,
+            sort,
+            exclude_adjusting,
+        ),
+        DetailType.OTHER_INCOME,
     )
     cogs = _totals_by_account(
         db, AccountType.COGS, start_date, end_date, in_class, sort, exclude_adjusting
     )
-    expenses = _totals_by_account(
-        db, AccountType.EXPENSE, start_date, end_date, in_class, sort, exclude_adjusting
+    expenses, other_expense = _split_other(
+        _totals_by_account(
+            db,
+            AccountType.EXPENSE,
+            start_date,
+            end_date,
+            in_class,
+            sort,
+            exclude_adjusting,
+        ),
+        DetailType.OTHER_EXPENSE,
     )
 
     total_income = sum(i["amount"] for i in income)
     total_cogs = sum(c["amount"] for c in cogs)
     total_expenses = sum(e["amount"] for e in expenses)
+    total_other_income = sum(i["amount"] for i in other_income)
+    total_other_expense = sum(e["amount"] for e in other_expense)
+    net_operating_income = total_income - total_cogs - total_expenses
+    net_other_income = total_other_income - total_other_expense
 
-    return {
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "class_id": cls.id if cls else None,
-        "class_name": cls.name if cls else None,
-        "sort": sort,
-        "exclude_adjusting": bool(exclude_adjusting),
-        "income": income,
-        "cogs": cogs,
-        "expenses": expenses,
-        "total_income": total_income,
-        "total_cogs": total_cogs,
-        "gross_profit": total_income - total_cogs,
-        "total_expenses": total_expenses,
-        "net_income": total_income - total_cogs - total_expenses,
-    }
+    return _pl_layout(
+        {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "class_id": cls.id if cls else None,
+            "class_name": cls.name if cls else None,
+            "sort": sort,
+            "exclude_adjusting": bool(exclude_adjusting),
+            "income": income,
+            "cogs": cogs,
+            "expenses": expenses,
+            "other_income": other_income,
+            "other_expense": other_expense,
+            "total_income": total_income,
+            "total_cogs": total_cogs,
+            "gross_profit": total_income - total_cogs,
+            "total_expenses": total_expenses,
+            "net_operating_income": net_operating_income,
+            "total_other_income": total_other_income,
+            "total_other_expense": total_other_expense,
+            "net_other_income": net_other_income,
+            # the same figure as before the split: a move between sections,
+            # never in or out of the total (#390)
+            "net_income": net_operating_income + net_other_income,
+        }
+    )
+
+
+def _split_other(lines: list, other) -> tuple[list, list]:
+    """(the section's lines, its Other Income / Other Expense lines), by
+    the account's detail type (#390)."""
+    return (
+        [i for i in lines if i.get("detail_type") != other.value],
+        [i for i in lines if i.get("detail_type") == other.value],
+    )
+
+
+def _pl_layout(data: dict) -> dict:
+    """`has_other`: the P&L prints Other Income / Other Expense below Net
+    Operating Income, and Net Operating Income itself, only when either
+    has a line (#390, the owner's answer 4); without, it is the P&L it was
+    in 2.26. Every writer (screen, PDF, CSV) reads this one flag."""
+    data["has_other"] = bool(data.get("other_income") or data.get("other_expense"))
+    return data
 
 
 def _year_earlier(d: date) -> date:
@@ -282,7 +332,13 @@ _PL_TOTALS = (
     "gross_profit",
     "total_expenses",
     "net_income",
+    "net_operating_income",
+    "total_other_income",
+    "total_other_expense",
+    "net_other_income",
 )
+# the P&L's account sections, in print order
+_PL_SECTIONS = ("income", "cogs", "expenses", "other_income", "other_expense")
 # the group subtotals (#390) ride along so the prior year has them too
 _BS_TOTALS = ("total_assets", "total_liabilities", "total_equity") + BS_GROUP_TOTALS
 
@@ -333,7 +389,7 @@ def _pl_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict
         db,
         current,
         prior,
-        ("income", "cogs", "expenses"),
+        _PL_SECTIONS,
         _PL_TOTALS,
         ("start_date", "end_date"),
         sort,
@@ -775,6 +831,19 @@ def cash_flow(
 
 
 _PL_TYPES = (AccountType.INCOME, AccountType.COGS, AccountType.EXPENSE)
+# the grids' sections (#390): the P&L's, so the three reports tie line for
+# line (the owner's answer 3)
+_GRID_SECTIONS = ("income", "cogs", "expenses", "other_income", "other_expense")
+
+
+def _pl_section_of(acct_type, detail) -> str:
+    """The P&L section an account prints in: by base type, with Other
+    Income and Other Expense apart by detail type (#390)."""
+    if acct_type == AccountType.INCOME:
+        return "other_income" if detail == DetailType.OTHER_INCOME.value else "income"
+    if acct_type == AccountType.COGS:
+        return "cogs"
+    return "other_expense" if detail == DetailType.OTHER_EXPENSE.value else "expenses"
 
 
 def _ids_param(values, name: str) -> Optional[set[int]]:
@@ -839,6 +908,7 @@ def _pl_pivot(
             Account.account_number,
             Account.name,
             Account.account_type,
+            Account.detail_type,
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
         )
@@ -856,6 +926,7 @@ def _pl_pivot(
             Account.account_number,
             Account.name,
             Account.account_type,
+            Account.detail_type,
         )
         .all()
     )
@@ -863,30 +934,23 @@ def _pl_pivot(
     by_key: dict = {}
     # each account's amount in each column: the rows of the report (#213)
     by_account: dict[int, dict] = {}
-    for key, acct_id, number, name, acct_type, dr, cr in rows:
+    for key, acct_id, number, name, acct_type, detail, dr, cr in rows:
+        section = _pl_section_of(acct_type, detail)
         acct = by_account.setdefault(
             acct_id,
             {
                 "id": acct_id,
                 "number": number,
                 "name": name,
-                "type": acct_type,
+                "section": section,
                 "by": {},
             },
         )
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         natural = (cr - dr) if acct_type == AccountType.INCOME else (dr - cr)
         acct["by"][key] = acct["by"].get(key, Decimal("0")) + natural
-        bucket = by_key.setdefault(
-            key,
-            {"income": Decimal("0"), "cogs": Decimal("0"), "expenses": Decimal("0")},
-        )
-        if acct_type == AccountType.INCOME:
-            bucket["income"] += cr - dr
-        elif acct_type == AccountType.COGS:
-            bucket["cogs"] += dr - cr
-        else:
-            bucket["expenses"] += dr - cr
+        bucket = by_key.setdefault(key, {f: Decimal("0") for f in _GRID_SECTIONS})
+        bucket[section] += natural
 
     def _meta(key):
         return meta.get(key) or {"name": "Unknown", "inactive": False}
@@ -912,18 +976,24 @@ def _pl_pivot(
     filtered = bool(with_activity - column_keys)
 
     def totals_of(keys):
-        t = {"income": Decimal("0"), "cogs": Decimal("0"), "expenses": Decimal("0")}
+        t = {f: Decimal("0") for f in _GRID_SECTIONS}
         for k in keys:
             b = by_key.get(k)
             if b:
                 for f in t:
                     t[f] += b[f]
+        operating = t["income"] - t["cogs"] - t["expenses"]
+        other = t["other_income"] - t["other_expense"]
         return {
             "income": float(t["income"]),
             "cogs": float(t["cogs"]),
             "gross_profit": float(t["income"] - t["cogs"]),
             "expenses": float(t["expenses"]),
-            "net_income": float(t["income"] - t["cogs"] - t["expenses"]),
+            "net_operating_income": float(operating),
+            "other_income": float(t["other_income"]),
+            "other_expense": float(t["other_expense"]),
+            "net_other_income": float(other),
+            "net_income": float(operating + other),
         }
 
     columns = []
@@ -943,19 +1013,14 @@ def _pl_pivot(
     # Accounts down the side, an amount per column in the order of
     # `columns` and the account's total, by section.
     order = [c["key"] for c in columns]
-    section_of = {
-        AccountType.INCOME: "income",
-        AccountType.COGS: "cogs",
-        AccountType.EXPENSE: "expenses",
-    }
-    accounts: dict[str, list] = {"income": [], "cogs": [], "expenses": []}
+    accounts: dict[str, list] = {f: [] for f in _GRID_SECTIONS}
     for a in sorted(
         by_account.values(), key=lambda a: (a["number"] or "", a["name"].lower())
     ):
         amounts = [a["by"].get(k, Decimal("0")) for k in order]
         if not any(amounts):
             continue
-        accounts[section_of[a["type"]]].append(
+        accounts[a["section"]].append(
             {
                 "account_id": a["id"],
                 "account_number": a["number"],
@@ -975,7 +1040,14 @@ def _pl_pivot(
         "total_cogs": shown["cogs"],
         "total_gross_profit": shown["gross_profit"],
         "total_expenses": shown["expenses"],
+        "total_net_operating_income": shown["net_operating_income"],
+        "total_other_income": shown["other_income"],
+        "total_other_expense": shown["other_expense"],
+        "total_net_other_income": shown["net_other_income"],
         "total_net_income": shown["net_income"],
+        # the Other Income / Other Expense rows print, as on the P&L, only
+        # when an account in them has a figure in the columns shown (#390)
+        "has_other": bool(accounts["other_income"] or accounts["other_expense"]),
         "filtered": filtered,
         "columns_total": len(with_activity),
         "chosen_empty": chosen_empty,
@@ -1052,6 +1124,10 @@ def profit_loss_by_class(
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
             "expenses": c["expenses"],
+            "net_operating_income": c["net_operating_income"],
+            "other_income": c["other_income"],
+            "other_expense": c["other_expense"],
+            "net_other_income": c["net_other_income"],
             "net_income": c["net_income"],
         }
         for c in out.pop("columns")
@@ -1148,6 +1224,10 @@ def profit_loss_by_job(
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
             "expenses": c["expenses"],
+            "net_operating_income": c["net_operating_income"],
+            "other_income": c["other_income"],
+            "other_expense": c["other_expense"],
+            "net_other_income": c["net_other_income"],
             "net_income": c["net_income"],
         }
         for c in out.pop("columns")
@@ -1311,18 +1391,24 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
             "style": style,
         }
 
-    rows = []
-    for label, key, total_key in (
-        (t("Income"), "income", "total_income"),
-        ("Cost of Goods Sold", "cogs", "total_cogs"),
-    ):
+    def section(label, key, total_key):
         rows.append({"cells": [label] + blank, "style": "subtotal"})
-        rows.extend(line(item) for item in data[key])
+        rows.extend(line(item) for item in data.get(key, []))
         rows.append(total(f"Total {label}", total_key))
+
+    rows = []
+    section(t("Income"), "income", "total_income")
+    section("Cost of Goods Sold", "cogs", "total_cogs")
     rows.append(total("Gross Profit", "gross_profit"))
-    rows.append({"cells": ["Expenses"] + blank, "style": "subtotal"})
-    rows.extend(line(item) for item in data["expenses"])
-    rows.append(total("Total Expenses", "total_expenses"))
+    section("Expenses", "expenses", "total_expenses")
+    if data.get("has_other"):
+        # below Net Operating Income, only when there is something (#390)
+        rows.append(total(t("Net Operating Income"), "net_operating_income"))
+        if data.get("other_income"):
+            section(t("Other Income"), "other_income", "total_other_income")
+        if data.get("other_expense"):
+            section("Other Expense", "other_expense", "total_other_expense")
+        rows.append(total(t("Net Other Income"), "net_other_income"))
     rows.append(total(t("Net Income"), "net_income", "grand-total"))
     cls = data.get("class_name")
     period = _period_words(data)
@@ -1341,6 +1427,66 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
 # past it the grid goes over several pages, each with the Account column
 # and the same Total column (the total across every column shown).
 GRID_COLUMNS_PER_PAGE = 8
+
+
+def _grid_layout(data: dict, t) -> list[tuple]:
+    """The P&L by Class / by Job grid's rows above Net Income, in print
+    order, for the screen's twin in the PDF and the CSV: (section heading,
+    accounts key or None for a summary row, subtotal label, column key,
+    total key). Other Income / Other Expense below Net Operating Income
+    when the grid has either (#390), as the P&L prints them."""
+    out = [
+        (t("Income"), "income", t("Total Income"), "income", "total_income"),
+        (
+            "Cost of Goods Sold",
+            "cogs",
+            "Gross Profit",
+            "gross_profit",
+            "total_gross_profit",
+        ),
+        ("Expenses", "expenses", "Total Expenses", "expenses", "total_expenses"),
+    ]
+    if data.get("has_other"):
+        out.append(
+            (
+                None,
+                None,
+                t("Net Operating Income"),
+                "net_operating_income",
+                "total_net_operating_income",
+            )
+        )
+        accounts = data.get("accounts") or {}
+        if accounts.get("other_income"):
+            out.append(
+                (
+                    t("Other Income"),
+                    "other_income",
+                    t("Total Other Income"),
+                    "other_income",
+                    "total_other_income",
+                )
+            )
+        if accounts.get("other_expense"):
+            out.append(
+                (
+                    "Other Expense",
+                    "other_expense",
+                    "Total Other Expense",
+                    "other_expense",
+                    "total_other_expense",
+                )
+            )
+        out.append(
+            (
+                None,
+                None,
+                t("Net Other Income"),
+                "net_other_income",
+                "total_net_other_income",
+            )
+        )
+    return out
 
 
 def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
@@ -1377,34 +1523,11 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             return row(label, [_money(c[key]) for c in cols] + [_money(total)], style)
 
         rows = []
-        for label, key in (
-            (t("Income"), "income"),
-            ("Cost of Goods Sold", "cogs"),
-            ("Expenses", "expenses"),
-        ):
-            rows.append(row(label, [""] * (len(cols) + 1), "subtotal"))
-            rows.extend(account_row(a) for a in data["accounts"][key])
-            if key == "income":
-                rows.append(
-                    sum_row(
-                        t("Total Income"), "income", data["total_income"], "subtotal"
-                    )
-                )
-            elif key == "cogs":
-                rows.append(
-                    sum_row(
-                        "Gross Profit",
-                        "gross_profit",
-                        data["total_gross_profit"],
-                        "subtotal",
-                    )
-                )
-            else:
-                rows.append(
-                    sum_row(
-                        "Total Expenses", "expenses", data["total_expenses"], "subtotal"
-                    )
-                )
+        for label, key, sub_label, sub_key, total_key in _grid_layout(data, t):
+            if key:
+                rows.append(row(label, [""] * (len(cols) + 1), "subtotal"))
+                rows.extend(account_row(a) for a in data["accounts"][key])
+            rows.append(sum_row(sub_label, sub_key, data[total_key], "subtotal"))
         rows.append(
             sum_row(
                 t("Net Income"), "net_income", data["total_net_income"], "grand-total"
