@@ -302,10 +302,20 @@ const BillsPage = {
     // With `line`, a stored line drawn as the bill has it (an edit, #225):
     // its item, account, words, cost code, fund, quantity and rate; a stock
     // item's account is Inventory and not a choice, as when it's picked.
+    // Qty and Rate start blank: a line is an amount alone until one of them
+    // is typed (#391). A stored line of quantity 1 whose rate is its amount
+    // is drawn that way too; saving it again stores the same numbers.
     lineHtml(idx, line = null) {
         const l = line || {};
         const item = l.item_id ? BillsPage._items.find(i => i.id == l.item_id) : null;
         const stock = !!(item && item.track_inventory);
+        // A stored 1 x amount line is drawn as an amount alone, Qty and Rate
+        // blank — but not a stock item: it is received as that quantity 1, so
+        // the 1 is shown rather than hidden by a blank Qty box (reviewer, #401).
+        const amountOnly = !!line && !stock && Number(l.quantity) === 1 && Number(l.rate) === Number(l.amount);
+        const qty = line && !amountOnly ? Number(l.quantity) : '';
+        const rate = line && !amountOnly ? Number(l.rate) : '';
+        const amount = line ? Number(l.amount).toFixed(2) : '';
         const itemOpts = BillsPage._items.map(i => `<option value="${i.id}"${l.item_id == i.id ? ' selected' : ''}>${escapeHtml(i.name)}</option>`).join('');
         const acctOpts = PurchaseAccounts.options(BillsPage._accounts, stock ? null : (l.account_id || BillsPage._defaultExpenseAccountId));
         return `<tr data-billline="${idx}">
@@ -314,9 +324,9 @@ const BillsPage = {
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
                 ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
-                <td><input class="line-qty" type="number" step="0.0001" value="${line ? Number(l.quantity) : 1}" oninput="BillsPage.recalc()"></td>
-                <td><input class="line-rate" type="number" step="0.0001" value="${line ? Number(l.rate) : 0}" oninput="BillsPage.recalc()"></td>
-                <td class="col-amount line-amount">$0.00</td>
+                <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
+                <td><input class="line-rate" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
+                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.amtChanged(this)"></td>
             </tr>`;
     },
 
@@ -335,7 +345,16 @@ const BillsPage = {
         }
         if (item) {
             row.querySelector('.line-desc').value = item.description || item.name;
-            row.querySelector('.line-rate').value = PurchaseLines.price(item);
+            // an item with no cost or price leaves the line an amount alone
+            const price = PurchaseLines.price(item);
+            row.querySelector('.line-rate').value = Number(price) ? price : '';
+            // A stock item is received as a quantity, so show the 1 it starts
+            // at rather than a blank box that is still received as 1 (#401
+            // review). An amount typed next prices it at 1 x amount.
+            if (item.track_inventory) {
+                const qtyBox = row.querySelector('.line-qty');
+                if (qtyBox && qtyBox.value === '') qtyBox.value = 1;
+            }
         }
         BillsPage.recalc();
     },
@@ -435,10 +454,16 @@ const BillsPage = {
     recalc() {
         let subtotal = 0;
         $$('#bill-lines tr').forEach(row => {
-            const amount = PurchaseLines.lineAmount(row);
+            const amount = BillsPage.lineAmount(row);
             subtotal += amount;
-            const amountCell = row.querySelector('.line-amount');
-            if (amountCell) amountCell.textContent = formatCurrency(amount);
+            // a priced line's Amount box shows quantity x rate and takes no
+            // typing; one with neither is the box itself
+            const amountInput = row.querySelector('.line-amt');
+            if (amountInput) {
+                const priced = BillsPage.priced(row);
+                amountInput.readOnly = priced;
+                if (priced) amountInput.value = amount.toFixed(2);
+            }
         });
         subtotal = PurchaseLines.cents(subtotal);
         // the tax as the server works it: the rate on the subtotal, to the cent
@@ -453,10 +478,69 @@ const BillsPage = {
         return total;
     },
 
-    // Split support (nonprofit): one line becomes the rule's shares, each
-    // with quantity 1 and the share as its rate.
+    // A line is priced once it has a rate; otherwise its Amount box is the
+    // line (#391). A quantity alone does not price it — typing a quantity on
+    // an amount-alone line seeds the rate from the amount (see qtyChanged),
+    // so the quantity takes effect through the rate rather than multiplying a
+    // blank rate to zero (reviewer, #401).
+    priced(row) {
+        return !!(row.querySelector('.line-rate')?.value);
+    },
+    // Typing a quantity on an amount-alone line (no rate yet) seeds the rate
+    // from the amount, so the line prices at quantity x amount instead of
+    // zeroing: the amount typed first is read as the per-unit cost. Clearing
+    // the quantity undoes the seed and the amount alone comes back. A rate the
+    // user typed is left as it is.
+    qtyChanged(input) {
+        const row = input.closest('tr');
+        const rateBox = row.querySelector('.line-rate');
+        const amtBox = row.querySelector('.line-amt');
+        if (input.value !== '') {
+            if (rateBox && !rateBox.value && amtBox && amtBox.value) {
+                rateBox.value = amtBox.value;
+                rateBox.dataset.seeded = 'qty';
+            }
+        } else if (rateBox && rateBox.dataset.seeded) {
+            // Restore the amount alone: the typed line total when the amount
+            // seeded the rate, else the per-unit rate the quantity seeded.
+            amtBox.value =
+                rateBox.dataset.seeded === 'amt'
+                    ? rateBox.dataset.lineTotal || rateBox.value
+                    : rateBox.value;
+            rateBox.value = '';
+            delete rateBox.dataset.seeded;
+            delete rateBox.dataset.lineTotal;
+        }
+        BillsPage.recalc();
+    },
+    // Typing an amount on a line that already has a quantity (and no rate yet)
+    // reads the amount as the line total for those units, so the rate is
+    // amount / quantity — Qty 3 then Amount 30 gives Rate 10 and posts 3 x 10.
+    // Without this the line stayed unpriced and posted 1 x 30, dropping the
+    // quantity the box still showed (reviewer, #401). The typed total is kept
+    // so clearing the quantity brings it back whole. A line with no quantity
+    // is still the amount alone.
+    amtChanged(input) {
+        const row = input.closest('tr');
+        const rateBox = row.querySelector('.line-rate');
+        const qtyBox = row.querySelector('.line-qty');
+        const qty = qtyBox && qtyBox.value !== '' ? parseFloat(qtyBox.value) : 0;
+        if (input.value !== '' && qty > 0 && rateBox && !rateBox.value) {
+            rateBox.dataset.lineTotal = input.value;
+            rateBox.value = Number((parseFloat(input.value) / qty).toFixed(4));
+            rateBox.dataset.seeded = 'amt';
+        }
+        BillsPage.recalc();
+    },
+    // What the line comes to, rounded to the cent as the server rounds: a
+    // priced line's quantity (blank is 1) x rate, else the amount typed.
+    // Also the split support (nonprofit): one line becomes the rule's
+    // shares, each with quantity 1 and the share as its rate.
     lineAmount(row) {
-        return (parseFloat(row.querySelector('.line-qty')?.value) || 0) * (parseFloat(row.querySelector('.line-rate')?.value) || 0);
+        if (!BillsPage.priced(row)) return PurchaseLines.cents(parseFloat(row.querySelector('.line-amt')?.value) || 0);
+        const qtyBox = row.querySelector('.line-qty');
+        const qty = qtyBox && qtyBox.value !== '' ? parseFloat(qtyBox.value) || 0 : 1;
+        return PurchaseLines.cents(qty * (parseFloat(row.querySelector('.line-rate')?.value) || 0));
     },
     splitApply(row, res) {
         const baseDesc = row.querySelector('.line-desc')?.value || '';
@@ -490,15 +574,19 @@ const BillsPage = {
         $$('#bill-lines tr').forEach((row, i) => {
             const acct = row.querySelector('.line-account');
             const accountId = acct && !acct.disabled && acct.value ? parseInt(acct.value) : null;
-            if (!missing && acct && !acct.disabled && !accountId && PurchaseLines.lineAmount(row) > 0) {
+            if (!missing && acct && !acct.disabled && !accountId && BillsPage.lineAmount(row) > 0) {
                 missing = { n: i + 1, sel: acct };
             }
+            // a priced line sends its quantity and rate; one with neither
+            // sends its amount alone and the server stores it as 1 x amount
+            const priced = BillsPage.priced(row)
+                ? { quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1, rate: parseFloat(row.querySelector('.line-rate')?.value) || 0 }
+                : { amount: parseFloat(row.querySelector('.line-amt')?.value) || 0 };
             lines.push({
                 item_id: row.querySelector('.line-item')?.value ? parseInt(row.querySelector('.line-item').value) : null,
                 account_id: accountId,
                 description: row.querySelector('.line-desc')?.value || '',
-                quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
-                rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
+                ...priced,
                 cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
                 class_id: Nonprofit.fundFromRow(row, 'line-function'),
                 ...Nonprofit.linePayload(row, 'line-function'),
@@ -509,7 +597,7 @@ const BillsPage = {
         // A bill for $0.00 is refused (item picks used to leave the rate at
         // 0 and save one silently — W-M1).
         if (BillsPage.recalc() <= 0) {
-            toast('Enter what the vendor charged: a quantity and rate on at least one line.', 'error');
+            toast('Enter what the vendor charged: an amount, or a quantity and rate, on at least one line.', 'error');
             return;
         }
         if (missing) {

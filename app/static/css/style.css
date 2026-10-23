@@ -1994,6 +1994,7 @@ td > select[class$="-fund"] { min-width: 124px; }
 .bill-lines-table .line-desc { min-width: 140px; }
 .bill-lines-table .line-qty { min-width: 64px; }
 .bill-lines-table .line-rate { min-width: 84px; }
+.bill-lines-table .line-amt { min-width: 84px; text-align: right; }
 
 .iif-file-info {
     display: flex;
