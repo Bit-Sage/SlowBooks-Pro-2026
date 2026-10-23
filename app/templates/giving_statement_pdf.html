@@ -6,11 +6,16 @@
     /* With a ministry footer the bottom margin widens to hold it (#415
        review): the footer is a running element printed in the @bottom-center
        margin box, so it never overprints the last rows of the gift table the
-       way a position:fixed footer did. ~1.1in holds six 8pt lines with room;
-       with no footer the margin stays as it was. */
+       way a position:fixed footer did. The footer is at most six lines
+       (settings_service, FOOTER_MAX_LINES): six 8pt lines at line-height 1.4
+       are ~0.9in, so a 1.4in margin with the footer pinned to its top (not
+       centred, which put the last line ~0.1in from the paper edge) leaves
+       ~0.45in below it, clear of a printer's unprintable edge, and a gap
+       above it to the last gift row. With no footer the margin stays as it
+       was. */
     {% if footer_text %}
-    @page { size: letter; margin: 0.6in 0.75in 1.1in 0.75in; }
-    @page { @bottom-center { content: element(statement-footer); } }
+    @page { size: letter; margin: 0.6in 0.75in 1.4in 0.75in; }
+    @page { @bottom-center { content: element(statement-footer); vertical-align: top; padding-top: 4pt; } }
     {% else %}
     @page { size: letter; margin: 0.6in 0.75in; }
     {% endif %}

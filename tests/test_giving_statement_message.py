@@ -137,6 +137,25 @@ def test_footer_over_the_cap_is_refused_422(client):
     assert client.get("/api/settings").json()["giving_statement_footer"] == ""
 
 
+def test_footer_over_six_lines_is_refused_422(client):
+    """#426 review: a short footer of many lines overprinted the last gift row
+    and ran off the page, so the footer is capped by lines too."""
+    _nonprofit(client)
+    six = "\n".join(f"Line {i}" for i in range(1, 7))
+    _set_footer(client, six)
+    r = client.put("/api/settings", json={"giving_statement_footer": six + "\nLine 7"})
+    assert r.status_code == 422
+    assert "at most 6 lines" in r.json()["detail"]
+    # a line too long for the page wraps, and counts as two
+    r = client.put(
+        "/api/settings",
+        json={"giving_statement_footer": "\n".join(["x" * 91] + ["y"] * 5)},
+    )
+    assert r.status_code == 422
+    # the six-line footer saved before is kept
+    assert client.get("/api/settings").json()["giving_statement_footer"] == six
+
+
 # ---------------------------------------------------------------------------
 # The opening message comes from the default saved giving-statement message
 # ---------------------------------------------------------------------------

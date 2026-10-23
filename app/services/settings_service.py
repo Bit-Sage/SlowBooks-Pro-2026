@@ -228,6 +228,25 @@ _ALNUM = re.compile(r"[0-9A-Za-z]+")
 _MAX_LENGTH_SETTINGS = {
     "giving_statement_footer": ("Giving statement footer", 500),
 }
+# ...and a line cap: the footer prints in the statement's bottom margin, which
+# holds six 8pt lines inside the printable area (#426 review: a 14-line
+# footer of 140 characters overprinted the last gift row and ran off the
+# page). A line longer than fits across the page wraps, so each started
+# FOOTER_LINE_CHARS characters of a line count as a line.
+# {key: (label, max_lines)}
+FOOTER_MAX_LINES = 6
+FOOTER_LINE_CHARS = 90
+_MAX_LINE_SETTINGS = {
+    "giving_statement_footer": ("Giving statement footer", FOOTER_MAX_LINES),
+}
+
+
+def printed_lines(text: str, width: int = FOOTER_LINE_CHARS) -> int:
+    """How many lines ``text`` takes on the page: one per typed line, more
+    for a line that wraps."""
+    if not text:
+        return 0
+    return sum(max(1, -(-len(line.rstrip()) // width)) for line in text.splitlines())
 
 
 class SettingValueError(ValueError):
@@ -292,6 +311,14 @@ def clean_setting_value(key: str, value) -> str:
         label, cap = _MAX_LENGTH_SETTINGS[key]
         if len(text) > cap:
             raise SettingValueError(f"{label} is at most {cap} characters.")
+        if key in _MAX_LINE_SETTINGS:
+            label, most = _MAX_LINE_SETTINGS[key]
+            if printed_lines(text) > most:
+                raise SettingValueError(
+                    f"{label} is at most {most} lines, so it fits at the foot of "
+                    f"each page; a line longer than {FOOTER_LINE_CHARS} "
+                    "characters wraps and counts as two."
+                )
         return text
     if key in _DATE_SETTINGS:
         if text == "":

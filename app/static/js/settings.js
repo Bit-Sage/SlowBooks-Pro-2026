@@ -448,7 +448,7 @@ const SettingsPage = {
                         (a thank-you from the pastor or the board). The Footer text replaces the fixed footer (the
                         ministry's address, website, EIN, a verse). Both are plain text with line breaks, printed as
                         typed. The IRS acknowledgment sentence is always printed and is not editable here.
-                        A giving-statement message is at most 1500 characters and the footer at most 500. Save first, then preview.
+                        A giving-statement message is at most 1500 characters and the footer at most 500 characters and 6 lines (a line longer than 90 characters wraps and counts as two). Save first, then preview.
                     </div>
                     <div style="display:flex; gap:8px; margin-bottom:12px;" data-admin data-write>
                         <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.editInvoiceMessage(null, 'giving_statement')">+ Add Opening Message</button>
@@ -456,7 +456,7 @@ const SettingsPage = {
                     <div id="giving-message-list"></div>
                     <div class="form-grid" style="margin-top:12px;">
                         <div class="form-group full-width"><label>Footer text</label>
-                            <textarea name="giving_statement_footer" rows="4" maxlength="500"
+                            <textarea name="giving_statement_footer" rows="6" maxlength="500"
                                 placeholder="Harbor Light Ministries · 123 Main St · EIN 12-3456789 · harborlight.org">${escapeHtml(s.giving_statement_footer || '')}</textarea></div>
                     </div>
                     <div style="display:flex; gap:8px;">
