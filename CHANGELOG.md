@@ -5,6 +5,17 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.27.0
+
+**macOS release tooling (testing-repo #104).** `release.py` now waits for
+Apple's notarization ticket before giving up. Right after notarization is
+accepted, `stapler staple` can fail with "Could not find base64 encoded
+ticket" or "Record not found" because the ticket has not reached Apple's CDN
+yet (three of the four 2.26.0 sign jobs; each passed on rerun). That failure
+alone is retried, up to six attempts over about five minutes, and the final
+error names the attempts. Any other staple error stops the run on the first
+try.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open

@@ -450,6 +450,49 @@ def _notarize(target: Path, profile: str, report_dir: Path, label: str) -> None:
         raise RuntimeError(f"notarization was not accepted; see {log_path}")
 
 
+# Right after notarization is Accepted, Apple's CDN may not serve the ticket
+# yet and `stapler staple` fails with one of these (three of four 2.26.0 sign
+# jobs; each passed on rerun). Retry that failure alone, ~5 minutes in total;
+# any other staple error fails on the first try.
+STAPLE_TICKET_MISSING = ("Could not find base64 encoded ticket", "Record not found")
+STAPLE_ATTEMPTS = 6
+STAPLE_BACKOFF_SECONDS = (20, 40, 60, 90, 90)
+
+
+def _is_ticket_missing(output: str) -> bool:
+    return any(marker in output for marker in STAPLE_TICKET_MISSING)
+
+
+def _staple_with_retry(target: Path, staple_evidence: Path) -> None:
+    """`stapler staple`, waiting for the ticket to propagate (see above)."""
+    for attempt in range(1, STAPLE_ATTEMPTS + 1):
+        result = _record_run(
+            staple_evidence,
+            "xcrun",
+            "stapler",
+            "staple",
+            "-v",
+            str(target),
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        if not _is_ticket_missing(f"{result.stdout or ''}{result.stderr or ''}"):
+            result.check_returncode()
+        if attempt == STAPLE_ATTEMPTS:
+            raise RuntimeError(
+                f"no notarization ticket for {target.name} after "
+                f"{STAPLE_ATTEMPTS} stapling attempts; see {staple_evidence}"
+            )
+        delay = STAPLE_BACKOFF_SECONDS[min(attempt, len(STAPLE_BACKOFF_SECONDS)) - 1]
+        print(
+            f"! ticket not available yet (attempt {attempt} of "
+            f"{STAPLE_ATTEMPTS}); retrying in {delay}s",
+            flush=True,
+        )
+        _sleep(delay)
+
+
 def _staple(target: Path, report_dir: Path) -> None:
     """Attach the notarization ticket to ``target`` and prove it is there.
 
@@ -463,7 +506,7 @@ def _staple(target: Path, report_dir: Path) -> None:
     with `stapler validate`, which only reads the local ticket.
     """
     staple_evidence = report_dir / "stapler.txt"
-    _record_run(staple_evidence, "xcrun", "stapler", "staple", "-v", str(target))
+    _staple_with_retry(target, staple_evidence)
     validated = _record_run(
         staple_evidence, "xcrun", "stapler", "validate", "-v", str(target), check=False
     )
