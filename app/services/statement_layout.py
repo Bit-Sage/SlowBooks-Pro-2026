@@ -79,3 +79,190 @@ def bs_group_totals(lines: list[dict], side: str) -> dict:
         key = BS_GROUPS[side][g][1]
         totals[key] += Decimal(str(line.get("amount") or 0))
     return {k: float(v) for k, v in totals.items()}
+
+
+# ── Sub-accounts under their parents (#416) ──────────────────────────────
+# The P&L and the Statement of Activities print a parent's family together:
+#
+#     Travel                       heading (the parent, even with no figure)
+#         Hotel           100
+#         Flight          200
+#         Direct postings to Travel  50   (the parent's own lines, if any)
+#     Total Travel        350
+#
+# Each line is printed once, so the families' totals and the loose lines
+# add up to the section's total. The flat presentation (the CSV) keeps the
+# full "Travel: Hotel" path instead.
+
+# Deeper than any real chart; a parent chain this long is bad data (a loop
+# the walk has not closed), and the account prints at the top level.
+MAX_DEPTH = 64
+
+
+def account_chart(db) -> dict:
+    """{id: {number, name, parent_id}} for every account."""
+    from app.models.accounts import Account
+
+    return {
+        a.id: {
+            "number": a.account_number or "",
+            "name": a.name or "",
+            "parent_id": a.parent_id,
+        }
+        for a in db.query(
+            Account.id, Account.account_number, Account.name, Account.parent_id
+        )
+    }
+
+
+def account_path(chart: dict, account_id) -> str:
+    """ "Travel: Hotel": the names from the top parent down, stopping at a
+    loop or MAX_DEPTH so bad data cannot hang a report."""
+    names, seen, cur = [], set(), account_id
+    while cur in chart and cur not in seen and len(seen) < MAX_DEPTH:
+        seen.add(cur)
+        names.append(chart[cur]["name"])
+        cur = chart[cur]["parent_id"]
+    return ": ".join(reversed(names))
+
+
+def _parent_in_section(chart: dict, node, belongs) -> int | None:
+    """The parent a node prints under: its own parent when that account
+    prints in the same section and the node is not on a parent loop (a
+    walk up from the parent that comes back to the node, or runs past
+    MAX_DEPTH); otherwise None and the node prints at the top level."""
+    parent = chart.get(node, {}).get("parent_id")
+    if parent is None or parent == node or parent not in chart or not belongs(parent):
+        return None
+    cur, steps = parent, 0
+    while cur is not None:
+        if cur == node or steps > MAX_DEPTH:
+            return None
+        cur = chart.get(cur, {}).get("parent_id")
+        steps += 1
+        if cur is not None and cur not in chart:
+            break
+    return parent
+
+
+def family_rows(
+    lines: list[dict],
+    chart: dict,
+    belongs,
+    keys: tuple,
+    order,
+    numbered: bool = True,
+) -> list[dict]:
+    """A section's lines as printed rows, sub-accounts beneath their
+    parents. `belongs(id)` says whether an account prints in this section
+    (a parent of another type or detail type does not gather the line);
+    `keys` are the figures to add up (amount, prior_amount, …); `order(id)`
+    the accounts' order. Each row is a dict with `kind`:
+
+    - "account": a line with no sub-account lines under it (the line's own
+      keys, plus `depth` and `label`);
+    - "heading": a parent with sub-account lines, no figures;
+    - "direct": the parent's own line, one level in, labelled "Direct
+      postings to …";
+    - "total": the family's total, "Total …", at the heading's level.
+
+    A line with no account (a computed one) prints last, as it came."""
+    by_id = {i["account_id"]: i for i in lines if i.get("account_id") in chart}
+    loose = [i for i in lines if i.get("account_id") not in by_id]
+
+    parent_of: dict = {}
+    todo = list(by_id)
+    while todo:
+        node = todo.pop()
+        if node in parent_of:
+            continue
+        parent_of[node] = _parent_in_section(chart, node, belongs)
+        if parent_of[node] is not None:
+            todo.append(parent_of[node])
+
+    children: dict = {}
+    roots = []
+    for node, parent in parent_of.items():
+        (children.setdefault(parent, []) if parent is not None else roots).append(node)
+    for kids in children.values():
+        kids.sort(key=order)
+    roots.sort(key=order)
+
+    def leaf(node) -> str:
+        entry = chart[node]
+        return (
+            f"{entry['number']} - {entry['name']}"
+            if numbered and entry["number"]
+            else entry["name"]
+        )
+
+    def top(node) -> str:
+        """At the top level the full path, as the flat P&L printed it: an
+        account whose parent prints elsewhere is still told apart."""
+        line = by_id.get(node)
+        if line and line.get("account_label"):
+            return line["account_label"]
+        path = account_path(chart, node)
+        number = chart[node]["number"]
+        return f"{number} - {path}" if numbered and number else path
+
+    def sums(node) -> dict:
+        total = {k: Decimal("0") for k in keys}
+        stack, seen = [node], set()
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            line = by_id.get(n)
+            if line:
+                for k in keys:
+                    total[k] += Decimal(str(line.get(k) or 0))
+            stack.extend(children.get(n, ()))
+        return {k: float(v) for k, v in total.items()}
+
+    rows: list[dict] = []
+
+    def emit(node, depth):
+        label = top(node) if depth == 0 else leaf(node)
+        line = by_id.get(node)
+        kids = children.get(node)
+        if not kids:
+            rows.append({**line, "kind": "account", "depth": depth, "label": label})
+            return
+        rows.append(
+            {"kind": "heading", "depth": depth, "label": label, "account_id": node}
+        )
+        for kid in kids:
+            emit(kid, depth + 1)
+        if line:
+            rows.append(
+                {
+                    **line,
+                    "kind": "direct",
+                    "depth": depth + 1,
+                    "label": f"Direct postings to {chart[node]['name']}",
+                }
+            )
+        rows.append(
+            {
+                "kind": "total",
+                "depth": depth,
+                "label": f"Total {label}",
+                "account_id": node,
+                **sums(node),
+            }
+        )
+
+    for root in roots:
+        emit(root, 0)
+    for line in loose:
+        rows.append(
+            {
+                **line,
+                "kind": "account",
+                "depth": 0,
+                "label": line.get("account_label") or line.get("account_name") or "",
+            }
+        )
+    return rows

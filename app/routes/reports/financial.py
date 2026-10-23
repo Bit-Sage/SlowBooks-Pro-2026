@@ -13,8 +13,10 @@ from app.routes.reports._router import router
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
+    account_chart,
     bs_group_totals,
     bs_groups,
+    family_rows,
 )
 from app.services.terminology import Terms, terms_from_db
 
@@ -227,7 +229,7 @@ def profit_loss(
             sort=sort,
             exclude_adjusting=exclude_adjusting,
         )
-        return _pl_layout(_pl_with_prior(db, current, prior, sort))
+        return _pl_layout(db, _pl_with_prior(db, current, prior, sort))
     cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
 
     income, other_income = _split_other(
@@ -267,6 +269,7 @@ def profit_loss(
     net_other_income = total_other_income - total_other_expense
 
     return _pl_layout(
+        db,
         {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -290,7 +293,7 @@ def profit_loss(
             # the same figure as before the split: a move between sections,
             # never in or out of the total (#390)
             "net_income": net_operating_income + net_other_income,
-        }
+        },
     )
 
 
@@ -303,12 +306,36 @@ def _split_other(lines: list, other) -> tuple[list, list]:
     )
 
 
-def _pl_layout(data: dict) -> dict:
-    """`has_other`: the P&L prints Other Income / Other Expense below Net
-    Operating Income, and Net Operating Income itself, only when either
-    has a line (#390, the owner's answer 4); without, it is the P&L it was
-    in 2.26. Every writer (screen, PDF, CSV) reads this one flag."""
+def _pl_layout(db, data: dict) -> dict:
+    """How the P&L prints, for every writer to read:
+
+    - `has_other`: Other Income / Other Expense below Net Operating Income,
+      and Net Operating Income itself, only when either has a line (#390,
+      the owner's answer 4); without, it is the P&L it was in 2.26.
+    - `tree`: each section's lines with sub-accounts beneath their parents,
+      a family total under each parent (#416), for the screen and the PDF.
+      The flat lists stay, with full paths, for the CSV and the prior-year
+      pairing. A parent of another section does not gather a line."""
     data["has_other"] = bool(data.get("other_income") or data.get("other_expense"))
+    chart = account_chart(db)
+    section_of = {
+        aid: _pl_section_of(atype, detail)
+        for aid, atype, detail in db.query(
+            Account.id, Account.account_type, Account.detail_type
+        )
+    }
+    order = _account_order(db, data.get("sort") or "number")
+    keys = ("amount", "prior_amount") if data.get("prior") else ("amount",)
+    data["tree"] = {
+        key: family_rows(
+            data.get(key, []),
+            chart,
+            lambda aid, key=key: section_of.get(aid) == key,
+            keys,
+            lambda aid: order({"account_id": aid}),
+        )
+        for key in _PL_SECTIONS
+    }
     return data
 
 
@@ -1382,6 +1409,26 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
             )
         }
 
+    def tree_row(r):
+        """A printed row of the section's tree (#416): an account, a
+        parent's heading, its direct postings or its family's total."""
+        indent = r["depth"] + 1
+        if r["kind"] == "heading":
+            return {
+                "cells": [f"  {r['label']}"] + blank,
+                "style": "group",
+                "indent": indent,
+            }
+        figures = _compare_figures(
+            r["amount"], r.get("prior_amount", 0), prior, show_changes
+        )
+        row = {"cells": [f"  {r['label']}"] + figures, "indent": indent}
+        if r["kind"] == "total":
+            row["style"] = "subtotal"
+        return row
+
+    tree = data.get("tree") or {}
+
     def total(label, key, style="subtotal"):
         return {
             "cells": [label]
@@ -1393,7 +1440,10 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
 
     def section(label, key, total_key):
         rows.append({"cells": [label] + blank, "style": "subtotal"})
-        rows.extend(line(item) for item in data.get(key, []))
+        if key in tree:
+            rows.extend(tree_row(r) for r in tree[key])
+        else:
+            rows.extend(line(item) for item in data.get(key, []))
         rows.append(total(f"Total {label}", total_key))
 
     rows = []

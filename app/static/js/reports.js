@@ -1078,14 +1078,16 @@ const ReportsPage = {
             const cols = ReportsPage._cmpCols(prior, show);
             const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
                 item && prior ? drillCall(item, prior.start_date, prior.end_date) : null);
-            const section = (items) => {
-                if (!items.length) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
-                return items.map(i =>
-                    `<tr><td style="padding-left:24px;">
-                        <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                           onclick="${drillCall(i, range.start, range.end)}">${escapeHtml(i.account_label || i.account_name)}</a>
-                        </td>${figures(i.amount, i.prior_amount, i)}</tr>`
-                ).join("");
+            // Sub-accounts beneath their parents, a total per family (#416):
+            // the server's tree for the section, else its flat lines.
+            const section = (items, key) => {
+                const rows = (data.tree || {})[key];
+                if (!items.length && !(rows && rows.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+                return ReportsPage._treeRows(rows || items, {
+                    blank: '<td></td>'.repeat(cols - 1),
+                    cells: (r) => figures(r.amount, r.prior_amount, r.kind === 'total' ? null : r),
+                    call: (r) => drillCall(r, range.start, range.end),
+                });
             };
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, key, style) => `<tr style="${style}"><td>${label}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
@@ -1096,19 +1098,44 @@ const ReportsPage = {
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head(T('Income'))}
-                        ${section(data.income)}
+                        ${section(data.income, 'income')}
                         ${total(T('Total Income'), 'total_income', sub)}
                         ${head('Cost of Goods Sold')}
-                        ${section(data.cogs)}
+                        ${section(data.cogs, 'cogs')}
                         ${total('Gross Profit', 'gross_profit', sub)}
                         ${head('Expenses')}
-                        ${section(data.expenses)}
+                        ${section(data.expenses, 'expenses')}
                         ${total('Total Expenses', 'total_expenses', sub)}
                         ${ReportsPage._plOther(data, head, section, (label, key) => total(label, key, sub))}
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+    },
+
+    // A statement section's rows, sub-accounts indented beneath their
+    // parents (#416): the server's tree rows (kind account / heading /
+    // direct / total, with a depth) or a flat list. `opts.cells(r)` writes
+    // a row's amount cells, `opts.call(r)` its drill-down onclick (escaped),
+    // `opts.blank` the empty cells of a heading. A family's total is not a
+    // link: it is several accounts.
+    _treeRows(rows, opts) {
+        return rows.map(r => {
+            const depth = r.depth || 0;
+            const pad = 24 + 18 * depth;
+            const label = escapeHtml(r.label || r.account_label || r.account_name);
+            const link = (text) => r.account_id && opts.call
+                ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${opts.call(r)}">${text}</a>`
+                : text;
+            if (r.kind === 'heading') {
+                return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${opts.blank}</tr>`;
+            }
+            if (r.kind === 'total') {
+                return `<tr class="pl-family-total" style="font-weight:600;"><td style="padding-left:${pad}px;">${label}</td>${opts.cells(r)}</tr>`;
+            }
+            const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+            return `<tr><td style="padding-left:${pad}px;">${link(text)}</td>${opts.cells(r)}</tr>`;
+        }).join('');
     },
 
     // Other Income / Other Expense below Net Operating Income (#390): only
@@ -2472,12 +2499,16 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
         const where = $('#class-pl-where');
         if (where) where.textContent = at >= 0 ? `${data.class_name}: ${at + 1} of ${order.length}` : `${data.class_name}: nothing in this period`;
         const args = (...xs) => xs.map(x => JSON.stringify(x)).join(',');
-        const section = items => items.length
-            ? items.map(i => {
-                const call = escapeHtml(`ReportsPage.openDrillDown(${args(i.account_id, i.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`);
-                return `<tr><td style="padding-left:24px;"><a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${call}">${escapeHtml(i.account_name)}</a></td><td class="amount">${formatCurrency(i.amount)}</td></tr>`;
-            }).join('')
-            : '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+        // sub-accounts beneath their parents, as on the P&L (#416)
+        const section = (items, key) => {
+            const rows = (data.tree || {})[key];
+            if (!items.length && !(rows && rows.length)) return '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+            return ReportsPage._treeRows(rows || items, {
+                blank: '<td></td>',
+                cells: (r) => `<td class="amount">${formatCurrency(r.amount)}</td>`,
+                call: (r) => escapeHtml(`ReportsPage.openDrillDown(${args(r.account_id, r.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`),
+            });
+        };
         const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${formatCurrency(amount)}</td></tr>`;
         return `<div id="class-pl-body">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -2489,13 +2520,13 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
                     <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
-                    ${section(data.income)}
+                    ${section(data.income, 'income')}
                     ${subtotal(T('Total Income'), data.total_income)}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
-                    ${section(data.cogs)}
+                    ${section(data.cogs, 'cogs')}
                     ${subtotal('Gross Profit', data.gross_profit)}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
-                    ${section(data.expenses)}
+                    ${section(data.expenses, 'expenses')}
                     ${subtotal('Total Expenses', data.total_expenses)}
                     ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
@@ -2859,7 +2890,18 @@ ReportsPage.statementOfActivities = async function (prefill) {
         const pt = cmp && d.prior ? d.prior.totals : {};
         const cols = cmp ? 6 : 4;
         const line = (label, w, r, tot, prior, style = '') => `<tr style="${style}"><td>${label}</td><td class="amount">${formatCurrency(w)}</td><td class="amount">${formatCurrency(r)}</td><td class="amount">${formatCurrency(tot)}</td>${cmp ? `<td class="amount">${formatCurrency(prior || 0)}</td><td class="amount">${formatCurrency((tot || 0) - (prior || 0))}</td>` : ''}</tr>`;
-        const rows = (items) => items.length ? items.map(i => line(`<span style="padding-left:24px">${escapeHtml(i.account_name)}</span>`, i.without, i.with, i.total, i.prior_total)).join('') : `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+        // sub-accounts beneath their parents, a total per family (#416)
+        const rows = (items, key) => {
+            const tree = (d.tree || {})[key];
+            if (!items.length && !(tree && tree.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+            return (tree || items).map(r => {
+                const pad = 24 + 18 * (r.depth || 0);
+                const label = escapeHtml(r.label || r.account_name);
+                if (r.kind === 'heading') return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${'<td></td>'.repeat(cols - 1)}</tr>`;
+                const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+                return line(`<span style="padding-left:${pad}px; display:inline-block;">${text}</span>`, r.without, key === 'expenses' ? 0 : r.with, r.total, r.prior_total, r.kind === 'total' ? 'font-weight:600;' : '');
+            }).join('');
+        };
         const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
         return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">${ReportsPage.compareToggleHtml('statement_of_activities')}${ReportsPage._exportButtons('statement-of-activities', qs)}</div>
             <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}</p>
@@ -2867,11 +2909,11 @@ ReportsPage.statementOfActivities = async function (prefill) {
                 <thead><tr><th scope="col"></th><th scope="col" class="amount">Without Donor Restrictions</th><th scope="col" class="amount">With Donor Restrictions</th><th scope="col" class="amount">Total</th>${cmp ? '<th scope="col" class="amount">Prior year</th><th scope="col" class="amount">Change</th>' : ''}</tr></thead>
                 <tbody>
                     ${head('Revenue &amp; Support')}
-                    ${rows(d.revenue)}
+                    ${rows(d.revenue, 'revenue')}
                     ${line('Total Revenue &amp; Support', t.revenue_without, t.revenue_with, t.revenue, pt.revenue, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Net assets released from restrictions', d.releases.without, d.releases.with, 0, 0)}
                     ${head('Expenses')}
-                    ${rows(d.expenses)}
+                    ${rows(d.expenses, 'expenses')}
                     ${line('Total Expenses', t.expenses, 0, t.expenses, pt.expenses, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Change in Net Assets', t.change_without, t.change_with, t.change_total, pt.change_total, 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                 </tbody>

@@ -53,7 +53,13 @@ from app.services.classes_service import (
     uncategorized_class_id,
 )
 from app.services.csv_export import _SafeWriter
-from app.services.statement_layout import bs_group_totals, bs_groups
+from app.services.statement_layout import (
+    account_chart,
+    account_path,
+    bs_group_totals,
+    bs_groups,
+    family_rows,
+)
 
 _DEBIT_NORMAL = {AccountType.ASSET, AccountType.EXPENSE, AccountType.COGS}
 _EXPENSE_TYPES = (AccountType.EXPENSE, AccountType.COGS)
@@ -323,23 +329,58 @@ def statement_of_activities(db: Session, start: date, end: date) -> dict:
     total_expenses = sum((Decimal(str(r["amount"])) for r in expense_rows), ZERO)
     change_without = inc_without + releases - total_expenses
     change_with = inc_with - releases
-    return {
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
-        "revenue": revenue,
-        "releases": {"without": _f(releases), "with": _f(-releases), "total": 0.0},
-        "expenses": expenses,
-        "totals": {
-            "revenue_without": _f(inc_without),
-            "revenue_with": _f(inc_with),
-            "revenue": _f(inc_without + inc_with),
-            "releases": _f(releases),
-            "expenses": _f(total_expenses),
-            "change_without": _f(change_without),
-            "change_with": _f(change_with),
-            "change_total": _f(change_without + change_with),
+    return _activities_layout(
+        db,
+        {
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "revenue": revenue,
+            "releases": {"without": _f(releases), "with": _f(-releases), "total": 0.0},
+            "expenses": expenses,
+            "totals": {
+                "revenue_without": _f(inc_without),
+                "revenue_with": _f(inc_with),
+                "revenue": _f(inc_without + inc_with),
+                "releases": _f(releases),
+                "expenses": _f(total_expenses),
+                "change_without": _f(change_without),
+                "change_with": _f(change_with),
+                "change_total": _f(change_without + change_with),
+            },
         },
+    )
+
+
+def _activities_layout(db: Session, data: dict) -> dict:
+    """Sub-accounts beneath their parents (#416): `tree` holds the revenue
+    and expense lines as printed rows, a family total under each parent,
+    for the screen and the PDF; each line also carries its full
+    `account_path` ("Travel: Hotel") for the flat CSV. A parent of the
+    other side (an expense under an income account) does not gather it."""
+    chart = account_chart(db)
+    side = {
+        aid: ("revenue" if atype == AccountType.INCOME else "expenses")
+        for aid, atype in db.query(Account.id, Account.account_type)
+        if atype in (AccountType.INCOME,) + _EXPENSE_TYPES
     }
+    keys = ("without", "with", "total")
+    if data.get("compare") == "prior_year":
+        keys += ("prior_total", "change")
+    data["tree"] = {}
+    for key in ("revenue", "expenses"):
+        for line in data[key]:
+            line["account_path"] = (
+                account_path(chart, line["account_id"]) or line["account_name"]
+            )
+        data["tree"][key] = family_rows(
+            data[key],
+            chart,
+            lambda aid, key=key: side.get(aid) == key,
+            keys,
+            lambda aid: (chart[aid]["number"], chart[aid]["name"]),
+            numbered=False,
+        )
+    return data
 
 
 # ── Fund balances ────────────────────────────────────────────────────────
@@ -611,7 +652,7 @@ def activities_csv(data: dict) -> str:
     for r in data["revenue"]:
         rows.append(
             [
-                f"  {r['account_name']}",
+                f"  {r.get('account_path') or r['account_name']}",  # #416
                 f"{r['without']:.2f}",
                 f"{r['with']:.2f}",
                 f"{r['total']:.2f}",
@@ -641,7 +682,7 @@ def activities_csv(data: dict) -> str:
     for r in data["expenses"]:
         rows.append(
             [
-                f"  {r['account_name']}",
+                f"  {r.get('account_path') or r['account_name']}",  # #416
                 f"{r['without']:.2f}",
                 "0.00",
                 f"{r['total']:.2f}",
@@ -796,7 +837,7 @@ def statement_of_activities_compared(db: Session, start: date, end: date) -> dic
         "releases": prior["releases"],
     }
     cur["compare"] = "prior_year"
-    return cur
+    return _activities_layout(db, cur)
 
 
 def functional_expenses_compared(db: Session, start: date, end: date) -> dict:

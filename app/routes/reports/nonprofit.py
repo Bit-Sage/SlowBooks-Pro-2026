@@ -166,17 +166,34 @@ def _soa_section(data: dict) -> dict:
     def head(label):
         return {"cells": [label] + [""] * (5 if cmp else 3), "style": "subtotal"}
 
+    tree = data.get("tree") or {}
+
+    def accounts(key, with_column: bool):
+        """The section's rows, sub-accounts beneath their parents with a
+        total per family (#416), else its flat lines."""
+        out = []
+        for r in tree.get(key) or [
+            dict(i, kind="account", depth=0, label=i["account_name"]) for i in data[key]
+        ]:
+            indent = r["depth"] + 1
+            if r["kind"] == "heading":
+                row = head(f"  {r['label']}")
+                row.update(style="group", indent=indent)
+            else:
+                row = line(
+                    f"  {r['label']}",
+                    r["without"],
+                    r["with"] if with_column else 0,
+                    r["total"],
+                    r.get("prior_total"),
+                    "subtotal" if r["kind"] == "total" else None,
+                )
+                row["indent"] = indent
+            out.append(row)
+        return out
+
     rows = [head("Revenue & Support")]
-    for r in data["revenue"]:
-        rows.append(
-            line(
-                f"  {r['account_name']}",
-                r["without"],
-                r["with"],
-                r["total"],
-                r.get("prior_total"),
-            )
-        )
+    rows.extend(accounts("revenue", True))
     rows.append(
         line(
             "Total Revenue & Support",
@@ -192,16 +209,7 @@ def _soa_section(data: dict) -> dict:
         line("Net assets released from restrictions", rl["without"], rl["with"], 0, 0)
     )
     rows.append(head("Expenses"))
-    for r in data["expenses"]:
-        rows.append(
-            line(
-                f"  {r['account_name']}",
-                r["without"],
-                0,
-                r["total"],
-                r.get("prior_total"),
-            )
-        )
+    rows.extend(accounts("expenses", False))
     rows.append(
         line(
             "Total Expenses",
