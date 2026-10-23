@@ -512,8 +512,10 @@ def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(g
     splits = None
     if data.splits:
         # a split entry (#330): every line's account, the amounts adding up
-        # to the entry's with its sign, no bank or card account among them
-        # (a transfer is one line, never a split)
+        # to the entry's, no bank or card account among them (a transfer is
+        # one line, never a split). A line may go the other way from the
+        # entry (#387): a processor's fee on a deposit, a refund netted
+        # against a check. A line of zero says nothing and is refused.
         splits = []
         for part in data.splits:
             cat = (
@@ -534,17 +536,17 @@ def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(g
                     status_code=400,
                     detail="A split line cannot post to the account itself",
                 )
+            if _q(part.amount) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A split line of 0.00 posts nothing; enter its share or remove the line",
+                )
             splits.append((cat, part.amount, part.description))
         total = sum((amt for _, amt, _ in splits), Decimal("0"))
         if _q(total) != _q(data.amount):
             raise HTTPException(
                 status_code=400,
                 detail=f"The split lines come to {_q(total):,.2f} and the entry is {_q(data.amount):,.2f}; they must agree",
-            )
-        if any((amt > 0) != (data.amount > 0) for _, amt, _ in splits if amt != 0):
-            raise HTTPException(
-                status_code=400,
-                detail="Every split line takes the entry's sign (money out negative, money in positive)",
             )
         category = splits[0][0]
     else:

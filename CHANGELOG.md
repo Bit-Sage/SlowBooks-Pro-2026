@@ -290,6 +290,20 @@ number, in a panel under the picker; the parent list leaves out the control
 accounts the software posts to by number. Added, the account is in every
 picker on the page (the split lines' too), chosen, and the cursor moves on
 to the amount or the memo. No server change.
+**A register deposit splits like a check, with a fee line** (#387, from a
+bookkeeper's notes). A card processor pays over the gross it collected less
+its fee, and only the net reaches the bank; a check could be split across
+lines since 2.23.5, a deposit could not, so it never matched the statement.
+A split line may now go the other way from its entry: the dialog's split
+table has a **Taken out** box per line, so the fee is typed as the positive
+number the statement shows, and a 97.00 deposit is Income 100.00, Bank
+Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
+3, DR bank 97). A ticked line always runs opposite the entry, whichever way
+the entry goes, so the same box on a check is a refund netted against it (a
+−500 check paying Insurance 620 less a 120 refund), and the check's printed
+stub lists that refund as a negative line so the stub still totals the
+check. On the API each split line is signed on its own, and a line of 0.00
+is refused rather than dropped.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

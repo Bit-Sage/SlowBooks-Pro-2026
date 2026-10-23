@@ -51,6 +51,13 @@ closed it.
 **+ Entry** posts a register entry: date, amount (sign per the rule), payee,
 check/ref number, **category** (required — the other side of the entry) and
 memo. A category that is itself a bank or card account makes it a transfer.
+"Split this entry…" takes an account and amount per line and posts one
+entry with several lines (a check that pays several things, a loan
+payment's principal and interest); a deposit splits the same way, and a
+line ticked **Taken out** goes the other way from the entry, so a card
+processor's deposit is the gross as income, the fee as an expense, and the
+net the bank got (`splits` on the API, each line signed; a line against the
+entry's sign is the fee or a refund).
 Register entries, transfers and card charges have **Void** (a mirror-image
 reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
@@ -71,7 +78,9 @@ selects it.
 
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,
-job_id?}` → the journal entry. `GET /api/banking/check-register?account_id=`
+job_id?, splits?: [{category_account_id, amount, description?}]}` → the
+journal entry (the split lines add up to `amount`; none is zero; no bank or
+card account among them). `GET /api/banking/check-register?account_id=`
 is the register (`start_date`/`end_date` optional; an opening balance is
 carried in for a range).
 

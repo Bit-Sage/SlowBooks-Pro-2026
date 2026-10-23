@@ -845,8 +845,8 @@ const BankingPage = {
                         <input name="description"></div>
                     ${classGroup}
                     <div class="form-group full-width" id="entry-splits" style="display:none;">
-                        <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things)</span></label>
-                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
+                        <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things, a card processor's deposit as the gross with the fee taken out)</span></label>
+                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Taken out</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
                         <tbody id="entry-split-rows"></tbody></table>
                         <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
                             <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.addSplitRow()">+ Line</button>
@@ -867,7 +867,13 @@ const BankingPage = {
 
     // Splits (#330): the Category becomes the first line and more lines
     // take their share; the note says what is left to place. Posted as one
-    // entry with several lines, as the API's `splits`.
+    // entry with several lines, as the API's `splits`. A line can go the
+    // other way from the entry (#387): "Taken out" on a line makes it run
+    // opposite the entry's direction, so a card processor's fee is typed as
+    // the positive number the statement shows and the deposit's lines are
+    // the gross income and the fee, adding up to the net the bank got. The
+    // same box on a check is a refund netted against it. Only the magnitude
+    // typed counts, so the line's own sign (620 or −620) does not matter.
     // The table is shown and hidden by style, not the hidden attribute:
     // .form-group's display:flex won over `hidden`, so the lines showed
     // before "Split this entry…" and what was typed there did not count
@@ -893,18 +899,38 @@ const BankingPage = {
         body.insertAdjacentHTML('beforeend', `<tr>
             <td><select class="split-cat" aria-label="Split line ${n} account" data-no-search><option value="">Select…</option>${BankingPage._splitCats || ''}</select></td>
             <td class="amount"><input class="split-amt" type="number" step="0.01" aria-label="Split line ${n} amount" oninput="BankingPage.splitNote()" style="width:100px; text-align:right;"></td>
+            <td style="text-align:center;"><input class="split-fee" type="checkbox" aria-label="Split line ${n} taken out" title="A fee the processor kept, or a refund netted against a check: this line goes the other way from the entry" onchange="BankingPage.splitNote()"></td>
             <td><input class="split-memo" type="text" aria-label="Split line ${n} memo"></td>
             <td><button type="button" class="btn btn-sm btn-secondary" aria-label="Remove split line ${n}" onclick="this.closest('tr').remove(); BankingPage.splitNote();">×</button></td>
         </tr>`);
+    },
+    // The entry's direction: +1 for money in (a deposit), −1 for money out
+    // (a check). Nothing typed yet counts as +1. A split line follows this
+    // direction, and "Taken out" flips it (#387).
+    _entrySign(form) {
+        const amt = parseFloat(form.amount.value || '0') || 0;
+        return amt < 0 ? -1 : 1;
+    },
+    // A split line's signed amount. A plain line runs the entry's direction;
+    // "Taken out" makes it go the opposite way — a fee on a deposit, or a
+    // refund on a check. Only the magnitude typed is used, so 620 and −620
+    // both read as the entry's side. Null when nothing was typed.
+    _splitAmount(row, sign) {
+        const typed = row.querySelector('.split-amt').value;
+        if (typed === '') return null;
+        const mag = Math.abs(parseFloat(typed) || 0);
+        const dir = row.querySelector('.split-fee').checked ? -sign : sign;
+        return dir * mag;
     },
     splitNote() {
         const note = document.getElementById('entry-split-note');
         const form = note ? note.closest('form') : null;
         if (!note || !form) return;
         const total = parseFloat(form.amount.value || '0') || 0;
-        const placed = [...form.querySelectorAll('.split-amt')].reduce((sum, i) => sum + (parseFloat(i.value || '0') || 0), 0);
+        const sign = BankingPage._entrySign(form);
+        const placed = [...form.querySelectorAll('#entry-split-rows tr')].reduce((sum, r) => sum + (BankingPage._splitAmount(r, sign) || 0), 0);
         const left = Math.round((total - placed) * 100) / 100;
-        note.textContent = total ? (left === 0 ? `Every cent of ${formatCurrency(total)} is placed` : `${formatCurrency(left)} of ${formatCurrency(total)} still to place (each line takes the entry's sign)`) : 'Enter the amount first';
+        note.textContent = total ? (left === 0 ? `Every cent of ${formatCurrency(total)} is placed` : `${formatCurrency(left)} of ${formatCurrency(total)} still to place (a fee or a refund goes the other way: tick Taken out)`) : 'Enter the amount first';
     },
 
     // The split lines to post. A line with an amount but no account, or an
@@ -915,6 +941,7 @@ const BankingPage = {
     _splitLines(form) {
         if (!BankingPage._splitsOpen()) return null;
         const rows = [...form.querySelectorAll('#entry-split-rows tr')];
+        const sign = BankingPage._entrySign(form);
         const splits = [];
         rows.forEach((r, i) => {
             const account = r.querySelector('.split-cat').value;
@@ -924,7 +951,7 @@ const BankingPage = {
             if (amount === '') throw new Error(`Split line ${i + 1} has an account but no amount. Enter its share, or remove the line.`);
             splits.push({
                 category_account_id: parseInt(account, 10),
-                amount,
+                amount: BankingPage._splitAmount(r, sign).toFixed(2),
                 description: r.querySelector('.split-memo').value || null,
             });
         });
