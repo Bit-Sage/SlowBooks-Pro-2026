@@ -1,7 +1,10 @@
 # Account detail types — design (#390)
 
-Status: DESIGN 2026-10-22. Written against the 2.26.0 tree. Nothing here is
-committed product behavior. Issue #390, from Kim Morden Bookkeeping's notes:
+Status: DESIGN 2026-10-22; decisions settled by the owner on PR #403
+(2026-10-22, see "Decisions" at the end). PR 1 (the field) is built for
+2.27.0 — "PR 1 as built" below records where it departs from the text
+here. PR 2 (the statements) is not started; nothing in the Balance Sheet,
+Profit & Loss and cash flow sections is product behavior yet. Issue #390, from Kim Morden Bookkeeping's notes:
 a CPA reading the Balance Sheet expects current and long-term liabilities
 grouped apart, and the chart cannot say which is which.
 
@@ -423,29 +426,109 @@ Shipping both at once would put a regrouped Balance Sheet in front of a
 CPA on the same day the defaults are guessed. Two PRs keeps the guess and
 the consequence a release apart.
 
-## Open questions for Trent
+## Decisions (settled on PR #403, 2026-10-22)
 
-1. **Loan default.** The migration sends the seeded 2400 Loan Payable to
-   Long Term Liability. Kim's clients' loans are mostly multi-year, but a
-   line of credit in the same account is current. Agree LTL as the default,
-   with the chart page as the correction?
-2. **More than one AR / AP account.** QuickBooks allows several Accounts
-   Receivable accounts; the posting code here only ever uses 1100 / 2000.
-   Allow the `accounts_receivable` / `accounts_payable` detail types on
-   other accounts (they print under Current Assets / Current Liabilities
-   either way) or restrict them to the control numbers?
-3. **The grids.** Leave P&L by Class / by Job on base type (their "Total
-   Income" then includes other income while the P&L's does not), or add
-   Other Income / Other Expense rows to `_pl_pivot` in PR 2 so the three
-   reports tie line for line? The second is a day's work and the tests
-   already compare the grid to the P&L.
-4. **Net Operating Income row.** Always print it, or only when there is
-   something in Other Income / Other Expense? Always is what QuickBooks
-   does; only-when-needed keeps most companies' P&L exactly as it is.
-5. **`bank_kind`.** Keep it as a column kept consistent with the detail
-   type (this note), or derive it in PR 1 and drop the column in a later
-   release? Keeping it means one more pair to validate; deriving it means
-   touching ten JS modules now.
-6. **Accumulated depreciation.** Typed Fixed Asset, as QuickBooks does, so
-   it nets inside the Fixed Assets group — or its own contra line? The
-   cash flow report still needs to tell it apart (by name today).
+1. **Loan default.** The seeded 2400 Loan Payable is a Long Term
+   Liability; the chart page is where a line of credit is corrected.
+2. **AR / AP** detail types only on 1100 and 2000, refused elsewhere.
+   More than one would need an aging behind each, and an IIF export would
+   write AR / AP lines with no name, which QuickBooks refuses.
+3. **The grids** (P&L by Class / by Job) get Other Income / Other Expense
+   rows in PR 2, so the three reports tie line for line.
+4. **Net Operating Income** prints only when Other Income or Other Expense
+   has something (PR 2).
+5. **`bank_kind`** stays a column, kept consistent with the detail type.
+6. **Accumulated depreciation** is typed Fixed Asset and nets inside the
+   group; the cash flow finds it through the register and by name.
+7. **All fifteen control accounts** have their detail type locked, not
+   only 1100 / 2000 (4000 or 4800 as Other Income, 6120 / 6150 as Other
+   Expense would move posting defaults out of Gross Profit in PR 2; 2100
+   could lose Credit Card with its bank kind).
+
+Review folds, also settled: the default lives on the model (the ten-odd
+paths that build `Account(...)` directly would otherwise hit NOT NULL),
+6999 and 7999 are Other Expense; `IIF_TO_ACCOUNT_TYPE`'s two uses in
+`iif_import.py` (creating accounts, validating types) both move to the
+detail type; NONPOSTING is skipped, not imported as an asset; the backfill
+uses the fixed-asset register and the cash flow's name rules so no account
+moves into or out of working capital; the IIF export reads the inverse
+table and emits CCARD.
+
+## PR 1 as built (2.27.0)
+
+Where the build departs from the proposal above, and why:
+
+- **Storage.** `accounts.detail_type` is a `String(30)` holding the value
+  (`"long_term_liability"`), like `bank_kind`, not a database enum: no
+  PostgreSQL type to create and drop per company file.
+- **The rules live in one function**, `detail_type_problem` in
+  `app/models/accounts.py` (pair with the type; Bank / Credit Card ⇔
+  `bank_kind`; AR / AP on 1100 / 2000 only; a control number takes
+  `default_detail_type` for its type, bank kind and number). The route
+  words its 400s from it; `_check_detail_type` became `_create_detail_type`
+  / `_update_detail_type` in `routes/accounts.py`, after `_check_bank_kind`.
+- **The model default** is a `before_insert` / `before_update` hook
+  (`_settle_detail_type`): a missing or no-longer-fitting detail type
+  becomes the default; a sub-account built or re-parented directly takes
+  its parent's when that fits (QuickBooks' own rule). The API has already
+  refused what it refuses, so the hook acts only on the direct paths
+  (importers, late fees, FX, disposal, job costing, benefits, seeds). The
+  FX (6999) and disposal (7999) accounts are created as Other Expense.
+- **Update without `detail_type`** keeps the current one while it still
+  fits; a type or bank-kind change it no longer fits resets it to the
+  default; a new parent's is taken. Control accounts: any change of the
+  resulting detail type is refused, so 2100 cannot drop its bank kind.
+- **A parent's change goes down** to the sub-accounts that shared its old
+  detail type; one that cannot take the new one (a card under a plain
+  folder, a type change the children cannot follow) refuses the change
+  and is named. Changing the type of a parent whose sub-accounts share its
+  detail type is therefore refused now, where it was allowed before.
+- **The backfill** reproduces `cash_flow._place` instead of matching the
+  seeded number + name pairs for assets and liabilities: the fifteen
+  control accounts first take what the API then locks (1100 AR, 2000 AP,
+  Bank / Credit Card with a bank kind, else the type's default — a 2000 or
+  2200 renamed like a loan would be the one control account to move, on
+  purpose); then bank kind; the register's asset and accumulated-depreciation accounts and the
+  `_ACCUMULATED` name → Fixed Asset; a four-digit 1xxx number below 1500 →
+  Other Current Asset whatever the name, 1500–1999 → Fixed Asset when
+  `_FIXED_ASSET` matches the name, else Other Asset; unnumbered and named
+  like equipment → Fixed Asset; a liability matching `_LONG_TERM_DEBT` →
+  Long Term Liability. So a renamed 1500 is an Other Asset (still
+  investing), not the default. 4900 Other Income, 6999 Exchange Gain/Loss
+  and 7999 Gain/Loss on Asset Disposal by number and name. A sub-account
+  takes its parent's only when it fell to its type's default and the
+  parent's is not Bank / Credit Card / AR / AP; the one move out of
+  working capital that allows (a default-typed child under a Fixed Assets
+  folder) is the right one, and nothing moves into it. The regexes are
+  copied into the revision so it never changes; a test pins them equal to
+  `cash_flow.py`'s while that file still uses them.
+- **Importers.** `IIF_TO_DETAIL_TYPE` is the table; `IIF_TO_ACCOUNT_TYPE`
+  stays as a derived name for the base-type match. The other dialects keep
+  their base-type maps and gain a small detail map beside each; the shared
+  engine passes `detail_type` through, and the model falls back where it
+  does not fit (an AR away from 1100, a "bank" word with no bank kind).
+  The IIF import notes any account whose detail type differs from the
+  file's, or that came in as something else.
+- **Chart page.** `GET /api/accounts/detail-types` gives the picker its
+  list (label, base type, `control_only` for AR / AP), so the JS keeps no
+  copy. The picker sets `account_type` and `bank_kind` from the choice.
+- **Chart CSV import** reads a Detail type column (label or value), and a
+  Type word that names a detail type ("fixed asset") sets it; a detail type
+  contradicting the Type column is a row error.
+
+## Open items (not settled; conservative choice taken)
+
+- **QBO report import, "Cost of Goods Sold" → `expense`.** Left as it is:
+  making it `cogs` moves an imported company's costs above Gross Profit, a
+  statement change, which PR 1 must not make. Decide with PR 2.
+- **Creating or editing a fixed-asset type** does not set its accounts'
+  detail type. The register's accounts are Fixed Asset after the backfill;
+  one chosen later keeps whatever it has.
+- **Words left at the default:** Wave "Loss on foreign exchange" (expense,
+  not Other Expense), Zoho "Other Liability" (current, not long-term). Each
+  is ambiguous without a real file.
+- **Bank / card words in Xero, Sage, Zoho, MYOB** do not set `bank_kind`
+  today, so they cannot be Bank / Credit Card here either; they take the
+  default. Marking them registers is a behavior change of its own.
+- **The chart CSV template** (`app/static/downloads/`) is unchanged: it is
+  also served by the website, and the column is optional.

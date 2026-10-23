@@ -5,6 +5,45 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.27.0
+
+**Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
+account now carries one of QuickBooks' fifteen account types beside its
+type: Bank, Accounts Receivable, Other Current Asset, Fixed Asset, Other
+Asset; Accounts Payable, Credit Card, Other Current Liability, Long Term
+Liability; Equity; Income, Other Income; Cost of Goods Sold; Expense, Other
+Expense. The account form has one picker, grouped by type, and the Chart of
+Accounts lists each type's accounts under a heading per detail type, so a
+loan sitting among the current liabilities shows in the first scroll. The
+detail type cannot contradict the type, a bank or card account is Bank or
+Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
+fifteen control accounts keep theirs, and a sub-account shares its parent's
+(`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
+`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`).
+
+The upgrade fills the detail type in from where the cash flow statement
+already puts each account: the fixed-asset register's accounts, accumulated
+depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
+1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
+(the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
+Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
+accounts Other Expense. **No statement changes in this release** — the
+Balance Sheet and the Profit & Loss keep their layout until the next one.
+After upgrading, open Chart of Accounts and check the detail type of any
+loan, vehicle, equipment or long-term note; a line of credit kept in a loan
+account, for one, is current.
+
+The QuickBooks lists import keeps the type each account has in the file
+(FIXASSET, LTLIAB, EXINC…) and the IIF export writes it back, CCARD included:
+2400 Loan Payable went out as OCLIAB and 2500 Other Current Liabilities as
+LTLIAB, guessed from their numbers. Non-posting accounts (estimates,
+purchase orders) are skipped with a note rather than made assets, and an
+account already in the chart keeps its own detail type, the import naming
+any the file disagrees with. The Xero, Wave, Sage 50, Zoho Books, MYOB and
+QuickBooks Online imports keep their files' fixed-asset, long-term and
+other-income / other-expense types the same way; the chart CSV export has a
+Detail type column, and the chart import reads it.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
