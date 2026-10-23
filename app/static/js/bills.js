@@ -326,7 +326,7 @@ const BillsPage = {
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
                 <td><input class="line-rate" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
-                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.recalc()"></td>
+                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.amtChanged(this)"></td>
             </tr>`;
     },
 
@@ -348,6 +348,13 @@ const BillsPage = {
             // an item with no cost or price leaves the line an amount alone
             const price = PurchaseLines.price(item);
             row.querySelector('.line-rate').value = Number(price) ? price : '';
+            // A stock item is received as a quantity, so show the 1 it starts
+            // at rather than a blank box that is still received as 1 (#401
+            // review). An amount typed next prices it at 1 x amount.
+            if (item.track_inventory) {
+                const qtyBox = row.querySelector('.line-qty');
+                if (qtyBox && qtyBox.value === '') qtyBox.value = 1;
+            }
         }
         BillsPage.recalc();
     },
@@ -481,8 +488,9 @@ const BillsPage = {
     },
     // Typing a quantity on an amount-alone line (no rate yet) seeds the rate
     // from the amount, so the line prices at quantity x amount instead of
-    // zeroing. Clearing the quantity undoes the seed and the amount alone
-    // comes back. A rate the user typed is left as it is.
+    // zeroing: the amount typed first is read as the per-unit cost. Clearing
+    // the quantity undoes the seed and the amount alone comes back. A rate the
+    // user typed is left as it is.
     qtyChanged(input) {
         const row = input.closest('tr');
         const rateBox = row.querySelector('.line-rate');
@@ -490,12 +498,37 @@ const BillsPage = {
         if (input.value !== '') {
             if (rateBox && !rateBox.value && amtBox && amtBox.value) {
                 rateBox.value = amtBox.value;
-                rateBox.dataset.seeded = '1';
+                rateBox.dataset.seeded = 'qty';
             }
         } else if (rateBox && rateBox.dataset.seeded) {
-            amtBox.value = rateBox.value;
+            // Restore the amount alone: the typed line total when the amount
+            // seeded the rate, else the per-unit rate the quantity seeded.
+            amtBox.value =
+                rateBox.dataset.seeded === 'amt'
+                    ? rateBox.dataset.lineTotal || rateBox.value
+                    : rateBox.value;
             rateBox.value = '';
             delete rateBox.dataset.seeded;
+            delete rateBox.dataset.lineTotal;
+        }
+        BillsPage.recalc();
+    },
+    // Typing an amount on a line that already has a quantity (and no rate yet)
+    // reads the amount as the line total for those units, so the rate is
+    // amount / quantity — Qty 3 then Amount 30 gives Rate 10 and posts 3 x 10.
+    // Without this the line stayed unpriced and posted 1 x 30, dropping the
+    // quantity the box still showed (reviewer, #401). The typed total is kept
+    // so clearing the quantity brings it back whole. A line with no quantity
+    // is still the amount alone.
+    amtChanged(input) {
+        const row = input.closest('tr');
+        const rateBox = row.querySelector('.line-rate');
+        const qtyBox = row.querySelector('.line-qty');
+        const qty = qtyBox && qtyBox.value !== '' ? parseFloat(qtyBox.value) : 0;
+        if (input.value !== '' && qty > 0 && rateBox && !rateBox.value) {
+            rateBox.dataset.lineTotal = input.value;
+            rateBox.value = Number((parseFloat(input.value) / qty).toFixed(4));
+            rateBox.dataset.seeded = 'amt';
         }
         BillsPage.recalc();
     },

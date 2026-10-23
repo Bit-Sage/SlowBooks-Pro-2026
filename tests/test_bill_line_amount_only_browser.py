@@ -89,6 +89,94 @@ def test_typing_a_quantity_on_an_amount_alone_line_prices_it(
         page.close()
 
 
+def test_typing_an_amount_after_a_quantity_prices_the_line(
+    browser, company, books, client, seed_accounts
+):
+    """Qty first, then Amount with no Rate: the amount is the line total for
+    those units, so the rate is amount / qty (Qty 3, Amount 30 -> Rate 10) and
+    Save posts 3 x 10. Before this the line stayed unpriced and posted 1 x 30,
+    dropping the quantity the box still showed (reviewer, #401)."""
+    acct = seed_accounts["6000"].id
+    page, handled = _open(browser, company)
+    try:
+        _visit(page, handled, "#/bills")
+        page.evaluate("async () => { await BillsPage.showForm(); }")
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        # a saveable fresh bill: pick the vendor and the line's account
+        page.evaluate(
+            "() => { const s = document.getElementById('bill-vendor');"
+            f" s.value = '{books['vendor']}';"
+            " VendorQuickAdd.selected('bill-vendor'); }"
+        )
+        page.select_option("#bill-lines tr:nth-child(1) .line-account", str(acct))
+        page.fill("#bill-form [name=bill_number]", "QTY-THEN-AMT")
+
+        # Qty 3 alone leaves the line unpriced; the amount then prices it.
+        page.fill("#bill-lines tr:nth-child(1) .line-qty", "3")
+        settle(page, handled)
+        page.fill("#bill-lines tr:nth-child(1) .line-amt", "30")
+        settle(page, handled)
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-rate").input_value() == "10"
+        )
+        assert _amt(page, 1) == "30.00"
+        assert float(_total(page)) == 30.00
+
+        page.evaluate("() => document.getElementById('bill-form').requestSubmit()")
+        settle(page, handled)
+        page.wait_for_function(f"() => !({OPEN})()", timeout=5000)
+        saved = next(
+            b
+            for b in client.get("/api/bills").json()
+            if b["bill_number"] == "QTY-THEN-AMT"
+        )
+        assert saved["total"] == "30.00"
+        assert (saved["lines"][0]["quantity"], saved["lines"][0]["rate"]) == (
+            "3.00",
+            "10.00",
+        )
+    finally:
+        page.close()
+
+
+def test_a_fresh_stock_line_shows_the_quantity_one_it_is_received_as(
+    browser, company, books, client
+):
+    """Picking a stock item on a new line shows the quantity 1 it is received
+    as, rather than a blank Qty box that is still received as 1 (reviewer,
+    #401). The item here has no cost, so the Rate box stays empty — the case
+    the reviewer flagged."""
+    item_id = client.post(
+        "/api/items",
+        json={
+            "name": "Unpriced Widget",
+            "item_type": "product",
+            "track_inventory": True,
+        },
+    ).json()["id"]
+
+    page, handled = _open(browser, company)
+    try:
+        _visit(page, handled, "#/bills")
+        page.evaluate("async () => { await BillsPage.showForm(); }")
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        # a fresh line starts with Qty blank
+        assert page.locator("#bill-lines tr:nth-child(1) .line-qty").input_value() == ""
+        # pick the stock item: Qty shows 1, Rate stays empty (no cost)
+        page.select_option("#bill-lines tr:nth-child(1) .line-item", str(item_id))
+        settle(page, handled)
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-qty").input_value() == "1"
+        )
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-rate").input_value() == ""
+        )
+    finally:
+        page.close()
+
+
 def test_a_quantity_then_cleared_leaves_the_amount(browser, company, books, client):
     page, handled = _open(browser, company)
     try:
