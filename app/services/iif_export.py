@@ -33,7 +33,7 @@ from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
 from app.models.estimates import Estimate, EstimateLine
 from app.services.addresses import city_line
-from app.services.csv_export import _csv_safe
+from app.services.csv_export import _Identifier, _csv_safe
 from app.services.currency import convert_lines, to_home
 from app.services.iif_common import account_to_iif_type, item_to_iif_type
 
@@ -72,9 +72,11 @@ def _iif_text(value) -> str:
     export neutralises a cell: people edit IIF files in Excel (it is the
     documented way to fix one before import), and a customer named
     `=HYPERLINK(...)` would run there. The leading apostrophe makes it
-    text; the importer takes it off again. Only text goes through here —
-    an amount like -850.00 must stay a number."""
-    return _csv_safe(_iif_clean(value))
+    text; the importer takes it off again. Only names, memos and the like go
+    through here — never an amount (those are written as numbers directly) —
+    so a memo that reads "-0001" keeps its apostrophe rather than opening as
+    -1 if the file is edited in Excel (reviewer, #410)."""
+    return _csv_safe(_Identifier(_iif_clean(value)))
 
 
 # Letters with no Windows-1252 form and no accent to drop (NFKD leaves

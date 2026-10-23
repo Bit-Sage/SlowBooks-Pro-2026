@@ -6,6 +6,7 @@
 import csv
 from decimal import ROUND_HALF_UP, Decimal
 import io
+import re
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,34 @@ from app.models.invoices import Invoice
 from app.models.accounts import Account
 
 _FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+# A whole cell that is just a signed decimal is a number, not a formula:
+# -1234.56, -0.5, and the money_text form -$1,234.56 the reconciliation CSV
+# carries (thousands in strict groups of three). ASCII digits only. The
+# integer part is a single 0 or has no leading zero, so a reference like
+# -0001 is not taken for the number -1 (reviewer, #410).
+_PLAIN_NUMBER = re.compile(
+    r"[-+]?\$?(?:[0-9]{1,3}(?:,[0-9]{3})+|0|[1-9][0-9]*)(?:\.[0-9]+)?"
+)
+
+
+class _Identifier(str):
+    """A cell an exporter marks as an identifier — a phone or fax number, a
+    reference, an audit before/after snapshot — rather than an amount. A
+    formula lead is still neutralised, but a value that merely looks like a
+    number ("+15551234567", "-0001") keeps its apostrophe so a spreadsheet
+    shows it verbatim instead of 4.47911E+11 or -1 (reviewer, #410)."""
+
+    __slots__ = ()
+
+
+def _is_plain_number(value: str) -> bool:
+    """True when the whole cell is just a signed amount that should sum in a
+    spreadsheet (-1234.56, -$1,234.56). A leading + with no decimal point is
+    a phone or a code, not money, so it is not a plain number; a leading zero
+    is already excluded by the pattern (reviewer, #410)."""
+    if not _PLAIN_NUMBER.fullmatch(value):
+        return False
+    return not (value[0] == "+" and "." not in value)
 
 
 def _rate_text(value) -> str:
@@ -41,9 +70,14 @@ def _csv_safe(value: str) -> str:
     """Neutralize spreadsheet formula injection. A cell beginning with
     =, +, -, @, TAB, or CR is treated as a formula by Excel/Sheets; prefixing
     with an apostrophe forces plain text without changing the displayed value.
-    A customer named `=HYPERLINK(...)` otherwise executes on open."""
+    A customer named `=HYPERLINK(...)` otherwise executes on open.
+    A plain signed number ("-1234.56") is left alone so a loss still sums
+    (SlowBooks-Pro-Testing#101); "-1+1" or "-SUM(A1)" is still prefixed. An
+    _Identifier cell (a phone number, a reference) is always kept as text so
+    "+15551234567" does not open as 1.5551e10 (reviewer, #410)."""
     if value and value[0] in _FORMULA_LEADS:
-        return "'" + value
+        if isinstance(value, _Identifier) or not _is_plain_number(value):
+            return "'" + value
     return value
 
 
@@ -107,7 +141,7 @@ def export_customers(db: Session) -> str:
                 c.name,
                 c.company or "",
                 c.email or "",
-                c.phone or "",
+                _Identifier(c.phone or ""),
                 c.bill_address1 or "",
                 c.bill_city or "",
                 c.bill_state or "",
@@ -148,7 +182,7 @@ def export_vendors(db: Session) -> str:
                 v.name,
                 v.company or "",
                 v.email or "",
-                v.phone or "",
+                _Identifier(v.phone or ""),
                 v.address1 or "",
                 v.city or "",
                 v.state or "",
