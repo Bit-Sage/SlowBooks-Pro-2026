@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.27.0
 
 **Saved invoice messages, one the default, chosen on the invoice** (#392,
 from a bookkeeper's notes). The note that says how to pay — Zelle to this
