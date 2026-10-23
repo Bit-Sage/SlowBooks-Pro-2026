@@ -57,7 +57,8 @@ def _chart_index(db) -> dict:
 def _chain(chart: dict, account_id) -> list:
     """The account's ids from the root down, the account itself last."""
     path = []
-    while account_id in chart and len(path) < 32:
+    # Stops at a repeat: a parent loop saved before Testing #101 was refused.
+    while account_id in chart and account_id not in path and len(path) < 32:
         path.append(account_id)
         account_id = chart[account_id][2]
     return list(reversed(path))

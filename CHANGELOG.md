@@ -68,6 +68,18 @@ leading-zero reference like `-0001`. Nothing that goes through the IIF
 export's text path is an amount, so its names, memos and descriptions always
 stay text; the audit log's and closing-date-exceptions' before/after columns
 stay text as well.
+**An account can't become a sub-account of its own sub-account** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Only an account named as its
+own parent was refused: Vehicles under Truck with Truck already under
+Vehicles was saved, and the IIF export's full names recursed until they
+failed. The API that sets a parent refuses it now ("That would make Vehicles
+a sub-account of itself (through Truck).") at any depth — including a loop
+longer than the walk's safety cap, which used to slip through — a parent id
+that names no account is refused on create and edit, and a chart file whose
+rows name each other as parents leaves the closing link off with that
+sentence as the row's note, shown in the dry-run preview and when applied
+alike. The report paths and IIF names stop at a loop saved before this
+release. The same one walk now guards the cost-code tree too.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

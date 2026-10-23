@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account, AccountType
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
+from app.services.account_tree import MAX_DEPTH, loop_message
 from app.services.csv_export import strip_formula_guard
 
 # --- vocabulary -------------------------------------------------------------
@@ -580,6 +581,8 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
         else:
             entry["_parent"] = hit
 
+    _flag_parent_loops(db, plan)
+
     if replace:
         for a in existing:
             if a.id in matched or not a.is_active:
@@ -625,6 +628,72 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 }
             )
     return plan
+
+
+def _flag_parent_loops(db: Session, plan: Plan) -> None:
+    """A file whose rows name each other as parents (Testing #101) would make
+    an account a sub-account of itself. Walk the parent links the plan would
+    set — through new rows and existing accounts both — and leave off any that
+    closes a loop, noting it on the row. Runs at plan time, so the dry-run
+    preview shows the note, not only the applied import.
+
+    Links are considered in row order, as apply would set them, so whichever
+    link would close the loop is the one dropped and the rest stand."""
+
+    # the parent each entry would get, keyed by a node id stable across new
+    # rows (("new", row index)) and existing accounts (("existing", id))
+    def node_of(i: int, entry: dict):
+        if entry["action"] == "create":
+            return ("new", i)
+        if "existing_id" in entry:
+            return ("existing", entry["existing_id"])
+        return None
+
+    def name_of(node) -> str:
+        if node[0] == "new":
+            return plan.rows[node[1]]["name"]
+        acct = db.get(Account, node[1])
+        return acct.name if acct else "?"
+
+    accepted: dict[tuple, tuple] = {}  # node -> parent node, links that stand
+
+    def parent_of(node):
+        if node in accepted:
+            return accepted[node]
+        if node[0] == "existing":
+            acct = db.get(Account, node[1])
+            if acct and acct.parent_id:
+                return ("existing", acct.parent_id)
+        return None
+
+    for i, entry in enumerate(plan.rows):
+        hit = entry.get("_parent")
+        if not hit:
+            continue
+        node = node_of(i, entry)
+        parent = (hit[0], hit[1])
+        if node is None or parent == node:
+            entry.pop("_parent", None)  # self-parent: just not set
+            continue
+        # walk up from the proposed parent through the links already accepted;
+        # reaching this node, a repeat, or MAX_DEPTH means the link loops
+        cur, seen, looped = parent, set(), False
+        while cur is not None:
+            if cur == node:
+                looped = True
+                break
+            if cur in seen or len(seen) >= MAX_DEPTH:
+                looped = True  # a pre-existing loop, or a chain too deep
+                break
+            seen.add(cur)
+            cur = parent_of(cur)
+        if looped:
+            entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
+                loop_message(entry["name"], name_of(parent)) + " The link was left off."
+            )
+            entry.pop("_parent", None)
+        else:
+            accepted[node] = parent
 
 
 # --- applying ---------------------------------------------------------------
@@ -674,6 +743,8 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             continue
         else:
             continue
+        # Looping links were dropped at plan time (_flag_parent_loops), with
+        # the note already on the row; only safe links remain here.
         parent = entry.get("_parent")
         if parent:
             kind, ref = parent
