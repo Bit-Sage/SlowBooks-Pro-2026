@@ -94,37 +94,69 @@ def get_session_secret() -> str:
         return env_key
 
     key_path = Path(__file__).resolve().parents[2] / ".slowbooks-session.key"
-    if key_path.exists():
-        try:
-            existing = key_path.read_text(encoding="utf-8").strip()
-            if existing:
-                logger.info("session secret loaded from %s", key_path)
-                return existing
-        except OSError as exc:
-            logger.warning("could not read %s: %s", key_path, exc)
+    return _session_secret_from_file(key_path)
+
+
+def _session_secret_from_file(key_path: Path) -> str:
+    """The key in key_path, made there once if it isn't yet.
+
+    Several server processes can start at once (the Docker image runs two
+    uvicorn workers) and none finds the file on a first start. Each used to
+    write its own key and keep it, so a cookie signed by one worker was
+    refused by the other and people were signed out at random until a
+    restart. Now the first process to create the file wins (a hard link of
+    a finished temp file: atomic, and refused if the file exists), and every
+    other process reads that key.
+    """
+    existing = _read_key(key_path)
+    if existing:
+        logger.info("session secret loaded from %s", key_path)
+        return existing
 
     new_key = secrets.token_urlsafe(48)
-    persisted = False
     try:
         import tempfile
 
         fd, tmp = tempfile.mkstemp(dir=str(key_path.parent), prefix=".session-key-")
-        os.write(fd, new_key.encode())
-        os.close(fd)
+        try:
+            os.write(fd, new_key.encode())
+        finally:
+            os.close(fd)
         os.chmod(tmp, 0o600)
-        os.replace(tmp, str(key_path))
-        persisted = True
+        try:
+            os.link(tmp, str(key_path))
+            logger.info("new session secret written to %s", key_path)
+        except FileExistsError:
+            pass  # another process made it first: its key is the key
+        except OSError:
+            # no hard links here (some network or FAT folders): fall back
+            # to an exclusive create, which is as atomic for the winner
+            try:
+                fd2 = os.open(
+                    str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd2, "w", encoding="utf-8") as fh:
+                    fh.write(new_key)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except OSError as exc:
         logger.warning("could not persist session secret to %s: %s", key_path, exc)
-    if key_path.exists():
-        try:
-            existing = key_path.read_text(encoding="utf-8").strip()
-            if existing:
-                if persisted:
-                    logger.info("new session secret written to %s", key_path)
-                return existing
-        except OSError:
-            pass
+
+    # The winner's file is complete when it appears via link; after an
+    # O_EXCL create it may be empty for a moment, so wait briefly for it.
+    import time
+
+    for _ in range(50):
+        existing = _read_key(key_path)
+        if existing:
+            return existing
+        time.sleep(0.02)
     logger.warning(
         "session secret is NOT persisted -- it will be different every "
         "time the server restarts, which logs everyone out without "
@@ -133,6 +165,16 @@ def get_session_secret() -> str:
         key_path,
     )
     return new_key
+
+
+def _read_key(key_path: Path) -> str:
+    try:
+        return key_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        logger.warning("could not read %s: %s", key_path, exc)
+        return ""
 
 
 def password_is_set(db: Session) -> bool:

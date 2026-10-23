@@ -88,7 +88,7 @@ administer — no `pg_dump`, no containers, no background services.
 
 ## Option 0A: macOS desktop app
 
-**Recommended for Apple Silicon Macs running macOS 14 or newer.** No Docker,
+**Recommended for Apple Silicon Macs running macOS 15 or newer.** No Docker,
 Python, or database server is required.
 
 1. Download `SlowBooksPro-<version>-macos-arm64.dmg` from the

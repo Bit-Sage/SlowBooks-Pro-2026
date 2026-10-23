@@ -13,6 +13,8 @@
 # ============================================================================
 
 import os
+import platform
+import sys
 import time
 
 import httpx
@@ -70,6 +72,25 @@ def is_newer(remote: str, local: str) -> bool:
     return _parse(remote) > _parse(local)
 
 
+def _this_macos() -> str:
+    """The running macOS version ("15.1"), or "" anywhere else."""
+    if sys.platform != "darwin":
+        return ""
+    return platform.mac_ver()[0] or ""
+
+
+def runs_here(data: dict) -> bool:
+    """Whether the published release can run on this machine. latest.json
+    may name the lowest macOS it runs on (`macos_minimum`); a Mac below it
+    is not offered an update it could not open. Anywhere else, or with no
+    minimum named, every release runs."""
+    minimum = str(data.get("macos_minimum", "") or "").strip()
+    here = _this_macos()
+    if not minimum or not here:
+        return True
+    return _parse(here) >= _parse(minimum)
+
+
 @router.get("")
 async def system_info():
     return {
@@ -102,7 +123,12 @@ async def update_check():
             data = resp.json()
         remote = str(data.get("version", "")).strip()
         download_url = str(data.get("download_url", "")).strip()
-        if remote and download_url and is_newer(remote, __version__):
+        if (
+            remote
+            and download_url
+            and is_newer(remote, __version__)
+            and runs_here(data)
+        ):
             result = {
                 "update_available": True,
                 "latest_version": remote,

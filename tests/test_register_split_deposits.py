@@ -169,6 +169,51 @@ def test_a_check_with_a_refund_netted_against_it_balances(
     assert _balanced(db_session, r.json()["id"])
 
 
+def test_the_check_stub_lists_a_refund_as_a_negative_line(
+    client, db_session, seed_accounts
+):
+    # The print stub lists every category line, a credit (refund) as a
+    # negative amount, so the lines add up to the check (#387 review): a
+    # 620.00 expense less a 120.00 refund is a 500.00 check, not a 620.00
+    # stub with the refund dropped. This is register_check_data alone, no
+    # PDF, so it runs without WeasyPrint.
+    from app.routes.checks import register_check_data
+
+    bank, insurance, supplies = (
+        seed_accounts["1000"],
+        seed_accounts["6300"],
+        seed_accounts["6000"],
+    )
+    r = client.post(
+        "/api/banking/transactions",
+        json={
+            "account_id": bank.id,
+            "date": "2026-03-06",
+            "amount": "-500.00",
+            "check_number": "1042",
+            "splits": [
+                {"category_account_id": insurance.id, "amount": "-620.00"},
+                {
+                    "category_account_id": supplies.id,
+                    "amount": "120.00",
+                    "description": "credit for the returned order",
+                },
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    data = register_check_data(db_session, r.json()["id"])
+    by_name = {d["description"]: Decimal(str(d["amount"])) for d in data["details"]}
+    insurance_line = next(v for k, v in by_name.items() if k.startswith("Insurance"))
+    refund_line = next(
+        v for k, v in by_name.items() if "returned order" in k or k.startswith("Adver")
+    )
+    assert insurance_line == Decimal("620.00")
+    assert refund_line == Decimal("-120.00")
+    assert sum(by_name.values()) == Decimal("500.00")
+    assert Decimal(str(data["amount"])) == Decimal("500.00")
+
+
 def test_a_split_check_still_posts_as_before(client, db_session, seed_accounts):
     bank = seed_accounts["1000"]
     r = client.post(
@@ -213,13 +258,17 @@ def test_the_entry_dialog_splits_a_deposit_with_a_fee_line():
     # the split control is not gated on the sign of the amount
     assert "Split this entry…" in form
     assert "amount < 0" not in form and "amount > 0" not in form
-    # a "Taken out" box per line negates what was typed, so a fee is typed
-    # as the positive number the statement shows
+    # a "Taken out" box per line makes it go the other way from the entry,
+    # so a fee is typed as the positive number the statement shows
     assert '<th scope="col">Taken out</th>' in form
     assert 'class="split-fee" type="checkbox"' in form
-    assert "return row.querySelector('.split-fee').checked ? -n : n;" in form
+    # the line follows the entry's direction, flipped by "Taken out"; only
+    # the magnitude typed counts, so 620 and −620 read the same (#387 review)
+    assert "const dir = row.querySelector('.split-fee').checked ? -sign : sign;" in form
+    assert "return dir * mag;" in form
+    assert "return amt < 0 ? -1 : 1;" in form
     # the running "left to place" and the payload both use the signed line
-    assert "(BankingPage._splitAmount(r) || 0)" in form
-    assert "amount: BankingPage._splitAmount(r).toFixed(2)," in form
+    assert "(BankingPage._splitAmount(r, sign) || 0)" in form
+    assert "amount: BankingPage._splitAmount(r, sign).toFixed(2)," in form
     assert "each line takes the entry's sign" not in form
     assert "tick Taken out" in form
