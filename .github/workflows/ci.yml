@@ -170,7 +170,9 @@ jobs:
           # 128 with the Possible Duplicates report (#414): its browser
           # module, skipped like the other Playwright modules, and its PDF
           # test, skipped with the other PDF tests (no WeasyPrint stack)
-          MAX_SKIPS: "128"
+          # 129 with the review follow-up: the chunked id-query test in
+          # tests/test_possible_duplicates.py needs a Postgres server
+          MAX_SKIPS: "129"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
