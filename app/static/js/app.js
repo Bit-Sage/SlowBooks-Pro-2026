@@ -1285,7 +1285,7 @@ const App = {
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
-                        <select name="detail_type" aria-describedby="account-type-hint"${locked ? ' disabled' : ''}>
+                        <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint"${locked ? ' disabled' : ''}>
                             ${picker}
                         </select>
                         <span id="account-type-hint" class="hint">A bank or card account gets a register; a sub-account shares its parent's type.</span></div>
@@ -1435,9 +1435,18 @@ const App = {
         // The picker's choice sets the base type and the bank kind with it
         // (#390); a locked control account sends neither.
         if (data.detail_type) {
-            const opt = e.target.detail_type.selectedOptions[0];
-            data.account_type = opt.dataset.accountType;
-            data.bank_kind = ['bank', 'credit_card'].includes(data.detail_type) ? data.detail_type : null;
+            const sel = e.target.detail_type;
+            data.account_type = sel.selectedOptions[0].dataset.accountType;
+            // bank_kind only when the choice moves into or out of Bank /
+            // Credit Card: an untouched field must never clear a register's
+            // kind (the server refuses that for a register in use anyway)
+            const kinds = ['bank', 'credit_card'];
+            const was = sel.dataset.was || '';
+            if (kinds.includes(data.detail_type)) {
+                if (data.detail_type !== was) data.bank_kind = data.detail_type;
+            } else if (kinds.includes(was)) {
+                data.bank_kind = null;
+            }
         }
         try {
             if (id) { await API.put(`/accounts/${id}`, data); toast('Account updated'); }

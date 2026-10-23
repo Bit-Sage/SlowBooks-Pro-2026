@@ -64,12 +64,17 @@ def account_to_iif_type(acct: Account) -> str:
     import's table (#390). The number-range guess this replaced sent 2400
     Loan Payable out as OCLIAB and 2500 Other Current Liabilities as LTLIAB,
     and never wrote CCARD."""
-    from app.models.accounts import default_detail_type
+    from app.models.accounts import _enum, default_detail_type
 
-    detail = acct.detail_type or default_detail_type(
-        acct.account_type, acct.bank_kind, acct.account_number
-    )
-    return DETAIL_TYPE_TO_IIF[DetailType(detail)]
+    try:
+        detail = _enum(DetailType, acct.detail_type)  # value or NAME form
+    except ValueError:
+        detail = None  # a stray stored value: write what the type implies
+    if detail is None:
+        detail = default_detail_type(
+            acct.account_type, acct.bank_kind, acct.account_number
+        )
+    return DETAIL_TYPE_TO_IIF[detail]
 
 
 def item_to_iif_type(item: Item) -> str:

@@ -87,6 +87,12 @@ _TYPE_DEFAULT = {
 }
 # The bank kinds and the two sub-ledger control accounts pin a detail type.
 _BANK_KIND_DETAIL = {"bank": DetailType.BANK, "credit_card": DetailType.CREDIT_CARD}
+# Pinned to a bank kind or a control number: never handed down to a
+# sub-account. A sub-account of 1100, of a bank or of a card is checked on
+# its own detail type alone (the migration keeps the same set).
+PINNED_DETAIL_TYPES = frozenset(
+    {"bank", "credit_card", "accounts_receivable", "accounts_payable"}
+)
 # Accounts Receivable / Payable carry an aging and IIF names a customer or
 # vendor on their lines; the posting code keeps those on 1100 and 2000 only.
 _SUBLEDGER_NUMBER = {
@@ -240,15 +246,21 @@ def _settle_detail_type(connection, target, parent_changed: bool) -> None:
     """Keep detail_type set and consistent on every ORM write: the API has
     already checked and refused, so this only acts on the paths that build
     or change an Account directly (importers, late fees, FX, job costing,
-    benefits). A sub-account takes its parent's detail type when that fits
-    it (QuickBooks' own rule); otherwise a detail type that no longer fits
-    the type / bank kind / number becomes the default."""
+    benefits). A detail type the row declares wins while it fits; a row
+    built with none (or one that no longer fits) takes its parent's when
+    that fits (QuickBooks' own rule), else the default for its type."""
     if target.account_type is None:
         return
+    own = target.detail_type
+    if own and not _fits(own, target):
+        own = None
+    if own and not target.__dict__.get("_detail_type_defaulted"):
+        target.detail_type = own
+        return
     parent = _parent_detail(connection, target) if parent_changed else None
-    if parent and parent != target.detail_type and _fits(parent, target):
+    if parent and _fits(parent, target):
         target.detail_type = parent
-    elif not _fits(target.detail_type, target):
+    elif not own:
         target.detail_type = default_detail_type(
             target.account_type, target.bank_kind, target.account_number
         )
@@ -256,9 +268,14 @@ def _settle_detail_type(connection, target, parent_changed: bool) -> None:
 
 @event.listens_for(Account, "before_insert")
 def _detail_type_on_insert(_mapper, connection, target):
+    # Built with none: the default it gets now may still give way to a
+    # parent linked in a later flush of the same session (chart import).
+    built_without = not target.detail_type
     _settle_detail_type(
         connection, target, bool(target.parent_id or target.__dict__.get("parent"))
     )
+    if built_without:
+        target.__dict__["_detail_type_defaulted"] = True
 
 
 @event.listens_for(Account, "before_update")

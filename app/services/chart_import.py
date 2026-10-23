@@ -42,6 +42,8 @@ from app.models.accounts import (
     Account,
     AccountType,
     DetailType,
+    default_detail_type,
+    detail_label,
 )
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
@@ -102,6 +104,9 @@ DETAIL_WORDS: dict[str, str] = {
     "other income": "other_income",
     "other expense": "other_expense",
 }
+
+
+_DETAIL_BANK_KIND = {"bank": "bank", "credit_card": "credit_card"}
 
 
 def _norm_detail(word: str | None) -> str | None:
@@ -410,14 +415,15 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
                     f"'{cell('detail_type')}' is a {base.value} type"
                 )
                 continue
-        elif detail:
-            acct_type, bank_kind = BASE_TYPE_OF[DetailType(detail)].value, None
         elif cell("type"):
+            # an unknown Type is an error whatever the Detail type says
             errors.append(
                 f"Row {n}: unknown account type '{cell('type')}' for '{name}' "
                 f"(use asset, liability, equity, income, cogs or expense)"
             )
             continue
+        elif detail:
+            acct_type, bank_kind = BASE_TYPE_OF[DetailType(detail)].value, None
         else:
             acct_type, bank_kind = _type_from_number(number), None
             if not acct_type:
@@ -425,6 +431,9 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
                     f"Row {n}: '{name}' has no type and no number to infer it from"
                 )
                 continue
+        # a Bank / Credit Card detail type is a register, as the type words
+        # "bank" and "credit card" are
+        bank_kind = bank_kind or _DETAIL_BANK_KIND.get(detail)
         active_cell = cell("active").lower()
         active = None
         if active_cell in ("false", "no", "0", "inactive"):
@@ -617,6 +626,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             resolved[r.path or number] = ("new", i)
             resolved[number] = ("new", i)
             resolved[r.name.lower()] = ("new", i)
+        entry["detail_type"] = _planned_detail(r, target, entry)
         entry["_row"] = r
         plan.rows.append(entry)
 
@@ -685,11 +695,30 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
     return plan
 
 
+def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
+    """The detail type the row will have (#390): the chart's own for an
+    account already there (an import never changes it, unless its type
+    changes), else the file's, else the default. A sub-account given none
+    takes its parent's when applied."""
+    retyped = any(c.startswith("type ") for c in entry.get("changes", []))
+    if target is not None and not retyped:
+        if r.detail_type and r.detail_type != target.detail_type:
+            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
+                f"detail type stays {detail_label(target.detail_type)} (the "
+                f"chart's), not {detail_label(r.detail_type)}"
+            )
+        return target.detail_type
+    if r.detail_type:
+        return r.detail_type
+    return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+
+
 # --- applying ---------------------------------------------------------------
 
 
 def apply_chart_import(db: Session, plan: Plan) -> None:
     created: dict[int, Account] = {}  # row index -> account
+    declared: dict[int, Account] = {}  # rows whose file named a detail type
     for i, entry in enumerate(plan.rows):
         if entry["action"] != "create":
             continue
@@ -742,6 +771,23 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             pid = created[ref].id if kind == "new" else ref
             if pid != a.id:
                 a.parent_id = pid
+        if r.detail_type:
+            declared[i] = a
+    db.flush()
+    # A declared detail type the account cannot carry (Bank without a bank
+    # kind, AR away from 1100) fell back; say so on the row
+    for i, a in declared.items():
+        entry, r = plan.rows[i], plan.rows[i]["_row"]
+        if entry["action"] == "update" and not any(
+            c.startswith("type ") for c in entry["changes"]
+        ):
+            continue
+        if a.detail_type != r.detail_type:
+            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
+                f"detail type {detail_label(r.detail_type)} in the file; came in "
+                f"as {detail_label(a.detail_type)}"
+            )
+        entry["detail_type"] = a.detail_type
     db.commit()
 
 

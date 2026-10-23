@@ -24,7 +24,7 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account
+from app.models.accounts import Account, detail_label
 from app.models.transactions import Transaction
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
@@ -302,6 +302,7 @@ def run_import_bundle(
 
     accounts, _ = parsers["coa"](bundle["coa"])
     created = 0
+    warnings = list(verdict.get("warnings") or [])
     by_name: dict[str, Account] = {a.name.lower(): a for a in db.query(Account).all()}
     for spec in accounts:
         key = spec["name"].lower()
@@ -331,6 +332,14 @@ def run_import_bundle(
             acct.account_number = None
         db.add(acct)
         db.flush()
+        declared = getattr(spec.get("detail_type"), "value", spec.get("detail_type"))
+        if declared and acct.detail_type != declared:
+            # an AR away from 1100, a Bank with no bank kind: the model gave
+            # the default (#390); say so rather than drop the file's word
+            warnings.append(
+                f"'{acct.name}' is {detail_label(declared)} in the file and came in "
+                f"as {detail_label(acct.detail_type)}"
+            )
         by_name[key] = acct
         created += 1
 
@@ -427,6 +436,7 @@ def run_import_bundle(
     db.commit()
     return {
         **verdict,
+        "warnings": warnings,
         "imported_accounts": created,
         "imported_journals": posted,
         # journals the file held that posted nothing (all-zero lines)
