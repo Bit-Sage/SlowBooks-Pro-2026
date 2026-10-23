@@ -959,7 +959,8 @@ const App = {
         'BankingPage.dismissLegacy', 'BankingPage.syncSimpleFIN', 'BankingPage.disconnectSimpleFIN',
         'BankingPage.showSimpleFINHistory', 'BankRulesPage.deleteRule', 'BankRulesPage.applyAll', 'TaxPage.showPaySalesTax',
         'ReportsPage.sendCollectionLetters', 'ReportsPage.batchEmailStatements', 'ReportsPage.emailGivingStatements',
-        'ReportsPage.applyLateFees', 'ReportsPage.deleteSaved', 'IIFPage.importFile',
+        'ReportsPage.applyLateFees', 'ReportsPage.deleteSaved', 'ReportsPage.voidDuplicate',
+        'ReportsPage.dismissDuplicate', 'ReportsPage.restoreDuplicate', 'IIFPage.importFile',
         'IIFPage.importQbReportCsv', 'MigrationPage.doImport', 'OpeningBalancesPage.save', 'BudgetsPage.saveAll',
     ]),
 

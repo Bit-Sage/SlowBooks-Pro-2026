@@ -31,6 +31,7 @@ const ReportsPage = {
         'closing-date-exceptions': { label: 'Closing Date Exceptions', open: (p) => ReportsPage.closingDateExceptions(p) },
         'accountants-package':  { label: "Accountant's Package", open: (p) => ReportsPage.accountantsPackage(p) },
         'reclassify':           { label: 'Reclassify Transactions', open: (p) => ReportsPage.reclassify(p) },
+        'possible-duplicates':  { label: 'Possible Duplicates', open: (p) => ReportsPage.possibleDuplicates(p) },
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
@@ -383,6 +384,7 @@ const ReportsPage = {
             card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after'),
             card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log'),
             card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change'),
+            card('possible-duplicates', 'Possible Duplicates', 'Bank and card entries that look entered twice: same amount, same or similar payee, a few days apart'),
             card('cash-flow', 'Cash Flow', 'Operating, investing, financing'),
             card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
             card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
@@ -2830,6 +2832,97 @@ ReportsPage.pledges = async function (prefill) {
             <h4 style="margin:12px 0 4px;font-size:12px;">By campaign (${T('class')})</h4>
             <div class="table-container"><table>${head}<tbody>${classes || `<tr><td colspan="7" style="color:var(--gray-400);">—</td></tr>`}</tbody></table></div>`;
     }, "Dates", false, { reportType: 'pledges', view: 'pledges', prefill });
+};
+
+// Possible Duplicates (#414): one bank or card account's entries with the
+// same amount on the same side and the same or a similar payee a few days
+// apart, grouped. Each entry opens, or voids through its own void route
+// (the report names it: void_path), so a reconciled entry and the closing
+// date follow the usual rules; "Not a duplicate" keeps a group off the
+// report for good. Nothing is voided or hidden by the report itself.
+ReportsPage._DUP_SOURCE = { imported: 'Imported', keyed: 'Keyed', migrated: 'Migrated' };
+ReportsPage.possibleDuplicates = async function (prefill) {
+    const p = prefill || {};
+    let accounts = [];
+    try { accounts = await API.get('/accounts?bank=1'); } catch (e) { accounts = []; }
+    const params = {
+        account_id: p.account_id || (accounts.length ? String(accounts[0].id) : ''),
+        include_dismissed: ['1', 'true'].includes(String(p.include_dismissed)) ? '1' : '',
+    };
+    const label = (a) => `${a.account_number ? a.account_number + ' - ' : ''}${a.name}`;
+    const options = accounts.map(a => `<option value="${a.id}" ${String(a.id) === String(params.account_id) ? 'selected' : ''}>${escapeHtml(label(a))}</option>`).join('');
+    const box = 'font-weight:normal; text-transform:none; font-size:12px; display:inline-flex; gap:6px; align-items:center;';
+    const toolbar = `
+        <div class="form-group"><label for="dup-account">Account</label>
+            <select id="dup-account" data-no-search onchange="ReportsPage.setParam('account_id', this.value)">${options}</select></div>
+        <div class="form-group" style="justify-content:flex-end;">
+            <label style="${box}"><input type="checkbox" id="dup-show-dismissed" ${params.include_dismissed ? 'checked' : ''}
+                onchange="ReportsPage.setParam('include_dismissed', this.checked ? '1' : '')"> Show groups marked not a duplicate</label></div>`;
+    await ReportsPage.openPeriodModal("Possible Duplicates", "this_year_to_date", async (_period, range, prm) => {
+        if (!prm.account_id) return '<div class="empty-state"><p>There is no bank or credit-card account.</p></div>';
+        const qs = `account_id=${encodeURIComponent(prm.account_id)}&start_date=${range.start}&end_date=${range.end}${prm.include_dismissed ? '&include_dismissed=true' : ''}`;
+        const data = await API.get(`/reports/possible-duplicates?${qs}`);
+        const groups = data.groups.map((g, n) => {
+            const action = g.dismissed
+                ? `<button class="btn btn-sm btn-secondary" onclick="ReportsPage.restoreDuplicate(${g.dismissal_id})">Put back</button>`
+                : `<button class="btn btn-sm btn-secondary" data-dup-key="${escapeHtml(g.key)}" onclick="ReportsPage.dismissDuplicate(${data.account.id}, this.dataset.dupKey)">Not a duplicate</button>`;
+            const head = `<tr class="dup-group" data-dup-group="${escapeHtml(g.key)}" style="font-weight:600; background:var(--gray-50);">
+                <td colspan="7">Group ${n + 1} · ${escapeHtml(g.side_label)} ${formatCurrency(g.amount)} · ${g.entries.length} entries${g.any_reconciled ? ' · a reconciled entry' : ''}${g.dismissed ? ` · marked not a duplicate${g.dismissed_by ? ` by ${escapeHtml(g.dismissed_by)}` : ''}` : ''}</td>
+                <td style="text-align:right; white-space:nowrap;">${action}</td></tr>`;
+            const lines = g.entries.map(e => {
+                const voidCall = escapeHtml(`ReportsPage.voidDuplicate(${JSON.stringify(e.void_path)})`);
+                return `<tr data-dup-entry="${e.transaction_id}">
+                    <td>${formatDate(e.date)}</td>
+                    <td>${escapeHtml(e.reference || '')}</td>
+                    <td>${escapeHtml(e.payee || '')}</td>
+                    <td>${escapeHtml(e.memo || '')}</td>
+                    <td>${escapeHtml(ReportsPage._DUP_SOURCE[e.source] || e.source)} <span style="color:var(--gray-500);">· ${escapeHtml(sourceWord(e.source_type || 'journal'))}</span></td>
+                    <td>${e.reconciled ? 'Reconciled' : (e.cleared ? 'Cleared' : '')}</td>
+                    <td class="amount">${formatCurrency(g.amount)}</td>
+                    <td style="text-align:right; white-space:nowrap;">
+                        <a class="btn btn-sm btn-secondary" href="${escapeHtml(e.link)}" data-row-key="dup:${e.transaction_id}" onclick="ReportsPage._leaveFrom(this)">Open</a>
+                        ${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="${voidCall}">Void</button>` : ''}</td>
+                </tr>`;
+            }).join('');
+            return head + lines;
+        }).join('');
+        const hidden = !data.include_dismissed && data.dismissed_count
+            ? ` · ${data.dismissed_count} marked not a duplicate, not shown` : '';
+        return `${ReportsPage._exportButtons('possible-duplicates', qs)}
+            <p style="margin-bottom:12px; color:var(--gray-500);">${escapeHtml(data.account.number || '')} ${escapeHtml(data.account.name)} · ${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'group' : 'groups'}${hidden}</p>
+            <p style="margin-bottom:12px; font-size:12px; color:var(--gray-500);">Entries with the same amount on the same side and the same or a similar payee, at most ${data.window_days} days apart. Nothing here is voided unless you void it.</p>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Date</th><th scope="col">Num</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">Source</th><th scope="col">Reconciled</th><th scope="col" class="amount">Amount</th><th scope="col"></th></tr></thead>
+                <tbody>${groups || '<tr><td colspan="8" style="text-align:center; color:var(--gray-400);">No possible duplicates on this account in this period</td></tr>'}</tbody>
+            </table></div>`;
+    }, "Dates", false, { reportType: 'possible_duplicates', view: 'possible-duplicates', params, toolbar, wide: true, spotlight: false, prefill: p });
+};
+
+ReportsPage.voidDuplicate = async function (path) {
+    if (!confirm('Void this entry? A reversing entry is posted; the original stays in the ledger.')) return;
+    try {
+        await API.post(path);
+        toast('Voided');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+ReportsPage.dismissDuplicate = async function (accountId, key) {
+    try {
+        await API.post('/reports/possible-duplicates/dismiss', {
+            account_id: accountId, transaction_ids: String(key).split(',').map(Number),
+        });
+        toast('Marked not a duplicate');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+ReportsPage.restoreDuplicate = async function (id) {
+    try {
+        await API.del(`/reports/possible-duplicates/dismissals/${id}`);
+        toast('Put back on the report');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
 };
 
 // Save PDF and Save CSV for a report with both routes; a report with only

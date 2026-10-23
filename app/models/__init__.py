@@ -98,6 +98,9 @@ from app.models.invoice_messages import InvoiceMessage
 from app.models.items import InventoryMovement
 from app.models.saved_reports import SavedReport
 
+# Possible Duplicates report (#414): groups kept as "not a duplicate"
+from app.models.duplicate_dismissals import DuplicateDismissal  # noqa: F401
+
 __all__ = [
     "Account",
     "Customer",

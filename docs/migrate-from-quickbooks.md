@@ -360,6 +360,16 @@ under Uncategorized is a posting QuickBooks had no class on either.
 - Spot-check **Reports → Trial Balance** against the same report in
   QuickBooks as of your cutover date (mind the date range — set it to
   cover the imported history).
+- Run **Reports → Possible Duplicates** once on each bank and card
+  account, with a Custom Date range covering the imported history. A
+  QuickBooks register often carries a bank-feed line on top of the same
+  payment keyed by hand, or a statement entered twice, and the import
+  brings those across as they are. The report groups entries with the
+  same amount on the same side and the same or a similar payee up to
+  three days apart; open each one, void the copy (the usual void, so a
+  reconciled entry or a closed period is protected as anywhere else), or
+  mark the group **Not a duplicate** so it stays off the report. It never
+  voids anything by itself.
 - Sales receipts are listed on **Sales Receipts** in the sidebar;
   regular invoices stay on **Invoices**.
 - Going forward, enter point-of-sale style sales on the **Sales
