@@ -24,9 +24,11 @@ a group found later is in that set.
 
 from __future__ import annotations
 
+import hashlib
 import io
 from datetime import date
 from decimal import Decimal
+from typing import Iterable, Iterator
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -62,34 +64,60 @@ def migrated_sources() -> set[str]:
 # ── payees ───────────────────────────────────────────────────────────────
 
 
+def _normalized_words(text: str | None) -> tuple[str, ...]:
+    """A payee's words after normalize_name (case, punctuation and business
+    suffixes dropped), before any further filtering."""
+    return tuple(normalize_name(text or "").split())
+
+
 def payee_words(text: str | None) -> tuple[str, ...]:
     """A payee as the words compared: case, punctuation and business
     suffixes dropped (the customer/vendor duplicate check's normalize_name),
     then every word holding a digit dropped, so a store or terminal number
     ("#0423", "STORE 1182") or a date in a feed description does not make
     two lines from one shop look different."""
-    return tuple(
-        w for w in normalize_name(text or "").split() if not any(c.isdigit() for c in w)
-    )
+    return tuple(w for w in _normalized_words(text) if not any(c.isdigit() for c in w))
 
 
 def similar_payees(a: str | None, b: str | None) -> bool:
-    """The same or a similar payee, conservatively: the words are equal,
-    or the shorter one's words appear in the longer one's as whole words,
-    in order and side by side ("Home Depot" in "The Home Depot #4410
-    Orlando"). Both blank is the same; one blank and one named is not.
-    No fuzzy spelling match: "Shell" and "Shellfish Co" are different."""
-    wa, wb = payee_words(a), payee_words(b)
-    if wa == wb:
+    """The same or a similar payee, conservatively.
+
+    A blank payee is the same only as another blank payee; one blank and one
+    named is not. A payee that is only a number ("76", a store or pump
+    number) names no shop, so it is not treated as blank and matches nothing,
+    including a blank payee.
+
+    Otherwise the shorter name must be the *start* of the longer one, whole
+    words in order, so "Home Depot" matches "The Home Depot #4410 Orlando"
+    but a one-word "Deposit" does not match "ATM Deposit" (it is not the
+    start). No fuzzy spelling: "Shell" and "Shellfish Co" are different."""
+    raw_a, raw_b = _normalized_words(a), _normalized_words(b)
+    if not raw_a and not raw_b:
         return True
+    if not raw_a or not raw_b:
+        return False
+    wa, wb = payee_words(a), payee_words(b)
     if not wa or not wb:
         return False
+    if wa == wb:
+        return True
     short, long_ = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
-    n = len(short)
-    return any(long_[i : i + n] == short for i in range(len(long_) - n + 1))
+    return long_[: len(short)] == short
 
 
 # ── the report ───────────────────────────────────────────────────────────
+
+
+# SQLite allows at most ~32k bound parameters in one statement; a single
+# IN (...) over every entry on a busy account blows past that. 900 keeps each
+# chunk well under the limit with room for the query's other parameters.
+_IN_CHUNK = 900
+
+
+def _chunks(seq: Iterable, size: int = _IN_CHUNK) -> Iterator[list]:
+    items = list(seq)
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 def _key(txn_ids) -> str:
@@ -98,6 +126,14 @@ def _key(txn_ids) -> str:
 
 def _ids(key: str) -> set[int]:
     return {int(p) for p in key.split(",") if p}
+
+
+def _group_hash(txn_ids) -> str:
+    """A fixed-length key for a dismissed group: sha256 hex of its sorted
+    ids. Used for the per-account unique constraint so the key never
+    overflows a column, however long the id list is. The ids themselves are
+    kept (as text) for display and the subset match."""
+    return hashlib.sha256(_key(txn_ids).encode()).hexdigest()
 
 
 def _void_path(source_type: str, txn_id: int, source_id) -> str | None:
@@ -120,7 +156,12 @@ def _void_path(source_type: str, txn_id: int, source_id) -> str | None:
         return f"/payments/{source_id}/void"
     if source_type == "bill_payment" and source_id:
         return f"/bill-payments/{source_id}/void"
-    if source_type in set(_journal_sources()) | {"qbo_ledger"}:
+    # Journals in their own right, with no document behind them: the
+    # QuickBooks Online ledger import, and the QuickBooks Desktop check
+    # register report's checks (source_type "check", #414's own migration),
+    # which post as a plain journal. /journal void reverses the lines and
+    # keeps the reconciliation and closing-date rules.
+    if source_type in set(_journal_sources()) | {"qbo_ledger", "check"}:
         return f"/journal/{txn_id}/void"
     return None
 
@@ -169,11 +210,11 @@ def _voided_payments(db: Session, entries) -> set[tuple]:
     for kind, model in (("payment", Payment), ("bill_payment", BillPayment)):
         ids = {e["source_id"] for e in entries if e["source_type"] == kind}
         ids.discard(None)
-        if ids:
+        for chunk in _chunks(ids):
             out |= {
                 (kind, r[0])
                 for r in db.query(model.id).filter(
-                    model.id.in_(ids), model.is_voided.is_(True)
+                    model.id.in_(chunk), model.is_voided.is_(True)
                 )
             }
     return out
@@ -194,18 +235,18 @@ def possible_duplicates(
         if not e["voided"] and (e["source_type"], e["source_id"]) not in dead
     ]
 
-    # imported: posted from a bank statement line (Add on the review list)
+    # imported: posted from a bank statement line (Add on the review list).
+    # Chunked so a busy account's line ids never exceed SQLite's parameter
+    # limit in one IN (...) (see _chunks).
     line_ids = [e["line_id"] for e in entries]
-    imported = (
-        {
+    imported: set[int] = set()
+    for chunk in _chunks(line_ids):
+        imported |= {
             r[0]
             for r in db.query(BankTransaction.transaction_line_id)
-            .filter(BankTransaction.transaction_line_id.in_(line_ids))
+            .filter(BankTransaction.transaction_line_id.in_(chunk))
             .filter(BankTransaction.match_status == "added")
         }
-        if line_ids
-        else set()
-    )
     migrated = migrated_sources()
 
     # same side, same amount; then pairs close enough in date and payee
@@ -217,35 +258,33 @@ def possible_duplicates(
             continue
         buckets.setdefault((side, cents), []).append(e)
 
-    parent = {}
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
+    # A group is bounded by the window measured from its *first* (earliest)
+    # entry, not pair-to-pair, so a long run of like charges a few days apart
+    # cannot chain into one ever-growing group and one late copy cannot
+    # resurrect the whole run. Sweep each (side, amount) bucket in date order:
+    # the earliest ungrouped entry anchors a group, and every later entry
+    # within WINDOW_DAYS of that anchor with a matching payee joins it.
     groups_raw = []
     for (side, cents), rows in buckets.items():
         if len(rows) < 2:
             continue
         rows.sort(key=lambda e: (e["date"], e["transaction_id"], e["line_id"]))
         days = [date.fromisoformat(e["date"]) for e in rows]
+        used = [False] * len(rows)
         for i in range(len(rows)):
-            parent[rows[i]["line_id"]] = rows[i]["line_id"]
-        for i in range(len(rows)):
+            if used[i]:
+                continue
+            anchor = rows[i]
+            members = [anchor]
+            used[i] = True
             for j in range(i + 1, len(rows)):
                 if (days[j] - days[i]).days > WINDOW_DAYS:
-                    break
-                a, b = rows[i], rows[j]
-                if a["transaction_id"] == b["transaction_id"]:
+                    break  # rows are date-sorted: nothing later is nearer
+                if used[j] or rows[j]["transaction_id"] == anchor["transaction_id"]:
                     continue
-                if similar_payees(a["payee"], b["payee"]):
-                    parent[find(a["line_id"])] = find(b["line_id"])
-        comps: dict[int, list] = {}
-        for e in rows:
-            comps.setdefault(find(e["line_id"]), []).append(e)
-        for members in comps.values():
+                if similar_payees(anchor["payee"], rows[j]["payee"]):
+                    members.append(rows[j])
+                    used[j] = True
             if len({m["transaction_id"] for m in members}) >= 2:
                 groups_raw.append((side, cents, members))
 
@@ -334,13 +373,15 @@ def dismiss(db: Session, account: Account, txn_ids, actor: str | None):
         raise HTTPException(
             status_code=400, detail="A group is two or more entries on the account"
         )
-    on_account = {
-        r[0]
-        for r in db.query(TransactionLine.transaction_id)
-        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
-        .filter(TransactionLine.account_id == account.id)
-        .filter(TransactionLine.transaction_id.in_(ids))
-    }
+    on_account: set[int] = set()
+    for chunk in _chunks(ids):  # chunked for the parameter limit (see _chunks)
+        on_account |= {
+            r[0]
+            for r in db.query(TransactionLine.transaction_id)
+            .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+            .filter(TransactionLine.account_id == account.id)
+            .filter(TransactionLine.transaction_id.in_(chunk))
+        }
     missing = ids - on_account
     if missing:
         raise HTTPException(
@@ -348,17 +389,21 @@ def dismiss(db: Session, account: Account, txn_ids, actor: str | None):
             detail=f"Not on {account.name}: entry {', '.join(str(i) for i in sorted(missing))}",
         )
     key = _key(ids)
+    group_hash = _group_hash(ids)
     row = (
         db.query(DuplicateDismissal)
         .filter(
             DuplicateDismissal.account_id == account.id,
-            DuplicateDismissal.transaction_ids == key,
+            DuplicateDismissal.group_hash == group_hash,
         )
         .first()
     )
     if row is None:
         row = DuplicateDismissal(
-            account_id=account.id, transaction_ids=key, dismissed_by=actor
+            account_id=account.id,
+            transaction_ids=key,
+            group_hash=group_hash,
+            dismissed_by=actor,
         )
         db.add(row)
         db.flush()

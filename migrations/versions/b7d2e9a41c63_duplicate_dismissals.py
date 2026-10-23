@@ -29,7 +29,12 @@ def upgrade() -> None:
         sa.Column(
             "account_id", sa.Integer(), sa.ForeignKey("accounts.id"), nullable=False
         ),
-        sa.Column("transaction_ids", sa.String(length=2000), nullable=False),
+        # The id list, for display and the subset match. Text, not a bounded
+        # String: it never keys anything, so its length cannot 500 a write.
+        sa.Column("transaction_ids", sa.Text(), nullable=False),
+        # The per-account key: a fixed-length sha256 of the sorted ids, so a
+        # long group's key never overflows the column.
+        sa.Column("group_hash", sa.String(length=64), nullable=False),
         sa.Column("dismissed_by", sa.String(length=100), nullable=True),
         sa.Column(
             "created_at",
@@ -38,7 +43,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.UniqueConstraint(
-            "account_id", "transaction_ids", name="uq_duplicate_dismissals_group"
+            "account_id", "group_hash", name="uq_duplicate_dismissals_group"
         ),
     )
     op.create_index("ix_duplicate_dismissals_id", "duplicate_dismissals", ["id"])

@@ -13,13 +13,21 @@ bank feed added on top of one someone had keyed, or a statement entered
 twice, arrives as two real entries. Reports → Possible Duplicates lists,
 for one bank or card account and a period, groups of entries with the same
 amount on the same side and the same or a similar payee at most three days
-apart (two equal monthly payments are not grouped). Each entry shows its
+apart (two equal monthly payments are not grouped). A group is bounded by
+the window measured from its first entry, so a run of like charges a few
+days apart breaks into small groups instead of chaining into one, and a
+daily charge never becomes one giant group. A payee that is only a number
+(a store or pump number) matches nothing, and a one-word payee must be the
+start of a longer name, not sit anywhere inside it. Each entry shows its
 date, number, payee, memo, source (imported, keyed or migrated) and whether
-it is reconciled, opens, or voids through its own void route, so a
-reconciled entry is not offered and a closed period asks for the
+it is reconciled, opens, or voids through its own void route — including an
+imported QuickBooks Desktop check, which voids through the journal route —
+so a reconciled entry is not offered and a closed period asks for the
 closing-date password. **Not a duplicate** keeps a group off the report for
 everyone, stored in a new `duplicate_dismissals` table (migration
-`b7d2e9a41c63`); a new copy joining the group brings it back. Save PDF and
+`b7d2e9a41c63`), keyed by a fixed-length hash of the group so a long group's
+key never overflows on PostgreSQL; a new copy joining the group brings it
+back. Save PDF and
 Save CSV as the other reports. Read-only and accountant sign-ins read it;
 dismissing is refused to them. The QuickBooks migration guide's *After the
 import* suggests running it once. It never voids anything by itself.

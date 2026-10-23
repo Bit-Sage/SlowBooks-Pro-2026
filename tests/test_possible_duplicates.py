@@ -5,6 +5,8 @@ can be kept as "not a duplicate", for good; an entry is voided through its
 own void route, so the reconciliation and closing-date rules hold. Reading
 is every role's; dismissing is a write."""
 
+import os
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -65,6 +67,22 @@ def _migrated(db, accounts, day, amount, text, number="1000", category="6000"):
     return txn
 
 
+def _check(db, accounts, day, amount, text, number="1000", category="6000"):
+    """A check the QuickBooks Desktop check-register report import posts: a
+    plain journal with source_type "check" (CR bank, DR the expense)."""
+    amt = Decimal(amount)
+    bank, other = accounts[number].id, accounts[category].id
+    lines = [
+        {"account_id": other, "debit": -amt, "credit": Decimal("0")},
+        {"account_id": bank, "debit": Decimal("0"), "credit": -amt},
+    ]
+    txn = create_journal_entry(
+        db, day, text, lines, source_type="check", reference="1042"
+    )
+    db.commit()
+    return txn
+
+
 def _report(client, accounts, number="1000", extra=""):
     r = client.get(f"{URL}?account_id={accounts[number].id}&{MARCH}{extra}")
     assert r.status_code == 200, r.text
@@ -116,6 +134,15 @@ def test_similar_payees(a, b):
         ("Home Depot", "Lowe's"),
         ("Depot Home", "Home Depot"),
         ("", "Home Depot"),
+        # a one-word payee must be the start of the longer name, not sit
+        # anywhere inside it: a generic "Deposit" is not "ATM Deposit"
+        ("Deposit", "ATM Deposit"),
+        ("ATM Deposit", "Deposit"),
+        # a payee that is only a number (a store/pump number) names no shop,
+        # so it matches neither a blank payee nor a named one
+        ("76", ""),
+        ("76", "Shell"),
+        ("Store 1182", ""),
     ],
 )
 def test_different_payees(a, b):
@@ -157,6 +184,31 @@ def test_three_copies_a_day_apart_are_one_group(client, db_session, seed_account
         _keyed(db_session, seed_accounts, date(2026, 3, day), "-45.00", "Cafe Bleu")
     (g,) = _report(client, seed_accounts)["groups"]
     assert len(g["entries"]) == 3
+
+
+def test_a_run_three_days_apart_does_not_chain_into_one_group(
+    client, db_session, seed_accounts
+):
+    """Ten like charges three days apart must not join into one 27-day group:
+    the window is measured from each group's first entry, not neighbour to
+    neighbour, so the run breaks into bounded groups of two."""
+    for day in range(1, 29, 3):  # 1, 4, 7, ... 28 — ten entries
+        _keyed(db_session, seed_accounts, date(2026, 3, day), "-5.00", "Parking")
+    groups = _report(client, seed_accounts)["groups"]
+    assert len(groups) == 5
+    assert all(len(g["entries"]) == 2 for g in groups)
+
+
+def test_a_daily_repeating_charge_does_not_make_a_giant_group(
+    client, db_session, seed_accounts
+):
+    """A charge every day is bounded to the window from each group's first
+    entry, so it never grows into one ever-larger group."""
+    for day in range(1, 9):  # eight consecutive days
+        _keyed(db_session, seed_accounts, date(2026, 3, day), "-9.00", "Toll")
+    groups = _report(client, seed_accounts)["groups"]
+    assert len(groups) == 2
+    assert all(len(g["entries"]) == WINDOW_DAYS + 1 for g in groups)
 
 
 def test_equal_monthly_payments_are_not_grouped(client, db_session, seed_accounts):
@@ -366,6 +418,43 @@ def test_a_void_in_a_closed_period_asks_for_the_password(
     assert b.id  # the migrated one stays
 
 
+def test_an_imported_qb_desktop_check_can_be_voided(client, db_session, seed_accounts):
+    """A QuickBooks Desktop check-register check (source_type "check") posts
+    as a journal of its own, so it had Open but no Void; it now routes to
+    /journal void, which reverses it and keeps the same rules (#414)."""
+    check = _check(db_session, seed_accounts, date(2026, 3, 2), "-200.00", "City Water")
+    _keyed(db_session, seed_accounts, date(2026, 3, 3), "-200.00", "City Water")
+    (g,) = _report(client, seed_accounts)["groups"]
+    entry = next(e for e in g["entries"] if e["transaction_id"] == check.id)
+    assert entry["source"] == "migrated"
+    assert entry["void_path"] == f"/journal/{check.id}/void"
+    assert entry["voidable"]
+    # it really voids, and the group goes with it
+    r = client.post(f"/api{entry['void_path']}")
+    assert r.status_code == 200, r.text
+    assert _report(client, seed_accounts)["groups"] == []
+
+
+def test_an_imported_check_in_a_closed_period_keeps_the_rule(
+    client, db_session, seed_accounts
+):
+    """Routing a check to /journal void keeps the closing-date rule."""
+    _check(db_session, seed_accounts, date(2026, 3, 2), "-200.00", "City Water")
+    other = _check(db_session, seed_accounts, date(2026, 3, 3), "-200.00", "City Water")
+    assert (
+        client.put(
+            "/api/settings",
+            json={"closing_date": "2026-03-31", "closing_date_password": "shut-tight"},
+        ).status_code
+        == 200
+    )
+    (g,) = _report(client, seed_accounts)["groups"]
+    entry = next(e for e in g["entries"] if e["transaction_id"] == other.id)
+    r = client.post(f"/api{entry['void_path']}")
+    assert r.status_code == 403
+    assert "closing date" in r.json()["detail"]
+
+
 # ── roles ────────────────────────────────────────────────────────────────
 
 
@@ -404,6 +493,98 @@ def test_a_bookkeeper_dismisses(client, db_session, seed_accounts):
     )
     assert r.status_code == 200, r.text
     assert r.json()["dismissed_by"] == "keeper"
+
+
+# ── the dismissal key on PostgreSQL ──────────────────────────────────────
+
+
+@pytest.fixture
+def postgres_url():
+    """A scratch PostgreSQL database for one test, created and dropped here.
+    Same convention as test_atomic_account_balance.py: SLOWBOOKS_TEST_POSTGRES_URL
+    is an admin URL the test can CREATE/DROP DATABASE against; skips when unset
+    or unreachable."""
+    import sqlalchemy as sa
+
+    admin_url = os.environ.get("SLOWBOOKS_TEST_POSTGRES_URL")
+    if not admin_url:
+        pytest.skip("SLOWBOOKS_TEST_POSTGRES_URL is not set")
+    pytest.importorskip("psycopg2")
+    name = "slowbooks_dup414_" + uuid.uuid4().hex[:12]
+    admin = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'CREATE DATABASE "{name}"'))
+    except Exception as exc:  # pragma: no cover - depends on the machine
+        admin.dispose()
+        pytest.skip(f"cannot create a scratch PostgreSQL database: {exc}")
+    url = sa.engine.make_url(admin_url).set(database=name)
+    try:
+        yield url.render_as_string(hide_password=False)
+    finally:
+        with admin.connect() as conn:
+            conn.execute(
+                sa.text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = :n AND pid <> pg_backend_pid()"
+                ),
+                {"n": name},
+            )
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{name}"'))
+        admin.dispose()
+
+
+def test_dismissing_a_large_group_does_not_overflow_on_postgres(postgres_url):
+    """A long group's id list is thousands of characters — more than the old
+    String(2000) key held, which 500'd on PostgreSQL. The key is now a
+    fixed-length hash, so dismissing it succeeds and reads back whole."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base
+    from app.models.accounts import Account, AccountType
+    from app.models.transactions import Transaction, TransactionLine
+    from app.services import possible_duplicates as pd
+
+    engine = create_engine(postgres_url)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        bank = Account(
+            account_number="1000",
+            name="Checking",
+            account_type=AccountType("asset"),
+            bank_kind="checking",
+            balance=Decimal("0"),
+        )
+        db.add(bank)
+        db.flush()
+        ids = []
+        for i in range(600):  # id list well past 2000 characters
+            txn = Transaction(date=date(2026, 3, 1), description=f"dup {i}")
+            db.add(txn)
+            db.flush()
+            db.add(
+                TransactionLine(
+                    transaction_id=txn.id,
+                    account_id=bank.id,
+                    debit=Decimal("5.00"),
+                    credit=Decimal("0"),
+                )
+            )
+            ids.append(txn.id)
+        db.commit()
+
+        assert len(",".join(str(i) for i in ids)) > 2000
+        row = pd.dismiss(db, bank, ids, actor="tester")
+        db.commit()
+
+        assert len(row.group_hash) == 64
+        assert {int(p) for p in row.transaction_ids.split(",")} == set(ids)
+    finally:
+        db.close()
+        engine.dispose()
 
 
 # ── Save CSV / Save PDF ──────────────────────────────────────────────────
