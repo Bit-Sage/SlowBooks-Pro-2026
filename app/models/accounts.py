@@ -221,10 +221,25 @@ class Account(Base):
 
 def _parent_detail(connection, target):
     """The parent's detail type, from the session when it is loaded there
-    (it may be pending in this same flush), else from the row."""
+    (it may be pending in this same flush, or changed by the same import and
+    not yet written), else from the row."""
     parent = target.__dict__.get("parent")
+    if parent is None and target.parent_id:
+        from sqlalchemy.orm import object_session
+        from sqlalchemy.orm.util import identity_key
+
+        session = object_session(target)
+        if session is not None:
+            parent = session.identity_map.get(identity_key(Account, target.parent_id))
     if parent is not None:
-        return parent.detail_type
+        if parent.detail_type:
+            return parent.detail_type
+        if parent.account_type is not None:
+            # cleared for a retype: what its own hook will give it
+            return default_detail_type(
+                parent.account_type, parent.bank_kind, parent.account_number
+            ).value
+        return None
     if not target.parent_id:
         return None
     return connection.execute(
@@ -291,4 +306,8 @@ def _detail_type_on_update(_mapper, connection, target):
         state.attrs.parent_id.history.has_changes()
         or state.attrs.parent.history.has_changes()
     )
+    if target.detail_type and state.attrs.detail_type.history.has_changes():
+        # set since the insert gave it the default (an importer settled it
+        # after linking the parent): that value stands, as a declared one does
+        target.__dict__.pop("_detail_type_defaulted", None)
     _settle_detail_type(connection, target, parent_changed)

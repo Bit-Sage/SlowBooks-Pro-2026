@@ -471,3 +471,63 @@ def test_a_migration_skips_a_parent_link_of_another_type(db_session, seed_accoun
     by = {a.name: a for a in db_session.query(Account).all()}
     assert by["Hotel"].parent_id == by["Travel"].id
     assert by["Petty cash"].parent_id is None
+
+
+# --- #430: a blank detail type under a parent retyped by the same import -----
+
+
+def _chart_details(client, db_session, text):
+    preview = _chart(client, text, 1)
+    planned = {r["name"]: r["detail_type"] for r in preview["rows"]}
+    applied = _chart(client, text, 0)
+    reported = {r["name"]: r["detail_type"] for r in applied["rows"]}
+    db_session.expire_all()
+    stored = {
+        a.name: a.detail_type
+        for a in db_session.query(Account).all()
+        if a.name in planned
+    }
+    return planned, reported, stored
+
+
+CHAIN_ROOT_FIRST = (
+    "Number,Name,Type,Detail type,Parent\n"
+    "8910,A,expense,Other Expense,\n"
+    "8920,B,expense,Expense,8910\n"
+    "8930,C,expense,,8920\n"
+    "8940,D,expense,Expense,8930\n"
+)
+
+
+def test_a_blank_row_under_a_retyped_parent_lands_as_the_dry_run_says(
+    client, db_session, seed_accounts
+):
+    # B's Expense gives way to A's Other Expense; C (blank) must take the new
+    # one in the database, not B's old one, so C and D agree
+    planned, reported, stored = _chart_details(client, db_session, CHAIN_ROOT_FIRST)
+    assert planned == {n: "other_expense" for n in "ABCD"}
+    assert reported == planned
+    assert stored == planned
+
+
+def test_the_same_chain_listed_leaf_first_lands_the_same(
+    client, db_session, seed_accounts
+):
+    lines = CHAIN_ROOT_FIRST.splitlines()
+    text = "\n".join([lines[0]] + lines[:0:-1]) + "\n"
+    planned, reported, stored = _chart_details(client, db_session, text)
+    assert planned == {n: "other_expense" for n in "ABCD"}
+    assert reported == planned
+    assert stored == planned
+
+    # G blank -> C blank -> R, the grandchild first
+    text = (
+        "Number,Name,Type,Detail type,Parent\n"
+        "8970,G,expense,,8960\n"
+        "8960,C2,expense,,8950\n"
+        "8950,R,expense,Other Expense,\n"
+    )
+    planned, reported, stored = _chart_details(client, db_session, text)
+    assert planned == {n: "other_expense" for n in ("G", "C2", "R")}
+    assert reported == planned
+    assert stored == planned
