@@ -55,6 +55,20 @@ Register entries, transfers and card charges have **Void** (a mirror-image
 reversal; the original stays). An entry a completed reconciliation holds
 cannot be voided.
 
+The entry row at the foot of the register posts the same way (Enter or
+Post). A payee typed there, or in + Entry, that is not already a customer's
+or a vendor's name is offered as one — a customer for money in (a deposit),
+a vendor for money out, matching the categorized import — with Add / Not
+now; the entry posts either way, and Add names the party so the entry's
+payee resolves to it. The question's toast takes focus and returns it to the
+row only when answered (or if it still holds the focus as it goes), holds its
+auto-dismiss while focused or hovered, and — in the + Entry dialog — folds
+into the dialog's Tab cycle, so it answers by keyboard; a toast left to time
+out leaves the caret where the typing moved on to. An
+**Add** button beside the category picker makes a new account in place —
+name, type, an optional parent (never a control account) and number — and
+selects it.
+
 `POST /api/banking/transactions {account_id, date, amount,
 category_account_id, payee?, description?, check_number?, class_id?,
 job_id?}` → the journal entry. `GET /api/banking/check-register?account_id=`

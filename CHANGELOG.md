@@ -268,6 +268,28 @@ the saved words (a sample donor on a file with no gifts yet). A new migration
 (`f9a0b1c2d3e4`, stacked on `e4f5a6b7c8d9`) adds the `kind` column with a
 server default of `invoice`, so a file upgraded from #392 keeps every saved
 message as an invoice message.
+**The register adds a payee or a category as it is typed** (#386, from a
+bookkeeper's notes). A payee typed into the register's entry row or the +
+Entry form that is not already a customer's or a vendor's name gets a toast,
+on leaving the box and again when the entry posts: "Add … as a customer?"
+for money in (a deposit) and "Add … as a vendor?" for money out — the
+categorized import's rule — with Add and Not now. Add makes the customer or
+the vendor (`POST /api/customers` or `/api/vendors`, the name alone), so the
+entry's payee resolves to it by name; either way the entry posts with the
+text as before, and a name answered Not now is not asked about again that
+session. The toast moves focus to itself and gives it back to the row only
+when it is answered (or still has the focus as it goes), and holds its
+auto-dismiss while it has focus or the pointer, so the keyboard can answer
+it; a toast left to time out does not take the caret back from wherever the
+typing moved on to. In the + Entry dialog, whose Tab is trapped, the toast's
+buttons are folded into the dialog's Tab cycle so the keyboard reaches and
+answers the offer. A new account is added from an **Add** button
+beside the category picker (not an option on the select, which trapped the
+keyboard) — name, type, an optional parent of that type and an optional
+number, in a panel under the picker; the parent list leaves out the control
+accounts the software posts to by number. Added, the account is in every
+picker on the page (the split lines' too), chosen, and the cursor moves on
+to the amount or the memo. No server change.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
