@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.27.0
 
 A recurring invoice that has made invoices can no longer be deleted. Deleting
 one answered 200 and left its invoices pointing at a template that no longer
