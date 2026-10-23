@@ -760,6 +760,31 @@ def test_a_memo_only_entry_shows_a_blank_payee_in_the_register(
     assert e2["payee"] == "" and e2["description"] == "Fuel receipt"
 
 
+def test_a_memo_only_entry_shows_its_memo_in_the_ledger_and_journal(
+    client, seed_accounts
+):
+    """A memo-only entry's header carries the "Bank entry" placeholder; the
+    General Ledger (JSON and CSV) and the journal API show its memo instead."""
+    posted = _entry(client, seed_accounts, payee=None, description="Fuel receipt")
+    span = "start_date=2026-09-01&end_date=2026-09-30"
+    gl = client.get(f"/api/reports/general-ledger?{span}").json()
+    rows = [
+        e
+        for a in gl["accounts"]
+        if a["account_id"] in (seed_accounts["1000"].id, seed_accounts["6900"].id)
+        for e in a["entries"]
+    ]
+    assert len(rows) == 2
+    assert {e["description"] for e in rows} == {"Fuel receipt"}
+
+    csv = client.get(f"/api/reports/general-ledger/csv?{span}")
+    assert csv.status_code == 200, csv.text
+    assert "Fuel receipt" in csv.text and "Bank entry" not in csv.text
+
+    j = client.get(f"/api/journal/{posted['id']}").json()
+    assert j["description"] == "Fuel receipt"
+
+
 def test_the_closing_date_holds_for_the_old_date_and_the_new(client, seed_accounts):
     posted = _entry(client, seed_accounts)  # Sep 2
     later = _entry(client, seed_accounts, date="2026-10-02")

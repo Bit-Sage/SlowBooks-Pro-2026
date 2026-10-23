@@ -31,6 +31,7 @@ from app.services.bank_register import (
     money_text,
 )
 from app.services.closing_date import check_closing_date
+from app.services.entry_text import BANK_ENTRY_HEADER
 
 
 def require_bank_account(db: Session, account_id: int) -> Account:
@@ -205,7 +206,7 @@ def bank_entry_lines(
     # typed — never the memo. A memo-only entry (memo on the lines, sentinel on
     # the header) is then told apart from a payee-only one (payee on both), so
     # it reopens with the memo in Memo, not in Payee (#388 review).
-    description = payee or "Bank entry"
+    description = payee or BANK_ENTRY_HEADER
     if splits:
         lines = []
         for cat, part, part_memo, *dims in splits:

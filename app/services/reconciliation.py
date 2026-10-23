@@ -24,6 +24,7 @@ from app.services.bank_register import (
     references_for,
     source_link,
 )
+from app.services.entry_text import header_text
 
 TOLERANCE = Decimal("0.005")
 
@@ -202,7 +203,7 @@ def session(db: Session, recon: Reconciliation) -> dict:
                 "transaction_id": txn.id,
                 "date": txn.date.isoformat(),
                 "payee": payees.get(txn.id, ""),
-                "description": txn.description or tl.description or "",
+                "description": header_text(txn, tl.description),
                 "reference": refs.get(txn.id, ""),
                 "check_number": refs.get(txn.id) or None,
                 "amount": float(amount),
@@ -389,7 +390,7 @@ def report(db: Session, recon: Reconciliation) -> dict:
                 "date": txn.date.isoformat(),
                 "reference": refs.get(txn.id, ""),
                 "payee": payees.get(txn.id, ""),
-                "description": txn.description or tl.description or "",
+                "description": header_text(txn, tl.description),
                 "amount": float(amount),
                 "source_type": txn.source_type,
             }

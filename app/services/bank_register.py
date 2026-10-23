@@ -18,6 +18,7 @@ from app.models.bills import BillPayment
 from app.models.contacts import Customer, Vendor
 from app.models.payments import Payment
 from app.models.transactions import Transaction, TransactionLine
+from app.services.entry_text import BANK_ENTRY_HEADER
 
 DEBIT_NORMAL = {AccountType.ASSET, AccountType.EXPENSE, AccountType.COGS}
 
@@ -237,7 +238,7 @@ def payees_for(db: Session, txns) -> dict[int, str]:
             name = (t.description or "").removeprefix("CC Charge: ").strip()
         # a register entry with no payee carries the sentinel "Bank entry" on
         # its header (bank_entry_lines), not a counterparty: show it blank
-        if t.source_type == "bank_entry" and name == "Bank entry":
+        if t.source_type == "bank_entry" and name == BANK_ENTRY_HEADER:
             name = ""
         out[t.id] = name
     return out

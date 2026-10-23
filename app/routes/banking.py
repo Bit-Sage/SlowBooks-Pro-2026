@@ -63,6 +63,7 @@ from app.services.bank_register import (
     voided_transaction_ids,
 )
 from app.services.closing_date import check_closing_date
+from app.services.entry_text import BANK_ENTRY_HEADER
 
 router = APIRouter(prefix="/api/banking", tags=["banking"])
 
@@ -645,7 +646,7 @@ def _entry_detail(
     # memo on the lines (bank_entry_lines). So the header being the sentinel
     # means no payee was typed, and whatever is on the lines is the Memo: both
     # reopen as they were saved — the memo in Memo, not in Payee (#388 review).
-    if header == "Bank entry":
+    if header == BANK_ENTRY_HEADER:
         out["payee"] = ""
         out["description"] = line_desc
     else:

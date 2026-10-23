@@ -36,6 +36,7 @@ from app.services.addresses import city_line
 from app.services.csv_export import _Identifier, _csv_safe
 from app.services.currency import convert_lines, to_home
 from app.services.iif_common import account_to_iif_type, item_to_iif_type
+from app.services.entry_text import is_bank_entry_placeholder
 
 
 def _iif_date(d: date) -> str:
@@ -1249,8 +1250,17 @@ def export_register_entries(
         cls = _class_name(db, txn.class_id)
         # the register stores the payee as the entry's description; a card
         # charge's posting prefixes it
-        name = (txn.description or "").removeprefix("CC Charge: ").strip()
-        memo = _memo_text(side.description or txn.description)
+        # a register entry typed with no payee carries a placeholder there,
+        # which is no one's name
+        name = (
+            ""
+            if is_bank_entry_placeholder(txn)
+            else (txn.description or "").removeprefix("CC Charge: ").strip()
+        )
+        memo = _memo_text(
+            side.description
+            or ("" if is_bank_entry_placeholder(txn) else txn.description)
+        )
         lines += _iif_line(
             [
                 "TRNS",

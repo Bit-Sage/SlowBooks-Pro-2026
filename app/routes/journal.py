@@ -22,6 +22,7 @@ from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.bank_posting import assert_not_reconciled, release_statement_links
 from app.services.closing_date import check_closing_date
 from app.services.safe_errors import safe_message
+from app.services.entry_text import header_text
 
 router = APIRouter(prefix="/api/journal", tags=["journal"])
 
@@ -158,7 +159,7 @@ def list_journal_entries(
             JournalEntryResponse(
                 id=txn.id,
                 date=txn.date,
-                description=txn.description or "",
+                description=header_text(txn),
                 reference=txn.reference or "",
                 source_type=txn.source_type or "",
                 is_adjusting=bool(txn.is_adjusting),
@@ -187,7 +188,7 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
     return JournalEntryResponse(
         id=txn.id,
         date=txn.date,
-        description=txn.description or "",
+        description=header_text(txn),
         reference=txn.reference or "",
         source_type=txn.source_type or "",
         is_adjusting=bool(txn.is_adjusting),

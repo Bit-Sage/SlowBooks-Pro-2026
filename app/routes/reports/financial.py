@@ -15,6 +15,7 @@ from app.services.terminology import Terms, terms_from_db
 # Debit-normal account types. For these, natural balance = debit - credit.
 # For the rest (liability, equity, income), natural balance = credit - debit.
 from app.services.bank_register import DEBIT_NORMAL as _DEBIT_NORMAL  # noqa: E402
+from app.services.entry_text import header_text
 
 
 def _in_class(db, class_id):
@@ -565,7 +566,7 @@ def general_ledger(
         a["entries"].append(
             {
                 "date": txn.date.isoformat(),
-                "description": txn.description or tl.description or "",
+                "description": header_text(txn, tl.description),
                 "reference": txn.reference or "",
                 "debit": float(tl.debit),
                 "credit": float(tl.credit),
@@ -2006,7 +2007,7 @@ def adjusting_entries(
                 "id": txn.id,
                 "date": txn.date.isoformat(),
                 "reference": txn.reference or "",
-                "description": txn.description or "",
+                "description": header_text(txn),
                 "posted_by": txn.posted_by or "",
                 "source_type": txn.source_type or "",
                 "voided": txn.id in voided,
