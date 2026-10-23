@@ -169,7 +169,10 @@ jobs:
           # (SLOWBOOKS_TEST_POSTGRES_URL), like the other Postgres-only tests
           # 128 with editing a register entry (#388): its Postgres test in
           # tests/test_register_edit_entry.py (no Postgres server here) and
-          # tests/test_register_edit_browser.py, one more Playwright module
+          # tests/test_register_edit_browser.py, one more Playwright module.
+          # The merged register quick add (#386) adds
+          # tests/test_browser_register_quick_add.py, another Playwright module;
+          # the real merged total is reconciled in the integration pass.
           MAX_SKIPS: "129"
         shell: pwsh
         run: |
