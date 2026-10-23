@@ -51,9 +51,16 @@ async def _read_statement(file: UploadFile, label: str, bom: str = "utf-8") -> s
     for marker, encoding in _BOMS:
         if content.startswith(marker):
             try:
-                return content.decode(encoding)
+                text = content.decode(encoding)
             except UnicodeDecodeError:
                 break
+            # A file that is nothing but a BOM decodes to "" (the marker is
+            # the encoding declaration, not content), so it has to answer the
+            # empty-file sentence like any other empty file rather than fall
+            # through as a 200 with an error in the body or an "unreadable".
+            if not text.strip():
+                raise HTTPException(status_code=400, detail=EMPTY_TEXT)
+            return text
     # A statement exported to a plain-text file sometimes carries trailing
     # NUL padding; drop it so a complete file isn't taken for binary junk.
     content = content.rstrip(b"\x00")

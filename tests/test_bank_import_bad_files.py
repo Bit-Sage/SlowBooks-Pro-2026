@@ -117,6 +117,38 @@ def test_an_empty_file_says_it_is_empty(client, db_session, feed, path):
     assert db_session.query(BankTransaction).count() == 0
 
 
+@pytest.mark.parametrize(
+    "encoding,bom",
+    [
+        ("utf-8-sig", "﻿".encode("utf-8")),
+        ("utf-16-le", "﻿".encode("utf-16-le")),
+        ("utf-16-be", "﻿".encode("utf-16-be")),
+    ],
+)
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/bank-import/preview",
+        "/api/bank-import/import/{id}",
+        "/api/bank-import/preview-csv",
+        "/api/bank-import/import-csv/{id}",
+    ],
+)
+def test_a_bom_only_file_says_it_is_empty(
+    client, db_session, feed, path, encoding, bom
+):
+    # A file that is nothing but a byte-order mark decodes to "" — there is no
+    # content after the encoding declaration — so it must answer the empty-file
+    # sentence (400), not slip past as a 200 or an "unreadable". OFX and CSV
+    # alike, on preview and import. Tested for the UTF-8 BOM and both UTF-16
+    # BOMs (Testing#101).
+    name = "statement.csv" if "csv" in path else "statement.ofx"
+    r = _post(client, path.format(id=feed["id"]), bom, name=name)
+    assert r.status_code == 400, (encoding, path, r.text)
+    assert r.json()["detail"] == EMPTY_TEXT, (encoding, path, r.text)
+    assert db_session.query(BankTransaction).count() == 0
+
+
 def test_a_binary_file_on_the_csv_path_is_a_400_too(client, db_session, feed):
     for path in (
         "/api/bank-import/preview-csv",

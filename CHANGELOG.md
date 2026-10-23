@@ -17,7 +17,10 @@ the bank." for any file they can't parse (an empty one says it is empty),
 and write nothing; an unrecognised CSV still goes to the column-mapping
 step. A UTF-16 export (either byte order) is decoded by its byte-order mark
 and read, and a complete statement that is only missing its closing
-`</OFX>` or carries trailing NUL padding still imports.
+`</OFX>` or carries trailing NUL padding still imports. A file that is
+nothing but a byte-order mark (UTF-8 or UTF-16) decodes to no content, so it
+answers the empty-file sentence like any other empty file rather than a 200
+or an "unreadable".
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
