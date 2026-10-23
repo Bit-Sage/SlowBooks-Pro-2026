@@ -167,7 +167,12 @@ jobs:
           # 126 with atomic account balances: the concurrent-postings race
           # in tests/test_atomic_account_balance.py needs a Postgres server
           # (SLOWBOOKS_TEST_POSTGRES_URL), like the other Postgres-only tests
-          MAX_SKIPS: "127"
+          # 127 with the invoice Message browser test (#392), one more
+          # Playwright module skipped here without Chromium
+          # 128 with the giving-statement message kind migration (#415): its
+          # Postgres run in tests/test_giving_statement_message.py needs a
+          # Postgres server, like the other Postgres-only tests
+          MAX_SKIPS: "128"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
