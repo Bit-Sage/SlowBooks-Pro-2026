@@ -240,7 +240,11 @@ app = BUNDLE(
         # a local build reads the checkout. The workflow refuses a bundle
         # whose CFBundleVersion is just the short version.
         "CFBundleVersion": _bundle_version(),
-        "LSMinimumSystemVersion": "14.0",
+        # The real floor is the bundled Homebrew libraries' (pango, cairo,
+        # glib for WeasyPrint): Homebrew builds them for the runner's macOS,
+        # and macos.yml refuses a bundle whose libraries need a newer macOS
+        # than this says. macos-15 runners since 2.26.0 (#376).
+        "LSMinimumSystemVersion": "15.0",
         "LSArchitecturePriority": ["arm64"],
         "NSHighResolutionCapable": True,
         # The app runs a local web server for its own UI
