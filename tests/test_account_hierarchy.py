@@ -531,3 +531,125 @@ def test_the_same_chain_listed_leaf_first_lands_the_same(
     assert planned == {n: "other_expense" for n in ("G", "C2", "R")}
     assert reported == planned
     assert stored == planned
+
+
+# --- #430: the migration dry run previews what the migration applies --------
+
+
+def _bundle(db_session, chart, apply=True):
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.migration_common import dry_run_bundle, run_import_bundle
+
+    first, last = chart[0]["name"], chart[-1]["name"]
+    gl = [
+        [
+            {
+                "date": date(2026, 1, 5),
+                "account": first,
+                "debit": Decimal("10"),
+                "credit": Decimal("0"),
+                "journal": "J1",
+            },
+            {
+                "date": date(2026, 1, 5),
+                "account": last,
+                "debit": Decimal("0"),
+                "credit": Decimal("10"),
+                "journal": "J1",
+            },
+        ]
+    ]
+    parsers = {"coa": lambda _t: (chart, []), "gl": lambda _t: (gl, [])}
+    bundle = {"coa": "x", "gl": "x"}
+    preview = dry_run_bundle(db_session, bundle, parsers, "Test", "test_import")
+    if not apply:
+        return preview, None
+    out = run_import_bundle(db_session, bundle, parsers, "test_import", "Test")
+    return preview, out
+
+
+def _spec(name, code, parent=None, detail=None, atype=AccountType.EXPENSE):
+    spec = {"name": name, "code": code, "type": atype, "description": None}
+    if parent:
+        spec["parent"] = parent
+    if detail:
+        spec["detail_type"] = detail
+    return spec
+
+
+def _stored(db_session, *names):
+    db_session.expire_all()
+    by = {a.name: a for a in db_session.query(Account).all()}
+    return {n: by[n] for n in names}
+
+
+def test_a_migration_grandchild_inheriting_through_its_parent_warns_in_the_dry_run(
+    db_session, seed_accounts
+):
+    chart = [
+        _spec("Root", "8710", detail="other_expense"),
+        _spec("Kid", "8720", "Root", "expense"),
+        _spec("Grand", "8730", "Kid", "expense"),
+    ]
+    preview, out = _bundle(db_session, chart)
+    takes = "'Grand' takes Other Expense"
+    assert any(takes in w for w in preview["warnings"]), preview["warnings"]
+    assert any(takes in w for w in out["warnings"]), out["warnings"]
+    got = _stored(db_session, "Root", "Kid", "Grand")
+    assert {n: a.detail_type for n, a in got.items()} == {
+        n: "other_expense" for n in got
+    }
+
+
+def test_a_migration_child_listed_before_its_parent_is_linked(
+    db_session, seed_accounts
+):
+    chart = [
+        _spec("Hotel", "8821", "Travel", "expense"),
+        _spec("Travel", "8820", detail="other_expense"),
+    ]
+    preview, out = _bundle(db_session, chart)
+    takes = "'Hotel' takes Other Expense"
+    assert any(takes in w for w in preview["warnings"]), preview["warnings"]
+    assert any(takes in w for w in out["warnings"]), out["warnings"]
+    got = _stored(db_session, "Hotel", "Travel")
+    assert got["Hotel"].parent_id == got["Travel"].id
+    assert got["Hotel"].detail_type == "other_expense"
+
+
+def test_a_migration_parent_inactive_in_the_books_is_refused_in_the_dry_run(
+    db_session, seed_accounts
+):
+    old = Account(
+        name="Travel",
+        account_number="8830",
+        account_type=AccountType.EXPENSE,
+        is_active=False,
+    )
+    db_session.add(old)
+    db_session.commit()
+    chart = [
+        _spec("Travel", "8830"),
+        _spec("Hotel", "8831", "Travel"),
+    ]
+    refused = "'Hotel' was not made a sub-account of 'Travel'"
+    preview, out = _bundle(db_session, chart)
+    assert any(refused in w and "inactive" in w for w in preview["warnings"]), preview
+    assert any(refused in w for w in out["warnings"]), out
+    assert _stored(db_session, "Hotel")["Hotel"].parent_id is None
+
+
+def test_the_migration_result_lists_each_parent_warning_once(db_session, seed_accounts):
+    chart = [
+        _spec("Travel", "8840", detail="other_expense"),
+        _spec("Hotel", "8841", "Travel", "expense"),
+        _spec("Petty cash", "1060", "Travel", atype=AccountType.ASSET),
+    ]
+    preview, out = _bundle(db_session, chart)
+    for w in preview["warnings"]:
+        if "Hotel" in w or "Petty cash" in w:
+            assert out["warnings"].count(w) == 1, out["warnings"]
+    assert any("'Hotel' takes Other Expense" in w for w in out["warnings"])
+    assert any("'Petty cash' was not made" in w for w in out["warnings"])
