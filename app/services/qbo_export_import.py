@@ -99,7 +99,9 @@ _SECTION_TYPES = {
     "equity": AccountType.EQUITY,
     "income": AccountType.INCOME,
     "other income": AccountType.INCOME,
-    "cost of goods sold": AccountType.EXPENSE,
+    # above Gross Profit, as QuickBooks prints it (2.26 imported it as an
+    # expense; deferred to the statements' change, #390)
+    "cost of goods sold": AccountType.COGS,
     "expenses": AccountType.EXPENSE,
     "other expenses": AccountType.EXPENSE,
 }
