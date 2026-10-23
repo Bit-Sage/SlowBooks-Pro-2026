@@ -267,7 +267,7 @@ def test_the_migration_makes_the_table_and_keeps_one_head(tmp_path):
     cfg.attributes["database_url"] = url
     script = ScriptDirectory.from_config(cfg)
     assert len(script.get_heads()) == 1
-    assert script.get_revision("e4f5a6b7c8d9").down_revision == "d3e4f5a6b7c8"
+    assert script.get_revision("e4f5a6b7c8d9").down_revision == "a1f2e3d4c5b6"
     command.upgrade(cfg, "head")
     engine = sa.create_engine(url)
     insp = sa.inspect(engine)
@@ -287,7 +287,7 @@ def test_the_migration_makes_the_table_and_keeps_one_head(tmp_path):
     ]
     assert ("name",) in uniques + indexes
     # a second run is a no-op, as a file create_all already made
-    command.downgrade(cfg, "d3e4f5a6b7c8")
+    command.downgrade(cfg, "a1f2e3d4c5b6")
     assert "invoice_messages" not in sa.inspect(engine).get_table_names()
     command.upgrade(cfg, "head")
     engine.dispose()

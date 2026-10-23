@@ -7,7 +7,7 @@ dismissed, and it stays dismissed for everyone on the company: one row per
 account and group (its sorted transaction ids).
 
 Revision ID: b7d2e9a41c63
-Revises: d3e4f5a6b7c8
+Revises: f9a0b1c2d3e4
 Create Date: 2026-10-23
 """
 
@@ -17,7 +17,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "b7d2e9a41c63"
-down_revision: Union[str, None] = "d3e4f5a6b7c8"
+down_revision: Union[str, None] = "f9a0b1c2d3e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
