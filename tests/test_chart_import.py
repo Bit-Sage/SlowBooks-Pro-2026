@@ -372,12 +372,14 @@ def test_the_shipped_template_imports_cleanly_into_the_seeded_chart(
     assert r.status_code == 200 and r.text == text
 
 
-def test_the_control_registry_is_fifteen_accounts():
+def test_the_control_registry_is_sixteen_accounts():
     """The gate's checks compare created rows against "the fifteen control
     names". One entry is declared across two lines, and a line-based reader
     returned fourteen without noticing (skytech, 2.15.0 gate). Pin the count
-    where a change to the registry will trip it."""
+    where a change to the registry will trip it. Sixteen since 3900 Opening
+    Balance Equity is found by number (#413)."""
     from app.services.control_accounts import CONTROL_ACCOUNTS
 
-    assert len(CONTROL_ACCOUNTS) == 15
+    assert len(CONTROL_ACCOUNTS) == 16
+    assert "3900" in CONTROL_ACCOUNTS
     assert "3200" in CONTROL_ACCOUNTS

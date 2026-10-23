@@ -12,7 +12,7 @@ removed or hidden**:
     interface could not do.
 
 That is the same wrong flag 2.10.2 found hiding the Edit button, in a second
-place. The gate is the control-account registry: fifteen numbers the posting
+place. The gate is the control-account registry: sixteen numbers the posting
 code resolves literally and a document that cannot find one is #119. Those
 can be renamed, never removed. The other forty-two are ordinary accounts.
 """

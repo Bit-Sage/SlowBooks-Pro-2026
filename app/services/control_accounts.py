@@ -83,6 +83,11 @@ CONTROL_ACCOUNTS: dict[str, tuple[str, str]] = {
         "Retained Earnings",
         "the balancing account for imported opening balances",
     ),
+    "3900": (
+        "Opening Balance Equity",
+        "the offset for opening balances — bank and card accounts and an "
+        "item's opening stock",
+    ),
     "4000": ("Service Income", "the default income account for invoice lines"),
     "4800": ("Late Fee Income", "finance charges added to overdue invoices"),
     "5000": ("Cost of Goods Sold", "the cost side of an inventory item's sale"),

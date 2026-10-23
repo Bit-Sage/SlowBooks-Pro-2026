@@ -19,7 +19,7 @@ accepted, both measured against real files rather than guessed at:
 Nothing is written on a dry run: `import_chart(..., dry_run=True)` returns
 the plan — what would be created, renamed, updated, skipped or deactivated,
 row by row, with a reason — and the same call with `dry_run=False` applies
-exactly that plan. The fifteen control accounts the posting code finds by
+exactly that plan. The sixteen control accounts the posting code finds by
 number are never removed and never renumbered; when the file names one of
 them (an account called Receivable, Payable, Checking, Sales tax payable,
 ...) the control account is **renamed to the file's name** so the operator's

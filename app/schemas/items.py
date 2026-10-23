@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -28,7 +28,7 @@ class ItemCreate(StrictModel):
     # The date the opening stock is booked (books set up as of 12/31 want it
     # in that period, not today). Only used on create and only when stock is
     # posted; defaults to today in the service.
-    as_of: Optional[date] = None
+    as_of: Optional[dt_date] = None
 
 
 class ItemUpdate(StrictModel):
