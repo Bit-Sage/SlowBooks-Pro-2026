@@ -30,11 +30,49 @@ depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
 1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
 (the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
 Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
-accounts Other Expense. **No statement changes in this release** — the
-Balance Sheet and the Profit & Loss keep their layout until the next one.
-After upgrading, open Chart of Accounts and check the detail type of any
-loan, vehicle, equipment or long-term note; a line of credit kept in a loan
+accounts Other Expense. The statements below print by it, so after
+upgrading, open Chart of Accounts and check the detail type of any loan,
+vehicle, equipment or long-term note; a line of credit kept in a loan
 account, for one, is current.
+
+**The statements print by detail type** (#390). The Balance Sheet groups
+its assets under Current / Fixed / Other Assets and its liabilities under
+Current / Long Term Liabilities, each with its subtotal, on the screen, in
+the PDF (and the accountant's package) and in the CSV, whose Section column
+is now the group, with the side in a new last column, Type. A group with no
+account is left out; accumulated depreciation is a Fixed Asset and nets
+inside its group; the prior-year columns carry the subtotals. The nonprofit
+Statement of Financial Position groups the same way. The Profit & Loss
+prints Other Income and Other Expense below Net Operating Income, with Net
+Other Income; Net Income is the same figure, and a company with nothing in
+them sees the P&L it saw, Net Operating Income included only when there is
+something below it. Total Income and Total Expenses no longer include the
+Other Income / Other Expense accounts (4900 Other Income, 6999 and 7999
+among them): the two together are the old figures. P&L by Class and by Job
+get the same rows, so the three reports tie line for line; the Classes list
+counts other income and expense with income and expenses, as before. The
+cash flow statement reads the detail type instead of guessing from numbers
+and names: Fixed Asset and Other Asset are investing, Long Term Liability
+financing; the fixed-asset register's accounts stay investing and
+accumulated depreciation an adjustment. The upgrade's detail types put
+every account where the old rules did, so an upgraded company's statement
+is unchanged (one exception, on purpose: an account left at the default
+inside a Fixed Assets folder took the folder's type and is investing now).
+An account made without a detail type is current, however it is named.
+The QuickBooks Online report import brings Cost of Goods Sold in as cost of
+goods sold, above Gross Profit; it came in as an expense.
+
+**Sub-accounts print under their parents** (#416, from Chris Cree). The
+Profit & Loss (and one class's P&L) and the nonprofit Statement of
+Activities print a parent's family together on the screen and in the PDF:
+the sub-accounts indented beneath it, the parent's own postings as "Direct
+postings to Travel", and "Total Travel" for the family, a parent heading
+its family even with no postings of its own. Each account prints once and
+every total is the one the flat list gives; the prior-year columns add up
+by family too. The CSV stays flat, each account named by its full path
+("Travel: Hotel"), now on the Statement of Activities as well, which
+printed the bare "Hotel". An account under a parent of another section, or
+in a parent loop, prints at the top level with its path.
 
 The QuickBooks lists import keeps the type each account has in the file
 (FIXASSET, LTLIAB, EXINC…) and the IIF export writes it back, CCARD included:
