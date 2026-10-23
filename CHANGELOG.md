@@ -147,6 +147,23 @@ is not among them, so a fresh reconciliation of a feed-linked account
 reports none. A date on or before the last completed
 statement is refused as a fresh start is, and a completed reconciliation
 refuses the change. The change leaves an `UPDATE` row in the audit trail.
+A recurring invoice that has made invoices can no longer be deleted. Deleting
+one answered 200 and left its invoices pointing at a template that no longer
+existed; now the delete is refused (409). Nothing ends on the delete — it
+keeps billing until the user acts — so the sentence counts the invoices it
+made and says to set an End Date to stop it for good or clear Active to pause
+it, and the edit form has the Active box that sentence names. Re-ticking
+Active now rolls next_due forward to the first occurrence on or after today:
+a template paused in January and re-activated in July no longer back-dates an
+invoice for every missed month, and a run no longer refuses every schedule
+because one back-dated installment fell inside the closing date. A schedule
+skipped for a closed period is reported with advice the operator can follow —
+move the closing date, or clear and re-tick Active to roll the due date
+forward past it — not "set a later start", which the edit form has no field
+for. `scripts/run_recurring.py` now prints the skipped schedules (each with
+its reason) so the cron log shows the ones it passed over, instead of
+skipping them silently every day. A schedule that has made nothing still
+deletes (found in PNWImport's fork, SlowBooks-Pro-Testing#101).
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
