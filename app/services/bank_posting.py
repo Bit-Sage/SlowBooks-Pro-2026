@@ -201,7 +201,11 @@ def bank_entry_lines(
             status_code=400, detail="Category must differ from the account itself"
         )
     line_desc = memo or payee or None
-    description = payee or memo or "Bank entry"
+    # The header carries the payee, or the sentinel "Bank entry" when none was
+    # typed — never the memo. A memo-only entry (memo on the lines, sentinel on
+    # the header) is then told apart from a payee-only one (payee on both), so
+    # it reopens with the memo in Memo, not in Payee (#388 review).
+    description = payee or "Bank entry"
     if splits:
         lines = []
         for cat, part, part_memo, *dims in splits:

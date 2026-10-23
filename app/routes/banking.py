@@ -638,14 +638,17 @@ def _entry_detail(
     bank_line = next(ln for ln in txn.lines if ln.account_id == account_id)
     others = [ln for ln in txn.lines if ln.account_id != account_id]
     line_desc = bank_line.description or ""
-    # the memo lives on the lines and is the payee when none was typed
-    # (post_bank_entry): the form's Memo is blank then, not the payee again.
-    # An entry with neither carries "Bank entry" on its header and nothing
-    # on its lines: the form's Payee is blank then too, so saving it as it
-    # opened writes "Bank entry" onto nothing.
-    if not line_desc and (txn.description or "") == "Bank entry":
+    header = txn.description or ""
+    # A payee-only entry carries the payee on both the header and the lines; a
+    # memo-only one carries the sentinel "Bank entry" on the header and the
+    # memo on the lines (bank_entry_lines). So the header being the sentinel
+    # means no payee was typed, and whatever is on the lines is the Memo: both
+    # reopen as they were saved — the memo in Memo, not in Payee (#388 review).
+    if header == "Bank entry":
         out["payee"] = ""
-    out["description"] = "" if line_desc == (txn.description or "") else line_desc
+        out["description"] = line_desc
+    else:
+        out["description"] = "" if line_desc == header else line_desc
     out["class_id"] = txn.class_id
     cls = db.get(TxnClass, txn.class_id) if txn.class_id else None
     out["class_name"] = cls.name if cls else None

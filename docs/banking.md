@@ -70,7 +70,12 @@ entry where it is, and saving it unchanged writes nothing; a new amount or
 category replaces the lines (each old line a DELETE in the audit log, each
 new one an INSERT). The form carries back what it has no box for: the
 entry's job, a split line's own class or job, a class archived since; a
-line with a class of its own (an imported check's) keeps it.
+line with a class of its own (an imported check's) keeps it. A memo-only
+entry (a memo, no payee) reopens with the memo in Memo, not in Payee: no
+payee is stored as the sentinel "Bank entry" on the header, which tells a
+memo-only entry from a payee-only one and shows a blank Payee in the
+register. No migration; entries posted before this still read their memo as
+the payee.
 
 An entry a completed reconciliation holds says so when it opens: its
 amount and date stay as the statement has them (refused, as its void is;

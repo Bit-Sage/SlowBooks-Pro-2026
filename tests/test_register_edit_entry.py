@@ -724,6 +724,40 @@ def test_opening_and_saving_an_entry_unchanged_writes_nothing(
     assert e["payee"] == "" and e["description"] == ""
     assert before["neither"][0] == "Bank entry"
     assert [ln[3] for ln in before["neither"][3]] == [None, None]
+    # a memo-only entry opens with the memo in Memo and a blank Payee, not the
+    # memo in Payee (#388 review): the header carries the sentinel, not the memo
+    e = client.get(f"/api/banking/entries/{posted['memo only']['id']}").json()
+    assert e["payee"] == "" and e["description"] == "August water"
+    assert before["memo only"][0] == "Bank entry"
+    assert [ln[3] for ln in before["memo only"][3]] == ["August water", "August water"]
+    # a payee-only entry still opens with the payee in Payee and a blank Memo
+    e = client.get(f"/api/banking/entries/{posted['payee only']['id']}").json()
+    assert e["payee"] == "City Water" and e["description"] == ""
+    assert before["payee only"][0] == "City Water"
+
+
+def test_a_memo_only_entry_shows_a_blank_payee_in_the_register(
+    client, db_session, seed_accounts
+):
+    """#388 review: a memo-only register entry reopens with the memo in Memo,
+    and the register's Payee column is blank — not the memo, not the
+    sentinel. The round trip is exact (open + save unchanged is a no-op)."""
+    from app.services.bank_register import account_register
+
+    posted = _entry(client, seed_accounts, payee=None, description="Fuel receipt")
+    rows = account_register(db_session, seed_accounts["1000"])["entries"]
+    row = next(r for r in rows if r["transaction_id"] == posted["id"])
+    assert row["payee"] == ""
+    assert row["description"] == "Fuel receipt"
+
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    assert e["payee"] == "" and e["description"] == "Fuel receipt"
+    audit = db_session.query(AuditLog).count()
+    r = client.put(f"/api/banking/entries/{posted['id']}", json=_form(e))
+    assert r.status_code == 200, r.text
+    assert db_session.query(AuditLog).count() == audit  # save-unchanged is a no-op
+    e2 = client.get(f"/api/banking/entries/{posted['id']}").json()
+    assert e2["payee"] == "" and e2["description"] == "Fuel receipt"
 
 
 def test_the_closing_date_holds_for_the_old_date_and_the_new(client, seed_accounts):

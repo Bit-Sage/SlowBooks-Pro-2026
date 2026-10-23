@@ -234,6 +234,10 @@ def payees_for(db: Session, txns) -> dict[int, str]:
             name = pay_names.get(t.source_id, "")
         if not name:
             name = (t.description or "").removeprefix("CC Charge: ").strip()
+        # a register entry with no payee carries the sentinel "Bank entry" on
+        # its header (bank_entry_lines), not a counterparty: show it blank
+        if t.source_type == "bank_entry" and name == "Bank entry":
+            name = ""
         out[t.id] = name
     return out
 

@@ -35,7 +35,14 @@ on edit, each old line a DELETE in the audit log and each new one an
 INSERT. A field the PUT leaves out keeps what the entry has, and the form
 carries back what it has no box for: the entry's job, a split line's own
 class or job, and a class archived since. A line with its own class (an
-imported check's lines can have one) keeps it through an edit.
+imported check's lines can have one) keeps it through an edit. A memo-only
+entry (a memo, no payee) now reopens with the memo in Memo, not in Payee: no
+payee carries the sentinel "Bank entry" on the entry's header instead of the
+memo, so a memo-only entry is told apart from a payee-only one, and the
+register shows its Payee column blank rather than the memo or the sentinel.
+This needs no migration and changes only new entries; a memo-only entry
+posted before this release was stored the same as a payee-only one, so it
+still reopens with its text in Payee.
 
 An entry a completed reconciliation holds says so as it opens, and its
 amount and date stay as the statement has them: a change to either is
