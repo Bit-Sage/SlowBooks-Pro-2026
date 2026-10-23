@@ -277,6 +277,9 @@ console.log(JSON.stringify({ ids, none: Q.itemId(null), html }));
         [node, "-e", script, str(JS / "item_quick_add.js")],
         capture_output=True,
         text=True,
+        # node writes UTF-8; without this Windows decodes the label's em dash
+        # as cp1252 and the assert reads mojibake (#445)
+        encoding="utf-8",
         check=True,
     )
     got = json.loads(out.stdout)
