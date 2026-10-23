@@ -283,3 +283,30 @@ def test_vendor_payments_csv_desktop_header_is_inline(client, db_session):
     )
     assert r.status_code == 200
     assert r.headers["content-disposition"].startswith("inline;")
+
+
+def test_vendor_payments_csv_name_is_capped_for_a_long_vendor_name(client, db_session):
+    """A 300-character vendor name gives a download name capped at
+    FILE_NAME_STEM_MAX characters before ".csv", in the ASCII fallback and
+    the exact UTF-8 name alike, with the extension kept whole (#423)."""
+    import re
+    from urllib.parse import unquote
+
+    from app.services.request_utils import FILE_NAME_STEM_MAX
+
+    vendor = Vendor(name="Łódź " + "Supply " * 42 + "Co")
+    assert len(vendor.name) >= 300
+    db_session.add(vendor)
+    db_session.commit()
+    r = client.get(f"/api/vendors/{vendor.id}/payments/csv")
+    assert r.status_code == 200
+    cd = r.headers["content-disposition"]
+    fallback = re.search(r'filename="([^"]*)"', cd).group(1)
+    exact = unquote(re.search(r"filename\*=UTF-8''([^;\s]+)", cd).group(1))
+    for name in (fallback, exact):
+        assert name.endswith(".csv"), name
+        stem = name[: -len(".csv")]
+        assert 0 < len(stem) <= FILE_NAME_STEM_MAX, (len(stem), name)
+        assert stem.startswith("Payments_"), name
+    assert fallback.startswith("Payments_Lodz-Supply-Supply")
+    assert exact.startswith("Payments_Łódź-Supply-Supply")
