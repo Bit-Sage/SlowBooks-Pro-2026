@@ -117,12 +117,11 @@ def vendor_payments_csv(
 ):
     """The vendor's payments as a CSV, with a paid-to-date total (#335):
     what a client asks for ("how much have we paid them this year")."""
-    import csv
     import io
 
-    from fastapi.responses import Response
-
     from app.models.bills import BillPayment
+    from app.routes.csv import _csv_response
+    from app.services.csv_export import _money_cell, _SafeWriter
 
     vendor = get_or_404(db, Vendor, vendor_id)
     q = db.query(BillPayment).filter(BillPayment.vendor_id == vendor_id)
@@ -132,7 +131,7 @@ def vendor_payments_csv(
         q = q.filter(BillPayment.date <= end_date)
     payments = q.order_by(BillPayment.date, BillPayment.id).all()
     out = io.StringIO()
-    w = csv.writer(out, lineterminator="\n")
+    w = _SafeWriter(out)  # formula guard; amounts stay numbers
     w.writerow(["Vendor", vendor.name])
     w.writerow(["Period", f"{start_date or 'start'} to {end_date or 'today'}"])
     w.writerow([])
@@ -147,16 +146,12 @@ def vendor_payments_csv(
                 p.date.isoformat(),
                 p.method or "",
                 p.check_number or "",
-                f"{amount:.2f}",
+                _money_cell(amount),
                 (p.pay_from_account.name if p.pay_from_account else ""),
                 (p.notes or "").replace("\n", " "),
                 "yes" if p.is_voided else "",
             ]
         )
-    w.writerow(["", "", "Total paid", f"{total:.2f}", "", "", ""])
+    w.writerow(["", "", "Total paid", _money_cell(total), "", "", ""])
     slug = "".join(ch if ch.isalnum() else "_" for ch in vendor.name)[:40]
-    return Response(
-        out.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="Payments_{slug}.csv"'},
-    )
+    return _csv_response(out.getvalue(), f"Payments_{slug}.csv")

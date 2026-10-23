@@ -3,6 +3,8 @@
 unused accounts go in one step (#332); the vendor list has a search box and
 a vendor's page shows what was paid to date, with a CSV (#335)."""
 
+import csv
+import io
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -216,3 +218,28 @@ def test_the_vendor_list_has_a_search_box_and_a_vendor_its_paid_to_date_and_csv(
     ).text
     assert "2025-12-15" not in year and "Total paid,250.00" in year
     assert client.get("/api/vendors/99999/payments/csv").status_code == 404
+
+
+def test_vendor_payments_csv_is_formula_guarded_with_bom(client, db_session):
+    """A formula-shaped vendor name is text, amounts stay numbers, BOM first."""
+    vendor = Vendor(name='=HYPERLINK("x")')
+    db_session.add(vendor)
+    db_session.flush()
+    db_session.add(
+        BillPayment(
+            vendor_id=vendor.id,
+            date=date(2026, 1, 15),
+            amount=Decimal("-5.00"),
+            method="+cmd",
+            check_number="1001",
+        )
+    )
+    db_session.commit()
+    r = client.get(f"/api/vendors/{vendor.id}/payments/csv")
+    assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
+    rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
+    assert rows[0] == ["Vendor", '\'=HYPERLINK("x")']
+    assert rows[4][1] == "'+cmd"
+    assert rows[4][3] == "-5.00"  # a number, not "'-5.00"
+    assert rows[5][3] == "-5.00"

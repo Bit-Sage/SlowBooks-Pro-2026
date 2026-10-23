@@ -5,6 +5,16 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.27.0
+
+- The vendor payments CSV (`/api/vendors/{id}/payments/csv`) now goes through
+  the shared export helpers: a vendor, method, check number, account or note
+  that begins with `=`, `+`, `-` or `@` is written as text with the same
+  leading apostrophe as every other export (it was written raw, so a vendor
+  named `=HYPERLINK(...)` was a live formula), and the file starts with the
+  UTF-8 byte-order mark so Excel reads accented names correctly. Amounts stay
+  numbers.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
