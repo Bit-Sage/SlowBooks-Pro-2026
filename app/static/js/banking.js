@@ -1104,6 +1104,7 @@ const BankingPage = {
                 </div>
             </div>
             <div id="recon-finish-msg" role="alert" style="font-size:12px; color:var(--danger); margin-bottom:8px;"></div>
+            ${data.ticked_after_date > 0 ? `<div role="status" style="font-size:12px; color:var(--gray-600); margin-bottom:8px;">${data.ticked_after_date} ticked line${data.ticked_after_date === 1 ? '' : 's'} fall after the statement date and won't be stamped when you finish; ${data.ticked_after_date === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.</div>` : ''}
             <div class="card-grid" style="margin-bottom:16px;">
                 <div class="card"><div class="card-header">Beginning Balance</div>
                     <div class="card-value">${formatCurrency(data.beginning_balance)}</div></div>
@@ -1112,6 +1113,7 @@ const BankingPage = {
                 <div class="card"><div class="card-header">Statement Balance</div>
                     <div class="card-value">${formatCurrency(data.statement_balance)}</div>
                     <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px;" data-write
+                        aria-label="Change the statement date or ending balance"
                         onclick="BankingPage.changeStatement(${reconId}, '${data.statement_date}', ${data.statement_balance})">Change…</button></div>
                 <div class="card"><div class="card-header">Difference</div>
                     <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
@@ -1160,7 +1162,7 @@ const BankingPage = {
         e.preventDefault();
         const form = e.target;
         try {
-            await API.put(`/banking/reconciliations/${reconId}`, {
+            const res = await API.put(`/banking/reconciliations/${reconId}`, {
                 statement_date: form.statement_date.value,
                 statement_balance: form.statement_balance.value,
             });
@@ -1169,7 +1171,12 @@ const BankingPage = {
             // start them over so they cannot sit past a date moved earlier.
             BankingPage._reconThrough[reconId] = '';
             BankingPage._reconDay[reconId] = '';
-            toast('Statement changed');
+            // A date moved earlier can leave lines ticked past it; they are
+            // not on this session and carry to the next one (#400 review).
+            const n = res.ticked_after_date;
+            toast(n > 0
+                ? `Statement changed. ${n} ticked line${n === 1 ? '' : 's'} fall after the new date; ${n === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.`
+                : 'Statement changed');
             BankingPage.showReconcileView(reconId);
         } catch (err) { toast(err.message, 'error'); }
     },

@@ -166,6 +166,62 @@ def test_a_later_date_brings_lines_in_and_an_earlier_one_keeps_the_ticks(
     assert fifth and fifth[0]["cleared"] is True and not fifth[0]["reconciliation_id"]
 
 
+def test_an_earlier_date_reports_the_ticks_that_carry_to_the_next_session(
+    client, seed_accounts, vendor, statement
+):
+    """A date moved earlier past ticked lines leaves them ticked but off the
+    session; completing won't stamp them, so they carry to the next
+    reconciliation already ticked (#400 review). The change reports how
+    many, and the session carries the same count for the screen."""
+    s = _session(client, statement["id"])
+    # With the fourth line (the 25th) in reach, tick all four.
+    r = _put(client, statement["id"], statement_date="2026-09-30")
+    assert r.status_code == 200 and r.json()["ticked_after_date"] == 0
+    s = _session(client, statement["id"])
+    for t in s["transactions"]:
+        _tick(client, statement["id"], t["id"])
+
+    # Move the date back to the 20th (and correct the balance to the 810
+    # that the lines through it clear to): the 25th's tick now falls after.
+    r = _put(
+        client, statement["id"], statement_date="2026-09-20", statement_balance="810.00"
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ticked_after_date"] == 1
+    s = _session(client, statement["id"])
+    assert s["ticked_after_date"] == 1
+    # The 25th is not on the session, but still cleared in the register.
+    assert "2026-09-25" not in [t["date"] for t in s["transactions"]]
+    reg = client.get(
+        f"/api/banking/check-register?account_id={statement['account_id']}"
+    ).json()
+    twenty_fifth = [e for e in reg["entries"] if e["date"] == "2026-09-25"]
+    assert twenty_fifth and twenty_fifth[0]["cleared"] is True
+
+    # Finish this one at the 20th, then the next session (ending later)
+    # shows the 25th already ticked — it carried, unstamped.
+    assert (
+        client.post(
+            f"/api/banking/reconciliations/{statement['id']}/complete"
+        ).status_code
+        == 200
+    )
+    nxt = _start(client, seed_accounts, "500.00", day=30)
+    ns = _session(client, nxt["id"])
+    carried = [t for t in ns["transactions"] if t["date"] == "2026-09-25"]
+    assert carried and carried[0]["reconciled"] is True
+
+
+def test_the_reconcile_screen_warns_about_ticks_past_the_date():
+    src = open("app/static/js/banking.js", encoding="utf-8").read()
+    # The Change… button is named for a screen reader (#400 review).
+    assert 'aria-label="Change the statement date or ending balance"' in src
+    # The screen and the change response say the carried ticks count.
+    assert "data.ticked_after_date > 0" in src
+    assert "to the next reconciliation, still ticked" in src
+    assert "res.ticked_after_date" in src
+
+
 def test_a_date_on_or_before_the_last_completed_statement_is_refused(
     client, seed_accounts, vendor
 ):

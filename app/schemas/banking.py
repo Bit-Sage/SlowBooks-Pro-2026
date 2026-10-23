@@ -182,5 +182,8 @@ class ReconciliationResponse(BaseModel):
     status: ReconciliationStatus
     created_at: datetime
     completed_at: Optional[datetime]
+    # Lines left ticked past the statement date that carry to the next
+    # reconciliation (#400 review); only set on the update response.
+    ticked_after_date: int = 0
 
     model_config = {"from_attributes": True}

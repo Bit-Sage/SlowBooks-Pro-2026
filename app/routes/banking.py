@@ -637,7 +637,9 @@ def update_reconciliation(
 ):
     """Correct the statement's ending balance or date while the
     reconciliation is in progress (#389); the next session's difference
-    is recomputed from the lines already ticked. 400 once completed."""
+    is recomputed from the lines already ticked. 400 once completed. The
+    response reports any lines left ticked past the statement date, which
+    carry to the next reconciliation still ticked (#400 review)."""
     from app.services import reconciliation as rc
 
     fields = reject_null_updates(Reconciliation, data.model_dump(exclude_unset=True))
@@ -649,6 +651,7 @@ def update_reconciliation(
     )
     db.commit()
     db.refresh(recon)
+    recon.ticked_after_date = rc.ticked_after_statement_date(db, recon)
     return recon
 
 

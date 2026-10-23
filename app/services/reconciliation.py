@@ -122,6 +122,24 @@ def update(
     return recon
 
 
+def ticked_after_statement_date(db: Session, recon: Reconciliation) -> int:
+    """How many lines are ticked on this account past the statement date
+    (#400 review). Completing a reconciliation only stamps the lines on or
+    before its date, so these are left ticked and carry into the next
+    session already ticked. They appear when the date is moved earlier past
+    lines that were ticked — a tick is a fact about the line, as Abandon
+    keeps them, but nothing on screen said they'd left this session."""
+    return (
+        db.query(TransactionLine)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id == recon.account_id)
+        .filter(TransactionLine.cleared.is_(True))
+        .filter(TransactionLine.reconciliation_id.is_(None))
+        .filter(Transaction.date > recon.statement_date)
+        .count()
+    )
+
+
 def _candidates(db: Session, recon: Reconciliation):
     return (
         db.query(TransactionLine, Transaction)
@@ -196,6 +214,7 @@ def session(db: Session, recon: Reconciliation) -> dict:
         "uncleared_total": float(uncleared_total),
         "difference": float(difference),
         "status": recon.status.value,
+        "ticked_after_date": ticked_after_statement_date(db, recon),
         "transactions": out_rows,
     }
 
