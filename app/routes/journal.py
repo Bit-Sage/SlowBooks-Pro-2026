@@ -43,6 +43,10 @@ def _journal_sources() -> list[str]:
         "iif_import",
         QB_LEDGER,
         "opening_balance",
+        # an item's opening stock (DR Inventory / CR Opening Balance Equity):
+        # shown here for the record, but never voidable — _voidable refuses
+        # it, so its stock and GL can't drift apart (use an adjustment).
+        "item_opening",
         # an accountant's entry applied from their copy (#346): a journal
         # of its own on the page, voidable like any other
         ACCOUNTANTS_COPY,
@@ -59,6 +63,12 @@ def _voidable(txn, voided: bool) -> bool:
     opening-balance import had no way out but the API (a CPA on X, 2.23.5)."""
     source = txn.source_type or ""
     if voided or source.endswith("_void"):
+        return False
+    # An item's opening stock is listed but not voidable: a reversal would
+    # take the value off the books while the movement, qty and avg cost
+    # stayed, so valuation and GL would disagree. Correct it with an
+    # inventory adjustment instead; the route refuses the void too.
+    if source == "item_opening":
         return False
     return source in _journal_sources() or source == "qbo_ledger"
 
@@ -267,6 +277,14 @@ def void_journal_entry(
         raise HTTPException(status_code=404, detail="Journal entry not found")
     if txn.source_type and txn.source_type.endswith("_void"):
         raise HTTPException(status_code=400, detail="Cannot void a reversal entry")
+    if txn.source_type == "item_opening":
+        # Voiding would remove the value but leave the movement, quantity and
+        # average cost, so valuation would say stock the GL no longer shows.
+        raise HTTPException(
+            status_code=400,
+            detail="An item's opening stock can't be voided here; correct it "
+            "with an inventory adjustment on the item.",
+        )
     acting = _acting(db)
     if _role(request) == ROLE_ACCOUNTANT and (txn.posted_by or "") != acting:
         # An accountant voids only what it posted (#340): the owner's

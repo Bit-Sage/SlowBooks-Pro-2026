@@ -120,6 +120,7 @@ _LINKS = {
     "transfer": "/#/banking/transfers/{txn}",
     "bank_entry": "/#/journal/{txn}",
     "opening_balance": "/#/journal/{txn}",
+    "item_opening": "/#/journal/{txn}",
     "qbo_ledger": "/#/journal/{txn}",
     "qbo_journal": "/#/journal/{txn}",
     # Postings that have a page of their own (#241): the document opens

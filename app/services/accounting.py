@@ -420,7 +420,14 @@ def get_cc_account_id(db: Session) -> int:
 
 def get_opening_balance_equity_id(db: Session) -> int:
     """3900 Opening Balance Equity, created on demand: the offset for a bank
-    or card account's opening balance (issue #114)."""
+    or card account's opening balance (issue #114).
+
+    Matched by account number first, so a chart that already holds 3900 under
+    another name (a renamed account, or QuickBooks' "Opening Bal Equity")
+    is reused instead of growing a second OBE account beside it."""
+    existing = db.query(Account).filter(Account.account_number == "3900").first()
+    if existing:
+        return existing.id
     return ensure_account(db, "3900", "Opening Balance Equity", AccountType.EQUITY).id
 
 

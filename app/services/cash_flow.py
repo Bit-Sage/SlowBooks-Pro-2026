@@ -41,7 +41,7 @@ from app.models.fixed_assets import FixedAssetType
 from app.models.transactions import Transaction, TransactionLine
 from app.services.accounting import _q
 
-CARRIED_IN = ("opening_balance",)
+CARRIED_IN = ("opening_balance", "item_opening")
 DISPOSAL = "asset_disposal"
 
 _PL_TYPES = (AccountType.INCOME, AccountType.EXPENSE, AccountType.COGS)
