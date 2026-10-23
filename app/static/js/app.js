@@ -1125,6 +1125,13 @@ const App = {
             const detail = tr.dataset.accountDetail;
             details[detail] = (details[detail] || 0) + (shown ? 1 : 0);
         });
+        // a sub-account left showing while its parent is filtered out says
+        // its full path, since the indent no longer can (#416)
+        $$('tr[data-parent-id]').forEach(tr => {
+            const span = tr.querySelector('.account-path');
+            const up = document.querySelector(`tr[data-account-id="${tr.dataset.parentId}"]`);
+            if (span) span.hidden = !(span.dataset.always || (!tr.hidden && up && up.hidden));
+        });
         $$('tr[data-account-group]').forEach(tr => { tr.hidden = !(groups[tr.dataset.accountGroup] || 0); });
         $$('tr[data-account-detail-group]').forEach(tr => { tr.hidden = !(details[tr.dataset.accountDetailGroup] || 0); });
         const note = $('#accounts-filter-note');
@@ -1302,9 +1309,9 @@ const App = {
                 // another account has too
                 const showPath = parent && (depth === 0 || tree.collides(a));
                 const haystack = escapeHtml(`${a.account_number || ''} ${a.name} ${path}`.toLowerCase());
-                html += `<tr${inactive ? ' class="row--dim"' : ''} aria-level="${depth + 1}" data-account-id="${Number(a.id)}" data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
+                html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-id="${Number(a.id)}"${parent ? ` data-parent-id="${Number(parent.id)}"` : ''} data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
                     <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
-                    <td style="padding-left:${10 + depth * 20}px;">${depth ? '<span aria-hidden="true" style="color:var(--gray-500);">└ </span>' : ''}<a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="${escapeHtml(parent ? `Open the register: ${path}` : 'Open the register')}">${escapeHtml(a.name)}</a>${parent ? `<span class="visually-hidden">, sub-account of ${escapeHtml(tree.path(parent))}</span>` : ''}${showPath ? ` <span class="account-path" aria-hidden="true" style="font-size:11px; color:var(--gray-500);">${escapeHtml(path)}</span>` : ''}${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
+                    <td style="padding-left:${10 + depth * 20}px;">${depth ? '<span aria-hidden="true" style="color:var(--gray-500);">└ </span>' : ''}<a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="${escapeHtml(parent ? `Open the register: ${path}` : 'Open the register')}">${escapeHtml(a.name)}</a>${parent ? `<span class="visually-hidden">, sub-account of ${escapeHtml(tree.path(parent))}</span>` : ''}${parent ? ` <span class="account-path" aria-hidden="true"${showPath ? ' data-always="1"' : ' hidden'} style="font-size:11px; color:var(--gray-500);">${escapeHtml(path)}</span>` : ''}${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${escapeHtml(T(a.detail_type_label || a.account_type))}</td>
                     <td class="amount">${formatCurrency(a.balance)}</td>
                     <td class="actions">
@@ -1378,7 +1385,8 @@ const App = {
                         <select name="parent_id" id="account-parent" data-was="${acct.parent_id == null ? '' : Number(acct.parent_id)}" aria-describedby="account-parent-hint" onchange="App.accountParentChanged()">
                             ${App._accountParentOptions(acct.parent_id)}
                         </select>
-                        <span id="account-parent-hint" class="hint" role="status">Accounts of the same type. A sub-account is listed under its parent.</span></div>
+                        <span id="account-parent-hint" class="hint">${App._accountStandsAlone(acct) ? 'Found by its number when the books post, so it stays a top-level account.' : 'Accounts of the same type. A sub-account is listed under its parent.'}</span>
+                        <span id="account-parent-status" class="hint" role="status"></span></div>
                     <div class="form-group full-width"><label>Description</label>
                         <textarea name="description">${escapeHtml(acct.description || '')}</textarea></div>
                 </div>
@@ -1399,17 +1407,25 @@ const App = {
     // accounts are left out, except the parent it has.
     _accountParentChoices(detail) {
         const { acct, accounts, tree } = App._accountFormState;
+        if (App._accountStandsAlone(acct)) return [];
         const d = (App._detailTypeList || []).find(x => x.value === detail);
         const base = d ? d.account_type : acct.account_type;
         const mine = acct.id ? tree.family(acct) : new Set();
-        const pinned = ['bank', 'credit_card', 'accounts_receivable', 'accounts_payable'];
         return accounts.filter(p => {
             if (mine.has(p.id) || p.account_type !== base) return false;
             if (p.is_active === false && p.id !== acct.parent_id) return false;
-            if (pinned.includes(p.detail_type)) return true;
+            if (App._PINNED_DETAILS.includes(p.detail_type)) return true;
             if (['bank', 'credit_card'].includes(detail)) return false;
             return !acct.is_control || p.detail_type === acct.detail_type;
         });
+    },
+
+    _PINNED_DETAILS: ['bank', 'credit_card', 'accounts_receivable', 'accounts_payable'],
+
+    // A control account (1100, 2000, Checking…) is found by its number and
+    // takes no new parent; the server refuses one (#416).
+    _accountStandsAlone(acct) {
+        return !!acct.is_control || ['accounts_receivable', 'accounts_payable'].includes(acct.detail_type);
     },
 
     _accountParentOptions(selected, detail = App._accountFormState.acct.detail_type, keep = true) {
@@ -1427,38 +1443,47 @@ const App = {
     },
 
     // A parent other than 1100, 2000, a bank or a card hands its detail type
-    // down: choosing one sets the Type picker to it.
+    // down: choosing one sets the Type picker to it. The choice is kept as
+    // the one a type change comes back to.
     accountParentChanged() {
-        const { tree } = App._accountFormState;
+        const state = App._accountFormState;
         const sel = $('#account-parent');
         const picker = document.querySelector('select[name=detail_type]');
-        const parent = tree.byId.get(Number(sel.value));
-        const hint = $('#account-parent-hint');
+        const parent = state.tree.byId.get(Number(sel.value));
+        state.wanted = parent ? parent.id : null;
+        const status = $('#account-parent-status');
         if (parent && picker && !picker.disabled
-            && !['bank', 'credit_card', 'accounts_receivable', 'accounts_payable'].includes(parent.detail_type)
+            && !App._PINNED_DETAILS.includes(parent.detail_type)
             && picker.value !== parent.detail_type) {
             picker.value = parent.detail_type;
-            hint.textContent = `Type set to ${T(parent.detail_type_label)}, the type of ${parent.name}.`;
+            status.textContent = `Type set to ${T(parent.detail_type_label)}, the type of ${parent.name}.`;
         } else {
-            hint.textContent = 'Accounts of the same type. A sub-account is listed under its parent.';
+            status.textContent = '';
         }
     },
 
-    // A new type re-lists the parents; one that cannot take the new type is
-    // let go, and the hint says so: a type change and a move out from under
-    // the parent in one save.
+    // A new type re-lists the parents. The parent chosen (or the one the
+    // account had) stays while the type allows it and comes back when the
+    // type does; one that cannot take the type is let go, the status saying
+    // so: a type change and a move out from under the parent in one save.
     accountTypeChanged() {
-        const { tree } = App._accountFormState;
+        const state = App._accountFormState;
         const sel = $('#account-parent');
         const picker = document.querySelector('select[name=detail_type]');
         if (!sel || !picker) return;
-        const was = sel.value ? Number(sel.value) : null;
-        sel.innerHTML = App._accountParentOptions(was, picker.value, false);
-        const parent = tree.byId.get(was);
-        const pinned = parent && ['bank', 'credit_card', 'accounts_receivable', 'accounts_payable'].includes(parent.detail_type);
-        if (parent && (sel.value !== String(was) || (!pinned && parent.detail_type !== picker.value))) {
+        if (!('wanted' in state)) state.wanted = state.acct.parent_id ?? null;
+        const wanted = state.wanted;
+        const original = picker.value === state.acct.detail_type && wanted === state.acct.parent_id;
+        sel.innerHTML = App._accountParentOptions(wanted, picker.value, original);
+        const parent = state.tree.byId.get(wanted);
+        const fits = parent && sel.value === String(wanted) && (original
+            || App._PINNED_DETAILS.includes(parent.detail_type) || parent.detail_type === picker.value);
+        const status = $('#account-parent-status');
+        if (parent && !fits) {
             sel.value = '';
-            $('#account-parent-hint').textContent = `No longer under ${parent.name}, which cannot take this type: saved, it is a top-level account.`;
+            status.textContent = `No longer under ${parent.name}, which cannot take this type: saved, it is a top-level account.`;
+        } else {
+            status.textContent = '';
         }
     },
 

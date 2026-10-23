@@ -47,7 +47,12 @@ from app.models.accounts import (
 )
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
-from app.services.account_tree import MAX_DEPTH, loop_message
+from app.services.account_tree import (
+    MAX_DEPTH,
+    loop_message,
+    parent_link_problem,
+    takes_no_new_parent,
+)
 from app.services.csv_export import strip_formula_guard
 
 # --- vocabulary -------------------------------------------------------------
@@ -649,6 +654,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
         else:
             entry["_parent"] = hit
 
+    _flag_parent_types(db, plan)
     _flag_parent_loops(db, plan)
 
     if replace:
@@ -714,6 +720,75 @@ def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
     if r.detail_type:
         return r.detail_type
     return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+
+
+def _flag_parent_types(db: Session, plan: Plan) -> None:
+    """Leave off a parent link the account API would refuse (#416): a
+    sub-account of another base type (an expense under Checking or under an
+    income account), one that cannot carry a plain parent's detail type (a
+    bank account under an expense folder), and a new parent for a control
+    account or an Accounts Receivable / Payable one. The row says why, in
+    the dry run as when applied, as a loop does."""
+    by_existing = {
+        e["existing_id"]: e for e in plan.rows if "existing_id" in e and "_row" in e
+    }
+
+    def planned(entry: dict | None, acct: Account | None):
+        """(name, base type, detail type, bank kind, number) as applied."""
+        r: Row | None = entry.get("_row") if entry else None
+        if entry is None or r is None:
+            return (
+                acct.name,
+                acct.account_type.value,
+                acct.detail_type,
+                acct.bank_kind,
+                acct.account_number,
+            )
+        if acct is None:  # a new row: the file's own detail type, if any
+            return (r.name, r.type, r.detail_type, r.bank_kind, entry.get("number"))
+        retyped = any(c.startswith("type ") for c in entry.get("changes", []))
+        return (
+            r.name,
+            r.type if retyped else acct.account_type.value,
+            r.detail_type if retyped else acct.detail_type,
+            acct.bank_kind or r.bank_kind,
+            acct.account_number,
+        )
+
+    def node(kind, ref):
+        if kind == "new":
+            return planned(plan.rows[ref], None)
+        acct = db.get(Account, ref)
+        return planned(by_existing.get(ref), acct) if acct else None
+
+    for entry in plan.rows:
+        hit = entry.get("_parent")
+        if not hit or entry["action"] in ("error", "deactivate", "keep"):
+            continue
+        acct = db.get(Account, entry["existing_id"]) if "existing_id" in entry else None
+        child = planned(entry, acct)
+        parent = node(*hit)
+        if parent is None:
+            continue
+        problem = None
+        moved = acct is None or hit != ("existing", acct.parent_id)
+        if acct is not None and moved and takes_no_new_parent(child[2], child[4]):
+            problem = f"{child[0]} is found by its number and takes no parent"
+        if problem is None:
+            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            # the planned detail type of a parent row is its default when the
+            # file names none; the rule reads the one it will have
+            pdetail = parent[2] or (
+                plan.rows[hit[1]].get("detail_type") if hit[0] == "new" else None
+            )
+            problem = parent_link_problem(
+                label, parent[1], pdetail, child[1], child[2], child[3], child[4]
+            )
+        if problem:
+            entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
+                problem[0].upper() + problem[1:] + ". The link was left off."
+            )
+            entry.pop("_parent", None)
 
 
 def _flag_parent_loops(db: Session, plan: Plan) -> None:

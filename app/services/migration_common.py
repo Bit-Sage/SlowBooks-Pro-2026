@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, detail_label
 from app.models.transactions import Transaction
+from app.services.account_tree import parent_link_problem
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
 
@@ -323,7 +324,24 @@ def run_import_bundle(
             acct.bank_kind = spec["bank_kind"]
         parent_name = (spec.get("parent") or "").lower()
         if parent_name and parent_name in by_name:
-            acct.parent_id = by_name[parent_name].id
+            parent = by_name[parent_name]
+            # a pair the account API refuses (#416) is left unlinked
+            problem = parent_link_problem(
+                parent.name,
+                parent.account_type,
+                parent.detail_type,
+                spec["type"],
+                spec.get("detail_type"),
+                spec.get("bank_kind"),
+                spec["code"],
+            )
+            if problem:
+                warnings.append(
+                    f"'{spec['name']}' was not made a sub-account of "
+                    f"'{parent.name}': {problem}"
+                )
+            else:
+                acct.parent_id = parent.id
         # Source-system codes can collide with the seeded chart's numbers —
         # the name stays authoritative; drop the code rather than fail.
         if spec["code"] and (

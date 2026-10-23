@@ -143,7 +143,26 @@ def test_a_pinned_parent_cannot_change_type_over_its_sub_accounts(
         },
     )
     assert r.status_code == 400
-    assert r.json()["detail"].startswith("its sub-account Sweep is an asset.")
+    detail = r.json()["detail"]
+    assert detail.startswith("its sub-account Sweep is Other Current Asset")
+    assert "Move Sweep out from under Spare bank first" in detail
+
+
+def test_a_parent_cannot_turn_pinned_over_sub_accounts_of_another_type(
+    client, seed_accounts
+):
+    folder = _new(client, "Cash folder", "asset")
+    _new(client, "Till", "asset", parent_id=folder["id"])
+    r = client.put(
+        f"/api/accounts/{folder['id']}",
+        json={
+            "account_type": "liability",
+            "detail_type": "credit_card",
+            "bank_kind": "credit_card",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"].startswith("its sub-account Till is an asset.")
 
 
 def test_a_mixed_pair_saved_before_stays_editable(client, db_session, seed_accounts):
@@ -169,3 +188,200 @@ def test_a_mixed_pair_saved_before_stays_editable(client, db_session, seed_accou
         )
     )
     assert (renamed["name"], renamed["parent_id"]) == ("Bank fees", bank.id)
+
+
+# --- the review's points (#416) ----------------------------------------------
+
+
+def test_a_full_object_put_resending_the_parent_is_no_move(
+    client, db_session, seed_accounts
+):
+    """A client that PUTs the whole account back, parent_id unchanged, on a
+    pair saved before: not a move, so not refused."""
+    bank = seed_accounts["1000"]
+    odd = Account(
+        name="Old fees",
+        account_type=AccountType.EXPENSE,
+        parent_id=bank.id,
+        is_system=False,
+    )
+    db_session.add(odd)
+    db_session.commit()
+    full = _ok(client.get(f"/api/accounts/{odd.id}"))
+    body = {
+        k: full[k]
+        for k in ("name", "account_number", "account_type", "parent_id", "description")
+    }
+    body["name"] = "Bank fees"
+    assert _ok(client.put(f"/api/accounts/{odd.id}", json=body))["name"] == "Bank fees"
+
+
+def test_a_type_change_resending_the_parent_says_how_to_get_out(client, seed_accounts):
+    bank = seed_accounts["1000"]
+    sweep = _new(client, "Sweep", "asset", parent_id=bank.id)
+    r = client.put(
+        f"/api/accounts/{sweep['id']}",
+        json={
+            "account_type": "expense",
+            "detail_type": "expense",
+            "parent_id": bank.id,
+        },
+    )
+    assert r.status_code == 400
+    assert "Move Sweep out from under" in r.json()["detail"]
+
+
+def test_a_bank_parent_turning_plain_checks_its_sub_accounts(client, seed_accounts):
+    """Nothing shares a Bank detail type, so the cascade skipped the
+    sub-accounts; a Fixed Asset one under an Other Current Asset parent is a
+    pair the API refuses everywhere else."""
+    spare = _new(client, "Spare bank", "asset", bank_kind="bank")
+    _new(client, "Safe", "asset", parent_id=spare["id"], detail_type="fixed_asset")
+    r = client.put(
+        f"/api/accounts/{spare['id']}",
+        json={"detail_type": "other_current_asset", "bank_kind": None},
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert detail.startswith("its sub-account Safe is Fixed Asset, and under Other")
+    assert "Move Safe out from under Spare bank first" in detail
+    # one that shares the new type is no obstacle
+    other = _new(client, "Spare bank 2", "asset", bank_kind="bank")
+    _new(client, "Float", "asset", parent_id=other["id"])
+    _ok(
+        client.put(
+            f"/api/accounts/{other['id']}",
+            json={"detail_type": "other_current_asset", "bank_kind": None},
+        )
+    )
+
+
+def test_a_control_account_takes_no_new_parent(client, db_session, seed_accounts):
+    ar, bank = seed_accounts["1100"], seed_accounts["1000"]
+    r = client.put(f"/api/accounts/{ar.id}", json={"parent_id": bank.id})
+    assert r.status_code == 400
+    assert r.json()["detail"] == (
+        "1100 Accounts Receivable is found by its number when the books post, "
+        "so it stays a top-level account."
+    )
+    # one it has already (saved before) can be left
+    ar.parent_id = bank.id
+    db_session.commit()
+    _ok(client.put(f"/api/accounts/{ar.id}", json={"name": "Receivables"}))
+    assert (
+        _ok(client.put(f"/api/accounts/{ar.id}", json={"parent_id": None}))["parent_id"]
+        is None
+    )
+
+
+def _chart(client, text, dry_run=0):
+    import io
+
+    r = client.post(
+        f"/api/csv/import/accounts?dry_run={dry_run}",
+        files={"file": ("chart.csv", io.BytesIO(text.encode("utf-8")), "text/csv")},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+CHART = (
+    "Number,Name,Type,Parent\n"
+    "8810,Bank fees,Expense,1000\n"
+    "8830,Travel,Expense,4000\n"
+    "8840,Petty cash,Bank,8830\n"
+    "8850,Tolls,Expense,8830\n"
+    "1100,Accounts Receivable,Asset,1000\n"
+)
+
+
+def test_the_chart_import_leaves_off_a_parent_the_api_refuses(
+    client, db_session, seed_accounts
+):
+    for dry_run in (1, 0):
+        out = _chart(client, CHART, dry_run)
+        notes = {r["name"]: r.get("note", "") for r in out["rows"]}
+        assert "must be an asset too" in notes["Bank fees"]
+        assert "must be an income account too" in notes["Travel"]
+        assert "must be an expense too" in notes["Petty cash"]
+        assert "takes no parent" in notes["Accounts Receivable"]
+        assert "left off" not in notes["Tolls"]
+    db_session.expire_all()
+    by = {a.account_number: a for a in db_session.query(Account).all()}
+    assert by["8810"].parent_id is None
+    assert by["8830"].parent_id is None
+    assert by["8840"].parent_id is None
+    assert by["8850"].parent_id == by["8830"].id
+    assert by["1100"].parent_id is None
+
+
+def test_a_bank_row_under_a_plain_folder_is_left_off(client, db_session, seed_accounts):
+    out = _chart(
+        client,
+        "Number,Name,Type,Parent\n1700,Cash folder,Other Current Asset,\n"
+        "1710,Sweep,Bank,1700\n1720,Float,Other Current Asset,1700\n",
+        1,
+    )
+    notes = {r["name"]: r.get("note", "") for r in out["rows"]}
+    assert "cannot be one" in notes["Sweep"] and "left off" in notes["Sweep"]
+    assert "left off" not in notes["Float"]
+
+
+def test_a_migration_skips_a_parent_link_of_another_type(db_session, seed_accounts):
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.migration_common import run_import_bundle
+
+    chart = [
+        {
+            "name": "Travel",
+            "code": "8830",
+            "type": AccountType.EXPENSE,
+            "description": None,
+        },
+        {
+            "name": "Hotel",
+            "code": "8831",
+            "type": AccountType.EXPENSE,
+            "description": None,
+            "parent": "Travel",
+        },
+        {
+            "name": "Petty cash",
+            "code": "1050",
+            "type": AccountType.ASSET,
+            "description": None,
+            "parent": "Travel",
+            "bank_kind": "bank",
+        },
+    ]
+    gl = [
+        [
+            {
+                "date": date(2026, 1, 5),
+                "account": "Hotel",
+                "debit": Decimal("10"),
+                "credit": Decimal("0"),
+                "journal": "J1",
+            },
+            {
+                "date": date(2026, 1, 5),
+                "account": "Petty cash",
+                "debit": Decimal("0"),
+                "credit": Decimal("10"),
+                "journal": "J1",
+            },
+        ]
+    ]
+    parsers = {"coa": lambda _t: (chart, []), "gl": lambda _t: (gl, [])}
+    out = run_import_bundle(
+        db_session, {"coa": "x", "gl": "x"}, parsers, "test_import", "Test"
+    )
+    assert any(
+        "'Petty cash' was not made a sub-account of 'Travel'" in w
+        for w in out["warnings"]
+    ), out
+    by = {a.name: a for a in db_session.query(Account).all()}
+    assert by["Hotel"].parent_id == by["Travel"].id
+    assert by["Petty cash"].parent_id is None

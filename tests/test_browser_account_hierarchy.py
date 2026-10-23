@@ -1,13 +1,15 @@
 """Sub-accounts on the Chart of Accounts page (#416, the chart half), in
 playwright's Chromium on the bakery's books:
 
-- a sub-account is listed under its parent, indented, with aria-level and
-  a screen-reader note naming the parent; a leaf name two accounts share
-  shows its full path;
+- a sub-account is listed under its parent, indented, with a
+  screen-reader note naming the parent; a leaf name two accounts share
+  shows its full path, and so does a sub-account the filter leaves
+  showing without its parent;
 - the form's "Sub-account of" picker opens on the parent the account has,
   offers only accounts of its type and never the account or one under it;
 - clearing it and choosing one save; a type the parent cannot take lets
-  the parent go; the server's refusal is written in the form.
+  the parent go, and a type it can brings it back; a control account is
+  offered none; the server's refusal is written in the form.
 
 Skipped, as one module, where playwright or its Chromium is not installed.
 """
@@ -59,6 +61,7 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
     meals = _new(company, "Meals out", account_number="8820")
     hotel2 = _new(company, "Hotel", account_number="8821", parent_id=meals["id"])
     fuel = _new(company, "Fuel")  # unnumbered, so listed after the numbered ones
+    parking = _new(company, "Parking", account_number="8812", parent_id=travel["id"])
     page, handled = _open_at(browser, company, "#/accounts")
     try:
         page.wait_for_selector(f'tr[data-account-id="{hotel["id"]}"]')
@@ -68,8 +71,6 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
         )
         assert ids.index(travel["id"]) + 1 == ids.index(hotel["id"])
         assert ids.index(meals["id"]) + 1 == ids.index(hotel2["id"])
-        assert _row(page, travel["id"]).get_attribute("aria-level") == "1"
-        assert _row(page, hotel["id"]).get_attribute("aria-level") == "2"
         cell = _row(page, hotel["id"]).locator("td").nth(1)
         assert cell.locator(".visually-hidden").text_content() == (
             ", sub-account of Travel"
@@ -80,6 +81,13 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
             "Open the register: Travel: Hotel"
         )
         assert _row(page, travel["id"]).locator(".account-path").count() == 0
+        # Parking, under Travel and its own name: no path while Travel shows
+        path = _row(page, parking["id"]).locator(".account-path")
+        assert not path.is_visible()
+        # ...and its path when the filter hides Travel
+        page.fill("#accounts-filter", "parking")
+        assert not _row(page, travel["id"]).is_visible()
+        assert path.is_visible() and path.text_content() == "Travel: Parking"
         # the filter finds a sub-account by its parent's name
         page.fill("#accounts-filter", "travel")
         assert _row(page, hotel["id"]).is_visible()
@@ -101,6 +109,25 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
             a["account_type"] == "expense" for a in accounts if str(a["id"]) in opts
         )
         assert page.get_by_label("Sub-account of").count() == 1
+        hint = page.get_attribute("#account-parent", "aria-describedby")
+        assert hint == "account-parent-hint"
+        assert page.get_attribute("#account-parent-hint", "role") is None
+        assert page.get_attribute("#account-parent-status", "role") == "status"
+
+        # a type round trip: Other Expense lets Travel go, Expense brings it
+        # back, and an untouched save keeps it
+        page.select_option("select[name=detail_type]", "other_expense")
+        assert page.input_value("#account-parent") == ""
+        assert "No longer under Travel" in page.text_content("#account-parent-status")
+        page.select_option("select[name=detail_type]", "expense")
+        assert page.input_value("#account-parent") == str(travel["id"])
+        assert page.text_content("#account-parent-status") == ""
+        _saved(page, handled)
+        assert company.get(f"/api/accounts/{hotel['id']}").json()["parent_id"] == (
+            travel["id"]
+        )
+        page.evaluate(f"App.showAccountForm({hotel['id']})")
+        page.wait_for_selector("#account-parent")
 
         # clear it and save: top level
         page.select_option("#account-parent", "")
@@ -147,9 +174,19 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
         page.wait_for_selector("#account-parent")
         page.select_option("select[name=detail_type]", "other_expense")
         assert page.input_value("#account-parent") == ""
-        assert "No longer under Travel" in page.text_content("#account-parent-hint")
+        assert "No longer under Travel" in page.text_content("#account-parent-status")
         _saved(page, handled)
         moved = company.get(f"/api/accounts/{tolls['id']}").json()
         assert (moved["parent_id"], moved["detail_type"]) == (None, "other_expense")
+        # a control account is found by its number: no parent offered
+        ar = next(
+            a
+            for a in company.get("/api/accounts").json()
+            if a["account_number"] == "1100"
+        )
+        page.evaluate(f"App.showAccountForm({ar['id']})")
+        page.wait_for_selector("#account-parent")
+        assert _options(page) == [["", "None (a top-level account)"]]
+        assert "stays a top-level account" in page.text_content("#account-parent-hint")
     finally:
         page.close()
