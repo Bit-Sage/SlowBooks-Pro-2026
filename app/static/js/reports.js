@@ -1620,8 +1620,10 @@ const ReportsPage = {
         const p = prefill || {};
         const params = {};
         if (/^\d+$/.test(p.account_id || '')) params.account_id = p.account_id;
-        // one payee's lines (#394): the vendor rides on the address like the account
+        // one payee's lines (#394): the vendor, and a free-text payee, ride
+        // on the address like the account
         if (/^\d+$/.test(p.vendor_id || '')) params.vendor_id = p.vendor_id;
+        if (p.payee) params.payee = p.payee;
         ReportsPage._rc = { lists: null, lines: [], ticked: new Set(), plan: null, range: null };
         await ReportsPage.openPeriodModal('Reclassify Transactions', 'this_year_to_date', async (_period, range, prm) => {
             const rc = ReportsPage._rc;
@@ -1637,18 +1639,21 @@ const ReportsPage = {
             }
             const accountId = String(prm.account_id || '');
             const vendorId = String(prm.vendor_id || '');
+            const payeeText = String(prm.payee || '');
             const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`;
             const picker = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
                     <label for="rc-account" style="font-size:11px;">Lines on</label>
                     <select id="rc-account" data-no-search style="max-width:300px;" onchange="ReportsPage.setParam('account_id', this.value)"><option value="">Choose an account…</option>${rc.lists.accounts.map(a => acctOpt(a, accountId)).join('')}</select>
-                    <label for="rc-vendor" style="font-size:11px;">Payee</label>
+                    <label for="rc-vendor" style="font-size:11px;">Vendor</label>
                     <select id="rc-vendor" data-no-search style="max-width:260px;" onchange="ReportsPage.setParam('vendor_id', this.value)"><option value="">All payees</option>${rc.lists.vendors.map(v => `<option value="${v.id}"${String(v.id) === vendorId ? ' selected' : ''}>${escapeHtml(v.name)}${v.is_active === false ? ' (inactive)' : ''}</option>`).join('')}</select>
+                    <label for="rc-payee" style="font-size:11px;">Payee</label>
+                    <input type="text" id="rc-payee" placeholder="any part of the payee" style="max-width:220px;" value="${escapeHtml(payeeText)}" onchange="ReportsPage.setParam('payee', this.value.trim())">
                 </div>`;
             if (!accountId) {
                 rc.lines = [];
                 return `${picker}<p style="color:var(--gray-500);">Pick the account the lines are parked on: a holding account, or one chosen by mistake. Tick the lines to move, choose where they belong, preview the move, then post it as one change. Every moved line is listed in the result and in the audit log.</p>`;
             }
-            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}${vendorId ? `&vendor_id=${vendorId}` : ''}`);
+            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}${vendorId ? `&vendor_id=${vendorId}` : ''}${payeeText ? `&payee=${encodeURIComponent(payeeText)}` : ''}`);
             rc.lines = data.lines;
             const listed = new Set(data.lines.map(l => l.id));
             rc.ticked.forEach(id => { if (!listed.has(id)) rc.ticked.delete(id); });

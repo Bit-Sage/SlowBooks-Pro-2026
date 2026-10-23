@@ -24,11 +24,14 @@ change to each line.
 The payee filter (#394): an unrecognized vendor is parked in Other
 expenses until the client says what it was, so the list takes a vendor
 (or a payee name) beside the account and period and shows that one's
-lines. Each line's payee is read the way its document records it: a
-bill's vendor; an expense's vendor, or the payee typed on it; the payee
-typed on a bank entry or a card charge; a journal entry has none. A
-vendor chosen as the filter matches a line that names the vendor, or one
-whose typed payee is the vendor's name.
+lines. Each line's payee reads the same as the bank register's (reusing
+``bank_register.payees_for``): a bill's or expense's vendor, else the
+payee read off a bank entry, check or card charge; a journal entry has
+none. A vendor chosen as the filter matches a line that names the vendor,
+or one whose resolved payee contains the vendor's name (case aside), so
+the bank-feed spelling (HOME DEPOT #4521 JOLIET IL) and the check memos
+(Home Depot — lumber, Check 1042 - Home Depot) come along, not the exact
+name alone.
 """
 
 from __future__ import annotations
@@ -224,6 +227,13 @@ class _Context:
             if vendor_ids
             else {}
         )
+        # The payee each line shows reads the same as the bank register's,
+        # so the two never disagree (reusing payees_for; an IIF card charge
+        # with no "CC Charge:" prefix keeps its payee instead of going blank).
+        from app.services.bank_register import payees_for
+
+        txns = list({ln.transaction.id: ln.transaction for ln in lines}.values())
+        self.payee_names = payees_for(db, txns) if txns else {}
 
     def verdict(
         self, line: TransactionLine
@@ -270,34 +280,25 @@ class _Context:
         return None
 
     def payee(self, txn: Transaction) -> tuple[int | None, str]:
-        """(vendor id, payee name) as the line's document records it; (None,
-        "") for a journal entry and the rest."""
+        """(vendor id, payee name): the vendor behind a bill or expense,
+        else the name the bank register reads for the entry (payees_for);
+        (None, "") for a journal entry and the rest. A journal has no payee
+        in the register's sense, so it stays blank here too."""
         source = txn.source_type or ""
-        desc = (txn.description or "").strip()
         if source in BILL_SOURCES:
             bill = self.bills.get(txn.source_id or 0)
             vendor = self.vendors.get(bill.vendor_id) if bill is not None else None
             return (vendor.id, vendor.name) if vendor is not None else (None, "")
         if source == "expense":
             # the vendor is an expense's only linked record (its source_id);
-            # with none, the payee typed on it heads the memo
+            # the name (vendor, else the payee typed on it) comes from the
+            # register's own lookup so the two columns match
             vendor = self.vendors.get(txn.source_id or 0)
-            if vendor is not None:
-                return vendor.id, vendor.name
-            return None, _after_prefix(desc, "Expense: ")
-        if source == "cc_charge":
-            return None, _after_prefix(desc, "CC Charge: ")
-        if source in ("bank_entry", "check"):
-            # a register entry's memo is on its lines; its payee (else its
-            # memo) is the entry's description, "Bank entry" when neither
-            return None, "" if desc == "Bank entry" else desc
+            vendor_id = vendor.id if vendor is not None else None
+            return vendor_id, self.payee_names.get(txn.id, "")
+        if source in ("cc_charge", "bank_entry", "check"):
+            return None, self.payee_names.get(txn.id, "")
         return None, ""
-
-
-def _after_prefix(text: str, prefix: str) -> str:
-    """The payee an expense or card charge keeps in its description, or ""
-    when it was posted without one (then the description is the plain type)."""
-    return text[len(prefix) :].strip() if text.startswith(prefix) else ""
 
 
 def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
@@ -364,11 +365,15 @@ def lines_on_account(
     classes = {c.id: c for c in db.query(TxnClass).all()}
     out = [_line_out(ctx, ln, classes) for ln in lines]
     if vendor is not None:
+        # a contains match on the resolved payee, so the bank-feed spelling
+        # (HOME DEPOT #4521 JOLIET IL), an IIF check memo (Home Depot —
+        # lumber) and a QB report check (Check 1042 - Home Depot) all come
+        # along with vendor "Home Depot", not the exact name alone
         wanted_name = vendor.name.casefold()
         out = [
             ln
             for ln in out
-            if ln["vendor_id"] == vendor.id or ln["payee"].casefold() == wanted_name
+            if ln["vendor_id"] == vendor.id or wanted_name in ln["payee"].casefold()
         ]
     if payee:
         out = [ln for ln in out if payee.casefold() in ln["payee"].casefold()]
