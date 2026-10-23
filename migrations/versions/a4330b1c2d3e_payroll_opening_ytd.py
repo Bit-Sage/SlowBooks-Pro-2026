@@ -26,7 +26,7 @@ these tables on purpose; nothing else sees them.
 Data-only note: nothing is backfilled; there is no earlier representation of
 an opening balance to migrate from.
 
-Revision ID: e4f5a6b7c8d9
+Revision ID: a4330b1c2d3e
 Revises: d3e4f5a6b7c8
 Create Date: 2026-10-23
 """
@@ -36,7 +36,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "e4f5a6b7c8d9"
+revision: str = "a4330b1c2d3e"
 down_revision: Union[str, None] = "d3e4f5a6b7c8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
