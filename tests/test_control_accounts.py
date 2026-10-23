@@ -109,6 +109,89 @@ def test_every_posting_control_account_is_protected(client, seed_accounts, numbe
 
 
 # ---------------------------------------------------------------------------
+# The other direction: a NEW account must not land on a reserved number
+#
+# 5900 Inventory Adjustments is created on demand, so its slot is usually
+# empty. A user who numbered a new expense 5900 silently became where every
+# inventory write-off posts — the resolver finds the control account by
+# number and does not care that it is the wrong one.
+# ---------------------------------------------------------------------------
+
+
+def test_creating_an_account_on_a_reserved_number_is_refused(client, seed_accounts):
+    """5900 is empty on a seeded chart (created on demand), so the unique
+    constraint does not catch it; the reserved-number guard must."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Marketing", "account_number": "5900", "account_type": "expense"},
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "5900" in detail and "Inventory Adjustments" in detail
+    assert "reserved" in detail.lower()
+
+
+def test_creating_an_account_on_an_ordinary_number_still_works(client, seed_accounts):
+    """The guard is the control-account registry, nothing else: an unused
+    ordinary number is accepted as before."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Dues", "account_number": "6999", "account_type": "expense"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["account_number"] == "6999"
+
+
+def test_creating_an_account_with_no_number_still_works(client, seed_accounts):
+    """#332: a number is optional. The reserved guard must not trip on None."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Miscellaneous", "account_type": "expense"},
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_renumbering_an_ordinary_account_onto_a_reserved_number_is_refused(
+    client, seed_accounts
+):
+    """The PUT twin of the create guard: moving an ordinary account onto a
+    control-account number is the same trap and refused the same way."""
+    office = next(
+        a
+        for n, a in seed_accounts.items()
+        if not control_accounts.is_control_number(n) and n.startswith("6")
+    )
+    r = client.put(f"/api/accounts/{office.id}", json={"account_number": "1100"})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "1100" in detail and "Accounts Receivable" in detail
+    assert "reserved" in detail.lower()
+    # and it did not move
+    assert (
+        client.get(f"/api/accounts/{office.id}").json()["account_number"]
+        == office.account_number
+    )
+
+
+def test_the_system_paths_still_create_a_control_account(db_session):
+    """ensure_account and the importers create the control accounts directly
+    on the model, not through POST /api/accounts, so the route guard must not
+    reach them. 5900 is created on demand; this is that path."""
+    from app.models.accounts import Account, AccountType
+
+    db_session.add(
+        Account(
+            account_number="5900",
+            name="Inventory Adjustments",
+            account_type=AccountType.EXPENSE,
+            is_system=True,
+        )
+    )
+    db_session.commit()
+    assert control_accounts.resolve(db_session, "5900") is not None
+
+
+# ---------------------------------------------------------------------------
 # The dangerous half: a posting path that cannot resolve its account
 # ---------------------------------------------------------------------------
 

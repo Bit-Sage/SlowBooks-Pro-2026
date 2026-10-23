@@ -5,6 +5,18 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.27.0
+
+`POST /api/accounts` and `PUT /api/accounts/{id}` now refuse the account
+numbers the posting code resolves control accounts by. A new expense numbered
+5900 used to become where every inventory adjustment posts, because the
+software finds that account by its number; the same slots (1100, 1200, 2000,
+2200, 3200, 5900, …) are now reserved, and creating or renumbering an ordinary
+account onto one is refused with a message naming what the number is for. The
+system paths that create the control accounts themselves — seeding, the chart
+CSV import, the IIF/QuickBooks/Xero/MYOB migrations, and on-demand
+ensure_account creation — do not go through the route and are unaffected.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
