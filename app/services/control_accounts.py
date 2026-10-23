@@ -58,8 +58,8 @@ class MissingControlAccount(LookupError):
         if purpose:
             detail += f" It is used for {purpose}."
         detail += (
-            " Restore it with that exact number (Chart of Accounts → New "
-            "Account), then try again. Nothing was posted."
+            " Restore it with that exact number and name (Chart of Accounts → "
+            "New Account), then try again. Nothing was posted."
         )
         super().__init__(detail)
         # This sentence is for the operator: safe_message passes it on
@@ -180,6 +180,43 @@ def describe(number: str) -> tuple[str, str]:
     """(name, purpose) for a control number; ("", "") if it is not one."""
     entry = CONTROL_ACCOUNTS.get(str(number))
     return (entry[0], entry[2]) if entry else ("", "")
+
+
+def restore_conflict(number, name, account_type) -> str:
+    """Why a new account of this number/name/type may not take a control-account
+    slot — "" when it is allowed.
+
+    Allowed means either the number is not a control number at all, or the row
+    IS the control account the slot is reserved for (its registry name,
+    case-insensitively, and its expected type): that restores an empty slot,
+    which is what MissingControlAccount tells the operator to do. Everything
+    else is a foreign account landing on a reserved number, which would
+    silently become where that posting path resolves.
+
+    Returns one of two reasons so a caller can pick a status code: a name
+    mismatch ("reserved …") or a right-name/wrong-type mismatch ("… must be a
+    <type> account"). Shared by the accounts API and the chart importer so
+    both refuse the same thing for the same reason.
+    """
+    entry = CONTROL_ACCOUNTS.get(str(number)) if number else None
+    if entry is None:
+        return ""
+    control_name, control_type, purpose = entry
+    name_ok = bool(name) and name.strip().casefold() == control_name.casefold()
+    type_ok = _type_value(account_type) == control_type
+    if name_ok and type_ok:
+        return ""
+    if name_ok and not type_ok:
+        return (
+            f"{number} {control_name} must be a {control_type} account — the "
+            f"software posts to it by number for {purpose}. Give it that type, "
+            f"or use a different number."
+        )
+    return (
+        f"Account number {number} is reserved for {control_name} — the software "
+        f"posts to it by number for {purpose}, so another account cannot use "
+        f"it. Choose a different number."
+    )
 
 
 def resolve(db: Session, number: str) -> int:

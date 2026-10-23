@@ -62,6 +62,33 @@ def _check_account_number(number) -> None:
         )
 
 
+def _reject_reserved_number(number, name=None, account_type=None) -> None:
+    """A new or renumbered account may not land on a control-account number.
+
+    The posting code resolves the control accounts BY NUMBER (see
+    control_accounts.py): inventory write-offs go to whatever account carries
+    5900, invoices to 1100, and so on. 5900 and 4800 are created on demand, so
+    their slot is usually empty — a user who numbers a new expense 5900 then
+    silently becomes where inventory adjustments post. The seeded ones (1100,
+    2000, …) are normally occupied, where _reject_duplicate_number already
+    refuses a second account; this guard also covers the slot being empty on a
+    hand-built chart. The control accounts themselves are created by the system
+    paths (seeding, chart import, importers, ensure_account), none of which go
+    through this route, so only the user-facing form is guarded.
+
+    Restoring the control account itself — the registry's exact name AND its
+    expected type, as MissingControlAccount tells the operator to — is allowed
+    while the slot is empty. A right name with the wrong type is a 400 (fix the
+    type); a foreign name is a 409 (the number is reserved)."""
+    reason = control_accounts.restore_conflict(number, name, account_type)
+    if not reason:
+        return
+    # The right-name/wrong-type message names the type to set; a foreign-name
+    # collision is a 409 against the number itself.
+    status = 400 if "must be a" in reason else 409
+    raise HTTPException(status_code=status, detail=reason)
+
+
 _BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
 
 
@@ -235,7 +262,17 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
     _check_parent_exists(db, data.parent_id)
+    _reject_reserved_number(data.account_number, data.name, data.account_type)
     account = Account(**data.model_dump())
+    # Restoring a SEEDED control account (the guard above let it through as
+    # the registry's name and type) brings it back is_system=True, as the seed
+    # creates it — otherwise the same account differs from a fresh company's.
+    # 4800 and 5900 are not seeded, so they restore is_system=False, unchanged.
+    if (
+        control_accounts.is_control(account.account_number, account.account_type)
+        and account.account_number in control_accounts.seeded_numbers()
+    ):
+        account.is_system = True
     db.add(account)
     try:
         db.commit()
@@ -279,6 +316,12 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
         # with its own number (or none) can still be renamed from the form.
         if fields["account_number"] != account.account_number:
             _check_account_number(fields["account_number"])
+            # Renumbering an ordinary account onto a control-account slot is
+            # the same trap as creating one there — it would quietly become
+            # where that posting path resolves. (The account that already
+            # holds a control number is handled above; this is a DIFFERENT
+            # account moving onto one.)
+            _reject_reserved_number(fields["account_number"])
         _reject_duplicate_number(db, fields["account_number"], exclude_id=account_id)
     if fields.get("parent_id") == account_id:
         raise HTTPException(

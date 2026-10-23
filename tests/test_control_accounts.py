@@ -110,6 +110,89 @@ def test_every_posting_control_account_is_protected(client, seed_accounts, numbe
 
 
 # ---------------------------------------------------------------------------
+# The other direction: a NEW account must not land on a reserved number
+#
+# 5900 Inventory Adjustments is created on demand, so its slot is usually
+# empty. A user who numbered a new expense 5900 silently became where every
+# inventory write-off posts — the resolver finds the control account by
+# number and does not care that it is the wrong one.
+# ---------------------------------------------------------------------------
+
+
+def test_creating_an_account_on_a_reserved_number_is_refused(client, seed_accounts):
+    """5900 is empty on a seeded chart (created on demand), so the unique
+    constraint does not catch it; the reserved-number guard must."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Marketing", "account_number": "5900", "account_type": "expense"},
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "5900" in detail and "Inventory Adjustments" in detail
+    assert "reserved" in detail.lower()
+
+
+def test_creating_an_account_on_an_ordinary_number_still_works(client, seed_accounts):
+    """The guard is the control-account registry, nothing else: an unused
+    ordinary number is accepted as before."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Dues", "account_number": "6999", "account_type": "expense"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["account_number"] == "6999"
+
+
+def test_creating_an_account_with_no_number_still_works(client, seed_accounts):
+    """#332: a number is optional. The reserved guard must not trip on None."""
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Miscellaneous", "account_type": "expense"},
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_renumbering_an_ordinary_account_onto_a_reserved_number_is_refused(
+    client, seed_accounts
+):
+    """The PUT twin of the create guard: moving an ordinary account onto a
+    control-account number is the same trap and refused the same way."""
+    office = next(
+        a
+        for n, a in seed_accounts.items()
+        if not control_accounts.is_control_number(n) and n.startswith("6")
+    )
+    r = client.put(f"/api/accounts/{office.id}", json={"account_number": "1100"})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "1100" in detail and "Accounts Receivable" in detail
+    assert "reserved" in detail.lower()
+    # and it did not move
+    assert (
+        client.get(f"/api/accounts/{office.id}").json()["account_number"]
+        == office.account_number
+    )
+
+
+def test_the_system_paths_still_create_a_control_account(db_session):
+    """ensure_account and the importers create the control accounts directly
+    on the model, not through POST /api/accounts, so the route guard must not
+    reach them. 5900 is created on demand; this is that path."""
+    from app.models.accounts import Account, AccountType
+
+    db_session.add(
+        Account(
+            account_number="5900",
+            name="Inventory Adjustments",
+            account_type=AccountType.EXPENSE,
+            is_system=True,
+        )
+    )
+    db_session.commit()
+    assert control_accounts.resolve(db_session, "5900") is not None
+
+
+# ---------------------------------------------------------------------------
 # The dangerous half: a posting path that cannot resolve its account
 # ---------------------------------------------------------------------------
 
@@ -455,3 +538,94 @@ def test_update_notice_takes_no_space_when_up_to_date():
         encoding="utf-8"
     )
     assert "#sidebar-update:empty" in css and "display: none" in css
+
+
+def test_restoring_a_missing_control_account_by_its_number_and_name_works(
+    client, seed_accounts
+):
+    """MissingControlAccount tells the operator to restore the account with
+    that exact number and name from New Account; the guard lets that through
+    while the slot is empty."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "5900",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["account_number"] == "5900"
+
+
+def test_restoring_with_the_right_name_but_wrong_type_is_refused(client, seed_accounts):
+    """The restore exception requires the registry's TYPE as well as the name:
+    the posting code finds the control account by number AND type, so a right
+    name with the wrong type is refused (400) and names the type to set.
+    Otherwise 'inventory adjustments' as income would resolve as the 5900 every
+    write-off posts to."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "inventory adjustments",  # case-insensitive name match
+            "account_number": "5900",
+            "account_type": "income",
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert "5900" in r.json()["detail"] and "expense" in r.json()["detail"]
+
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Late Fee Income",
+            "account_number": "4800",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert "4800" in r.json()["detail"] and "income" in r.json()["detail"]
+
+
+def test_a_restored_control_account_matches_the_seed_is_system(
+    client, db_session, seed_accounts
+):
+    """A restored control account comes back is_system to match the seed —
+    but only where the seed actually creates it. 5900 is on-demand (not
+    seeded), so it stays is_system=False; 1100 is seeded, so it restores
+    is_system=True and is identical to a fresh company's."""
+    from app.models.accounts import Account
+
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "5900",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    on_demand = (
+        db_session.query(Account).filter(Account.account_number == "5900").first()
+    )
+    assert on_demand.is_system is False
+
+    # Empty a SEEDED control-account slot at the DB level — the delete route
+    # refuses a control account — then restore it through New Account.
+    db_session.delete(seed_accounts["1100"])
+    db_session.commit()
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Accounts Receivable",
+            "account_number": "1100",
+            "account_type": "asset",
+        },
+    )
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    restored = (
+        db_session.query(Account).filter(Account.account_number == "1100").first()
+    )
+    assert restored.is_system is True

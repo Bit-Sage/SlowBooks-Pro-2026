@@ -383,3 +383,40 @@ def test_the_control_registry_is_sixteen_accounts():
     assert len(CONTROL_ACCOUNTS) == 16
     assert "3900" in CONTROL_ACCOUNTS
     assert "3200" in CONTROL_ACCOUNTS
+
+
+def test_csv_import_refuses_a_foreign_account_on_a_reserved_number(
+    client, db_session, seed_accounts
+):
+    """The review's hole: `/api/csv/import/accounts` had no reserved-number
+    guard, so a `5900,Marketing Promotions,expense` row created 5900 under a
+    foreign name and every inventory write-off then posted there. The new-row
+    path now refuses it, the dry run shows the refusal, and apply creates
+    nothing. 5900 is on demand, so the slot is empty on a seeded chart."""
+    text = "Number,Name,Type\n5900,Marketing Promotions,expense\n"
+
+    out = _upload(client, text, dry_run=1).json()
+    row = next(x for x in out["rows"] if x["name"] == "Marketing Promotions")
+    assert row["action"] == "error"
+    assert "5900" in row["note"] and "reserved" in row["note"].lower()
+    assert out["row_errors"] >= 1
+    assert "5900" not in _by_number(db_session)
+
+    out = _upload(client, text, dry_run=0).json()
+    assert out["dry_run"] is False
+    assert "5900" not in _by_number(db_session)
+
+
+def test_csv_import_restores_the_control_account_itself(
+    client, db_session, seed_accounts
+):
+    """The guard refuses a FOREIGN account only: a row that IS the control
+    account — the registry's name and expected type — restores the empty
+    slot, the same exception the API's New Account form allows."""
+    text = "Number,Name,Type\n5900,Inventory Adjustments,expense\n"
+    out = _upload(client, text, dry_run=0).json()
+    assert out["row_errors"] == 0
+    created = _by_number(db_session)
+    assert "5900" in created
+    assert created["5900"].name == "Inventory Adjustments"
+    assert created["5900"].account_type.value == "expense"

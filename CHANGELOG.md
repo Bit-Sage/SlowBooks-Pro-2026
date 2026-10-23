@@ -111,6 +111,23 @@ sends it; `PUT /api/items/{id}` never sets it. The Balance Sheet now rounds
 its current-period net income and total equity to the cent the same way the
 Profit & Loss does, so the two reports agree and no 777.4000000000001 sits
 beside the P&L's 777.40.
+`POST /api/accounts`, `PUT /api/accounts/{id}` and the CSV chart import
+(`/api/csv/import/accounts`) now refuse the account numbers the posting code
+resolves control accounts by. A new expense numbered 5900 used to become where
+every inventory adjustment posts, because the software finds that account by
+its number; the same slots (1100, 1200, 2000, 2200, 3200, 5900, …) are now
+reserved, and creating or renumbering an ordinary account onto one — or a chart
+import row that lands a new account on one — is refused with a message naming
+what the number is for (the import shows it in the dry run). The one exception
+is restoring the control account itself: the registry's exact name AND its
+expected type restore an empty slot, which is what the "account missing"
+message tells you to do — a right name with the wrong type (an "Inventory
+Adjustments" booked as income) is refused and names the type to set. A restored
+account that the standard chart seeds comes back `is_system`, so it matches a
+fresh company's. The internal paths that create the control accounts directly —
+seeding, the chart import's match-and-rename of an existing account, the
+IIF/QuickBooks/Xero/MYOB migrations, and on-demand ensure_account creation —
+do not go through these guards and are unaffected.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

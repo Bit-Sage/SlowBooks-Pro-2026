@@ -543,6 +543,19 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 resolved[r.number] = ("existing", target.id)
             resolved[r.name.lower()] = ("existing", target.id)
         else:
+            # A new row may not land on a control-account number under a
+            # foreign name or type — it would silently become where that
+            # posting path resolves (a `5900,Marketing,expense` row becomes
+            # inventory adjustments). The same guard POST /api/accounts
+            # applies; a row that IS the control account (its registry name
+            # and type) is allowed through, restoring an empty slot.
+            reserved = control_accounts.restore_conflict(r.number, r.name, r.type)
+            if reserved:
+                entry["action"] = "error"
+                entry["note"] = reserved
+                entry["_row"] = r
+                plan.rows.append(entry)
+                continue
             if r.number and numbers.claim(r.number):
                 number = r.number
             else:
