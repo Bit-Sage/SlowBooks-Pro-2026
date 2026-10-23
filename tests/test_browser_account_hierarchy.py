@@ -219,6 +219,6 @@ def test_moving_a_subtree_says_how_far_the_retype_reaches(browser, company, book
         status = page.text_content("#account-parent-status")
         assert "Travel keeps Other Expense" in status
         assert "2 sub-accounts" in status
-        assert "Net Operating Income" in status
+        assert "above the Other lines" in status
     finally:
         page.close()

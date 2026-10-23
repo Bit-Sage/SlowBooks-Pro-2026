@@ -1515,7 +1515,7 @@ const App = {
             // the P&L family sits below Net Operating Income only for the two
             // Other types; any other type just needs the picker
             msg += ['other_income', 'other_expense'].includes(picker.value)
-                ? '; change the Type picker to move the family above Net Operating Income.'
+                ? `; change the Type picker to move the family back above the Other lines on the ${T('Profit & Loss')}.`
                 : '; change the Type picker to give the family another type.';
             status.textContent = msg;
             return;
