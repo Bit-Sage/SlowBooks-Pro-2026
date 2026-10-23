@@ -363,7 +363,11 @@ def test_3900_is_locked_once_it_joins_the_control_registry(client, monkeypatch):
     registry = dict(control_accounts.CONTROL_ACCOUNTS)
     registry.setdefault(
         "3900",
-        ("Opening Balance Equity", "the balancing account for opening balances"),
+        (
+            "Opening Balance Equity",
+            "equity",
+            "the balancing account for opening balances",
+        ),
     )
     monkeypatch.setattr(control_accounts, "CONTROL_ACCOUNTS", registry)
 
@@ -391,3 +395,50 @@ def test_3900_is_locked_once_it_joins_the_control_registry(client, monkeypatch):
     r = client.put(f"/api/accounts/{acct['id']}", json={"account_type": "expense"})
     assert r.status_code == 400
     assert "control account" in r.json()["detail"]
+
+
+def test_an_expense_3900_takes_any_expense_detail_type(client, db_session):
+    # #413 keys the registry on number AND type: an expense 3900 (an imported
+    # chart's Miscellaneous Expense) is an ordinary account, so its detail
+    # type is not locked to anything.
+    from app.models.accounts import detail_type_problem
+
+    for detail in ("expense", "other_expense"):
+        assert detail_type_problem(detail, "expense", None, "3900") is None
+
+    misc = Account(
+        name="Miscellaneous Expense",
+        account_number="3900",
+        account_type=AccountType.EXPENSE,
+        detail_type="other_expense",
+    )
+    db_session.add(misc)
+    db_session.commit()
+    acct = _ok(client.get(f"/api/accounts/{misc.id}"))
+    assert acct["detail_type"] == "other_expense"
+    assert acct["is_control"] is False
+    acct = _ok(
+        client.put(f"/api/accounts/{acct['id']}", json={"detail_type": "expense"})
+    )
+    assert acct["detail_type"] == "expense"
+    acct = _ok(
+        client.put(f"/api/accounts/{acct['id']}", json={"detail_type": "other_expense"})
+    )
+    assert acct["detail_type"] == "other_expense"
+
+
+def test_an_equity_3900_keeps_its_detail_type_locked(monkeypatch):
+    # The matching half: an equity 3900 is Opening Balance Equity, so the
+    # lock applies. Equity has one detail type, so the lock is proven by
+    # moving the default it pins: it then names the control account.
+    from app.models import accounts as accounts_model
+    from app.models.accounts import DetailType, detail_type_problem
+
+    assert detail_type_problem("equity", "equity", None, "3900") is None
+    monkeypatch.setitem(
+        accounts_model._TYPE_DEFAULT, AccountType.EQUITY, DetailType.INCOME
+    )
+    why = detail_type_problem("equity", "equity", None, "3900")
+    assert why and "3900 Opening Balance Equity is a control account" in why
+    # an equity account on an ordinary number is not locked
+    assert detail_type_problem("equity", "equity", None, "3950") is None

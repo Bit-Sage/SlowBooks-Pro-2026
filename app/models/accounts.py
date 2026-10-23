@@ -163,7 +163,7 @@ def detail_type_problem(detail, account_type, bank_kind=None, number=None):
             f"{label} is kept for {_SUBLEDGER_NUMBER[d][0]}, the account the "
             f"posting code and the aging use"
         )
-    if control_accounts.is_control_number(number):
+    if control_accounts.is_control(number, atype):
         want = default_detail_type(atype, bank_kind, number)
         if d != want:
             name, _purpose = control_accounts.describe(number)

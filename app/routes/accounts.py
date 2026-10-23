@@ -391,7 +391,9 @@ def _update_detail_type(db: Session, account: Account, fields: dict) -> list[dic
     elif (
         "parent_id" in fields
         and _shares_parent(parent)
-        and not control_accounts.is_control_number(account.account_number)
+        and not control_accounts.is_control(
+            account.account_number, account.account_type
+        )
     ):
         # a control account never takes a parent's: the sub-account check
         # below says why it cannot go there
@@ -404,7 +406,7 @@ def _update_detail_type(db: Session, account: Account, fields: dict) -> list[dic
     if (
         detail != current
         and asked
-        and control_accounts.is_control_number(account.account_number)
+        and control_accounts.is_control(account.account_number, account.account_type)
     ):
         name, purpose = control_accounts.describe(account.account_number)
         raise HTTPException(
