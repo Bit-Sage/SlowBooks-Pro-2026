@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 **A file the bank import can't read is said so, not a 500** (found in
 PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV or
@@ -20,6 +20,22 @@ The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
 path as a possible traceback; it never was one, and now cannot be).
+
+**A new Docker install no longer signs people out at random.** The image runs
+two server processes, and on a first start each made its own session key
+when none was on disk yet, so a request reaching the other process was
+refused as not signed in (12 of 30 in one session on a fresh stack) until
+the container restarted. The first process to write the key now wins and
+the other reads it. `SESSION_SECRET_KEY` in the environment still overrides
+the file.
+
+**A Postgres backup restores again** (Discussion #417, @teich). On the Docker and
+server installs that keep the books in PostgreSQL, every restore from the
+Backups page or `POST /api/backups/restore` was refused as "made under another
+key" and asked for a recovery key, since 2.24.0: the check meant for an
+encrypted company file took any backup that wasn't plain SQLite for one, and
+a pg_dump backup isn't SQLite. Only a `.db` backup is checked for a key now,
+and the backup lists no longer mark Postgres backups encrypted.
 
 **A processed pay run's direct deposit file, from the page** (discussion
 #211, @ContractorKeith). The NACHA file could only be made by an API client
@@ -130,6 +146,9 @@ contend with a concurrent edit of the same accounts, which the database resolves
 by failing one of them. NULL balances are coalesced to zero, and in-session
 Account objects are refreshed so a response built in the same request reflects
 the new balance. Behaviour is unchanged on SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+The Audit Log no longer lists an account row for each balance a posting
+moves (a change of `balance` alone); the posting's own lines, which are what
+moved it, are recorded as before.
 
 **Reverse-proxy client IP and shared rate-limit counters** (fix). Behind a
 TLS-terminating reverse proxy the app saw the proxy's address on every request
@@ -233,6 +252,46 @@ imports: QuickBooks reports a parent's own postings in a section it names
 whole file as "accounts not in the chart" for each of them (discussion
 #349). Those lines post to the parent account itself now.
 
+**Profit & Loss and Balance Sheet compare to last year** (#347, PR #367, @JohnH-code). "Compare to
+same period last year" on the P&L, and "Compare to same date last year"
+on the Balance Sheet, add a Prior Year column on screen and in the PDF
+and CSV (`compare=prior_year` on `/api/reports/profit-loss`,
+`/api/reports/balance-sheet` and their exports), with $ Change and
+% Change columns that "Show $ and % change" turns off (`hide_changes=1`
+on the exports). The prior period is the same dates one year earlier, a
+month's last day mapping to that month's last day, so a full February
+compares with a full February across a leap year. An account with
+activity in only one of the two years shows 0 in the other; % Change is
+"—" against a zero. The rows keep the chosen order, and "Without
+adjusting entries" applies to both years. A prior-year amount drills into
+that year's transactions and "Back to …" returns to the comparison; both
+choices ride on the address and in saved reports. The Balance Sheet
+screen also shows the Liabilities + Equity total its PDF already had.
+
+A Balance Sheet line's drill-down for an as-of date in an earlier year
+started on January 1 of the current year, after its own end date, so the
+dates were refused and this year's transactions shown instead. It starts
+on January 1 of the as-of date's year (#347).
+
+**The served sign-in reaches the company chosen** (#369, #370, PR #372,
+@ContractorKeith). A session signed in to a company whose file then went
+missing chose another company on the sign-in screen and got a blank page;
+it switches there signed in now. The setup form on a served host offers the
+host's other companies a choice away.
+
+**The Mac app needs macOS 15 or later** (PR #376, @ContractorKeith). GitHub
+retires its macOS 14 build machines on November 2, so the Mac app is built
+on macOS 15. The PDF libraries it carries are built for the macOS they are
+built on, so 2.26.0 opens on macOS 15 (Sequoia) or later, and says so
+(`LSMinimumSystemVersion` 15.0) rather than closing at launch on macOS 14;
+every Apple Silicon Mac can update to 15. The build refuses a bundle whose
+libraries need a newer macOS than the app declares. latest.json names the
+lowest macOS (`macos_minimum`), and from this release the update check does
+not offer a Mac an update it can't open.
+
+One schema change: `users.session_version`, run in each company file.
+587 API operations (`GET /api/payroll/{id}/nacha`).
+
 ### v2.25.0 — Several companies on one server
 
 **Server Edition serves every company file** (#358, PR #363, @ContractorKeith). The sign-in screen asks
@@ -293,26 +352,6 @@ No schema change. 585 API operations.
   check, each split line on the stub (`GET
   /api/checks/print?transaction_id=`). A deposit, card charge, transfer or
   void is refused with the reason (discussion #354).
-- Profit & Loss and Balance Sheet compare to last year (#347). "Compare to
-  same period last year" on the P&L, and "Compare to same date last year"
-  on the Balance Sheet, add a Prior Year column on screen and in the PDF
-  and CSV (`compare=prior_year` on `/api/reports/profit-loss`,
-  `/api/reports/balance-sheet` and their exports), with $ Change and
-  % Change columns that "Show $ and % change" turns off (`hide_changes=1`
-  on the exports). The prior period is the same dates one year earlier, a
-  month's last day mapping to that month's last day, so a full February
-  compares with a full February across a leap year. An account with
-  activity in only one of the two years shows 0 in the other; % Change is
-  "—" against a zero. The rows keep the chosen order, and "Without
-  adjusting entries" applies to both years. A prior-year amount drills into
-  that year's transactions and "Back to …" returns to the comparison; both
-  choices ride on the address and in saved reports. The Balance Sheet
-  screen also shows the Liabilities + Equity total its PDF already had.
-- A Balance Sheet line's drill-down for an as-of date in an earlier year
-  started on January 1 of the current year, after its own end date, so the
-  dates were refused and this year's transactions shown instead. It starts
-  on January 1 of the as-of date's year (#347).
-
 ### v2.24.0 — Working with your accountant
 
 **An Accountant role** (#340). Settings → Users offers Accountant: a sign-in
