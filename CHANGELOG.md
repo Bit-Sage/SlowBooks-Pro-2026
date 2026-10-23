@@ -164,6 +164,20 @@ for. `scripts/run_recurring.py` now prints the skipped schedules (each with
 its reason) so the cron log shows the ones it passed over, instead of
 skipping them silently every day. A schedule that has made nothing still
 deletes (found in PNWImport's fork, SlowBooks-Pro-Testing#101).
+**A file the bank import can't read is said so, not a 500** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV, a
+truncated statement, an OFX with broken markup or a nonsense amount
+(`NaN`, `Infinity`, `1e999999999`), or a CSV with an absurd date all raised
+an error as a 500. The OFX/QFX and CSV preview and import now answer "That
+file isn't a bank statement this can read: an OFX, QFX or CSV export from
+the bank." for any file they can't parse (an empty one says it is empty),
+and write nothing; an unrecognised CSV still goes to the column-mapping
+step. A UTF-16 export (either byte order) is decoded by its byte-order mark
+and read, and a complete statement that is only missing its closing
+`</OFX>` or carries trailing NUL padding still imports. A file that is
+nothing but a byte-order mark (UTF-8 or UTF-16) decodes to no content, so it
+answers the empty-file sentence like any other empty file rather than a 200
+or an "unreadable".
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

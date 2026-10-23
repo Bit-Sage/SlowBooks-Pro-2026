@@ -94,11 +94,15 @@ def parse_date(val: str) -> date:
             continue
     try:
         from dateutil import parser as dateparser
-
-        return dateparser.parse(val).date()
     except ImportError:
-        pass
-    raise DataProblem(f"Cannot parse date: {val}")
+        raise DataProblem(f"Cannot parse date: {val}")
+    try:
+        return dateparser.parse(val).date()
+    except (ValueError, OverflowError, TypeError) as exc:
+        # dateutil raises OverflowError (not ValueError) on an absurd number
+        # like 99999999999999999999; keep every unparseable date one kind of
+        # data problem the callers already skip (Testing#101).
+        raise DataProblem(f"Cannot parse date: {val}") from exc
 
 
 # ── Format-specific parsers ──────────────────────────────────────────────
