@@ -312,7 +312,7 @@ def test_a_parent_segment_named_like_a_control_account_becomes_it_and_the_import
 
     text = (FIX / "accounts.txt").read_text(encoding="utf-8")
     plan = _upload(client, text).json()
-    control_names = {name.lower() for name, _ in CONTROL_ACCOUNTS.values()}
+    control_names = {entry[0].lower() for entry in CONTROL_ACCOUNTS.values()}
     twins = [
         r
         for r in plan["rows"]

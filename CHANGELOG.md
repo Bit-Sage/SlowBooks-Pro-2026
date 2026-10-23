@@ -26,7 +26,13 @@ on the Journal page but not voidable there (reversing it would leave the
 stock without its value); correct it with an inventory adjustment. Opening
 Balance Equity is matched by account number 3900, so a chart that already
 holds it under another name — a renamed account, or QuickBooks' "Opening Bal
-Equity" — is reused rather than grown a second one. A later change to
+Equity" — is reused rather than grown a second one. Only an **equity** 3900
+counts, both for that resolution and as the control account the renumber and
+delete guards now protect; the registry matches on number **and** the type the
+posting code expects, so an imported chart's non-equity 3900 (an expense "3900
+Miscellaneous Expense", say) is an ordinary account you can still renumber or
+delete, and the same holds for any other control number carrying the wrong
+type. A later change to
 on-hand still posts as an inventory adjustment, as the item form already
 sends it; `PUT /api/items/{id}` never sets it. The Balance Sheet now rounds
 its current-period net income and total equity to the cent the same way the

@@ -13,6 +13,7 @@ catch this class. Only the tie-out can.
 
 import pytest
 
+from app.models.accounts import AccountType
 from app.services import control_accounts
 
 
@@ -205,6 +206,107 @@ def test_registry_matches_the_numbers_the_code_resolves_by_literal():
         "these account numbers are resolved by literal value but are not in "
         f"CONTROL_ACCOUNTS, so they can be renumbered into silence: {sorted(unregistered)}"
     )
+
+
+def test_registry_is_matched_on_number_and_type():
+    """A number alone is not a control account; the posting code resolves
+    Opening Balance Equity as an EQUITY 3900, so an expense 3900 is ordinary.
+    The unit of the whole PR: is_control matches number AND type."""
+    assert control_accounts.is_control("3900", "equity") is True
+    assert control_accounts.is_control("3900", "expense") is False
+    assert control_accounts.is_control("1100", "asset") is True
+    assert control_accounts.is_control("1100", "expense") is False
+    # the type the posting code expects for each registered number
+    for number, (
+        _name,
+        want_type,
+        _purpose,
+    ) in control_accounts.CONTROL_ACCOUNTS.items():
+        assert control_accounts.expected_type(number) == want_type
+        assert control_accounts.is_control(number, want_type) is True
+        wrong = "income" if want_type != "income" else "expense"
+        assert control_accounts.is_control(number, wrong) is False
+    # number-only membership is unchanged for the paths that still use it
+    assert control_accounts.is_control_number("3900") is True
+    assert control_accounts.is_control_number("9999") is False
+
+
+def test_resolve_wants_the_expected_type_not_just_the_number(db_session, seed_accounts):
+    """resolve matches number AND type: a 1100 that is somehow an expense is
+    not Accounts Receivable, so the posting path fails loudly rather than
+    booking to the wrong account."""
+    assert control_accounts.resolve(db_session, "1100") == seed_accounts["1100"].id
+    seed_accounts["1100"].account_type = AccountType.EXPENSE
+    db_session.commit()
+    with pytest.raises(control_accounts.MissingControlAccount):
+        control_accounts.resolve(db_session, "1100")
+
+
+def test_a_non_equity_3900_is_not_a_control_account(client, seed_accounts):
+    """The review's repro: an imported chart's expense '3900 Miscellaneous
+    Expense' must not come back is_control, must be renumberable, and must be
+    deletable — it is never where Opening Balance Equity resolves (that is an
+    equity 3900). 3900 is not seeded, so the slot is free to create here."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Miscellaneous Expense",
+            "account_number": "3900",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    acct_id = r.json()["id"]
+    assert r.json()["is_control"] is False
+    assert r.json()["control_purpose"] is None
+
+    # renumbering it is allowed — it is an ordinary account
+    rn = client.put(f"/api/accounts/{acct_id}", json={"account_number": "3905"})
+    assert rn.status_code == 200, rn.text
+    assert rn.json()["account_number"] == "3905"
+
+    # and so is deleting it (no postings, nothing references it)
+    rd = client.delete(f"/api/accounts/{acct_id}")
+    assert rd.status_code == 200, rd.text
+
+
+def test_an_equity_3900_is_a_control_account(client, db_session):
+    """The matching half: an equity 3900 is Opening Balance Equity and is
+    locked — renumbering is refused and the row is flagged."""
+    from app.models.accounts import Account, AccountType as AT
+
+    obe = Account(
+        name="Opening Balance Equity",
+        account_number="3900",
+        account_type=AT.EQUITY,
+        is_system=True,
+    )
+    db_session.add(obe)
+    db_session.commit()
+
+    row = client.get(f"/api/accounts/{obe.id}").json()
+    assert row["is_control"] is True
+    rn = client.put(f"/api/accounts/{obe.id}", json={"account_number": "3901"})
+    assert rn.status_code == 400, rn.text
+    assert "3900" in rn.json()["detail"] and "control account" in rn.json()["detail"]
+
+
+def test_a_wrong_type_on_another_control_number_is_not_flagged(client, seed_accounts):
+    """Not just 3900: a '4800' booked as an expense (its slot is empty — Late
+    Fee Income is created on demand as income) is an ordinary account too."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Some Expense",
+            "account_number": "4800",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["is_control"] is False
+    # renumbering the ordinary 4800 is allowed
+    rn = client.put(f"/api/accounts/{r.json()['id']}", json={"account_number": "4850"})
+    assert rn.status_code == 200, rn.text
 
 
 def test_missing_lists_what_a_blank_chart_lacks(db_session):
