@@ -555,7 +555,7 @@ const BankingPage = {
 
     // A register entry opens for editing (#388); the register says which
     // (`editable`: a bank entry that is not void — a reconciled one too,
-    // the save warns first).
+    // its amount and date locked).
     _editButton(e, accountId) {
         if (!e.editable) return '';
         return `<button class="btn btn-sm btn-secondary" onclick="BankingPage.editEntry(${e.transaction_id}, ${accountId})">Edit</button>`;
@@ -864,19 +864,33 @@ const BankingPage = {
 
     // The form as "Edit entry": the entry's fields in the boxes, its split
     // lines when it has them, and the entry id on the form for saveEntry.
+    // What the form has no box for rides along on it and goes back with
+    // the save (#388 review): the entry's job, and each split line's own
+    // class and job. A class archived since keeps its place in the list.
     _fillEntryForm(entry) {
         const form = document.querySelector('#modal-body form');
         if (!form) return;
         const title = document.getElementById('modal-title');
         if (title) title.textContent = 'Edit entry';
         form.dataset.entryId = entry.id;
+        form.dataset.jobId = entry.job_id || '';
         form.date.value = entry.date;
         form.amount.value = Number(entry.amount).toFixed(2);
         form.payee.value = entry.payee || '';
         form.check_number.value = entry.reference || '';
         form.description.value = entry.description || '';
         form.category_account_id.value = entry.category_account_id || '';
-        if (form.class_id) form.class_id.value = entry.class_id || '';
+        if (form.class_id) {
+            const sel = form.class_id;
+            const want = entry.class_id ? String(entry.class_id) : '';
+            if (![...sel.options].some(o => o.value === want)) {
+                const opt = document.createElement('option');
+                opt.value = want;
+                opt.textContent = want ? `${entry.class_name || 'Class ' + want} (archived)` : '—';
+                sel.appendChild(opt);
+            }
+            sel.value = want;
+        }
         const submit = form.querySelector('button[type="submit"]');
         if (submit) submit.textContent = 'Save';
         if (entry.splits && entry.splits.length) {
@@ -896,8 +910,24 @@ const BankingPage = {
                 row.querySelector('.split-amt').value = (against ? -part : part).toFixed(2);
                 row.querySelector('.split-fee').checked = against;
                 row.querySelector('.split-memo').value = sp.description || '';
+                row.dataset.classId = sp.class_id || '';
+                row.dataset.jobId = sp.job_id || '';
             });
             BankingPage.splitNote();
+        }
+        // a reconciled entry says so as it opens: its amount and date stay
+        // as the statement has them (the server refuses a change)
+        if (entry.reconciled_note) {
+            form.date.readOnly = true;
+            form.amount.readOnly = true;
+            const note = document.createElement('div');
+            note.id = 'entry-reconciled-note';
+            note.setAttribute('role', 'note');
+            note.className = 'form-group full-width';
+            note.style.cssText = 'display:block; padding:8px 10px; border:1px solid var(--warning, #b7791f); border-radius:4px; font-size:12px;';
+            note.textContent = entry.reconciled_note;
+            const grid = form.querySelector('.form-grid');
+            if (grid) grid.prepend(note); else form.prepend(note);
         }
     },
 
@@ -989,17 +1019,19 @@ const BankingPage = {
                 category_account_id: parseInt(account, 10),
                 amount: BankingPage._splitAmount(r, sign).toFixed(2),
                 description: r.querySelector('.split-memo').value || null,
+                // a line's own class and job, carried from the entry (#388)
+                ...(r.dataset.classId ? { class_id: parseInt(r.dataset.classId, 10) } : {}),
+                ...(r.dataset.jobId ? { job_id: parseInt(r.dataset.jobId, 10) } : {}),
             });
         });
         return splits.length ? splits : null;
     },
 
-    async saveEntry(e, accountId) {
-        e.preventDefault();
-        const form = e.target;
-        let splits;
-        try { splits = BankingPage._splitLines(form); } catch (err) { toast(err.message, 'error'); return; }
-        if (!splits && !form.category_account_id.value) { toast('Choose a category, or split the entry', 'error'); return; }
+    // The entry as the form has it now, for a post or an edit's save.
+    // Throws the sentence to show when it can't be sent.
+    _entryData(form, accountId) {
+        const splits = BankingPage._splitLines(form);
+        if (!splits && !form.category_account_id.value) throw new Error('Choose a category, or split the entry');
         const data = {
             account_id: accountId,
             date: form.date.value,
@@ -1011,6 +1043,17 @@ const BankingPage = {
             class_id: classIdFromForm(form),
             ...(splits ? { splits } : {}),
         };
+        // an edit sends the entry's job back: the form has no box for it,
+        // and leaving it out of the body would be read as "keep" anyway
+        if (form.dataset.entryId) data.job_id = form.dataset.jobId ? parseInt(form.dataset.jobId, 10) : null;
+        return data;
+    },
+
+    async saveEntry(e, accountId) {
+        e.preventDefault();
+        const form = e.target;
+        let data;
+        try { data = BankingPage._entryData(form, accountId); } catch (err) { toast(err.message, 'error'); return; }
         if (!(await ClassWarn.ok(form))) return;
         const entryId = form.dataset.entryId ? parseInt(form.dataset.entryId, 10) : null;
         if (entryId) { await BankingPage._putEntry(entryId, data, accountId); return; }
@@ -1022,11 +1065,12 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // The edit's save (#388). An entry a completed reconciliation holds
-    // comes back 409 ("This entry was reconciled on the Sep 30 statement.
-    // Changing it moves that reconciled balance."): the sentence is shown
-    // in the form with "Change it anyway", which sends the same edit once
-    // more with confirm_reconciled.
+    // The edit's save (#388). A change of category on an entry a completed
+    // reconciliation holds comes back 409 ("This entry was reconciled on the
+    // Sep 30, 2026 statement. Changing its category moves its amount
+    // between accounts in a period already reconciled."): the sentence is
+    // shown in the form with "Change it anyway", which saves what the form
+    // holds then, with confirm_reconciled.
     async _putEntry(entryId, data, accountId) {
         try {
             const saved = await API.put(`/banking/entries/${entryId}`, data);
@@ -1035,17 +1079,17 @@ const BankingPage = {
             BankingPage.go(`#/banking/${accountId}`);
         } catch (err) {
             if (err.status === 409 && err.detail && err.detail.code === 'reconciled' && !data.confirm_reconciled) {
-                BankingPage._askReconciled(entryId, data, accountId, err.detail.message);
+                BankingPage._askReconciled(entryId, accountId, err.detail.message);
                 return;
             }
             toast(err.message, 'error');
         }
     },
 
-    _askReconciled(entryId, data, accountId, message) {
+    _askReconciled(entryId, accountId, message) {
         const form = document.querySelector('#modal-body form');
         if (!form) { toast(message, 'error'); return; }
-        BankingPage._pendingEdit = { entryId, data, accountId };
+        BankingPage._pendingEdit = { entryId, accountId };
         let box = document.getElementById('entry-reconciled-warning');
         if (!box) {
             box = document.createElement('div');
@@ -1058,16 +1102,37 @@ const BankingPage = {
         }
         box.innerHTML = `<p style="margin:0 0 8px;">${escapeHtml(message)}</p>
             <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveEntryAnyway()">Change it anyway</button>
-            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('entry-reconciled-warning').remove()">Keep it as it is</button>`;
+            <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.keepEntry()">Keep it as it is</button>`;
         const first = box.querySelector('button');
         if (first) first.focus();
     },
 
+    // "Change it anyway": the form as it is now, not as it was at the first
+    // Save — a change made after the warning is saved too (#388 review)
     async saveEntryAnyway() {
         const pending = BankingPage._pendingEdit;
-        if (!pending) return;
+        const form = document.querySelector('#modal-body form');
+        if (!pending || !form) return;
+        let data;
+        try { data = BankingPage._entryData(form, pending.accountId); } catch (err) { toast(err.message, 'error'); return; }
         BankingPage._pendingEdit = null;
-        await BankingPage._putEntry(pending.entryId, { ...pending.data, confirm_reconciled: true }, pending.accountId);
+        await BankingPage._putEntry(pending.entryId, { ...data, confirm_reconciled: true }, pending.accountId);
+    },
+
+    // "Keep it as it is": the warning goes and the focus goes back to the
+    // form, on the category the warning was about (not lost to the page)
+    keepEntry() {
+        BankingPage._pendingEdit = null;
+        const box = document.getElementById('entry-reconciled-warning');
+        if (box) box.remove();
+        const form = document.querySelector('#modal-body form');
+        if (!form) return;
+        const target = BankingPage._splitsOpen()
+            ? form.querySelector('#entry-split-rows .split-cat')
+            : form.category_account_id;
+        // a picker with type-ahead is answered in its box, not the select
+        const el = target && target._cbx ? target._cbx.box : target;
+        (el || form.querySelector('button[type="submit"]')).focus();
     },
 
     async showTransferForm(fromId = null) {

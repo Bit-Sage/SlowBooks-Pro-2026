@@ -952,7 +952,7 @@ const App = {
         'BenefitsPage.createRemittanceBill', 'BenefitsPage.deleteRate', 'BenefitsPage.deleteGroup',
         'OnboardingPage.completeTask', 'FixedAssetsPage.showPostPurchaseForm', 'FixedAssetsPage.showDisposeForm',
         'FixedAssetsPage.showDepreciationForm', 'FixedAssetsPage.showImportForm', 'ItemsPage.showAdjust',
-        'BankingPage.voidEntry', 'BankingPage.voidTransfer', 'BankingPage.showEntryForm', 'BankingPage.showTransferForm',
+        'BankingPage.voidEntry', 'BankingPage.editEntry', 'BankingPage.saveEntryAnyway', 'BankingPage.voidTransfer', 'BankingPage.showEntryForm', 'BankingPage.showTransferForm',
         'BankingPage.showAccountForm', 'BankingPage.showOFXImport', 'BankingPage.confirmOFXImport', 'BankingPage.startReconcile',
         'BankingPage.finishReconcile', 'BankingPage.abandonReconcile', 'BankingPage.matchLine', 'BankingPage.showMatch',
         'BankingPage.excludeLine', 'BankingPage.findMatches', 'BankingPage.addAll', 'BankingPage.postLegacy',

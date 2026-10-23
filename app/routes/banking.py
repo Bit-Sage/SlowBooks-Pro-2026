@@ -5,6 +5,7 @@
 
 import re
 from datetime import date
+from types import SimpleNamespace
 from typing import Optional
 from decimal import Decimal
 
@@ -30,6 +31,7 @@ from app.schemas.banking import (
     BankEntryDetail,
     BankEntryResponse,
     BankEntryUpdate,
+    BankSplit,
     BankTransactionCreate,
     BankTransactionResponse,
     LegacyBalancePost,
@@ -42,6 +44,7 @@ from app.schemas.banking import (
 from app.models.transactions import Transaction
 from app.services.audit import log_event
 from app.services.bank_posting import (
+    bank_entry_lines,
     post_bank_entry,
     post_opening_balance,
     post_statement_balance,
@@ -543,8 +546,15 @@ def _category_and_splits(db: Session, account: Account, data) -> tuple:
                     status_code=400,
                     detail="A split line of 0.00 posts nothing; enter its share or remove the line",
                 )
-            splits.append((cat, part.amount, part.description))
-        total = sum((amt for _, amt, _ in splits), Decimal("0"))
+            splits.append(
+                (
+                    cat,
+                    part.amount,
+                    part.description,
+                    {"class_id": part.class_id, "job_id": part.job_id},
+                )
+            )
+        total = sum((sp[1] for sp in splits), Decimal("0"))
         if _q(total) != _q(data.amount):
             raise HTTPException(
                 status_code=400,
@@ -605,21 +615,47 @@ def _bank_line(txn: Transaction):
     )
 
 
+def _reconciled_sentence(recon) -> str:
+    """What the edit form says about an entry a completed reconciliation
+    holds (#388), when it opens and when a change is refused."""
+    return (
+        f"This entry was reconciled on the {date_text(recon.statement_date)} "
+        "statement, so its amount and date stay as they are (a reconciled "
+        "entry cannot be voided either). Its payee, memo, category, class "
+        "and job can still be corrected."
+    )
+
+
 def _entry_detail(
     txn, account_id: int, db: Session, status: str = "recorded", uncleared=None
 ) -> dict:
     """The entry in the + Entry form's shape (#388): what `_entry_out`
     says, plus class, job, the split lines when there are several, and
     the statement it was reconciled on."""
+    from app.models.classes import TxnClass
+
     out = _entry_out(txn, account_id, db, status)
     bank_line = next(ln for ln in txn.lines if ln.account_id == account_id)
     others = [ln for ln in txn.lines if ln.account_id != account_id]
     line_desc = bank_line.description or ""
     # the memo lives on the lines and is the payee when none was typed
-    # (post_bank_entry): the form's Memo is blank then, not the payee again
+    # (post_bank_entry): the form's Memo is blank then, not the payee again.
+    # An entry with neither carries "Bank entry" on its header and nothing
+    # on its lines: the form's Payee is blank then too, so saving it as it
+    # opened writes "Bank entry" onto nothing.
+    if not line_desc and (txn.description or "") == "Bank entry":
+        out["payee"] = ""
     out["description"] = "" if line_desc == (txn.description or "") else line_desc
     out["class_id"] = txn.class_id
+    cls = db.get(TxnClass, txn.class_id) if txn.class_id else None
+    out["class_name"] = cls.name if cls else None
     out["job_id"] = txn.job_id
+
+    def own(ln, key):
+        # a line's own class or job: one set apart from the entry's
+        value = getattr(ln, key)
+        return value if value is not None and value != getattr(txn, key) else None
+
     out["splits"] = (
         [
             {
@@ -628,6 +664,8 @@ def _entry_detail(
                 "description": (
                     ln.description if (ln.description or "") != line_desc else None
                 ),
+                "class_id": own(ln, "class_id"),
+                "job_id": own(ln, "job_id"),
             }
             for ln in others
         ]
@@ -636,6 +674,7 @@ def _entry_detail(
     )
     recon = reconciled_on(db, txn)
     out["reconciled_on"] = recon.statement_date if recon else None
+    out["reconciled_note"] = _reconciled_sentence(recon) if recon else None
     out["uncleared"] = [
         {
             "account_id": o["account_id"],
@@ -672,25 +711,38 @@ def get_bank_entry(txn_id: int, db: Session = Depends(get_db)):
     return _entry_detail(txn, _bank_line(txn).account_id, db, status=status)
 
 
+def _other_side(txn: Transaction, account_id: int) -> list:
+    """The entry's lines off the bank account, as (account, signed amount)
+    — what a change of category or split lines changes."""
+    return sorted(
+        (ln.account_id, _q((ln.credit or 0) - (ln.debit or 0)))
+        for ln in txn.lines
+        if ln.account_id != account_id
+    )
+
+
 @router.put("/entries/{txn_id}", response_model=BankEntryDetail)
 def update_bank_entry(
     txn_id: int, data: BankEntryUpdate, db: Session = Depends(get_db)
 ):
     """Rewrite a register entry in place (#388): same journal entry, new
     date, amount, category or splits, payee, memo, reference, class and
-    job; the lines replaced as a bill's are on edit, each old and new line
-    in the audit log. A void entry is not edited; an entry that would
-    become a transfer is refused (void it and post the transfer); an entry
-    a completed reconciliation holds is refused with 409 and the statement
-    date until the request says `confirm_reconciled`, and then the edit is
-    audited as one that moved a reconciled balance."""
+    job (`replace_bank_entry`). A field the request leaves out keeps what
+    the entry has. A void entry is not edited; an entry that would become
+    a transfer is refused (void it and post the transfer). On an entry a
+    completed reconciliation holds, the amount and date are refused (400:
+    the reconciled bank line stays as it is), a payee, memo, reference,
+    class or job fix goes through, and a change of category or split
+    lines is refused with 409 and the statement date until the request
+    says `confirm_reconciled`, then audited as such."""
     txn = _bank_entry(db, txn_id)
     if txn.id in voided_transaction_ids(db, [txn.id]):
         raise HTTPException(
             status_code=400,
             detail="This entry is void; a void entry is not edited. Enter it again.",
         )
-    account = _bank_line(txn).account
+    bank_line = _bank_line(txn)
+    account = bank_line.account
     if data.account_id is not None or data.bank_account_id is not None:
         wanted = _resolve_account(db, data.account_id, data.bank_account_id)
         if wanted.id != account.id:
@@ -699,7 +751,33 @@ def update_bank_entry(
                 detail=f"This entry stays on {account.name}. To move it to "
                 f"{wanted.name}, void it and enter it there.",
             )
-    category, splits = _category_and_splits(db, account, data)
+    # what the request leaves out, the entry keeps (#388 review): the form
+    # sends what it shows, an API client may send only what it changes
+    given = data.model_fields_set
+    now = _entry_detail(txn, account.id, db)
+    new_date = data.date if data.date is not None else txn.date
+    new_amount = data.amount if data.amount is not None else now["amount"]
+    if "splits" in given or "category_account_id" in given:
+        category, splits = _category_and_splits(
+            db,
+            account,
+            SimpleNamespace(
+                splits=data.splits,
+                category_account_id=data.category_account_id,
+                amount=new_amount,
+            ),
+        )
+    else:
+        kept = [BankSplit(**sp) for sp in now["splits"]] if now["splits"] else None
+        category, splits = _category_and_splits(
+            db,
+            account,
+            SimpleNamespace(
+                splits=kept,
+                category_account_id=now["category_account_id"],
+                amount=new_amount,
+            ),
+        )
     if not splits and category.bank_kind:
         raise HTTPException(
             status_code=400,
@@ -708,36 +786,64 @@ def update_bank_entry(
             "transfer.",
         )
     check_closing_date(db, txn.date)
-    check_closing_date(db, data.date)
+    check_closing_date(db, new_date)
     recon = reconciled_on(db, txn)
-    if recon is not None and not data.confirm_reconciled:
+    if recon is not None:
+        # the reconciled bank line stays as the statement has it: a new
+        # amount or date would take it off that statement (or keep it on
+        # one it no longer belongs to), as a void would (#388 review)
+        if new_date != txn.date or _q(new_amount) != _q(now["amount"]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"This entry was reconciled on the "
+                f"{date_text(recon.statement_date)} statement, so its amount "
+                "and date cannot be changed, just as it cannot be voided. "
+                "Correct the difference with a new entry.",
+            )
+    _, new_lines = bank_entry_lines(
+        account,
+        new_amount,
+        category,
+        splits=splits,
+    )
+    moves = sorted(
+        (ln["account_id"], _q(ln["credit"] - ln["debit"]))
+        for ln in new_lines
+        if ln["account_id"] != account.id
+    ) != _other_side(txn, account.id)
+    if recon is not None and moves and not data.confirm_reconciled:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "reconciled",
                 "message": f"This entry was reconciled on the "
-                f"{date_text(recon.statement_date)} statement. Changing it "
-                "moves that reconciled balance.",
+                f"{date_text(recon.statement_date)} statement. Changing its "
+                "category moves its amount between accounts in a period "
+                "already reconciled.",
                 "statement_date": recon.statement_date.isoformat(),
             },
         )
+
+    def keep(field, value):
+        return getattr(data, field) if field in given else value
+
     uncleared = replace_bank_entry(
         db,
         txn,
         account,
-        data.date,
-        data.amount,
+        new_date,
+        new_amount,
         category,
-        payee=data.payee,
-        memo=data.description,
-        reference=data.check_number,
-        class_id=data.class_id,
-        job_id=data.job_id,
+        payee=keep("payee", now["payee"] or None),
+        memo=keep("description", now["description"] or None),
+        reference=keep("check_number", txn.reference or None),
+        class_id=keep("class_id", txn.class_id),
+        job_id=keep("job_id", txn.job_id),
         splits=splits,
     )
-    if recon is not None:
-        # the edit of a reconciled entry says so in the trail, beside the
-        # rows the hook writes for the header and each line
+    if recon is not None and moves:
+        # the category change on a reconciled entry says so in the trail,
+        # beside the rows the hook writes for the header and each line
         log_event(
             db,
             "transactions",
@@ -946,7 +1052,7 @@ def check_register(
             and e["reconciliation_id"] is None
         )
         # a register entry opens for editing (#388), a reconciled one too
-        # (the edit warns first); a void one does not
+        # (its amount and date stay as they are); a void one does not
         row["editable"] = e["source_type"] == "bank_entry" and not e["voided"]
         # a check written here or as an expense prints (discussion #354):
         # money out of a bank account, not a card, not void

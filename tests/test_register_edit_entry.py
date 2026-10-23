@@ -4,12 +4,15 @@ rewrites the entry in place on the same journal entry — lines, balances and
 the audit trail following — refuses a void one, and asks first about one a
 completed reconciliation holds."""
 
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from app.models.accounts import Account
 from app.models.audit import AuditLog
+from app.models.banking import BankTransaction
 from app.models.transactions import Transaction, TransactionLine
+from tests.test_atomic_account_balance import postgres_url  # noqa: F401  (fixture)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,8 +98,9 @@ def test_get_returns_the_entry_in_the_forms_shape(client, seed_accounts):
     assert e["category_account_id"] == seed_accounts["6900"].id
     assert e["payee"] == "City Water" and e["description"] == "August water"
     assert e["reference"] == "1042" and e["status"] == "recorded"
-    assert e["class_id"] is None and e["job_id"] is None
+    assert e["class_id"] is None and e["job_id"] is None and e["class_name"] is None
     assert e["splits"] is None and e["reconciled_on"] is None
+    assert e["reconciled_note"] is None
     # no memo typed: the line carries the payee, the form's Memo stays blank
     blank = _entry(client, seed_accounts, description=None, check_number=None)
     e = client.get(f"/api/banking/entries/{blank['id']}").json()
@@ -182,10 +186,9 @@ def test_a_void_entry_is_not_edited(client, seed_accounts):
     assert [x["editable"] for x in reg["entries"]] == [False, False]
 
 
-def test_a_reconciled_entry_asks_first_and_keeps_its_mark_when_unchanged(
-    client, db_session, seed_accounts
-):
-    bank = seed_accounts["1000"]
+def _reconciled_entry(client, seed_accounts):
+    """The reviewer's books: 1000.00 in on Sep 1, a 125.00 water bill on
+    Sep 2, the Sep 30 statement reconciled at 875.00."""
     _entry(
         client,
         seed_accounts,
@@ -198,40 +201,123 @@ def test_a_reconciled_entry_asks_first_and_keeps_its_mark_when_unchanged(
     )
     posted = _entry(client, seed_accounts)
     recon = _reconcile(client, seed_accounts, "875.00")
+    return posted, recon
+
+
+def _bank_row(db, txn_id, acct):
+    db.expire_all()
+    return (
+        db.query(TransactionLine)
+        .filter_by(transaction_id=txn_id, account_id=acct.id)
+        .one()
+    )
+
+
+def test_a_reconciled_entrys_amount_and_date_are_refused_as_its_void_is(
+    client, db_session, seed_accounts
+):
+    """#388 review: an amount edit with confirm took the line off its
+    statement (the Sep 30 report out by −125.00) and then let it be voided;
+    a date moved past the statement kept Sep's reconciliation."""
+    bank = seed_accounts["1000"]
+    posted, recon = _reconciled_entry(client, seed_accounts)
     e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    # the form says so as it opens
     assert e["reconciled_on"] == "2026-09-30"
-    # the register still offers Edit on it (not Void)
+    assert e["reconciled_note"] == (
+        "This entry was reconciled on the Sep 30, 2026 statement, so its amount "
+        "and date stay as they are (a reconciled entry cannot be voided either). "
+        "Its payee, memo, category, class and job can still be corrected."
+    )
     reg = client.get(f"/api/banking/check-register?account_id={bank.id}").json()
     row = next(x for x in reg["entries"] if x["transaction_id"] == posted["id"])
     assert row["editable"] is True and row["voidable"] is False
-    # a typo in the payee: refused until the person says so
-    body = _form(e, payee="City Water Dept")
+    refused = (
+        "This entry was reconciled on the Sep 30, 2026 statement, so its amount "
+        "and date cannot be changed, just as it cannot be voided. Correct the "
+        "difference with a new entry."
+    )
+    for change in (
+        {"amount": "-125.01"},
+        {"date": "2026-10-02"},
+        {"date": "2026-09-03"},
+    ):
+        r = client.put(
+            f"/api/banking/entries/{posted['id']}",
+            json=_form(e, confirm_reconciled=True, **change),
+        )
+        assert r.status_code == 400, (change, r.text)
+        assert r.json()["detail"] == refused
+    # nothing moved, and the void is still refused
+    line = _bank_row(db_session, posted["id"], bank)
+    assert Decimal(str(line.credit)) == Decimal("125.00")
+    assert line.cleared is True and line.reconciliation_id == recon["id"]
+    assert _balance(db_session, bank) == Decimal("875.00")
+    r = client.post(f"/api/banking/entries/{posted['id']}/void")
+    assert r.status_code == 400 and "completed reconciliation" in r.text
+    report = client.get(f"/api/banking/reconciliations/{recon['id']}/report").json()
+    assert "125" in str(report)
+
+
+def test_a_payee_fix_on_a_reconciled_entry_needs_no_warning(
+    client, db_session, seed_accounts
+):
+    bank = seed_accounts["1000"]
+    posted, recon = _reconciled_entry(client, seed_accounts)
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    r = client.put(
+        f"/api/banking/entries/{posted['id']}",
+        json=_form(e, payee="City Water Dept", description="Aug water"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["payee"] == "City Water Dept" and r.json()["uncleared"] == []
+    line = _bank_row(db_session, posted["id"], bank)
+    assert line.cleared is True and line.reconciliation_id == recon["id"]
+    assert line.description == "Aug water"
+    # the lines were updated where they are, not deleted and re-made
+    actions = {
+        a.action
+        for a in db_session.query(AuditLog).filter_by(table_name="transaction_lines")
+    }
+    assert "DELETE" not in actions
+    assert not [
+        a
+        for a in db_session.query(AuditLog).filter_by(
+            table_name="transactions", record_id=posted["id"], action="UPDATE"
+        )
+        if a.changed_fields == ["confirm_reconciled"]
+    ]
+
+
+def test_a_category_change_on_a_reconciled_entry_asks_first_and_keeps_its_mark(
+    client, db_session, seed_accounts
+):
+    bank, new_cat = seed_accounts["1000"], seed_accounts["6400"]
+    posted, recon = _reconciled_entry(client, seed_accounts)
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    body = _form(e, category_account_id=new_cat.id)
     r = client.put(f"/api/banking/entries/{posted['id']}", json=body)
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == {
         "code": "reconciled",
         "message": "This entry was reconciled on the Sep 30, 2026 statement. "
-        "Changing it moves that reconciled balance.",
+        "Changing its category moves its amount between accounts in a period "
+        "already reconciled.",
         "statement_date": "2026-09-30",
     }
-    # nothing moved
-    db_session.expire_all()
-    assert db_session.get(Transaction, posted["id"]).description == "City Water"
+    assert _balance(db_session, new_cat) == 0
     r = client.put(
         f"/api/banking/entries/{posted['id']}",
         json={**body, "confirm_reconciled": True},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["payee"] == "City Water Dept" and r.json()["uncleared"] == []
-    # the amount did not change: the bank line is still cleared on that statement
-    db_session.expire_all()
-    bank_line = (
-        db_session.query(TransactionLine)
-        .filter_by(transaction_id=posted["id"], account_id=bank.id)
-        .one()
-    )
-    assert bank_line.cleared is True and bank_line.reconciliation_id == recon["id"]
-    # the trail says the edit moved past a reconciliation
+    assert r.json()["category_account_id"] == new_cat.id
+    assert r.json()["uncleared"] == [] and r.json()["note"] is None
+    # the bank line is as the statement has it, still on that reconciliation
+    line = _bank_row(db_session, posted["id"], bank)
+    assert line.cleared is True and line.reconciliation_id == recon["id"]
+    assert _balance(db_session, new_cat) == Decimal("125.00")
+    assert _balance(db_session, bank) == Decimal("875.00")
     marks = [
         a
         for a in db_session.query(AuditLog).filter_by(
@@ -243,10 +329,21 @@ def test_a_reconciled_entry_asks_first_and_keeps_its_mark_when_unchanged(
     assert marks[0].old_values == {"reconciled_on": "2026-09-30"}
     assert marks[0].new_values["reconciliation_id"] == recon["id"]
     assert marks[0].new_values["lines_uncleared"] == 0
-    # a changed amount loses the mark, and the answer says so
+
+
+def test_an_amount_change_on_a_cleared_entry_loses_the_mark_and_says_so(
+    client, db_session, seed_accounts
+):
+    """Cleared but not reconciled (ticked in an open reconciliation): the
+    amount may change; the line loses its tick and the answer says so."""
+    bank = seed_accounts["1000"]
+    posted = _entry(client, seed_accounts)
+    line = _bank_row(db_session, posted["id"], bank)
+    line.cleared = True
+    db_session.commit()
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
     r = client.put(
-        f"/api/banking/entries/{posted['id']}",
-        json={**body, "amount": "-130.00", "confirm_reconciled": True},
+        f"/api/banking/entries/{posted['id']}", json=_form(e, amount="-130.00")
     )
     assert r.status_code == 200, r.text
     out = r.json()
@@ -257,17 +354,376 @@ def test_a_reconciled_entry_asks_first_and_keeps_its_mark_when_unchanged(
         "The Checking line changed, so it is no longer marked cleared; tick it "
         "again on the next reconciliation."
     )
+    line = _bank_row(db_session, posted["id"], bank)
+    assert line.cleared is False and Decimal(str(line.credit)) == Decimal("130.00")
+
+
+# ------------------------------------------------- statement lines (#388 review)
+
+
+def _feed_entry(client, db_session, seed_accounts, amount="-130.00"):
+    """A statement line, categorised and added from the review queue: the
+    entry it posts is linked to it."""
+    from app.services.ofx_import import import_transactions
+
+    feed = client.post(
+        "/api/banking/accounts",
+        json={"name": "Checking feed", "account_id": seed_accounts["1000"].id},
+    ).json()
+    import_transactions(
+        db_session,
+        feed["id"],
+        [
+            {
+                "fitid": "F1",
+                "date": date(2026, 9, 8),
+                "amount": Decimal(amount),
+                "payee": "CITY WATER",
+                "memo": "",
+            }
+        ],
+    )
+    bt = db_session.query(BankTransaction).one()
+    r = client.post(
+        f"/api/banking/transactions/{bt.id}/add",
+        json={"category_account_id": seed_accounts["6900"].id},
+    )
+    assert r.status_code == 200, r.text
+    return feed, bt.id, r.json()["transaction_id"]
+
+
+def test_an_amount_edit_sends_the_statement_line_back_uncategorised(
+    client, db_session, seed_accounts
+):
+    """#388 review: the line went back to review keeping its category, so
+    "Add all categorised" posted it again — one bank line as 130.00 and
+    125.00, the balance −255.00."""
+    bank = seed_accounts["1000"]
+    feed, bt_id, txn_id = _feed_entry(client, db_session, seed_accounts)
+    e = client.get(f"/api/banking/entries/{txn_id}").json()
+    r = client.put(f"/api/banking/entries/{txn_id}", json=_form(e, amount="-125.00"))
+    assert r.status_code == 200, r.text
     db_session.expire_all()
-    bank_line = (
-        db_session.query(TransactionLine)
-        .filter_by(transaction_id=posted["id"], account_id=bank.id)
+    bt = db_session.get(BankTransaction, bt_id)
+    assert bt.match_status == "unmatched" and bt.category_account_id is None
+    assert bt.transaction_id is None and bt.transaction_line_id is None
+    out = client.post(f"/api/banking/accounts/{feed['id']}/feed/add-all").json()
+    assert out["added"] == 0
+    assert _balance(db_session, bank) == Decimal("-125.00")
+    reg = client.get(f"/api/banking/check-register?account_id={bank.id}").json()
+    assert [x["payment"] for x in reg["entries"]] == [125.0]
+
+
+def test_a_payee_or_category_edit_keeps_the_statement_line_linked(
+    client, db_session, seed_accounts
+):
+    feed, bt_id, txn_id = _feed_entry(client, db_session, seed_accounts)
+    e = client.get(f"/api/banking/entries/{txn_id}").json()
+    for change in (
+        {"payee": "City Water Dept"},
+        {"category_account_id": seed_accounts["6400"].id},
+    ):
+        r = client.put(f"/api/banking/entries/{txn_id}", json=_form(e, **change))
+        assert r.status_code == 200, (change, r.text)
+        e = r.json()
+        db_session.expire_all()
+        bt = db_session.get(BankTransaction, bt_id)
+        line = _bank_row(db_session, txn_id, seed_accounts["1000"])
+        assert bt.match_status == "added" and bt.transaction_id == txn_id
+        assert bt.transaction_line_id == line.id and line.cleared is True
+
+
+def _statement_line_edits(db, accounts):
+    """The reviewer's 500, below the HTTP layer so it can run on any
+    engine: a feed-added entry has its payee fixed, its category changed
+    (the lines replaced, the bank line kept) and its amount changed.
+    `accounts` is {number: Account} on `db`."""
+    from app.models.banking import BankAccount
+    from app.routes.banking import update_bank_entry
+    from app.schemas.banking import BankEntryUpdate
+    from app.services import bank_matching
+
+    feed = BankAccount(name="Checking feed", account_id=accounts["1000"].id)
+    db.add(feed)
+    db.flush()
+    bt = BankTransaction(
+        bank_account_id=feed.id,
+        date=date(2026, 9, 8),
+        amount=Decimal("-130.00"),
+        payee="CITY WATER",
+        match_status="unmatched",
+    )
+    db.add(bt)
+    db.flush()
+    bank_matching.add(db, bt, category_account_id=accounts["6900"].id)
+    db.commit()
+    txn_id = bt.transaction_id
+    out = update_bank_entry(txn_id, BankEntryUpdate(payee="City Water Dept"), db)
+    assert out["payee"] == "City Water Dept"
+    out = update_bank_entry(
+        txn_id, BankEntryUpdate(category_account_id=accounts["6400"].id), db
+    )
+    assert out["category_account_id"] == accounts["6400"].id
+    db.expire_all()
+    line = (
+        db.query(TransactionLine)
+        .filter_by(transaction_id=txn_id, account_id=accounts["1000"].id)
         .one()
     )
-    assert bank_line.cleared is False and bank_line.reconciliation_id is None
-    assert Decimal(str(bank_line.credit)) == Decimal("130.00")
-    reg = client.get(f"/api/banking/check-register?account_id={bank.id}").json()
-    row = next(x for x in reg["entries"] if x["transaction_id"] == posted["id"])
-    assert row["reconciliation_id"] is None and row["voidable"] is True
+    assert db.get(BankTransaction, bt.id).transaction_line_id == line.id
+    update_bank_entry(txn_id, BankEntryUpdate(amount=Decimal("-125.00")), db)
+    db.expire_all()
+    bt = db.get(BankTransaction, bt.id)
+    assert bt.transaction_line_id is None and bt.category_account_id is None
+
+
+def _seeded(db):
+    from app.models.accounts import AccountType
+    from app.seed.chart_of_accounts import CHART_OF_ACCOUNTS
+
+    accounts = {}
+    for data in CHART_OF_ACCOUNTS:
+        acct = Account(
+            account_number=data["account_number"],
+            name=data["name"],
+            account_type=AccountType(data["account_type"]),
+            bank_kind=data.get("bank_kind"),
+            is_system=True,
+            balance=Decimal("0"),
+        )
+        db.add(acct)
+        accounts[data["account_number"]] = acct
+    db.commit()
+    return accounts
+
+
+def test_statement_line_edits_with_sqlite_foreign_keys_on(tmp_path):
+    import sqlalchemy as sa
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base
+
+    engine = sa.create_engine(f"sqlite:///{(tmp_path / 'fk.db').as_posix()}")
+
+    @sa.event.listens_for(engine, "connect")
+    def _fk_on(dbapi_connection, _record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        assert db.execute(sa.text("PRAGMA foreign_keys")).scalar() == 1
+        _statement_line_edits(db, _seeded(db))
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_statement_line_edits_on_postgres(postgres_url):  # noqa: F811
+    import sqlalchemy as sa
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base
+
+    engine = sa.create_engine(postgres_url)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        _statement_line_edits(db, _seeded(db))
+    finally:
+        db.close()
+        engine.dispose()
+
+
+# ------------------------------------- what the form doesn't carry (#388 review)
+
+
+def _class(client, name):
+    r = client.post("/api/classes", json={"name": name})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_a_field_left_out_of_the_put_is_kept(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = client.post(
+        "/api/jobs", json={"customer_id": seed_customer.id, "name": "Kitchen"}
+    ).json()["id"]
+    cls = _class(client, "Remodels")
+    posted = _entry(client, seed_accounts, class_id=cls, job_id=job)
+    # the form before this fix sent no job_id: the job is kept, not cleared
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    body = _form(e, payee="City Water Dept")
+    del body["job_id"]
+    r = client.put(f"/api/banking/entries/{posted['id']}", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["job_id"] == job and r.json()["class_id"] == cls
+    # an API client may send only what it changes
+    r = client.put(f"/api/banking/entries/{posted['id']}", json={"memo": "x"})
+    assert r.status_code == 422  # the field is `description`, as on a post
+    r = client.put(
+        f"/api/banking/entries/{posted['id']}", json={"description": "Water, Aug"}
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["payee"] == "City Water Dept" and out["description"] == "Water, Aug"
+    assert out["amount"] == "-125.00" and out["date"] == "2026-09-02"
+    assert out["category_account_id"] == seed_accounts["6900"].id
+    assert out["reference"] == "1042" and out["job_id"] == job
+    assert out["class_id"] == cls
+    db_session.expire_all()
+    assert {
+        (ln.class_id, ln.job_id)
+        for ln in db_session.query(TransactionLine).filter_by(
+            transaction_id=posted["id"]
+        )
+    } == {(cls, job)}
+
+
+def test_a_lines_own_class_survives_an_edit_and_an_archived_class_stays(
+    client, db_session, seed_accounts
+):
+    """An imported check's lines can carry classes of their own; the form
+    shows the header's. And a class archived since stays on the entry."""
+    head, own, other = (
+        _class(client, "Bakery"),
+        _class(client, "Catering"),
+        _class(client, "Retail"),
+    )
+    posted = _entry(client, seed_accounts, class_id=head)
+    cat_line = (
+        db_session.query(TransactionLine)
+        .filter_by(transaction_id=posted["id"], account_id=seed_accounts["6900"].id)
+        .one()
+    )
+    cat_line.class_id = own
+    db_session.commit()
+    assert client.put(f"/api/classes/{head}", json={"is_archived": True}).is_success
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    assert e["class_id"] == head and e["class_name"] == "Bakery"
+    # a new category and amount: the lines are re-made, the classes kept
+    r = client.put(
+        f"/api/banking/entries/{posted['id']}",
+        json=_form(e, category_account_id=seed_accounts["6400"].id, amount="-99"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["class_id"] == head
+
+    def classes():
+        db_session.expire_all()
+        return {
+            ln.account_id: ln.class_id
+            for ln in db_session.query(TransactionLine).filter_by(
+                transaction_id=posted["id"]
+            )
+        }
+
+    assert classes() == {
+        seed_accounts["6400"].id: own,
+        seed_accounts["1000"].id: head,
+    }
+    # the header's class changed: the line that followed it follows; the
+    # line with its own keeps it
+    e = r.json()
+    r = client.put(
+        f"/api/banking/entries/{posted['id']}", json=_form(e, class_id=other)
+    )
+    assert r.status_code == 200, r.text
+    assert classes() == {
+        seed_accounts["6400"].id: own,
+        seed_accounts["1000"].id: other,
+    }
+
+
+def test_a_split_lines_own_class_round_trips(client, db_session, seed_accounts):
+    head, own = _class(client, "Bakery"), _class(client, "Catering")
+    a, b = seed_accounts["6900"], seed_accounts["6400"]
+    posted = _entry(
+        client,
+        seed_accounts,
+        amount="-100.00",
+        category_account_id=a.id,
+        class_id=head,
+        splits=[
+            {"category_account_id": a.id, "amount": "-60.00"},
+            {"category_account_id": b.id, "amount": "-40.00", "class_id": own},
+        ],
+    )
+    e = client.get(f"/api/banking/entries/{posted['id']}").json()
+    assert [(s["class_id"], s["job_id"]) for s in e["splits"]] == [
+        (None, None),
+        (own, None),
+    ]
+    splits = [dict(s) for s in e["splits"]]
+    splits[0]["amount"] = "-65.00"
+    r = client.put(
+        f"/api/banking/entries/{posted['id']}",
+        json=_form(e, amount="-105.00", splits=splits),
+    )
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert {
+        ln.account_id: ln.class_id
+        for ln in db_session.query(TransactionLine).filter_by(
+            transaction_id=posted["id"]
+        )
+    } == {a.id: head, b.id: own, seed_accounts["1000"].id: head}
+
+
+# ------------------------------------------- open and save as is (#388 review)
+
+
+def test_opening_and_saving_an_entry_unchanged_writes_nothing(
+    client, db_session, seed_accounts
+):
+    cls = _class(client, "Bakery")
+    shapes = {
+        "payee and memo": {},
+        "payee only": {"description": None},
+        "memo only": {"payee": None},
+        "neither": {"payee": None, "description": None, "check_number": None},
+        "split": {
+            "amount": "-100.00",
+            "class_id": cls,
+            "splits": [
+                {"category_account_id": seed_accounts["6900"].id, "amount": "-70"},
+                {
+                    "category_account_id": seed_accounts["6400"].id,
+                    "amount": "-30",
+                    "description": "fee",
+                },
+            ],
+        },
+    }
+    posted = {k: _entry(client, seed_accounts, **v) for k, v in shapes.items()}
+
+    def stored(txn_id):
+        db_session.expire_all()
+        txn = db_session.get(Transaction, txn_id)
+        return (
+            txn.description,
+            txn.reference,
+            txn.class_id,
+            sorted(
+                (ln.account_id, str(ln.debit), str(ln.credit), ln.description)
+                for ln in txn.lines
+            ),
+        )
+
+    before = {k: stored(p["id"]) for k, p in posted.items()}
+    audit_rows = db_session.query(AuditLog).count()
+    for name, p in posted.items():
+        e = client.get(f"/api/banking/entries/{p['id']}").json()
+        r = client.put(f"/api/banking/entries/{p['id']}", json=_form(e))
+        assert r.status_code == 200, (name, r.text)
+        assert stored(p["id"]) == before[name], name
+    assert db_session.query(AuditLog).count() == audit_rows
+    # an entry with neither opens with a blank payee, not "Bank entry"
+    e = client.get(f"/api/banking/entries/{posted['neither']['id']}").json()
+    assert e["payee"] == "" and e["description"] == ""
+    assert before["neither"][0] == "Bank entry"
+    assert [ln[3] for ln in before["neither"][3]] == [None, None]
 
 
 def test_the_closing_date_holds_for_the_old_date_and_the_new(client, seed_accounts):
@@ -318,9 +774,20 @@ def test_a_split_entry_round_trips(client, db_session, seed_accounts):
     )
     e = client.get(f"/api/banking/entries/{posted['id']}").json()
     assert e["amount"] == "-500.00" and e["category_account_id"] == a.id
+    no_own = {"class_id": None, "job_id": None}
     assert e["splits"] == [
-        {"category_account_id": a.id, "amount": "-450.00", "description": None},
-        {"category_account_id": b.id, "amount": "-50.00", "description": "interest"},
+        {
+            "category_account_id": a.id,
+            "amount": "-450.00",
+            "description": None,
+            **no_own,
+        },
+        {
+            "category_account_id": b.id,
+            "amount": "-50.00",
+            "description": "interest",
+            **no_own,
+        },
     ]
     # the interest was 45, not 50, and a bank fee was on the same check
     r = client.put(
@@ -429,9 +896,7 @@ def test_a_reconciled_refusal_is_asked_in_the_form_not_a_browser_dialog():
 def test_the_edit_form_shows_a_fee_line_as_typed():
     """A deposit's fee line (#387) reopens as its own number with Taken out
     ticked, not as a negative amount."""
-    from pathlib import Path
-
-    js = (Path(__file__).resolve().parents[1] / "app/static/js/banking.js").read_text()
+    js = (ROOT / "app/static/js/banking.js").read_text(encoding="utf-8")
     fill = js[js.index("_fillEntryForm(entry) {") :]
     fill = fill[: fill.index("\n    },")]
     assert ".split-fee').checked = against" in fill

@@ -22,23 +22,40 @@ stub lists that refund as a negative line so the stub still totals the
 check. On the API each split line is signed on its own, and a line of 0.00
 is refused rather than dropped.
 
-**A register entry opens for editing** (#388, from a bookkeeper's notes). A
-typo in an entry made from the bank register meant voiding it and entering
-it again; now the row has **Edit**, which opens the + Entry form filled in
-(the split lines included), and Save rewrites the entry in place — the same
-journal entry, so its links, statement match and audit trail stay with it
-(`GET` and `PUT /api/banking/entries/{id}`, the PUT taking the form's
-fields). The lines are replaced the way a bill's are on edit: each old line
-a DELETE in the audit log, each new one an INSERT. An entry a completed
-reconciliation holds warns first — "This entry was reconciled on the Sep
-30, 2026 statement. Changing it moves that reconciled balance." — with
-**Change it anyway** in the form (`confirm_reconciled` on the request, and
-the audit log says the edit moved past that reconciliation). A line whose
-account and amount did not change keeps its cleared mark; one that changed
-loses it, and the answer says so. A void entry is not edited, an edit that
-would turn the entry into a transfer is refused (void it and post the
-transfer), and the closing date holds for the entry's old date and its new
-one. Journal entries and deposits still open their own views from the row.
+**A register entry opens for editing** (part of #388, from a bookkeeper's
+notes). A typo in an entry made from the bank register meant voiding it and
+entering it again; now the row has **Edit**, which opens the + Entry form
+filled in (the split lines included), and Save rewrites the entry in place
+— the same journal entry, so its links, statement match and audit trail
+stay with it (`GET` and `PUT /api/banking/entries/{id}`). A fix that leaves
+every line's account and amount alone (payee, memo, check number, date,
+class, job) updates the entry where it is, and saving it unchanged writes
+nothing; a new amount or category replaces the lines the way a bill's are
+on edit, each old line a DELETE in the audit log and each new one an
+INSERT. A field the PUT leaves out keeps what the entry has, and the form
+carries back what it has no box for: the entry's job, a split line's own
+class or job, and a class archived since. A line with its own class (an
+imported check's lines can have one) keeps it through an edit.
+
+An entry a completed reconciliation holds says so as it opens, and its
+amount and date stay as the statement has them: a change to either is
+refused, as voiding it is ("so its amount and date cannot be changed, just
+as it cannot be voided. Correct the difference with a new entry."). Its
+payee, memo, check number, class and job can be fixed without a word; a
+new category or split asks first — "Changing its category moves its amount
+between accounts in a period already reconciled." — with **Change it
+anyway**, which saves the form as it is then (`confirm_reconciled`, and the
+audit log says the edit moved past that reconciliation). On an entry that
+is only cleared, a changed amount loses the tick and the answer says so.
+An entry added from a statement line keeps that link through an edit (on
+PostgreSQL too, where the edit failed); one whose amount changed sends the
+statement line back to review without its category, so **Add all
+categorised** cannot post it a second time. A void entry is not edited, an
+edit that would turn the entry into a transfer is refused (void it and post
+the transfer), the closing date holds for the old date and the new one, and
+a read-only or accountant's sign-in is not offered Edit. Journal entries
+and deposits still open their own views from the row; editing them in
+place is still to come.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
