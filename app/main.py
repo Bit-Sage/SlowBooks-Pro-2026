@@ -1428,7 +1428,14 @@ class _UploadsHiddenStaticFiles(StaticFiles):
         )
 
     def lookup_path(self, path):
-        full_path, stat_result = super().lookup_path(path)
+        try:
+            full_path, stat_result = super().lookup_path(path)
+        except (OSError, ValueError):
+            # A name the filesystem can't hold (on Windows ':' or one of
+            # < > ? * " |) is not a file here: a 404, not a 500 (2.26.0 gate,
+            # W-31). Starlette catches only FileNotFoundError and
+            # NotADirectoryError.
+            return "", None
         if full_path and self._inside_uploads(
             os.path.normcase(os.path.realpath(full_path))
         ):

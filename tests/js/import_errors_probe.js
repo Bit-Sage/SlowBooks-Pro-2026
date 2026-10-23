@@ -33,6 +33,9 @@ function harness(result) {
     T: (s) => s,
   };
   vm.createContext(ctx);
+  // the page's own local-date helper, from utils.js (the file is named for the local day)
+  const utils = fs.readFileSync('app/static/js/utils.js', 'utf8');
+  vm.runInContext(utils.match(/function todayISO\(\) \{[\s\S]*?\n\}/)[0], ctx, { filename: 'utils.js' });
   vm.runInContext(fs.readFileSync('app/static/js/iif.js', 'utf8'), ctx, { filename: 'iif.js' });
   vm.runInContext('this.IIFPage = IIFPage;', ctx);
   return { ctx, els, toasts, anchors };
