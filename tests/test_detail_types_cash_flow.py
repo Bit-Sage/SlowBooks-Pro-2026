@@ -88,6 +88,10 @@ def books(db_session, seed_accounts):
     # imported, unnumbered
     add("mortgage", None, "Mortgage on Shop", AccountType.LIABILITY)
     add("accrued", None, "Accrued Wages", AccountType.LIABILITY)
+    # default-named sub-accounts of non-current parents: the backfill's
+    # parent inheritance must not move them out of working capital
+    add("shelving", None, "Shop Shelving", AccountType.ASSET, a["1500"])
+    add("interest", None, "Accrued Interest", AccountType.LIABILITY, a["2400"])
     db.add(
         FixedAssetType(
             name="Trucks",
@@ -110,6 +114,8 @@ def books(db_session, seed_accounts):
     _je(db, d, [(a["tools"], 1500, 0), (cash, 0, 1500)], "tools")
     _je(db, d, [(a["deposits"], 2500, 0), (cash, 0, 2500)], "deposits")
     _je(db, d, [(a["1400"], 600, 0), (cash, 0, 600)], "prepaid")
+    _je(db, d, [(a["shelving"], 1500, 0), (cash, 0, 1500)], "shelving")
+    _je(db, d, [(a["6000"], 250, 0), (a["interest"], 0, 250)], "interest accrued")
     _je(db, d, [(a["6000"], 3000, 0), (a["1510"], 0, 3000)], "depreciation")
     _je(db, d, [(a["6000"], 800, 0), (a["accrued"], 0, 800)], "wages accrued")
     _je(db, d, [(cash, 20000, 0), (a["4000"], 0, 20000)], "sales")
@@ -132,6 +138,9 @@ def test_an_upgraded_company_sees_the_same_cash_flow(db_session, books, monkeypa
     assert detail[books["deposits"].id] == "other_current_asset"
     assert detail[books["mortgage"].id] == "long_term_liability"
     assert detail[books["2400"].id] == "long_term_liability"
+    # their default-typed sub-accounts stay current
+    assert detail[books["shelving"].id] == "other_current_asset"
+    assert detail[books["interest"].id] == "other_current_liability"
 
     now = _statement(db_session)
     monkeypatch.setattr(cash_flow, "_place", place_2_26)
@@ -143,7 +152,12 @@ def test_an_upgraded_company_sees_the_same_cash_flow(db_session, books, monkeypa
         now["investing"]
     )
     assert {"Mortgage on Shop", "Loan Payable"} <= names(now["financing"])
-    assert {"Equipment Deposits", "Accrued Wages"} <= names(now["working_capital"])
+    assert {
+        "Equipment Deposits",
+        "Accrued Wages",
+        "Shop Shelving",
+        "Accrued Interest",
+    } <= names(now["working_capital"])
     assert any("Accumulated" in r["account_name"] for r in now["adjustments"])
 
 
