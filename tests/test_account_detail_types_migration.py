@@ -58,6 +58,12 @@ CHART = [
     # a folder of equipment and what sits in it
     ("fixed_folder", None, "Fixed Assets", "ASSET", None, None),
     ("trailer", None, "Trailer", "ASSET", None, "fixed_folder"),
+    # default-typed sub-accounts of non-current parents: still current, as
+    # the 2.26 cash flow placed them (no figure moves, #390 review)
+    ("shelving", None, "Shop Shelving", "ASSET", None, "equipment"),
+    ("accrued", None, "Accrued Interest", "LIABILITY", None, "loan"),
+    # a default-typed sub-account of a current parent shares its type
+    ("prepaid_rent", None, "Prepaid Rent", "ASSET", None, "prepaid"),
     # a bank account in a folder keeps Bank
     ("bank_folder", None, "Bank Accounts", "ASSET", None, None),
     ("savings", None, "Money Market", "ASSET", "bank", "bank_folder"),
@@ -94,7 +100,10 @@ EXPECTED = {
     "fx": "other_expense",
     "disposal": "other_expense",
     "fixed_folder": "fixed_asset",
-    "trailer": "fixed_asset",
+    "trailer": "other_current_asset",
+    "shelving": "other_current_asset",
+    "accrued": "other_current_liability",
+    "prepaid_rent": "other_current_asset",
     "bank_folder": "other_current_asset",
     "savings": "bank",
     "odd_child": "expense",
@@ -257,7 +266,7 @@ def test_the_backfill_places_every_account_where_the_cash_flow_did():
     """Working capital, investing, financing or an adjustment: for every
     account in the 2.26 chart above, the cash flow statement reading the
     backfilled detail type places it where 2.26.0's number and name rules
-    did, the one move being a default-typed child of a Fixed Assets folder."""
+    did: no account moves, sub-accounts of non-current parents included."""
     from app.models.accounts import Account, AccountType
     from app.services.cash_flow import _place
     from tests.cash_flow_2_26 import place_2_26
@@ -294,9 +303,4 @@ def test_the_backfill_places_every_account_where_the_cash_flow_did():
         before = place_2_26(acct, fixed, accumulated)
         acct.detail_type = result[r["id"]]
         now = _place(acct, fixed, accumulated)
-        if r["name"] == "Trailer":
-            # took its Fixed Assets folder's: out of working capital, the one
-            # move the backfill makes, and only for a default-typed child
-            assert (before, now) == ("working_capital", "investing")
-            continue
         assert now == before, (r["name"], result[r["id"]], before, now)

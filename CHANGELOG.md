@@ -30,7 +30,11 @@ depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
 1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
 (the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
 Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
-accounts Other Expense. The statements below print by it, so after
+accounts Other Expense. A sub-account left at the default shares its
+parent's only where that keeps it current or non-current as the cash flow
+had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
+stays current), so no figure moves between working capital, investing and
+financing. The statements below print by it, so after
 upgrading, open Chart of Accounts and check the detail type of any loan,
 vehicle, equipment or long-term note; a line of credit kept in a loan
 account, for one, is current.
@@ -56,8 +60,7 @@ and names: Fixed Asset and Other Asset are investing, Long Term Liability
 financing; the fixed-asset register's accounts stay investing and
 accumulated depreciation an adjustment. The upgrade's detail types put
 every account where the old rules did, so an upgraded company's statement
-is unchanged (one exception, on purpose: an account left at the default
-inside a Fixed Assets folder took the folder's type and is investing now).
+is unchanged.
 An account made without a detail type is current, however it is named.
 The QuickBooks Online report import brings Cost of Goods Sold in as cost of
 goods sold, above Gross Profit; it came in as an expense.
