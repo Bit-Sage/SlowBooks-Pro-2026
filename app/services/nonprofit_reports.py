@@ -53,6 +53,7 @@ from app.services.classes_service import (
     uncategorized_class_id,
 )
 from app.services.csv_export import _SafeWriter
+from app.services.statement_layout import bs_group_totals, bs_groups
 
 _DEBIT_NORMAL = {AccountType.ASSET, AccountType.EXPENSE, AccountType.COGS}
 _EXPENSE_TYPES = (AccountType.EXPENSE, AccountType.COGS)
@@ -80,6 +81,7 @@ def _account_totals(
             Account.id,
             Account.name,
             Account.account_number,
+            Account.detail_type,
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
         )
@@ -93,8 +95,8 @@ def _account_totals(
     if end is not None:
         q = q.filter(Transaction.date <= end)
     rows = []
-    for acct_id, name, number, dr, cr in q.group_by(
-        Account.id, Account.name, Account.account_number
+    for acct_id, name, number, detail, dr, cr in q.group_by(
+        Account.id, Account.name, Account.account_number, Account.detail_type
     ).all():
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
@@ -103,6 +105,7 @@ def _account_totals(
                 "account_id": acct_id,
                 "account_name": name,
                 "account_number": number,
+                "detail_type": detail,
                 "amount": _f(amount),
             }
         )
@@ -261,6 +264,17 @@ def statement_of_financial_position(db: Session, as_of: date) -> dict:
         "as_of_date": as_of.isoformat(),
         "assets": assets,
         "liabilities": liabilities,
+        # Current / Fixed / Other Assets, Current / Long Term Liabilities
+        # (#390), as the Balance Sheet groups them; Net Assets as before
+        "groups": {
+            side: [
+                {"heading": heading, "total_key": key, "lines": lines}
+                for heading, key, lines in bs_groups(rows, side)
+            ]
+            for side, rows in (("assets", assets), ("liabilities", liabilities))
+        },
+        **bs_group_totals(assets, "assets"),
+        **bs_group_totals(liabilities, "liabilities"),
         "net_assets": net_assets,
         "total_assets": _f(total_assets),
         "total_liabilities": _f(total_liabilities),
@@ -566,8 +580,15 @@ def financial_position_csv(data: dict) -> str:
         ("Net Assets", "net_assets", "total_net_assets"),
     ):
         rows.append([label, ""])
-        for r in data[key]:
-            rows.append([f"  {r['account_name']}", f"{r['amount']:.2f}"])
+        groups = (data.get("groups") or {}).get(key)
+        if groups is None:
+            for r in data[key]:
+                rows.append([f"  {r['account_name']}", f"{r['amount']:.2f}"])
+        for g in groups or ():
+            rows.append([f"  {g['heading']}", ""])
+            for r in g["lines"]:
+                rows.append([f"    {r['account_name']}", f"{r['amount']:.2f}"])
+            rows.append([f"  Total {g['heading']}", f"{data[g['total_key']]:.2f}"])
         rows.append([f"Total {label}", f"{data[total_key]:.2f}"])
     rows.append(
         ["Liabilities + Net Assets", f"{data['total_liabilities_and_net_assets']:.2f}"]

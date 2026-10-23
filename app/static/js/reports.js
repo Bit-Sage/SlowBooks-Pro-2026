@@ -1178,23 +1178,34 @@ const ReportsPage = {
                 ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
                        onclick="${drillCall(i, asOf)}">${escapeHtml(i.account_label || i.account_name)}</a>`
                 : escapeHtml(i.account_name);
-            const section = (items) => items.map(i =>
-                `<tr><td style="padding-left:24px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
+            const section = (items, pad = 24) => items.map(i =>
+                `<tr><td style="padding-left:${pad}px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
             ).join("") || `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, cur, before, style) => `<tr style="${style}"><td>${label}</td>${figures(cur, before)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             const p = prior || {};
+            // Current / Fixed / Other Assets, Current / Long Term
+            // Liabilities (#390): the server hands the groups down ready-made.
+            const grouped = (side) => {
+                const groups = (data.groups || {})[side];
+                if (!groups) return section(data[side]);
+                if (!groups.length) return section([]);
+                return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td>${'<td></td>'.repeat(cols - 1)}</tr>`
+                    + section(g.lines, 36)
+                    + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td>${figures(data[g.total_key], p[g.total_key])}</tr>`
+                ).join('');
+            };
             return `${pdfBtn}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head('Assets')}
-                        ${section(data.assets)}
+                        ${grouped('assets')}
                         ${total('Total Assets', data.total_assets, p.total_assets, sub)}
                         ${head('Liabilities')}
-                        ${section(data.liabilities)}
+                        ${grouped('liabilities')}
                         ${total('Total Liabilities', data.total_liabilities, p.total_liabilities, sub)}
                         ${head(T('Equity'))}
                         ${section(data.equity)}
@@ -2840,17 +2851,25 @@ ReportsPage.statementOfFinancialPosition = async function (prefill) {
         const qs = `as_of_date=${params.as_of_date}`;
         const d = await API.get(`/reports/statement-of-financial-position?${qs}`);
         const drillCall = (i) => escapeHtml(`ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'statement-of-financial-position')`);
-        const section = (items) => items.map(i => `<tr><td style="padding-left:24px;">
+        const section = (items, pad = 24) => items.map(i => `<tr><td style="padding-left:${pad}px;">
                 ${i.account_id ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${drillCall(i)}">${escapeHtml(i.account_name)}</a>` : escapeHtml(i.account_name)}
                 </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`).join('') || `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
         const sub = (label, v) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${label}</td><td class="amount">${formatCurrency(v)}</td></tr>`;
+        // Current / Fixed / Other Assets, Current / Long Term Liabilities (#390)
+        const grouped = (side) => {
+            const groups = (d.groups || {})[side];
+            if (!groups || !groups.length) return section(d[side]);
+            return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td><td></td></tr>`
+                + section(g.lines, 36)
+                + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td><td class="amount">${formatCurrency(d[g.total_key])}</td></tr>`).join('');
+        };
         return `${ReportsPage._exportButtons('statement-of-financial-position', qs)}
             <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(d.as_of_date)}</p>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
-                    <tr><td><strong>Assets</strong></td><td></td></tr>${section(d.assets)}${sub('Total Assets', d.total_assets)}
-                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${section(d.liabilities)}${sub('Total Liabilities', d.total_liabilities)}
+                    <tr><td><strong>Assets</strong></td><td></td></tr>${grouped('assets')}${sub('Total Assets', d.total_assets)}
+                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${grouped('liabilities')}${sub('Total Liabilities', d.total_liabilities)}
                     <tr><td><strong>Net Assets</strong></td><td></td></tr>${section(d.net_assets)}
                     ${sub('Net Assets Without Donor Restrictions', d.net_assets_without)}
                     ${sub('Net Assets With Donor Restrictions', d.net_assets_with)}

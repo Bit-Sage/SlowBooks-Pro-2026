@@ -49,9 +49,31 @@ def _sofp_section(data: dict) -> dict:
         ("Net Assets", "net_assets", "total_net_assets"),
     ):
         rows.append({"cells": [label, ""], "style": "subtotal"})
-        for item in data[key]:
+        groups = (data.get("groups") or {}).get(key)
+        if groups is None:
+            for item in data[key]:
+                rows.append(
+                    {
+                        "cells": [f"  {item['account_name']}", _money(item["amount"])],
+                        "indent": 1,
+                    }
+                )
+        # Current / Fixed / Other Assets, Current / Long Term Liabilities (#390)
+        for g in groups or ():
+            rows.append({"cells": [g["heading"], ""], "style": "group", "indent": 1})
+            for item in g["lines"]:
+                rows.append(
+                    {
+                        "cells": [f"  {item['account_name']}", _money(item["amount"])],
+                        "indent": 2,
+                    }
+                )
             rows.append(
-                {"cells": [f"  {item['account_name']}", _money(item["amount"])]}
+                {
+                    "cells": [f"Total {g['heading']}", _money(data[g["total_key"]])],
+                    "style": "subtotal",
+                    "indent": 1,
+                }
             )
         rows.append(
             {"cells": [f"Total {label}", _money(data[total_key])], "style": "subtotal"}

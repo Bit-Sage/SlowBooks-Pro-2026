@@ -10,6 +10,12 @@ from app.database import get_db
 from app.models.accounts import Account, AccountType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
+from app.services.statement_layout import (
+    BS_GROUP_TOTALS,
+    BS_GROUPS,
+    bs_group_totals,
+    bs_groups,
+)
 from app.services.terminology import Terms, terms_from_db
 
 # Debit-normal account types. For these, natural balance = debit - credit.
@@ -126,8 +132,8 @@ def _totals_by_account(
     sort="number",
     exclude_adjusting=False,
 ):
-    """Return a list of {account_id, account_name, account_number, amount}
-    rows where amount is signed by the account type's natural balance
+    """Return a list of {account_id, account_name, account_number,
+    detail_type, amount} rows where amount is signed by the account type's natural balance
     (always positive for a normal-balance ledger), in the chart's order
     (`sort`: number or name, see _account_order).
 
@@ -140,6 +146,7 @@ def _totals_by_account(
             Account.id,
             Account.name,
             Account.account_number,
+            Account.detail_type,
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
         )
@@ -155,11 +162,13 @@ def _totals_by_account(
         q = q.filter(in_class)
     if exclude_adjusting:
         q = q.filter(Transaction.is_adjusting == False)  # noqa: E712
-    q = q.group_by(Account.id, Account.name, Account.account_number)
+    q = q.group_by(
+        Account.id, Account.name, Account.account_number, Account.detail_type
+    )
 
     rows = []
     chart = _chart_index(db)
-    for acct_id, name, number, dr, cr in q.all():
+    for acct_id, name, number, detail, dr, cr in q.all():
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
         path, label = _account_words(chart, acct_id)
         rows.append(
@@ -169,6 +178,7 @@ def _totals_by_account(
                 "account_number": number,
                 "account_path": path or name,
                 "account_label": label or name,
+                "detail_type": detail,
                 "amount": float(amount),
             }
         )
@@ -273,7 +283,8 @@ _PL_TOTALS = (
     "total_expenses",
     "net_income",
 )
-_BS_TOTALS = ("total_assets", "total_liabilities", "total_equity")
+# the group subtotals (#390) ride along so the prior year has them too
+_BS_TOTALS = ("total_assets", "total_liabilities", "total_equity") + BS_GROUP_TOTALS
 
 
 def _line_key(item: dict):
@@ -396,11 +407,13 @@ def balance_sheet(
     if not as_of_date:
         as_of_date = date.today()
     if compare == "prior_year":
-        return _bs_with_prior(
-            db,
-            balance_sheet(as_of_date, db, sort=sort),
-            balance_sheet(_year_earlier(as_of_date), db, sort=sort),
-            sort,
+        return _bs_layout(
+            _bs_with_prior(
+                db,
+                balance_sheet(as_of_date, db, sort=sort),
+                balance_sheet(_year_earlier(as_of_date), db, sort=sort),
+                sort,
+            )
         )
 
     assets = _totals_by_account(db, AccountType.ASSET, date_end=as_of_date, sort=sort)
@@ -440,16 +453,35 @@ def balance_sheet(
         ]
         total_equity += net_income
 
-    return {
-        "as_of_date": as_of_date.isoformat(),
-        "sort": sort,
-        "assets": assets,
-        "liabilities": liabilities,
-        "equity": equity,
-        "total_assets": total_assets,
-        "total_liabilities": total_liabilities,
-        "total_equity": total_equity,
+    return _bs_layout(
+        {
+            "as_of_date": as_of_date.isoformat(),
+            "sort": sort,
+            "assets": assets,
+            "liabilities": liabilities,
+            "equity": equity,
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "total_equity": total_equity,
+            **bs_group_totals(assets, "assets"),
+            **bs_group_totals(liabilities, "liabilities"),
+        }
+    )
+
+
+def _bs_layout(data: dict) -> dict:
+    """The Balance Sheet's groups (#390) beside its flat lists: for assets
+    and liabilities, [{heading, total_key, lines}] in print order, so the
+    screen, the PDF and the CSV classify nothing. The flat lists stay what
+    the prior-year pairing and the drill-down read."""
+    data["groups"] = {
+        side: [
+            {"heading": heading, "total_key": key, "lines": lines}
+            for heading, key, lines in bs_groups(data[side], side)
+        ]
+        for side in BS_GROUPS
     }
+    return data
 
 
 @router.get("/general-ledger")
@@ -1400,7 +1432,9 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
 
 
 def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
-    """Balance Sheet rows for the PDF. With a prior-year comparison
+    """Balance Sheet rows for the PDF. Assets and liabilities print under
+    their groups (#390: Current / Fixed / Other Assets, Current / Long Term
+    Liabilities), each with its subtotal. With a prior-year comparison
     (`prior` on the data) the columns are Current | Prior Year, and
     $ Change | % Change unless show_changes is off."""
     t = t or Terms()
@@ -1408,9 +1442,17 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
     columns = _compare_columns(prior, show_changes)
     blank = [""] * (len(columns) - 1)
     p = prior or {}
+    groups = data.get("groups") or {}
 
     def figures(cur, before):
         return _compare_figures(cur, before, prior, show_changes)
+
+    def line(item, indent):
+        return {
+            "cells": [f"  {_row_words(item)}"]
+            + figures(item["amount"], item.get("prior_amount", 0)),
+            "indent": indent,
+        }
 
     rows = []
     for label, key, total_key in (
@@ -1419,13 +1461,22 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
         (t("Equity"), "equity", "total_equity"),
     ):
         rows.append({"cells": [label] + blank, "style": "subtotal"})
-        for item in data[key]:
-            rows.append(
-                {
-                    "cells": [f"  {_row_words(item)}"]
-                    + figures(item["amount"], item.get("prior_amount", 0))
-                }
-            )
+        if key in groups:
+            for g in groups[key]:
+                rows.append(
+                    {"cells": [g["heading"]] + blank, "style": "group", "indent": 1}
+                )
+                rows.extend(line(item, 2) for item in g["lines"])
+                rows.append(
+                    {
+                        "cells": [f"Total {g['heading']}"]
+                        + figures(data[g["total_key"]], p.get(g["total_key"], 0)),
+                        "style": "subtotal",
+                        "indent": 1,
+                    }
+                )
+        else:
+            rows.extend(line(item, 1) for item in data[key])
         rows.append(
             {
                 "cells": [f"Total {label}"]
