@@ -331,7 +331,7 @@ def test_each_dialect_keeps_its_finer_types(module, coa, expected):
 def test_the_qbo_reports_keep_the_innermost_heading():
     from app.services import qbo_export_import as qbo
 
-    text = (FIXTURES / "qbo_export" / "Balance_sheet.csv").read_text()
+    text = (FIXTURES / "qbo_export" / "Balance_sheet.csv").read_text(encoding="utf-8")
     text = text.replace(
         "TOTAL ASSETS,=5260.00\n",
         "   Fixed Assets,\n      Truck,=9000.00\n   Total Fixed Assets,=9000.00\n"
