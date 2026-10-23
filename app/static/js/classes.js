@@ -344,10 +344,13 @@ const ClassesPage = {
         const fund = Terms.isNonprofit() ? ClassesPage._fundHtml(c) : '';
         return `
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px" id="class-stats">
-                ${stat(T('Income'), ClassesPage.money(d.total_income + (d.total_other_income || 0)))}
+                ${stat(T('Income'), ClassesPage.money(d.total_income))}
                 ${stat('Cost of goods', ClassesPage.money(d.total_cogs))}
                 ${stat('Gross profit', ClassesPage.money(d.gross_profit))}
-                ${stat('Expenses', ClassesPage.money(d.total_expenses + (d.total_other_expense || 0)))}
+                ${stat('Expenses', ClassesPage.money(d.total_expenses))}
+                ${(d.total_other_income || d.total_other_expense)
+                    ? stat('Net other income', ClassesPage.money(d.net_other_income), d.net_other_income < 0 ? 'var(--text-danger)' : null)
+                    : ''}
                 ${stat(T('Net Income'), ClassesPage.money(d.net_income), d.net_income < 0 ? 'var(--text-danger)' : null, Terms.text(`Net income by class: ${share}`))}
             </div>
             <p id="class-net-note" style="font-size:11px; color:var(--gray-500); margin:0 0 10px;">

@@ -87,6 +87,53 @@ def test_other_income_and_expense_sit_below_net_operating_income(client, books):
     assert bs["equity"][-1]["amount"] == d["net_income"]
 
 
+def test_the_grids_print_full_paths_where_leaf_names_repeat(
+    client, db_session, seed_accounts
+):
+    """A numbered Travel: Lodging: Hotel and a second, unnumbered Hotel
+    under Meals: the by-class grid rows carry the full path, not the bare
+    leaf, so the two are told apart, in parent-first order; the CSV prints
+    the path too (Trent's #416 review, point 1)."""
+    a = dict(seed_accounts)
+
+    def expense(number, name, parent=None):
+        acct = Account(
+            account_number=number,
+            name=name,
+            account_type=AccountType.EXPENSE,
+            parent_id=parent.id if parent else None,
+        )
+        db_session.add(acct)
+        db_session.flush()
+        return acct
+
+    travel = expense("7310", "Travel")
+    lodging = expense("7311", "Lodging", travel)
+    hotel_numbered = expense("7312", "Hotel", lodging)
+    meals = expense(None, "Meals")
+    hotel_unnumbered = expense(None, "Hotel", meals)
+    d = date(2026, 5, 1)
+    _je(db_session, d, [(a["1000"], 3000, 0), (a["4000"], 0, 3000)])
+    _je(db_session, d, [(hotel_numbered, 120, 0), (a["1000"], 0, 120)])
+    _je(db_session, d, [(hotel_unnumbered, 80, 0), (a["1000"], 0, 80)])
+    db_session.commit()
+
+    g = client.get(f"/api/reports/profit-loss-by-class?{PERIOD}").json()
+    expenses = g["accounts"]["expenses"]
+    paths = [row["account_path"] for row in expenses]
+    # the numbered chain first (parent-first order), the unnumbered after
+    assert paths == ["Travel: Lodging: Hotel", "Meals: Hotel"]
+    labels = [row["account_label"] for row in expenses]
+    assert labels[0] == "7312 - Travel: Lodging: Hotel"
+    # the leaf name is kept for compatibility
+    assert [row["account_name"] for row in expenses] == ["Hotel", "Hotel"]
+
+    rows = rows_of(client.get(f"/api/reports/profit-loss-by-class/csv?{PERIOD}").text)
+    csv_paths = [r[2] for r in rows]
+    assert "Travel: Lodging: Hotel" in csv_paths
+    assert "Meals: Hotel" in csv_paths
+
+
 def test_per_type_totals_are_kept_across_the_split(client, books):
     """Income and Other Income together are the income type's total as
     2.26 printed it; Expenses and Other Expense, the expense type's."""
@@ -302,17 +349,27 @@ def test_the_classes_activity_carries_the_grids_figures(client, books):
         assert round(row["gross_profit"], 2) == round(row["income"] - row["cogs"], 2)
 
 
-def test_the_classes_pages_add_other_income_and_expense_back_for_display():
+def test_the_class_page_cards_are_operating_with_a_net_other_income_card():
+    """The list rows still fold Other back into income and expenses (one
+    net per row), but the class page's cards are operating — so Income −
+    Cost of goods = Gross profit — with a Net other income card added only
+    when the class has other activity (Trent's #390 review, point 3)."""
     from pathlib import Path
 
     js = (Path(__file__).resolve().parents[1] / "app/static/js/classes.js").read_text(
         encoding="utf-8"
     )
-    # the list's rows and the class page's stat cards: four figures to net
+    # the list's rows still net four figures
     assert "income: (c.income || 0) + (c.other_income || 0)" in js
     assert "expenses: (c.expenses || 0) + (c.other_expense || 0)" in js
-    assert "d.total_income + (d.total_other_income || 0)" in js
-    assert "d.total_expenses + (d.total_other_expense || 0)" in js
+    # the class page cards are operating only, not Income + Other Income
+    assert "d.total_income + (d.total_other_income || 0)" not in js
+    assert "d.total_expenses + (d.total_other_expense || 0)" not in js
+    assert "stat(T('Income'), ClassesPage.money(d.total_income))" in js
+    assert "stat('Expenses', ClassesPage.money(d.total_expenses))" in js
+    # a Net other income card, gated on the class having other activity
+    assert "(d.total_other_income || d.total_other_expense)" in js
+    assert "stat('Net other income', ClassesPage.money(d.net_other_income)" in js
 
 
 def test_a_nonprofit_reads_other_revenue_and_support(
@@ -336,6 +393,59 @@ def test_a_nonprofit_reads_other_revenue_and_support(
     assert "Total Other Revenue & Support" in words
     assert "Change in Net Assets from Operations" in words
     assert "Net Operating Income" not in words
+
+
+def test_a_zero_other_income_account_prints_no_heading_in_any_writer(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """An Other Income account netting to $0 beside an Other Expense with a
+    figure: the P&L still carries the $0 account's data (only the heading is
+    gated), but no writer — screen flag, PDF, CSV, grid — opens an Other
+    Income section (Trent's #390 review, point 2)."""
+    from app.routes.reports import financial
+
+    a = dict(seed_accounts)
+    interest = Account(
+        account_number="7100",
+        name="Interest Expense",
+        account_type=AccountType.EXPENSE,
+        detail_type="other_expense",
+    )
+    db_session.add(interest)
+    db_session.flush()
+    d = date(2026, 5, 1)
+    _je(db_session, d, [(a["1000"], 2000, 0), (a["4000"], 0, 2000)])
+    _je(db_session, d, [(a["1000"], 100, 0), (a["4900"], 0, 100)])  # Other Income
+    _je(db_session, d, [(a["4900"], 100, 0), (a["1000"], 0, 100)])  # reversed to $0
+    _je(db_session, d, [(interest, 50, 0), (a["1000"], 0, 50)])  # Other Expense
+    db_session.commit()
+
+    pl = _pl(client)
+    assert pl["has_other"] is True
+    assert pl["has_other_income"] is False
+    assert pl["has_other_expense"] is True
+    # the $0 account's data is still there; only the heading is gated
+    assert _numbers(pl["other_income"]) == ["4900"]
+    assert pl["total_other_income"] == 0
+
+    captured = {}
+    monkeypatch.setattr(
+        financial,
+        "_pdf_response",
+        lambda sections, db, filename, landscape=False: captured.update(s=sections)
+        or {},
+    )
+    client.get(f"/api/reports/profit-loss/pdf?{PERIOD}")
+    words = [r["cells"][0].strip() for r in captured["s"][0]["rows"]]
+    assert "Other Income" not in words and "Total Other Income" not in words
+    assert "Other Expense" in words
+
+    rows = rows_of(client.get(f"/api/reports/profit-loss/csv?{PERIOD}").text)
+    assert not any(r[2] == "Other Income" for r in rows)
+    assert any(r[0] == "Other Expense" for r in rows)
+
+    g = client.get(f"/api/reports/profit-loss-by-class?{PERIOD}").json()
+    assert g["accounts"]["other_income"] == []
 
 
 def test_an_other_account_netting_to_nothing_opens_no_block(

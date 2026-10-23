@@ -344,9 +344,11 @@ def _pl_layout(db, data: dict, chart: dict) -> dict:
       a family total under each parent (#416), for the screen and the PDF.
       The flat lists stay, with full paths, for the CSV and the prior-year
       pairing. A parent of another section does not gather a line."""
-    data["has_other"] = _has_other(
-        data.get("other_income", []) + data.get("other_expense", [])
-    )
+    # each section opens on its own figures, not whether the list has a row:
+    # a section with only a $0 account does not print a heading (#390)
+    data["has_other_income"] = _has_other(data.get("other_income", []))
+    data["has_other_expense"] = _has_other(data.get("other_expense", []))
+    data["has_other"] = data["has_other_income"] or data["has_other_expense"]
     section_of = {aid: _pl_section_of(row[3], row[4]) for aid, row in chart.items()}
     order = _account_order(db, data.get("sort") or "number", chart)
     accounts = account_chart(index=chart)
@@ -968,6 +970,7 @@ def _pl_pivot(
 
     An account that nets to nothing in every column shown is left out.
     """
+    chart = _chart_index(db)
     rows = (
         db.query(
             key_expr.label("k"),
@@ -1080,18 +1083,24 @@ def _pl_pivot(
     # Accounts down the side, an amount per column in the order of
     # `columns` and the account's total, by section.
     order = [c["key"] for c in columns]
+    # a sub-account right after its parent, and full paths where a leaf name
+    # repeats, as the P&L flat list does (#416)
+    row_order = _account_order(db, "number", chart)
     accounts: dict[str, list] = {f: [] for f in _GRID_SECTIONS}
     for a in sorted(
-        by_account.values(), key=lambda a: (a["number"] or "", a["name"].lower())
+        by_account.values(), key=lambda a: row_order({"account_id": a["id"]})
     ):
         amounts = [a["by"].get(k, Decimal("0")) for k in order]
         if not any(amounts):
             continue
+        path, label = _account_words(chart, a["id"])
         accounts[a["section"]].append(
             {
                 "account_id": a["id"],
                 "account_number": a["number"],
                 "account_name": a["name"],
+                "account_path": path or a["name"],
+                "account_label": label or a["name"],
                 "amounts": [float(x) for x in amounts],
                 "total": float(sum(amounts, Decimal("0"))),
             }
@@ -1495,9 +1504,9 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
     if data.get("has_other"):
         # below Net Operating Income, only when there is something (#390)
         rows.append(total(t("Net Operating Income"), "net_operating_income"))
-        if data.get("other_income"):
+        if data.get("has_other_income"):
             section(t("Other Income"), "other_income", "total_other_income")
-        if data.get("other_expense"):
+        if data.get("has_other_expense"):
             section("Other Expense", "other_expense", "total_other_expense")
         rows.append(total(t("Net Other Income"), "net_other_income"))
     rows.append(total(t("Net Income"), "net_income", "grand-total"))
@@ -1604,8 +1613,9 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             return r
 
         def account_row(a):
+            # the number and full path, as the P&L PDF prints a flat line (#416)
             return row(
-                f"  {a['account_number'] + ' - ' if a['account_number'] else ''}{a['account_name']}",
+                f"  {_row_words(a)}",
                 [_money(a["amounts"][i]) if a["amounts"][i] else "" for i in idx]
                 + [_money(a["total"])],
             )

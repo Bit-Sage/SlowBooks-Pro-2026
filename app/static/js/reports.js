@@ -1139,16 +1139,16 @@ const ReportsPage = {
     },
 
     // Other Income / Other Expense below Net Operating Income (#390): only
-    // when either has a line (`has_other`, the server's one flag), so a P&L
-    // without them reads as it did. `head`, `section` and `total` are the
-    // calling view's own row writers.
+    // when either has a figure (the server's flags), so a section with just
+    // a $0 account prints no heading and a P&L without them reads as it did.
+    // `head`, `section` and `total` are the calling view's own row writers.
     _plOther(data, head, section, total) {
         if (!data.has_other) return '';
         let html = total(T('Net Operating Income'), 'net_operating_income');
-        if ((data.other_income || []).length) {
+        if (data.has_other_income) {
             html += head(T('Other Income')) + section(data.other_income, 'other_income') + total(T('Total Other Income'), 'total_other_income');
         }
-        if ((data.other_expense || []).length) {
+        if (data.has_other_expense) {
             html += head('Other Expense') + section(data.other_expense, 'other_expense') + total('Total Other Expense', 'total_other_expense');
         }
         return html + total(T('Net Other Income'), 'net_other_income');
@@ -2065,7 +2065,8 @@ ReportsPage._pivotGrid = function (spec) {
     const totals = spec.totals;
     const link = (call, text) => `<a href="javascript:void(0)" class="grid-link" style="color:var(--text-link); text-decoration:none;" onclick="${escapeHtml(call)}">${text}</a>`;
     const empties = cols.map((_, i) => `<td data-col="${i}"></td>`).join('') + '<td></td>';
-    const label = a => `${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.account_name)}`;
+    // the number and full path, as the P&L flat list prints a line (#416)
+    const label = a => escapeHtml(a.account_label || a.account_name);
     const cell = (a, i) => {
         const amount = a.amounts[i];
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;
@@ -2372,7 +2373,7 @@ ReportsPage.profitLossByClass = async function (prefill) {
                 totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('classes')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
                 head: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
                 sum: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
             })}`;
@@ -2424,7 +2425,7 @@ ReportsPage.profitLossByJob = async function (prefill) {
                 totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('jobs')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
                 head: (c) => c.job_id ? `ReportsPage._leaveFrom(this);App.navigate(${JSON.stringify(jobUrl(c))})` : null,
             })}`;
     }, "Dates", false, { reportType: 'profit_loss_by_job', view: 'profit-loss-by-job', params, prefill, toolbar, wide: true, afterRender: () => ReportsPage._gridFit() });

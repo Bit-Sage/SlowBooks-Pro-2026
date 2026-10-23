@@ -324,9 +324,9 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     if data.get("has_other"):
         # Other Income / Other Expense below Net Operating Income (#390)
         summary(words("Net Operating Income"), "net_operating_income")
-        if data.get("other_income"):
+        if data.get("has_other_income"):
             section(words("Other Income"), "other_income", "total_other_income")
-        if data.get("other_expense"):
+        if data.get("has_other_expense"):
             section("Other Expense", "other_expense", "total_other_expense")
         summary(words("Net Other Income"), "net_other_income")
     w.writerow(
@@ -385,7 +385,7 @@ def profit_loss_by_class_csv(
                         [
                             label,
                             a.get("account_number") or "",
-                            a["account_name"],
+                            a.get("account_path") or a["account_name"],  # W-8
                             c["name"],
                             _money(amount),
                         ]
@@ -408,7 +408,11 @@ def profit_loss_by_class_csv(
     for label, key, sub, sub_col, sub_key in sections:
         for a in data["accounts"][key] if key else ():
             w.writerow(
-                [label, a.get("account_number") or "", a["account_name"]]
+                [
+                    label,
+                    a.get("account_number") or "",
+                    a.get("account_path") or a["account_name"],  # W-8
+                ]
                 + [_money(x) if x else "" for x in a["amounts"]]
                 + [_money(a["total"])]
             )
