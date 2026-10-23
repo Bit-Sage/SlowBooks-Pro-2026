@@ -13,7 +13,12 @@ on what the software does, not on what sprint shipped what.
   leading apostrophe as every other export (it was written raw, so a vendor
   named `=HYPERLINK(...)` was a live formula), and the file starts with the
   UTF-8 byte-order mark so Excel reads accented names correctly. Amounts stay
-  numbers.
+  numbers. The download's file name goes through the shared
+  `content_disposition` helper, so a vendor whose name Latin-1 can't carry
+  (`Łódź Supply`) no longer fails the download with a 500 in the
+  Content-Disposition header: the header sends an ASCII fallback
+  (`Payments_Lodz-Supply.csv`) plus `filename*=UTF-8''…` with the exact name.
+  The desktop shim's inline header is honored too.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

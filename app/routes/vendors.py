@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -110,6 +110,7 @@ def delete_vendor(vendor_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{vendor_id}/payments/csv")
 def vendor_payments_csv(
+    request: Request,
     vendor_id: int,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
@@ -122,6 +123,7 @@ def vendor_payments_csv(
     from app.models.bills import BillPayment
     from app.routes.csv import _csv_response
     from app.services.csv_export import _money_cell, _SafeWriter
+    from app.services.request_utils import file_name
 
     vendor = get_or_404(db, Vendor, vendor_id)
     q = db.query(BillPayment).filter(BillPayment.vendor_id == vendor_id)
@@ -153,5 +155,11 @@ def vendor_payments_csv(
             ]
         )
     w.writerow(["", "", "Total paid", _money_cell(total), "", "", ""])
-    slug = "".join(ch if ch.isalnum() else "_" for ch in vendor.name)[:40]
-    return _csv_response(out.getvalue(), f"Payments_{slug}.csv")
+    # content_disposition makes the name safe for the header (ASCII fallback
+    # plus filename*=UTF-8''…), so a non-Latin-1 vendor ("Łódź Supply") no
+    # longer 500s; request lets the desktop shim get its inline header.
+    return _csv_response(
+        out.getvalue(),
+        file_name("Payments", vendor.name) + ".csv",
+        request,
+    )
