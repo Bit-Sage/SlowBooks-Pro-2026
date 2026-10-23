@@ -135,9 +135,9 @@ def _totals_by_account(
     exclude_adjusting=False,
 ):
     """Return a list of {account_id, account_name, account_number,
-    detail_type, amount} rows where amount is signed by the account type's natural balance
-    (always positive for a normal-balance ledger), in the chart's order
-    (`sort`: number or name, see _account_order).
+    detail_type, amount} rows where amount is signed by the account type's
+    natural balance (always positive for a normal-balance ledger), in the
+    chart's order (`sort`: number or name, see _account_order).
 
     `account_id` is included so the SPA can drill into /account-transactions
     for any line — Phase 11 drill-down support. `exclude_adjusting` leaves

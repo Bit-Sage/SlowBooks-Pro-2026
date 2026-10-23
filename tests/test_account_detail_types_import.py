@@ -360,7 +360,7 @@ def test_the_qbo_report_imports_cost_of_goods_sold_as_cogs():
     from app.models.accounts import AccountType
     from app.services import qbo_export_import as qbo
 
-    text = (FIXTURES / "qbo_export" / "Profit_and_loss.csv").read_text()
+    text = (FIXTURES / "qbo_export" / "Profit_and_loss.csv").read_text(encoding="utf-8")
     text = text.replace(
         "Gross Profit,=4550.00\n",
         "Cost of Goods Sold,\n   Materials,=500.00\n"
