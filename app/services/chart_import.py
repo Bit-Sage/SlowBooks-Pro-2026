@@ -36,7 +36,13 @@ from dataclasses import dataclass, field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import (
+    BASE_TYPE_OF,
+    DETAIL_TYPES,
+    Account,
+    AccountType,
+    DetailType,
+)
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
 from app.services.csv_export import strip_formula_guard
@@ -76,6 +82,39 @@ TYPE_WORDS: dict[str, tuple[str, str | None]] = {
     "expenses": ("expense", None),
     "other expense": ("expense", None),
 }
+
+# Type words that also name a detail type (#390). A word not here (asset,
+# expense, ...) leaves the account the default for its type.
+DETAIL_WORDS: dict[str, str] = {
+    "bank": "bank",
+    "cash": "bank",
+    "accounts receivable": "accounts_receivable",
+    "current asset": "other_current_asset",
+    "other current asset": "other_current_asset",
+    "fixed asset": "fixed_asset",
+    "other asset": "other_asset",
+    "credit card": "credit_card",
+    "accounts payable": "accounts_payable",
+    "current liability": "other_current_liability",
+    "other current liability": "other_current_liability",
+    "long term liability": "long_term_liability",
+    "long-term liability": "long_term_liability",
+    "other income": "other_income",
+    "other expense": "other_expense",
+}
+
+
+def _norm_detail(word: str | None) -> str | None:
+    """A Detail type cell — the label the export writes ("Long Term
+    Liability") or the API value ("long_term_liability") — or None."""
+    if not word:
+        return None
+    w = word.strip().lower().replace("_", " ")
+    for d, (label, _base) in DETAIL_TYPES.items():
+        if w in (label.lower(), d.value.replace("_", " ")):
+            return d.value
+    return DETAIL_WORDS.get(w)
+
 
 # hledger's one-letter account types: Asset, Liability, Equity, Revenue,
 # eXpense, Cash (an asset you can spend from), conVersion (equity).
@@ -149,6 +188,7 @@ _HEADER_ALIASES = {
     "account": "name",
     "account type": "type",
     "type": "type",
+    "detail type": "detail_type",
     "parent": "parent",
     "parent account": "parent",
     "sub-account of": "parent",
@@ -168,6 +208,7 @@ class Row:
     parent_ref: str | None = None  # a path (hledger) or a number/name (CSV)
     description: str | None = None
     bank_kind: str | None = None
+    detail_type: str | None = None  # #390; None takes the type's default
     path: str | None = None  # hledger only: the full colon path
     active: bool | None = None
     synthesized: bool = False  # an hledger parent the file never listed
@@ -353,8 +394,24 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
             continue
         number = cell("number") or None
         typed = _norm_type(cell("type"))
+        detail = _norm_detail(cell("detail_type"))
+        if cell("detail_type") and detail is None:
+            errors.append(
+                f"Row {n}: unknown detail type '{cell('detail_type')}' for '{name}'"
+            )
+            continue
         if typed:
             acct_type, bank_kind = typed
+            detail = detail or DETAIL_WORDS.get(cell("type").lower().replace("_", " "))
+            base = BASE_TYPE_OF[DetailType(detail)] if detail else None
+            if base is not None and base.value != acct_type:
+                errors.append(
+                    f"Row {n}: '{name}' is typed {acct_type} and its detail type "
+                    f"'{cell('detail_type')}' is a {base.value} type"
+                )
+                continue
+        elif detail:
+            acct_type, bank_kind = BASE_TYPE_OF[DetailType(detail)].value, None
         elif cell("type"):
             errors.append(
                 f"Row {n}: unknown account type '{cell('type')}' for '{name}' "
@@ -383,6 +440,7 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
                 parent_ref=cell("parent") or None,
                 description=(cell("description") or None),
                 bank_kind=bank_kind,
+                detail_type=detail,
                 active=active,
             )
         )
@@ -642,6 +700,7 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             account_type=AccountType(r.type),
             description=r.description,
             bank_kind=r.bank_kind,
+            detail_type=r.detail_type,
             is_active=r.active is not False,
             is_system=False,
         )
@@ -659,6 +718,9 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
                     a.name = r.name
                 elif change.startswith("type "):
                     a.account_type = AccountType(r.type)
+                    # the old detail type cannot stand under a new type; the
+                    # file's, else the default (Account._settle_detail_type)
+                    a.detail_type = r.detail_type
                 elif change.startswith("number "):
                     a.account_number = r.number
                 elif change == "description":

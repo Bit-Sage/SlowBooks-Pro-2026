@@ -312,6 +312,9 @@ def run_import_bundle(
             account_number=spec["code"],
             account_type=spec["type"],
             description=spec["description"],
+            # the dialect's finer type (#390) when it has one; the model
+            # falls back to the default where it does not fit
+            detail_type=spec.get("detail_type"),
         )
         # A dialect may say what kind of account it is (a bank, a card) and
         # whose sub-account it is ("Parent:Child", the parent listed first).

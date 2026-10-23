@@ -51,7 +51,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.models.contacts import Customer, Vendor
 from app.services.migration_common import (
     dry_run_bundle,
@@ -104,6 +104,20 @@ _SECTION_TYPES = {
     "other expenses": AccountType.EXPENSE,
 }
 _KIND_SECTIONS = {"bank accounts": "bank", "credit cards": "credit_card"}
+# The reports' headings that name a detail type (#390); the innermost one an
+# account sits under wins. Accounts Receivable / Payable hold only on 1100 /
+# 2000, so an account under those headings takes the default here.
+_DETAIL_SECTIONS = {
+    "bank accounts": DetailType.BANK,
+    "other current assets": DetailType.OTHER_CURRENT_ASSET,
+    "fixed assets": DetailType.FIXED_ASSET,
+    "other assets": DetailType.OTHER_ASSET,
+    "credit cards": DetailType.CREDIT_CARD,
+    "other current liabilities": DetailType.OTHER_CURRENT_LIABILITY,
+    "long-term liabilities": DetailType.LONG_TERM_LIABILITY,
+    "other income": DetailType.OTHER_INCOME,
+    "other expenses": DetailType.OTHER_EXPENSE,
+}
 # The reports' own headings. A labelled row with no figure that is not one
 # of these is a parent account whose children follow (QuickBooks shows a
 # parent with no activity of its own as a bare heading over them).
@@ -246,6 +260,14 @@ def parse_coa(
                             "type": acct_type,
                             "description": None,
                             "bank_kind": kind,
+                            "detail_type": next(
+                                (
+                                    _DETAIL_SECTIONS[s]
+                                    for s in reversed(sections)
+                                    if s in _DETAIL_SECTIONS
+                                ),
+                                None,
+                            ),
                             "parent": ":".join(parents) if parents else None,
                             # the account the Journal's invoices and
                             # payments post to (QuickBooks names it
@@ -287,6 +309,9 @@ def parse_coa(
             "type": acct_type,
             "description": None,
             "bank_kind": None,
+            # a sub-account takes its parent's (the model's rule); a
+            # top-level one guessed from its neighbours, the default
+            "detail_type": None,
             "parent": parent_name,
         }
         accounts.append(spec)
