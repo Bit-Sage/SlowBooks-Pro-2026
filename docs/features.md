@@ -146,7 +146,7 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 - **Donation receipt** — IRS Pub. 1771 block: no goods or services, or the fair value of what was and the deductible portion
 - **Acknowledgment letters** — PDF and email for donations, pledge payments, unapplied gifts and in-kind gifts, worded by the editable `donation_acknowledgment` email template
 - **In-kind gifts** — two-sided document (asset/expense ↔ In-Kind Contributions), acknowledged without a value
-- **Year-end giving statements** — per donor, all donors in one PDF, or batch email honouring each donor's opt-out
+- **Year-end giving statements** — per donor, all donors in one PDF, or batch email honouring each donor's opt-out; Settings (nonprofit mode) → Giving Statement keeps the ministry's own **opening message** (a saved giving-statement message, #415, its default printed above the gift table) and a **footer** (the ministry's address, EIN, a verse), plain text with line breaks, on all three outputs — message capped at 1500 characters and footer at 500, the footer printed in each page's bottom margin so a multi-page statement never overprints the gift table; the IRS sentence is always printed and not editable, and a donor's statement carries no product name
 - **Pledges** — recurring pledges and their installments (generated invoices link to their template and carry its grant), one-off pledges, write-off to Bad Debt Expense through a credit memo; credit memo void
 - Guide: [nonprofit-module.md](nonprofit-module.md); design: [design/nonprofit.md](design/nonprofit.md)
 
@@ -631,7 +631,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/nonprofit/allocations` (+`/{id}/void`) | GET, POST | Period-end functional allocation runs |
 | `/api/in-kind-gifts` (+`/{id}/void`) | GET, POST | In-kind gift documents |
 | `/api/donors/gifts/{kind}/{id}/acknowledgment/{preview,pdf,email}` | GET, POST | Acknowledgment letters |
-| `/api/donors/{id}/giving-statement/pdf`, `/api/donors/giving-statements/{pdf,batch-email}` | GET, POST | Year-end giving statements |
+| `/api/donors/{id}/giving-statement/pdf`, `/api/donors/giving-statements/{pdf,batch-email}`, `/api/donors/giving-statement/preview` | GET, POST | Year-end giving statements (preview: one donor's with the default giving-statement message and footer, a sample donor when the file has no gifts) |
 | `/api/invoices/{id}/write-off` | POST | Write an open balance off to Bad Debt Expense (any company, v2.22.2) |
 | `/api/invoices/write-offs/candidates` | GET | The open balances under `?under=` as of `?as_of_date=`, listed before any is written off (v2.22.2) |
 | `/api/invoices/write-offs` | POST | Write the listed invoices off together, one credit memo each; `{date, under, invoice_ids, memo}` → `{written_off, skipped}` (v2.22.2) |
@@ -671,7 +671,7 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/bank-rules` | GET, POST, PUT, DELETE | Bank transaction categorization rules (`…/apply` runs them over the review queue) |
 | `/api/budgets` | GET, POST, PUT, DELETE | Budget management |
 | `/api/email-templates` | GET, POST, PUT, DELETE | Custom email template management |
-| `/api/invoice-messages` | GET, POST, PUT, DELETE | Saved invoice messages, one the default (writes: administrator) |
+| `/api/invoice-messages` | GET, POST, PUT, DELETE | Saved messages, one the default per kind; `?kind=invoice` (default) or `?kind=giving_statement` filters the list (#392, #415; writes: administrator) |
 | `/health` | GET | Liveness probe (no auth required) |
 
 ### Inventory
