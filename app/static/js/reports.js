@@ -2065,8 +2065,9 @@ ReportsPage._pivotGrid = function (spec) {
     const totals = spec.totals;
     const link = (call, text) => `<a href="javascript:void(0)" class="grid-link" style="color:var(--text-link); text-decoration:none;" onclick="${escapeHtml(call)}">${text}</a>`;
     const empties = cols.map((_, i) => `<td data-col="${i}"></td>`).join('') + '<td></td>';
-    // the number and full path, as the P&L flat list prints a line (#416)
-    const label = a => escapeHtml(a.account_label || a.account_name);
+    // the number and full path, as the P&L flat list prints a line (#416);
+    // a row without the label (an older reply) still reads number - name
+    const label = a => escapeHtml(a.account_label || `${a.account_number ? a.account_number + ' - ' : ''}${a.account_name}`);
     const cell = (a, i) => {
         const amount = a.amounts[i];
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;

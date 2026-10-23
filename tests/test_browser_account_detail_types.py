@@ -213,8 +213,11 @@ STATS = """() => [...document.querySelectorAll('#class-stats > *')]
 
 
 def test_the_classes_pages_count_other_income_with_income(browser, company, books):
-    """The Classes list and a class page's cards keep four figures that add
-    to net: Other Income (#390) is counted with income for display."""
+    """The Classes list keeps four figures that add to net, Other Income
+    (#390) counted with income for display. The class page's cards are
+    operating (Income, Cost of goods, Gross profit, Expenses) with a Net
+    other income card beside them, so Income - Cost of goods = Gross profit
+    (the #429 round)."""
     accounts = {a["account_number"]: a for a in company.get("/api/accounts").json()}
     _journal(
         company,
@@ -244,6 +247,9 @@ def test_the_classes_pages_count_other_income_with_income(browser, company, book
     try:
         page.wait_for_selector("#class-stats")
         stats = " | ".join(page.evaluate(STATS))
-        assert f"${shown:,.2f}" in stats
+        assert f"Income ${row['income']:,.2f}" in stats
+        other = row["other_income"] - row.get("other_expense", 0)
+        assert f"Net other income ${other:,.2f}" in stats
+        assert f"${shown:,.2f}" not in stats
     finally:
         page.close()
