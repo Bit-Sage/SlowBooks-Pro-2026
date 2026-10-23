@@ -55,20 +55,17 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.25 — Several companies on one server.** Server Edition serves every
-company file in the install's list (#358): the sign-in screen asks which
-company, then who; a session works in the company it chose, so two people
-work in two companies at once; and a sign-in whose password opens another
-company switches to it with one click from the topbar, with the role that
-company gives, while the rest ask for their own password. Audit log,
-backups, bank feeds and settings stay per company; a company made under
-Companies is set up by the administrator who opens it; an API token's
-request names its company with the `X-SlowBooks-Company` header; and
-`--serve-lan` brings every listed company up to date first. The desktop
-window still opens one company at a time, and a PostgreSQL server still
-serves one database.
+**v2.26 — Direct deposit from the page, and last year beside this one.** A processed pay run makes its direct deposit
+(ACH) file from the page, with the bank's numbers kept under Settings →
+Direct Deposit (discussion #211); the Profit & Loss and Balance Sheet
+compare to last year, with $ and % change on screen and in the PDF and CSV
+(#347); and a security pass: a session ends when its user is deactivated,
+demoted or has a new password, account balances update atomically, a
+reverse proxy's real client address reaches the rate limits and the audit
+log, and hostile input is refused with a 422. An import's whole error list
+is shown and saved as a file. The Mac app now needs macOS 15 or later.
 
-Patch releases and everything before 2.25 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.26 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -83,7 +80,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (586 operations in v2.25.0) — built for Claude
+self-documenting local REST API (587 operations in v2.26.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
@@ -189,7 +186,7 @@ startup task, and machine-wide data location handled. Details in
 
 Download **[SlowBooksPro-macos-arm64.dmg](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-macos-arm64.dmg)**,
 drag **SlowBooks Pro** to Applications, launch. Signed and notarized with
-the project's Apple Developer ID on every release; macOS 14+, Apple
+the project's Apple Developer ID on every release; macOS 15+, Apple
 Silicon. Intel Macs: Docker.
 
 ### Docker (Linux servers, Intel Mac)
