@@ -25,6 +25,22 @@ def _money(v) -> Decimal:
     return Decimal(str(v or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+class _Percent:
+    """A % Change cell. Not a str, so the safe writer leaves it alone: a fall
+    is written -12.3% like a rise is 62.8%, and a spreadsheet reads both as
+    numbers. As text it got the formula guard's apostrophe ('-12.3%), which
+    Excel shows as text (2.26.0 gate, W-29 / NEW-171). A number with a
+    percent sign is never a formula."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: float):
+        self.value = value
+
+    def __str__(self) -> str:
+        return f"{self.value:.1f}%"
+
+
 def _preamble(writer, company: str, report: str, period: str) -> None:
     writer.writerow(["Company", company])
     writer.writerow(["Report", report])
@@ -258,7 +274,7 @@ def _cmp_cells(cur, before, prior, show_changes: bool) -> list:
         pct = pct_change(cur, before)
         cells += [
             _money(float(cur or 0) - float(before or 0)),
-            "" if pct is None else f"{pct:.1f}%",
+            "" if pct is None else _Percent(pct),
         ]
     return cells
 
