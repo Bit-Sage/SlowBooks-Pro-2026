@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### Unreleased
 
 **A file the bank import can't read is said so, not a 500** (found in
 PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV, a
@@ -18,6 +18,8 @@ and write nothing; an unrecognised CSV still goes to the column-mapping
 step. A UTF-16 export (either byte order) is decoded by its byte-order mark
 and read, and a complete statement that is only missing its closing
 `</OFX>` or carries trailing NUL padding still imports.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
