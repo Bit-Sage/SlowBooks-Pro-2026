@@ -71,7 +71,6 @@ BAD_FILES = {
         "Date,Description,Amount\n01/05/2026,Coffee,-12.50\n".encode("utf-16")
     ),
     # Exercise the parser net, not just the binary guard:
-    "an OFX with broken markup": _ofx(extra=b"<![bogus[x]]>"),
     "an OFX amount of 1e999999999": _ofx(trnamt=b"1e999999999"),
     "an OFX amount of NaN": _ofx(trnamt=b"NaN"),
     "an OFX amount of Infinity": _ofx(trnamt=b"Infinity"),
@@ -230,3 +229,34 @@ def test_the_size_limit_still_answers_413(client):
 
     r = _post(client, "/api/bank-import/preview", b"x" * (MAX_IMPORT_BYTES + 1))
     assert r.status_code == 413
+
+
+# Whether bs4 rejects <![bogus[x]]> depends on its version and the parsers
+# installed (it does on one machine, reads past it on CI), so the real file
+# is only held to "never a 500", and the rejection itself is forced.
+BROKEN_MARKUP = _ofx(extra=b"<![bogus[x]]>")
+
+
+def test_an_ofx_with_broken_markup_never_500s(client, db_session, feed):
+    for path in ("/api/bank-import/preview", f"/api/bank-import/import/{feed['id']}"):
+        r = _post(client, path, BROKEN_MARKUP)
+        assert r.status_code in (200, 400), (path, r.text)
+        if r.status_code == 400:
+            assert r.json()["detail"] == UNREADABLE_TEXT
+
+
+def test_markup_bs4_rejects_is_a_400_with_the_sentence(
+    client, db_session, feed, monkeypatch
+):
+    bs4 = pytest.importorskip("bs4")
+    ofxparse = pytest.importorskip("ofxparse")
+
+    def reject(*args, **kwargs):
+        raise bs4.ParserRejectedMarkup("bogus markup")
+
+    monkeypatch.setattr(ofxparse.OfxParser, "parse", reject)
+    for path in ("/api/bank-import/preview", f"/api/bank-import/import/{feed['id']}"):
+        r = _post(client, path, BROKEN_MARKUP)
+        assert r.status_code == 400, (path, r.text)
+        assert r.json()["detail"] == UNREADABLE_TEXT
+    assert db_session.query(BankTransaction).count() == 0
