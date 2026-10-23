@@ -167,7 +167,10 @@ jobs:
           # 126 with atomic account balances: the concurrent-postings race
           # in tests/test_atomic_account_balance.py needs a Postgres server
           # (SLOWBOOKS_TEST_POSTGRES_URL), like the other Postgres-only tests
-          MAX_SKIPS: "126"
+          # 128 with the Possible Duplicates report (#414): its browser
+          # module, skipped like the other Playwright modules, and its PDF
+          # test, skipped with the other PDF tests (no WeasyPrint stack)
+          MAX_SKIPS: "128"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
