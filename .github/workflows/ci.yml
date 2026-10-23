@@ -171,7 +171,9 @@ jobs:
           # 126 with atomic account balances: the concurrent-postings race
           # in tests/test_atomic_account_balance.py needs a Postgres server
           # (SLOWBOOKS_TEST_POSTGRES_URL), like the other Postgres-only tests
-          MAX_SKIPS: "143"
+          # 141 for 2.27.0, the count on the integrated tree's own Windows run
+          # (CI 40031366864): each PR raised it from 126 on its own base.
+          MAX_SKIPS: "141"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
