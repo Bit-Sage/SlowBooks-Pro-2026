@@ -231,7 +231,7 @@ def test_a_bank_account_in_use_keeps_its_bank_kind(client, db_session):
 def test_the_form_sends_bank_kind_only_on_a_move():
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "app/static/js/app.js").read_text()
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/app.js").read_text(encoding="utf-8")
     save = js[js.index("    async saveAccount(e, id) {") :]
     save = save[: save.index("\n    },")]
     assert "data.bank_kind = null;" in save
