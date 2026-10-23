@@ -223,6 +223,7 @@ const ANSWERS = {
   '/uploads/logo': { path: '/api/uploads/logo/3', missing: false, from_shared_folder: false },
   '/backups': [{ filename: 'harbor-light_2026-09-25_2210.db', file_size: 184320, backup_type: 'manual', created_at: '2026-09-25T22:10:04+00:00' }],
   '/email-templates': [{ id: 1, name: 'Invoice', template_type: 'invoice', subject_template: 'Invoice {{ invoice.invoice_number }}' }],
+  '/invoice-messages': [{ id: 1, name: 'Zelle', body: 'To pay by Zelle use pay@example.com.', is_default: true }],
   '/email-templates/1': { id: 1, name: 'Invoice', template_type: 'invoice', subject_template: 'Invoice', body_template: '<p>Hello</p>' },
   '/invoices?is_sales_receipt=false&limit=50': [{ id: 7, invoice_number: '1001', customer_name: 'Maple Street Cafe' }],
   '/analytics/ai-config': {
