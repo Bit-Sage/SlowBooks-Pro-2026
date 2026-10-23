@@ -99,7 +99,8 @@ def test_ar_aging_saves_the_package_file(client, seed_accounts, customers):
     r = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}")
     assert (
         r.headers["content-disposition"]
-        == "attachment; filename=ar-aging_2026-09-30.csv"
+        == 'attachment; filename="ar-aging_2026-09-30.csv"; '
+        "filename*=UTF-8''ar-aging_2026-09-30.csv"
     )
     assert r.text.startswith(BOM)
     rows = rows_of(r.text.lstrip(BOM))
@@ -123,7 +124,8 @@ def test_ap_aging_saves_the_package_file(client, seed_accounts, db_session):
     r = _csv(client, f"/api/reports/ap-aging/csv?as_of_date={AS_OF}")
     assert (
         r.headers["content-disposition"]
-        == "attachment; filename=ap-aging_2026-09-30.csv"
+        == 'attachment; filename="ap-aging_2026-09-30.csv"; '
+        "filename*=UTF-8''ap-aging_2026-09-30.csv"
     )
     rows = rows_of(r.text.lstrip(BOM))
     assert rows[0] == AP_HEAD
@@ -149,7 +151,9 @@ def test_opened_from_a_customer_or_vendor_page_the_file_is_the_whole_company(
     whole = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}")
     r = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}&customer_id={acme}")
     assert r.text == whole.text
-    assert r.headers["content-disposition"].endswith("filename=ar-aging_2026-09-30.csv")
+    assert r.headers["content-disposition"].endswith(
+        "filename*=UTF-8''ar-aging_2026-09-30.csv"
+    )
     names = [row[0] for row in rows_of(r.text.lstrip(BOM))]
     assert names[0] == "Customer" and names[-1] == "Total"
     assert "Acme Diner" in names and len(names) > 3
@@ -161,7 +165,9 @@ def test_opened_from_a_customer_or_vendor_page_the_file_is_the_whole_company(
         client, f"/api/reports/ap-aging/csv?as_of_date={AS_OF}&vendor_id={cascade}"
     )
     assert r.text == whole.text
-    assert r.headers["content-disposition"].endswith("filename=ap-aging_2026-09-30.csv")
+    assert r.headers["content-disposition"].endswith(
+        "filename*=UTF-8''ap-aging_2026-09-30.csv"
+    )
     names = [row[0] for row in rows_of(r.text.lstrip(BOM))]
     assert "Cascade Flour Mill" in names and "Puget Dairy" in names
 
