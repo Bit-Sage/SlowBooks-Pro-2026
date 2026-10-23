@@ -1482,7 +1482,7 @@ const ReportsPage = {
     },
 
     async arAging(prefill) {
-        await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params, who) => {
+        await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params) => {
             const data = await API.get(`/reports/ar-aging?as_of_date=${params.as_of_date}`);
             // Save CSV writes the file the Accountant's Package carries (#393):
             // the whole company, as the screen shows it.
@@ -1536,7 +1536,7 @@ const ReportsPage = {
     },
 
     async apAging(prefill) {
-        await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params, who) => {
+        await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params) => {
             const data = await API.get(`/reports/ap-aging?as_of_date=${params.as_of_date}`);
             const csvQs = `as_of_date=${params.as_of_date}`;
             // A vendor's name opens the vendor's page (R9)
