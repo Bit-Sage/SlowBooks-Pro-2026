@@ -5,6 +5,15 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.27.0
+
+**The macOS build's Pillow moves to 13.0.0.** Dependabot had ten open alerts
+on the 12.3.0 pin in `packaging/macos/requirements-build.txt`, two of them
+high (a JPEG comment heap overflow and a libopenjp2 heap overflow), all
+fixed in 13.0.0. The HarfBuzz rule in the mac spec (#141) excludes Pillow's
+font module by name, so it holds unchanged; nothing in the app draws text
+with Pillow.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
