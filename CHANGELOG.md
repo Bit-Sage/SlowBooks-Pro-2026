@@ -20,6 +20,9 @@ Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
 fifteen control accounts keep theirs, and a sub-account shares its parent's
 (`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
 `GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`).
+Under 1100, 2000, a bank or a card a sub-account keeps its own. A bank or
+card account with reconciliations, feed rows or register entries keeps its
+bank kind: changing it would take the register away.
 
 The upgrade fills the detail type in from where the cash flow statement
 already puts each account: the fixed-asset register's accounts, accumulated
