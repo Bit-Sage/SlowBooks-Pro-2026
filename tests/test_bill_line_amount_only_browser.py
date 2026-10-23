@@ -27,6 +27,19 @@ def _amt(page, row):
     return page.locator(f"#bill-lines tr:nth-child({row}) .line-amt").input_value()
 
 
+def _type(page, row, box, text):
+    """Type into a line's box key by key, as a person does, then Tab out:
+    fill() sets the whole value in one input event and hid a bug where the
+    first digit of an amount priced the line (reviewer, #401)."""
+    loc = page.locator(f"#bill-lines tr:nth-child({row}) .{box}")
+    loc.focus()
+    loc.press("Control+a")
+    loc.press("Delete")
+    if text:
+        loc.press_sequentially(text)
+    loc.press("Tab")
+
+
 def _total(page):
     txt = page.locator("#bill-total").inner_text()
     return txt.replace("$", "").replace(",", "")
@@ -71,7 +84,7 @@ def test_typing_a_quantity_on_an_amount_alone_line_prices_it(
         assert _amt(page, 1) == "640.00"
 
         # type Qty 2: the rate seeds from the amount, so the line is 2 x 640
-        page.fill("#bill-lines tr:nth-child(1) .line-qty", "2")
+        _type(page, 1, "line-qty", "2")
         settle(page, handled)
         assert _amt(page, 1) == "1280.00"
         assert float(_total(page)) == 1380.00
@@ -113,9 +126,10 @@ def test_typing_an_amount_after_a_quantity_prices_the_line(
         page.fill("#bill-form [name=bill_number]", "QTY-THEN-AMT")
 
         # Qty 3 alone leaves the line unpriced; the amount then prices it.
-        page.fill("#bill-lines tr:nth-child(1) .line-qty", "3")
+        _type(page, 1, "line-qty", "3")
         settle(page, handled)
-        page.fill("#bill-lines tr:nth-child(1) .line-amt", "30")
+        # typed key by key: the "3" alone must not price the line at 3 x 1
+        _type(page, 1, "line-amt", "30")
         settle(page, handled)
         assert (
             page.locator("#bill-lines tr:nth-child(1) .line-rate").input_value() == "10"
@@ -185,14 +199,14 @@ def test_a_quantity_then_cleared_leaves_the_amount(browser, company, books, clie
         page.wait_for_function(OPEN, timeout=5000)
         settle(page, handled)
         # a fresh line, typed as an amount alone
-        page.fill("#bill-lines tr:nth-child(1) .line-amt", "125.50")
+        _type(page, 1, "line-amt", "125.50")
         settle(page, handled)
         # Qty 1 prices it at 1 x 125.50, not 0
-        page.fill("#bill-lines tr:nth-child(1) .line-qty", "1")
+        _type(page, 1, "line-qty", "1")
         settle(page, handled)
         assert _amt(page, 1) == "125.50"
         # clearing the Qty brings the amount back, not blank or 0
-        page.fill("#bill-lines tr:nth-child(1) .line-qty", "")
+        _type(page, 1, "line-qty", "")
         settle(page, handled)
         assert _amt(page, 1) == "125.50"
         assert (
@@ -234,5 +248,103 @@ def test_a_stock_item_amount_alone_line_shows_its_received_quantity(
             == "8.5"
         )
         assert _amt(page, 1) == "8.50"
+    finally:
+        page.close()
+
+
+def test_typing_an_amount_after_a_quantity_then_clearing_it(
+    browser, company, books, client
+):
+    """Qty 3, then "30" typed key by key: Rate 10, Amount 30.00 -- not 3 x 1
+    from the first keystroke (reviewer, #401). Clearing the Qty puts the
+    typed 30 back as the amount alone."""
+    page, handled = _open(browser, company)
+    try:
+        _visit(page, handled, "#/bills")
+        page.evaluate("async () => { await BillsPage.showForm(); }")
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        _type(page, 1, "line-qty", "3")
+        settle(page, handled)
+        _type(page, 1, "line-amt", "30")
+        settle(page, handled)
+        rate = page.locator("#bill-lines tr:nth-child(1) .line-rate")
+        assert rate.input_value() == "10"
+        assert _amt(page, 1) == "30.00"
+        assert float(_total(page)) == 30.00
+        _type(page, 1, "line-qty", "")
+        settle(page, handled)
+        assert rate.input_value() == ""
+        # the 30 typed comes back as it was typed
+        assert _amt(page, 1) == "30"
+        assert float(_total(page)) == 30.00
+        assert not page.locator("#bill-lines tr:nth-child(1) .line-amt").evaluate(
+            "el => el.readOnly"
+        )
+    finally:
+        page.close()
+
+
+def test_typing_an_amount_on_a_fresh_stock_line_keeps_it(
+    browser, company, books, client
+):
+    """A new stock line starts at Qty 1; "125.50" typed key by key in Amount
+    gives Rate 125.5 and keeps Amount 125.50 -- the first keystroke used to
+    price it at 1 x 1 and make the box read-only (reviewer, #401)."""
+    item_id = client.post(
+        "/api/items",
+        json={
+            "name": "Unpriced Gadget",
+            "item_type": "product",
+            "track_inventory": True,
+        },
+    ).json()["id"]
+    page, handled = _open(browser, company)
+    try:
+        _visit(page, handled, "#/bills")
+        page.evaluate("async () => { await BillsPage.showForm(); }")
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        page.select_option("#bill-lines tr:nth-child(1) .line-item", str(item_id))
+        settle(page, handled)
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-qty").input_value() == "1"
+        )
+        _type(page, 1, "line-amt", "125.50")
+        settle(page, handled)
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-rate").input_value()
+            == "125.5"
+        )
+        assert _amt(page, 1) == "125.50"
+        assert float(_total(page)) == 125.50
+    finally:
+        page.close()
+
+
+def test_a_rate_the_user_typed_is_not_overwritten_by_the_amount(
+    browser, company, books, client
+):
+    """With a rate typed, the Amount box is quantity x rate and read-only;
+    nothing typed or tabbed through rewrites the rate."""
+    page, handled = _open(browser, company)
+    try:
+        _visit(page, handled, "#/bills")
+        page.evaluate("async () => { await BillsPage.showForm(); }")
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        _type(page, 1, "line-qty", "4")
+        _type(page, 1, "line-rate", "25")
+        settle(page, handled)
+        amt = page.locator("#bill-lines tr:nth-child(1) .line-amt")
+        assert amt.evaluate("el => el.readOnly")
+        amt.focus()
+        page.keyboard.type("999")
+        page.keyboard.press("Tab")
+        settle(page, handled)
+        assert (
+            page.locator("#bill-lines tr:nth-child(1) .line-rate").input_value() == "25"
+        )
+        assert _amt(page, 1) == "100.00"
     finally:
         page.close()

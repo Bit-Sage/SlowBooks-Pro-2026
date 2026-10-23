@@ -326,7 +326,7 @@ const BillsPage = {
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
                 <td><input class="line-rate" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
-                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.amtChanged(this)"></td>
+                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.recalc()" onchange="BillsPage.amtChanged(this)"></td>
             </tr>`;
     },
 
@@ -520,6 +520,10 @@ const BillsPage = {
     // quantity the box still showed (reviewer, #401). The typed total is kept
     // so clearing the quantity brings it back whole. A line with no quantity
     // is still the amount alone.
+    // It runs on change (blur, Tab, Enter), not on each keystroke: seeding on
+    // input read the first digit typed as the whole amount, priced the line
+    // and made the box read-only, so "30" with Qty 3 came out 3 x 1 and
+    // "125.50" on a fresh stock line (Qty 1) came out 1.00 (reviewer, #401).
     amtChanged(input) {
         const row = input.closest('tr');
         const rateBox = row.querySelector('.line-rate');
@@ -569,6 +573,12 @@ const BillsPage = {
     async save(e, id = null) {
         e.preventDefault();
         const form = e.target;
+        // an amount still being typed has had no change event yet: settle it
+        // as leaving the box would, so its quantity is not dropped
+        const active = document.activeElement;
+        if (active && active.classList && active.classList.contains('line-amt') && !active.readOnly) {
+            BillsPage.amtChanged(active);
+        }
         const lines = [];
         let missing = null;
         $$('#bill-lines tr').forEach((row, i) => {
