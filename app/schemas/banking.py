@@ -162,6 +162,15 @@ class ReconciliationCreate(StrictModel):
     statement_balance: Decimal
 
 
+class ReconciliationUpdate(StrictModel):
+    """Correct the statement's date or ending balance while the
+    reconciliation is in progress (#389): a transposed digit was a fresh
+    start. Both optional; an omitted field is left as it was."""
+
+    statement_date: Optional[dt_date] = None
+    statement_balance: Optional[Decimal] = None
+
+
 class ReconciliationResponse(BaseModel):
     id: int
     account_id: Optional[int]
@@ -173,5 +182,8 @@ class ReconciliationResponse(BaseModel):
     status: ReconciliationStatus
     created_at: datetime
     completed_at: Optional[datetime]
+    # Lines left ticked past the statement date that carry to the next
+    # reconciliation (#400 review); only set on the update response.
+    ticked_after_date: int = 0
 
     model_config = {"from_attributes": True}

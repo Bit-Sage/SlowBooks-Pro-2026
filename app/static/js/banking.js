@@ -1104,13 +1104,17 @@ const BankingPage = {
                 </div>
             </div>
             <div id="recon-finish-msg" role="alert" style="font-size:12px; color:var(--danger); margin-bottom:8px;"></div>
+            ${data.ticked_after_date > 0 ? `<div role="status" style="font-size:12px; color:var(--gray-600); margin-bottom:8px;">${data.ticked_after_date} ticked line${data.ticked_after_date === 1 ? '' : 's'} ${data.ticked_after_date === 1 ? 'falls' : 'fall'} after the statement date and won't be stamped when you finish; ${data.ticked_after_date === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.</div>` : ''}
             <div class="card-grid" style="margin-bottom:16px;">
                 <div class="card"><div class="card-header">Beginning Balance</div>
                     <div class="card-value">${formatCurrency(data.beginning_balance)}</div></div>
                 <div class="card"><div class="card-header">Cleared</div>
                     <div class="card-value" id="recon-cleared">${formatCurrency(data.cleared_total)}</div></div>
                 <div class="card"><div class="card-header">Statement Balance</div>
-                    <div class="card-value">${formatCurrency(data.statement_balance)}</div></div>
+                    <div class="card-value">${formatCurrency(data.statement_balance)}</div>
+                    <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px;" data-write
+                        aria-label="Change the statement date or ending balance"
+                        onclick="BankingPage.changeStatement(${reconId}, '${data.statement_date}', ${data.statement_balance})">Change…</button></div>
                 <div class="card"><div class="card-header">Difference</div>
                     <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
                     <div style="font-size:11px; font-weight:600;" role="status">${balanced ? '✓ Balanced — ready to finish' : '⚠ Out of balance — finish when this is $0.00'}</div></div>
@@ -1130,6 +1134,51 @@ const BankingPage = {
                 <tbody>${rows || '<tr><td colspan="5" style="text-align:center;">No ledger lines up to this date</td></tr>'}</tbody>
             </table></div>
             <div id="recon-through-note" role="status" style="font-size:11px; color:var(--gray-500); margin-top:6px;">${hidden ? `${hidden} later line${hidden === 1 ? '' : 's'} hidden (dated after ${formatDate(through)}); the figures above count the whole session` : ''}</div>`;
+    },
+
+    // The statement's ending balance and date can be corrected while the
+    // reconciliation is in progress (#389): a transposed digit was a fresh
+    // start. The ticks stay; the view re-renders with the new difference.
+    changeStatement(reconId, statementDate, statementBalance) {
+        openModal('Change Statement', `
+            <form onsubmit="BankingPage.saveStatement(event, ${reconId})">
+                <p style="margin-bottom:12px; font-size:11px; color:var(--gray-500);">
+                    Correct the ending date or balance from your statement. The lines you have ticked stay ticked; the difference is refigured.
+                </p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Statement Date *</label>
+                        <input name="statement_date" type="date" required value="${escapeHtml(statementDate)}"></div>
+                    <div class="form-group"><label>Statement Ending Balance *</label>
+                        <input name="statement_balance" type="number" step="0.01" required value="${Number(statementBalance).toFixed(2)}"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>`);
+    },
+
+    async saveStatement(e, reconId) {
+        e.preventDefault();
+        const form = e.target;
+        try {
+            const res = await API.put(`/banking/reconciliations/${reconId}`, {
+                statement_date: form.statement_date.value,
+                statement_balance: form.statement_balance.value,
+            });
+            closeModal();
+            // The Through day and filter are bounded by the statement date;
+            // start them over so they cannot sit past a date moved earlier.
+            BankingPage._reconThrough[reconId] = '';
+            BankingPage._reconDay[reconId] = '';
+            // A date moved earlier can leave lines ticked past it; they are
+            // not on this session and carry to the next one (#400 review).
+            const n = res.ticked_after_date;
+            toast(n > 0
+                ? `Statement changed. ${n} ticked line${n === 1 ? '' : 's'} ${n === 1 ? 'falls' : 'fall'} after the new date; ${n === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.`
+                : 'Statement changed');
+            BankingPage.showReconcileView(reconId);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // Every line at once (#258): ticked, ticked through a date, or all
