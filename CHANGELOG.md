@@ -30,7 +30,11 @@ depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
 1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
 (the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
 Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
-accounts Other Expense. **No statement changes in this release** — the
+accounts Other Expense. A sub-account left at the default shares its
+parent's only where that keeps it current or non-current as the cash flow
+had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
+stays current), so no figure moves between working capital, investing and
+financing. **No statement changes in this release** — the
 Balance Sheet and the Profit & Loss keep their layout until the next one.
 After upgrading, open Chart of Accounts and check the detail type of any
 loan, vehicle, equipment or long-term note; a line of credit kept in a loan
