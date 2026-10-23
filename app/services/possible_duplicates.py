@@ -12,8 +12,10 @@ Two entries on the account are a possible duplicate when:
 - their dates are at most WINDOW_DAYS apart;
 - their payees are the same or similar (``similar_payees``).
 
-Groups are the connected sets of such pairs, so three copies a day apart
-are one group. Voided entries and reversals are left out. Every row reads
+A group is anchored on its first (earliest) entry: every later entry
+within WINDOW_DAYS of that anchor, with a payee similar to the anchor's,
+joins it, so three copies a day apart are one group, but a long run of
+like charges a few days apart does not chain into one. Voided entries and reversals are left out. Every row reads
 from the register's own query (``bank_register.account_register``), so the
 payee, number and memo are the ones the register shows.
 
