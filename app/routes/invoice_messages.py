@@ -15,6 +15,7 @@ from app.database import get_db
 from app.models.invoice_messages import InvoiceMessage
 from app.routes._helpers import get_or_404, reject_null_updates
 from app.schemas.invoice_messages import (
+    GIVING_STATEMENT_BODY_MAX,
     InvoiceMessageCreate,
     InvoiceMessageResponse,
     InvoiceMessageUpdate,
@@ -23,26 +24,43 @@ from app.schemas.invoice_messages import (
 router = APIRouter(prefix="/api/invoice-messages", tags=["invoice-messages"])
 
 
-def default_message_body(db: Session) -> Optional[str]:
-    """The default message's text, for a new invoice's Notes; None when
-    no message is the default."""
+def default_message_body(db: Session, kind: str = "invoice") -> Optional[str]:
+    """The default message's text for ``kind`` — a new invoice's Notes, or
+    the giving statement's opening message (#415); None when that kind has
+    no default."""
     row = (
         db.query(InvoiceMessage.body)
-        .filter(InvoiceMessage.is_default.is_(True))
+        .filter(InvoiceMessage.is_default.is_(True), InvoiceMessage.kind == kind)
         .order_by(InvoiceMessage.id)
         .first()
     )
     return row[0] if row else None
 
 
-def _clear_default(db: Session, keep_id: Optional[int] = None) -> None:
-    """One default at a time: unset every other row in the same
-    transaction as the one being set, so the list never shows two.
+def _check_body_cap(kind: str, body: Optional[str]) -> None:
+    """A giving-statement opening message has a length cap so a pasted
+    letter cannot run off the page; invoice messages stay uncapped."""
+    if kind == "giving_statement" and body and len(body) > GIVING_STATEMENT_BODY_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"A giving-statement message is at most "
+                f"{GIVING_STATEMENT_BODY_MAX} characters."
+            ),
+        )
+
+
+def _clear_default(db: Session, kind: str, keep_id: Optional[int] = None) -> None:
+    """One default at a time per kind: unset every other row of the same
+    kind in the same transaction as the one being set, so neither list
+    shows two defaults.
 
     Each row is flipped through the ORM, not a bulk Query.update, so the
     after_flush audit hook logs the old default turning off (it only sees
     rows that pass through session.dirty)."""
-    q = db.query(InvoiceMessage).filter(InvoiceMessage.is_default.is_(True))
+    q = db.query(InvoiceMessage).filter(
+        InvoiceMessage.is_default.is_(True), InvoiceMessage.kind == kind
+    )
     if keep_id is not None:
         q = q.filter(InvoiceMessage.id != keep_id)
     for row in q.all():
@@ -57,10 +75,13 @@ def _name_taken(db: Session, name: str, except_id: Optional[int] = None) -> bool
 
 
 @router.get("", response_model=list[InvoiceMessageResponse])
-def list_messages(db: Session = Depends(get_db)):
-    # the default first, then by name: the order the invoice form lists them
+def list_messages(kind: str = "invoice", db: Session = Depends(get_db)):
+    # The invoice form and the Settings invoice list ask for nothing and get
+    # kind='invoice', unchanged from #392; the giving-statement list asks for
+    # ?kind=giving_statement. The default first, then by name.
     return (
         db.query(InvoiceMessage)
+        .filter(InvoiceMessage.kind == kind)
         .order_by(InvoiceMessage.is_default.desc(), InvoiceMessage.name)
         .all()
     )
@@ -72,8 +93,9 @@ def create_message(data: InvoiceMessageCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400, detail="A message with this name already exists"
         )
+    _check_body_cap(data.kind, data.body)
     if data.is_default:
-        _clear_default(db)
+        _clear_default(db, data.kind)
     msg = InvoiceMessage(**data.model_dump())
     db.add(msg)
     db.commit()
@@ -91,8 +113,11 @@ def update_message(
         raise HTTPException(
             status_code=400, detail="A message with this name already exists"
         )
+    # The kind after this edit decides the cap and which default list to clear.
+    kind = changes.get("kind", msg.kind)
+    _check_body_cap(kind, changes.get("body", msg.body))
     if changes.get("is_default"):
-        _clear_default(db, keep_id=msg.id)
+        _clear_default(db, kind, keep_id=msg.id)
     for key, val in changes.items():
         setattr(msg, key, val)
     db.commit()

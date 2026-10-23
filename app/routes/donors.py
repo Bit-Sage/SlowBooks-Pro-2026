@@ -22,6 +22,7 @@ from app.services.donor_documents import (
     load_gift,
     render_acknowledgment,
 )
+from app.routes.invoice_messages import default_message_body
 from app.services.email_service import send_email
 from app.services.pdf_service import (
     generate_acknowledgment_letter_pdf,
@@ -144,6 +145,21 @@ def _statement(db: Session, company: dict, customer: Customer, year: int) -> dic
     }
 
 
+def _render_statements(
+    db: Session, company: dict, statements: list, year: int
+) -> bytes:
+    """One code path for every giving-statement output (#415): the single
+    PDF, the all-donors stack and the emailed copy all render here, so the
+    ministry's opening message (its default giving-statement saved message)
+    rides on all three the same."""
+    return generate_giving_statement_pdf(
+        statements,
+        company,
+        year,
+        opening_message=default_message_body(db, kind="giving_statement") or "",
+    )
+
+
 def _donors_with_gifts(db: Session, year: int, customer_ids=None) -> list[Customer]:
     q = db.query(Customer).filter(Customer.is_active.is_(True))
     if customer_ids:
@@ -165,7 +181,7 @@ def giving_statements_pdf(
     company = get_all_settings(db)
     donors = _donors_with_gifts(db, year, ids or None)
     statements = [_statement(db, company, c, year) for c in donors]
-    pdf = generate_giving_statement_pdf(statements, company, year)
+    pdf = _render_statements(db, company, statements, year)
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -181,8 +197,8 @@ def giving_statement_pdf(customer_id: int, year: int, db: Session = Depends(get_
     if customer is None:
         raise HTTPException(status_code=404, detail="Donor not found")
     company = get_all_settings(db)
-    pdf = generate_giving_statement_pdf(
-        [_statement(db, company, customer, year)], company, year
+    pdf = _render_statements(
+        db, company, [_statement(db, company, customer, year)], year
     )
     return Response(
         content=pdf,
@@ -191,6 +207,60 @@ def giving_statement_pdf(customer_id: int, year: int, db: Session = Depends(get_
             "Content-Disposition": content_disposition(
                 f"GivingStatement_{year}_{customer.name}.pdf"
             )
+        },
+    )
+
+
+@router.get("/giving-statement/preview")
+def giving_statement_preview(year: Optional[int] = None, db: Session = Depends(get_db)):
+    """One donor's statement for the Settings preview (#415): the first donor
+    with a gift that year, rendered with the default giving-statement opening
+    message and the footer so the ministry sees its own words before it prints
+    or emails. A sample donor stands in when the file has no gifts yet, so the
+    wording can still be checked on a fresh file."""
+    the_year = year or date.today().year
+    company = get_all_settings(db)
+    donors = _donors_with_gifts(db, the_year)
+    if donors:
+        statement = _statement(db, company, donors[0], the_year)
+    else:
+        from decimal import Decimal
+        from types import SimpleNamespace
+
+        totals = {
+            "amount": Decimal("250.00"),
+            "fair_value": Decimal("0.00"),
+            "deductible": Decimal("250.00"),
+        }
+        statement = {
+            "customer": SimpleNamespace(
+                name="Sample Donor",
+                bill_address1="123 Main Street",
+                bill_address2="",
+                bill_city="Anytown",
+                bill_state="FL",
+                bill_zip="32801",
+            ),
+            "cash": [
+                {
+                    "date": date(the_year, 12, 15),
+                    "number": "",
+                    "description": "General fund",
+                    "amount": Decimal("250.00"),
+                    "fair_value_amount": None,
+                    "deductible": Decimal("250.00"),
+                }
+            ],
+            "in_kind": [],
+            "totals": totals,
+            "irs_text": giving_statement_irs_text(company, totals),
+        }
+    pdf = _render_statements(db, company, [statement], the_year)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename=GivingStatementPreview_{the_year}.pdf"
         },
     )
 
@@ -212,8 +282,8 @@ def giving_statements_batch_email(
             errors.append(f"{customer.name}: no email address")
             continue
         try:
-            pdf = generate_giving_statement_pdf(
-                [_statement(db, company, customer, data.year)], company, data.year
+            pdf = _render_statements(
+                db, company, [_statement(db, company, customer, data.year)], data.year
             )
             ok = send_email(
                 db=db,
