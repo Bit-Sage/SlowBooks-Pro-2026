@@ -282,15 +282,37 @@ def test_the_grid_exports_print_the_block(client, books, monkeypatch):
     ]
 
 
-def test_the_classes_list_keeps_its_four_figures(client, books):
+def test_the_classes_activity_carries_the_grids_figures(client, books):
+    """Operating income and expenses as the grid has them, Other Income and
+    Other Expense beside them; the list page adds them for display."""
     d = client.get(f"/api/classes/activity?{PERIOD}").json()
-    # other income counts with income, other expense with expenses
-    assert d["company"]["income"] == 2300
-    assert d["company"]["expenses"] == 450
-    for row in d["classes"]:
-        assert round(row["income"] - row["cogs"] - row["expenses"], 2) == round(
-            row["net_income"], 2
-        )
+    company = d["company"]
+    assert company["income"] == 2000 and company["other_income"] == 300
+    assert company["expenses"] == 400 and company["other_expense"] == 50
+    assert company["gross_profit"] == company["income"] - company["cogs"]
+    for row in d["classes"] + [company, d["totals"]]:
+        assert round(
+            row["income"]
+            - row["cogs"]
+            - row["expenses"]
+            + row["other_income"]
+            - row["other_expense"],
+            2,
+        ) == round(row["net_income"], 2)
+        assert round(row["gross_profit"], 2) == round(row["income"] - row["cogs"], 2)
+
+
+def test_the_classes_pages_add_other_income_and_expense_back_for_display():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app/static/js/classes.js").read_text(
+        encoding="utf-8"
+    )
+    # the list's rows and the class page's stat cards: four figures to net
+    assert "income: (c.income || 0) + (c.other_income || 0)" in js
+    assert "expenses: (c.expenses || 0) + (c.other_expense || 0)" in js
+    assert "d.total_income + (d.total_other_income || 0)" in js
+    assert "d.total_expenses + (d.total_other_expense || 0)" in js
 
 
 def test_a_nonprofit_reads_other_revenue_and_support(

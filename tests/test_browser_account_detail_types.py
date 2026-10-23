@@ -206,3 +206,44 @@ def test_the_statements_print_the_groups_and_the_families(browser, company, book
         assert rows[-1].startswith("Net Income")
     finally:
         page.close()
+
+
+STATS = """() => [...document.querySelectorAll('#class-stats > *')]
+    .map(e => e.textContent.replace(/\\s+/g, ' ').trim())"""
+
+
+def test_the_classes_pages_count_other_income_with_income(browser, company, books):
+    """The Classes list and a class page's cards keep four figures that add
+    to net: Other Income (#390) is counted with income for display."""
+    accounts = {a["account_number"]: a for a in company.get("/api/accounts").json()}
+    _journal(
+        company,
+        "2026-09-15",
+        accounts["1000"]["id"],
+        accounts["4900"]["id"],
+        "1234.00",
+    )
+    span = "start_date=2026-09-01&end_date=2026-09-30&period=custom"
+    act = company.get(
+        "/api/classes/activity?start_date=2026-09-01&end_date=2026-09-30"
+    ).json()
+    row = next(c for c in act["classes"] if c["other_income"])
+    shown = row["income"] + row["other_income"]
+    page, _handled = _open_at(browser, company, f"#/classes?{span}&show=all")
+    try:
+        page.wait_for_selector("#page-content tbody tr")
+        rows = page.evaluate(
+            """() => [...document.querySelectorAll('#page-content tbody tr')]
+                .map(r => [...r.cells].map(c => c.textContent.trim()))"""
+        )
+        mine = next(r for r in rows if r[0].startswith(row["name"]))
+        assert mine[2] == f"${shown:,.2f}"
+    finally:
+        page.close()
+    page, _handled = _open_at(browser, company, f"#/classes/{row['id']}?{span}")
+    try:
+        page.wait_for_selector("#class-stats")
+        stats = " | ".join(page.evaluate(STATS))
+        assert f"${shown:,.2f}" in stats
+    finally:
+        page.close()

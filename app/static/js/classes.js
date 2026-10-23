@@ -179,10 +179,13 @@ const ClassesPage = {
             return `<div class="empty-state"><p>${escapeHtml(err.message)}</p></div>`;
         }
         const all = data.classes;
-        const rows = all.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
-        if (!rows.length) {
+        if (!all.some(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived)) {
             return `<div class="empty-state"><p>${s.show === 'archived' ? `No archived ${T('classes').toLowerCase()}.` : Terms.text('No classes yet. Add them under Settings → Classes; every entry form then offers them.')}</p></div>`;
         }
+        // Other Income / Other Expense (#390) count with income and
+        // expenses here, so each row's four figures add up to net
+        const shown = all.map(c => ({ ...c, income: (c.income || 0) + (c.other_income || 0), expenses: (c.expenses || 0) + (c.other_expense || 0) }));
+        const rows = shown.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
         const keys = ['income', 'cogs', 'expenses', 'net_income'];
         const sum = {};
         for (const k of keys) sum[k] = rows.reduce((t, c) => t + (c[k] || 0), 0);
@@ -341,10 +344,10 @@ const ClassesPage = {
         const fund = Terms.isNonprofit() ? ClassesPage._fundHtml(c) : '';
         return `
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px" id="class-stats">
-                ${stat(T('Income'), ClassesPage.money(d.total_income))}
+                ${stat(T('Income'), ClassesPage.money(d.total_income + (d.total_other_income || 0)))}
                 ${stat('Cost of goods', ClassesPage.money(d.total_cogs))}
                 ${stat('Gross profit', ClassesPage.money(d.gross_profit))}
-                ${stat('Expenses', ClassesPage.money(d.total_expenses))}
+                ${stat('Expenses', ClassesPage.money(d.total_expenses + (d.total_other_expense || 0)))}
                 ${stat(T('Net Income'), ClassesPage.money(d.net_income), d.net_income < 0 ? 'var(--text-danger)' : null, Terms.text(`Net income by class: ${share}`))}
             </div>
             <p id="class-net-note" style="font-size:11px; color:var(--gray-500); margin:0 0 10px;">
