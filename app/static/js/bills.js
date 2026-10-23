@@ -307,12 +307,15 @@ const BillsPage = {
     // is drawn that way too; saving it again stores the same numbers.
     lineHtml(idx, line = null) {
         const l = line || {};
-        const amountOnly = !!line && Number(l.quantity) === 1 && Number(l.rate) === Number(l.amount);
+        const item = l.item_id ? BillsPage._items.find(i => i.id == l.item_id) : null;
+        const stock = !!(item && item.track_inventory);
+        // A stored 1 x amount line is drawn as an amount alone, Qty and Rate
+        // blank — but not a stock item: it is received as that quantity 1, so
+        // the 1 is shown rather than hidden by a blank Qty box (reviewer, #401).
+        const amountOnly = !!line && !stock && Number(l.quantity) === 1 && Number(l.rate) === Number(l.amount);
         const qty = line && !amountOnly ? Number(l.quantity) : '';
         const rate = line && !amountOnly ? Number(l.rate) : '';
         const amount = line ? Number(l.amount).toFixed(2) : '';
-        const item = l.item_id ? BillsPage._items.find(i => i.id == l.item_id) : null;
-        const stock = !!(item && item.track_inventory);
         const itemOpts = BillsPage._items.map(i => `<option value="${i.id}"${l.item_id == i.id ? ' selected' : ''}>${escapeHtml(i.name)}</option>`).join('');
         const acctOpts = PurchaseAccounts.options(BillsPage._accounts, stock ? null : (l.account_id || BillsPage._defaultExpenseAccountId));
         return `<tr data-billline="${idx}">
@@ -321,7 +324,7 @@ const BillsPage = {
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
                 ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
-                <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.recalc()"></td>
+                <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
                 <td><input class="line-rate" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
                 <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.recalc()"></td>
             </tr>`;
@@ -468,10 +471,33 @@ const BillsPage = {
         return total;
     },
 
-    // A line is priced when it has a quantity or a rate; otherwise its
-    // Amount box is the line (#391).
+    // A line is priced once it has a rate; otherwise its Amount box is the
+    // line (#391). A quantity alone does not price it — typing a quantity on
+    // an amount-alone line seeds the rate from the amount (see qtyChanged),
+    // so the quantity takes effect through the rate rather than multiplying a
+    // blank rate to zero (reviewer, #401).
     priced(row) {
-        return !!(row.querySelector('.line-qty')?.value || row.querySelector('.line-rate')?.value);
+        return !!(row.querySelector('.line-rate')?.value);
+    },
+    // Typing a quantity on an amount-alone line (no rate yet) seeds the rate
+    // from the amount, so the line prices at quantity x amount instead of
+    // zeroing. Clearing the quantity undoes the seed and the amount alone
+    // comes back. A rate the user typed is left as it is.
+    qtyChanged(input) {
+        const row = input.closest('tr');
+        const rateBox = row.querySelector('.line-rate');
+        const amtBox = row.querySelector('.line-amt');
+        if (input.value !== '') {
+            if (rateBox && !rateBox.value && amtBox && amtBox.value) {
+                rateBox.value = amtBox.value;
+                rateBox.dataset.seeded = '1';
+            }
+        } else if (rateBox && rateBox.dataset.seeded) {
+            amtBox.value = rateBox.value;
+            rateBox.value = '';
+            delete rateBox.dataset.seeded;
+        }
+        BillsPage.recalc();
     },
     // What the line comes to, rounded to the cent as the server rounds: a
     // priced line's quantity (blank is 1) x rate, else the amount typed.
