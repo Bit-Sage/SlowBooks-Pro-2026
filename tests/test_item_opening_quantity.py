@@ -283,3 +283,30 @@ def test_a_renamed_3900_is_reused_not_duplicated(client, db_session, seed_accoun
     assert (
         db_session.query(Account).filter_by(name="Opening Balance Equity").count() == 0
     )
+
+
+def test_a_non_equity_3900_is_not_taken_for_opening_balance_equity(
+    client, db_session, seed_accounts
+):
+    """An imported chart may use 3900 for something that isn't equity; the
+    opening value must not be credited to it."""
+    from app.models.accounts import AccountType
+
+    other = Account(
+        account_number="3900",
+        name="Miscellaneous Expense",
+        account_type=AccountType.EXPENSE,
+        balance=Decimal("0"),
+    )
+    db_session.add(other)
+    db_session.commit()
+
+    item = _create(client, seed_accounts, name="Other 3900 Widget").json()
+    txn = _opening_txn(db_session, item["id"])
+    credited = [
+        db_session.get(Account, ln.account_id)
+        for ln in db_session.query(TransactionLine).filter_by(transaction_id=txn.id)
+        if ln.credit and ln.credit > 0
+    ]
+    assert [a.name for a in credited] == ["Opening Balance Equity"]
+    assert credited[0].account_type == AccountType.EQUITY
