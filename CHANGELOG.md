@@ -43,6 +43,16 @@ first: they need not — each line comes in as a statement line with its
 payee as text, and waits in the account's To review list to match or
 categorize unless it matches one entry already in the books, which it is
 matched to on import.
+**Save CSV on the A/R and A/P Aging reports** (from a bookkeeper's notes,
+#393). A client who asks for the aging as a spreadsheet could only have it
+from the Accountant's Package, so one file meant building the whole zip.
+Each aging report has a **Save CSV** button now (`GET
+/api/reports/ar-aging/csv` and `/ap-aging/csv`, `as_of_date` as the
+screen's) that writes the file the package carries — the same preamble,
+columns and totals row, made by the one function both use, so the two
+cannot drift. It is always the whole company, as the screen is, even when
+the report was opened from a customer's or vendor's page (which only
+highlights their row).
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

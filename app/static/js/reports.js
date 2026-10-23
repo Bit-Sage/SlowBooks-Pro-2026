@@ -1413,8 +1413,11 @@ const ReportsPage = {
     },
 
     async arAging(prefill) {
-        await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params) => {
+        await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params, who) => {
             const data = await API.get(`/reports/ar-aging?as_of_date=${params.as_of_date}`);
+            // Save CSV writes the file the Accountant's Package carries (#393):
+            // the whole company, as the screen shows it.
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // The API nets a customer's credits (unapplied payments and
             // credit memos) into Current; show Current gross and the
             // credits on their own, so the row still adds up to Total and
@@ -1436,7 +1439,7 @@ const ReportsPage = {
             let rows = data.items.map(i => agingRow(i, name(i))).join("");
             const t = data.totals;
             rows += agingRow(t, 'TOTAL', 'font-weight:700; background:var(--gray-50);');
-            return `
+            return `${ReportsPage._exportButtons('ar-aging', csvQs, ['csv'])}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}</p>
                 <div style="margin-bottom:12px; display:flex; gap:8px;" data-write>
                     <button class="btn btn-sm btn-secondary" onclick="ReportsPage.applyLateFees()">Apply Late Fees</button>
@@ -1464,8 +1467,9 @@ const ReportsPage = {
     },
 
     async apAging(prefill) {
-        await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params) => {
+        await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params, who) => {
             const data = await API.get(`/reports/ap-aging?as_of_date=${params.as_of_date}`);
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // A vendor's name opens the vendor's page (R9)
             let rows = data.items.map(i =>
                 `<tr>
@@ -1486,7 +1490,7 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(t.over_90)}</td>
                 <td class="amount">${formatCurrency(t.total)}</td>
             </tr>`;
-            return `
+            return `${ReportsPage._exportButtons('ap-aging', csvQs, ['csv'])}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}</p>
                 <div class="table-container"><table>
                     <thead><tr>
@@ -2720,10 +2724,14 @@ ReportsPage.pledges = async function (prefill) {
     }, "Dates", false, { reportType: 'pledges', view: 'pledges', prefill });
 };
 
-ReportsPage._exportButtons = function (path, qs) {
+// Save PDF and Save CSV for a report with both routes; a report with only
+// a CSV (the agings, #393) passes kinds = ['csv'].
+ReportsPage._exportButtons = function (path, qs, kinds = ['pdf', 'csv']) {
+    const pdf = kinds.includes('pdf') ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/pdf?${qs}','_blank')">Save PDF</button>` : '';
+    const csv = kinds.includes('csv') ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/csv?${qs}','_blank')">Save CSV</button>` : '';
     return `<div style="text-align:right; margin-bottom:6px; margin-left:auto;">
-        <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/pdf?${qs}','_blank')">Save PDF</button>
-        <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/csv?${qs}','_blank')">Save CSV</button>
+        ${pdf}
+        ${csv}
     </div>`;
 };
 
