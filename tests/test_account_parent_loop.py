@@ -87,6 +87,49 @@ def test_a_chart_file_cannot_make_a_loop(client, db_session, seed_accounts):
     assert not (one.parent_id == two.id and two.parent_id == one.id)
 
 
+def test_a_chart_file_loop_shows_in_the_dry_run_preview(client, seed_accounts):
+    """The note belongs in the preview, not only once the import is applied —
+    the page shows the dry run before anyone commits to it."""
+    text = "Name,Type,Parent\nRig One,expense,Rig Two\nRig Two,expense,Rig One\n"
+    out = client.post(
+        "/api/csv/import/accounts?dry_run=1",
+        files={"file": ("chart.csv", io.BytesIO(text.encode()), "text/csv")},
+    ).json()
+    assert out["dry_run"] is True
+    assert out["created"] == 2
+    assert any(
+        "sub-account of itself" in (r.get("note") or "")
+        and "left off" in (r.get("note") or "")
+        for r in out["rows"]
+    )
+
+
+def test_a_loop_deeper_than_the_walk_limit_is_still_refused(
+    client, db_session, seed_accounts
+):
+    """A chain longer than the walk's depth cap used to exhaust the walk and
+    then be allowed, saving a loop the tree-walkers spin on. Refuse it."""
+    from app.services.account_tree import MAX_DEPTH
+
+    prev = None
+    chain = []
+    for i in range(MAX_DEPTH + 5):
+        a = Account(
+            name=f"L{i}", account_type=AccountType.EXPENSE, balance=Decimal("0")
+        )
+        db_session.add(a)
+        db_session.flush()
+        a.parent_id = prev
+        prev = a.id
+        chain.append(a.id)
+    db_session.commit()
+    # chain[0] is the root, chain[-1] the deepest leaf: hanging the root off
+    # the leaf closes a loop longer than the walk ever steps through.
+    r = _move(client, chain[0], chain[-1])
+    assert r.status_code == 400
+    assert "sub-account of itself" in r.json()["detail"]
+
+
 def test_a_loop_already_saved_does_not_hang_the_chart_or_reports(
     client, db_session, seed_accounts
 ):
