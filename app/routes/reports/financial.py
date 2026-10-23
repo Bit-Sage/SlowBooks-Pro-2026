@@ -306,6 +306,16 @@ def _split_other(lines: list, other) -> tuple[list, list]:
     )
 
 
+def _has_other(lines) -> bool:
+    """An Other Income / Other Expense line with a figure: an account that
+    nets to nothing (this year and last) does not open the block, as the
+    grids leave out an account with nothing in any column (#390)."""
+    return any(
+        abs(i.get("amount") or 0) >= 0.005 or abs(i.get("prior_amount") or 0) >= 0.005
+        for i in lines
+    )
+
+
 def _pl_layout(db, data: dict) -> dict:
     """How the P&L prints, for every writer to read:
 
@@ -316,7 +326,9 @@ def _pl_layout(db, data: dict) -> dict:
       a family total under each parent (#416), for the screen and the PDF.
       The flat lists stay, with full paths, for the CSV and the prior-year
       pairing. A parent of another section does not gather a line."""
-    data["has_other"] = bool(data.get("other_income") or data.get("other_expense"))
+    data["has_other"] = _has_other(
+        data.get("other_income", []) + data.get("other_expense", [])
+    )
     chart = account_chart(db)
     section_of = {
         aid: _pl_section_of(atype, detail)
@@ -1074,6 +1086,7 @@ def _pl_pivot(
         "total_net_income": shown["net_income"],
         # the Other Income / Other Expense rows print, as on the P&L, only
         # when an account in them has a figure in the columns shown (#390)
+        # an account with nothing in every column is not in `accounts`
         "has_other": bool(accounts["other_income"] or accounts["other_expense"]),
         "filtered": filtered,
         "columns_total": len(with_activity),

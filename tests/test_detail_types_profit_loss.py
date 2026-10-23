@@ -336,3 +336,24 @@ def test_a_nonprofit_reads_other_revenue_and_support(
     assert "Total Other Revenue & Support" in words
     assert "Change in Net Assets from Operations" in words
     assert "Net Operating Income" not in words
+
+
+def test_an_other_account_netting_to_nothing_opens_no_block(
+    client, db_session, seed_accounts
+):
+    """4900 with a posting and its reversal: the P&L and the grids agree
+    that there is nothing below Net Operating Income."""
+    a = seed_accounts
+    d = date(2026, 5, 1)
+    _je(db_session, d, [(a["1000"], 900, 0), (a["4000"], 0, 900)])
+    _je(db_session, d, [(a["1000"], 60, 0), (a["4900"], 0, 60)])
+    _je(db_session, d, [(a["4900"], 60, 0), (a["1000"], 0, 60)])
+    db_session.commit()
+    pl = _pl(client)
+    assert pl["has_other"] is False
+    assert pl["total_other_income"] == 0
+    for path in ("profit-loss-by-class", "profit-loss-by-job"):
+        g = client.get(f"/api/reports/{path}?{PERIOD}").json()
+        assert g["has_other"] is False, path
+    rows = rows_of(client.get(f"/api/reports/profit-loss/csv?{PERIOD}").text)
+    assert not any("Operating" in r[2] for r in rows)
