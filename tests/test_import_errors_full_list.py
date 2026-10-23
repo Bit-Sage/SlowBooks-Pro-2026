@@ -9,9 +9,13 @@ counts them and offers Save the list, a text file of every line.
 """
 
 import io
+from datetime import date
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from tests.test_qb_desktop_ledger import _chart
 
@@ -73,6 +77,7 @@ def test_the_categorized_sheet_lists_every_row_it_could_not_read(
     assert body["errors"][-1].startswith("Row 31:")
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_the_page_counts_the_list_and_saves_it():
     out = subprocess.run(
         ["node", str(ROOT / "tests" / "js" / "import_errors_probe.js")],
@@ -92,8 +97,7 @@ def test_the_page_counts_the_list_and_saves_it():
     # the IIF import's own box gets the same control
     assert got["iif"]["count_line"] == "22 problems." and got["iif"]["button"] is True
     # Save the list: a text file named for the day, every line, a toast
-    assert got["saved"]["name"].startswith("Import-problems_") and got["saved"][
-        "name"
-    ].endswith(".txt")
+    # named for the local day, not UTC's (2.26.0 gate, W-30 / NEW-170)
+    assert got["saved"]["name"] == f"Import-problems_{date.today().isoformat()}.txt"
     assert got["saved"]["lines"] == 25
     assert got["saved"]["toast"].startswith("Saved Import-problems_")
