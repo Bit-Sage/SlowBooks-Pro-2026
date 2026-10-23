@@ -297,3 +297,41 @@ def test_the_statement_of_activities_compares_by_family(client, db_session, nonp
     vehicle = next(r for r in d["tree"]["expenses"] if r["label"] == "Total Vehicle")
     assert vehicle["total"] == 30 and vehicle["prior_total"] == 9
     assert vehicle["change"] == 21
+
+
+def test_the_statements_read_the_chart_once(client, books, db_session):
+    """One chart index per statement, handed to every helper (#390 review:
+    the compare P&L read the whole chart some sixteen times)."""
+    from tests.test_no_nplus1_in_list_endpoints import _count_selects
+
+    engine = db_session.get_bind()
+    reads = {}
+    for name, url in (
+        ("pl", f"/api/reports/profit-loss?{PERIOD}&compare=prior_year"),
+        ("bs", "/api/reports/balance-sheet?as_of_date=2026-12-31&compare=prior_year"),
+    ):
+        with _count_selects(engine) as statements:
+            assert client.get(url).status_code == 200
+        # the chart query: every account, no join to the ledger
+        reads[name] = [
+            q
+            for q in statements
+            if "FROM accounts" in q and "transaction" not in q.lower()
+        ]
+    assert len(reads["pl"]) == 1, reads["pl"]
+    assert len(reads["bs"]) == 1, reads["bs"]
+
+
+def test_both_walkers_share_one_depth_limit():
+    """The rows' "Parent: Child" paths and the sub-account tree stop at the
+    same MAX_DEPTH, and at a loop, so the two never disagree on bad data."""
+    from app.routes.reports import financial
+    from app.services import statement_layout
+
+    assert financial.MAX_DEPTH == statement_layout.MAX_DEPTH == 64
+    deep = {n: (str(n), f"A{n}", n - 1 if n else None, None, None) for n in range(90)}
+    assert len(financial._chain(deep, 89)) == 64
+    looped = {1: ("1", "A", 2, None, None), 2: ("2", "B", 1, None, None)}
+    assert financial._chain(looped, 1) == [2, 1]
+    chart = statement_layout.account_chart(index=looped)
+    assert statement_layout.account_path(chart, 1) == "B: A"

@@ -99,10 +99,17 @@ def bs_group_totals(lines: list[dict], side: str) -> dict:
 MAX_DEPTH = 64
 
 
-def account_chart(db) -> dict:
-    """{id: {number, name, parent_id}} for every account."""
+def account_chart(db=None, index: dict | None = None) -> dict:
+    """{id: {number, name, parent_id}} for every account: from `index`, the
+    chart a report has already read ({id: (number, name, parent_id, …)},
+    financial._chart_index), else one query."""
     from app.models.accounts import Account
 
+    if index is not None:
+        return {
+            aid: {"number": row[0], "name": row[1], "parent_id": row[2]}
+            for aid, row in index.items()
+        }
     return {
         a.id: {
             "number": a.account_number or "",

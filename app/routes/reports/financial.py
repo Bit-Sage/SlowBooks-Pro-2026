@@ -13,6 +13,7 @@ from app.routes.reports._router import router
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
+    MAX_DEPTH,
     account_chart,
     bs_group_totals,
     bs_groups,
@@ -53,19 +54,34 @@ _SORT_QUERY = Query(
 
 
 def _chart_index(db) -> dict:
-    """Every account's number, name and parent, by id."""
+    """Every account's (number, name, parent, type, detail type), by id: one
+    query a statement builds once and hands to every helper that needs the
+    chart (#390 review: the compare P&L read it some sixteen times)."""
     return {
-        a.id: (a.account_number or "", a.name or "", a.parent_id)
+        a.id: (
+            a.account_number or "",
+            a.name or "",
+            a.parent_id,
+            a.account_type,
+            a.detail_type,
+        )
         for a in db.query(
-            Account.id, Account.account_number, Account.name, Account.parent_id
+            Account.id,
+            Account.account_number,
+            Account.name,
+            Account.parent_id,
+            Account.account_type,
+            Account.detail_type,
         )
     }
 
 
 def _chain(chart: dict, account_id) -> list:
-    """The account's ids from the root down, the account itself last."""
-    path = []
-    while account_id in chart and len(path) < 32:
+    """The account's ids from the root down, the account itself last; stops
+    at a parent loop or MAX_DEPTH, the sub-account walk's limit (#416)."""
+    path, seen = [], set()
+    while account_id in chart and account_id not in seen and len(path) < MAX_DEPTH:
+        seen.add(account_id)
         path.append(account_id)
         account_id = chart[account_id][2]
     return list(reversed(path))
@@ -83,7 +99,7 @@ def _account_order(db, sort="number", chart: dict | None = None):
     chart = chart if chart is not None else _chart_index(db)
 
     def level(account_id):
-        number, name, _ = chart[account_id]
+        number, name = chart[account_id][:2]
         name = name.lower()
         if sort == "name":
             return (0, name, number)
@@ -133,6 +149,7 @@ def _totals_by_account(
     in_class=None,
     sort="number",
     exclude_adjusting=False,
+    chart: dict | None = None,
 ):
     """Return a list of {account_id, account_name, account_number,
     detail_type, amount} rows where amount is signed by the account type's
@@ -169,7 +186,7 @@ def _totals_by_account(
     )
 
     rows = []
-    chart = _chart_index(db)
+    chart = chart if chart is not None else _chart_index(db)
     for acct_id, name, number, detail, dr, cr in q.all():
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
         path, label = _account_words(chart, acct_id)
@@ -212,26 +229,21 @@ def profit_loss(
         start_date = date(date.today().year, 1, 1)
     if not end_date:
         end_date = date.today()
-    if compare == "prior_year":
-        current = profit_loss(
-            start_date,
-            end_date,
-            db,
-            class_id=class_id,
-            sort=sort,
-            exclude_adjusting=exclude_adjusting,
-        )
-        prior = profit_loss(
-            _year_earlier(start_date),
-            _year_earlier(end_date),
-            db,
-            class_id=class_id,
-            sort=sort,
-            exclude_adjusting=exclude_adjusting,
-        )
-        return _pl_layout(db, _pl_with_prior(db, current, prior, sort))
     cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
+    chart = _chart_index(db)
 
+    def period(start, end):
+        return _pl_period(db, start, end, cls, in_class, sort, exclude_adjusting, chart)
+
+    if compare == "prior_year":
+        current = period(start_date, end_date)
+        prior = period(_year_earlier(start_date), _year_earlier(end_date))
+        return _pl_layout(db, _pl_with_prior(db, current, prior, sort, chart), chart)
+    return _pl_layout(db, period(start_date, end_date), chart)
+
+
+def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting, chart):
+    """One period's P&L figures, before the layout."""
     income, other_income = _split_other(
         _totals_by_account(
             db,
@@ -241,11 +253,19 @@ def profit_loss(
             in_class,
             sort,
             exclude_adjusting,
+            chart,
         ),
         DetailType.OTHER_INCOME,
     )
     cogs = _totals_by_account(
-        db, AccountType.COGS, start_date, end_date, in_class, sort, exclude_adjusting
+        db,
+        AccountType.COGS,
+        start_date,
+        end_date,
+        in_class,
+        sort,
+        exclude_adjusting,
+        chart,
     )
     expenses, other_expense = _split_other(
         _totals_by_account(
@@ -256,6 +276,7 @@ def profit_loss(
             in_class,
             sort,
             exclude_adjusting,
+            chart,
         ),
         DetailType.OTHER_EXPENSE,
     )
@@ -268,33 +289,30 @@ def profit_loss(
     net_operating_income = total_income - total_cogs - total_expenses
     net_other_income = total_other_income - total_other_expense
 
-    return _pl_layout(
-        db,
-        {
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "class_id": cls.id if cls else None,
-            "class_name": cls.name if cls else None,
-            "sort": sort,
-            "exclude_adjusting": bool(exclude_adjusting),
-            "income": income,
-            "cogs": cogs,
-            "expenses": expenses,
-            "other_income": other_income,
-            "other_expense": other_expense,
-            "total_income": total_income,
-            "total_cogs": total_cogs,
-            "gross_profit": total_income - total_cogs,
-            "total_expenses": total_expenses,
-            "net_operating_income": net_operating_income,
-            "total_other_income": total_other_income,
-            "total_other_expense": total_other_expense,
-            "net_other_income": net_other_income,
-            # the same figure as before the split: a move between sections,
-            # never in or out of the total (#390)
-            "net_income": net_operating_income + net_other_income,
-        },
-    )
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "class_id": cls.id if cls else None,
+        "class_name": cls.name if cls else None,
+        "sort": sort,
+        "exclude_adjusting": bool(exclude_adjusting),
+        "income": income,
+        "cogs": cogs,
+        "expenses": expenses,
+        "other_income": other_income,
+        "other_expense": other_expense,
+        "total_income": total_income,
+        "total_cogs": total_cogs,
+        "gross_profit": total_income - total_cogs,
+        "total_expenses": total_expenses,
+        "net_operating_income": net_operating_income,
+        "total_other_income": total_other_income,
+        "total_other_expense": total_other_expense,
+        "net_other_income": net_other_income,
+        # the same figure as before the split: a move between sections,
+        # never in or out of the total (#390)
+        "net_income": net_operating_income + net_other_income,
+    }
 
 
 def _split_other(lines: list, other) -> tuple[list, list]:
@@ -316,7 +334,7 @@ def _has_other(lines) -> bool:
     )
 
 
-def _pl_layout(db, data: dict) -> dict:
+def _pl_layout(db, data: dict, chart: dict) -> dict:
     """How the P&L prints, for every writer to read:
 
     - `has_other`: Other Income / Other Expense below Net Operating Income,
@@ -329,19 +347,14 @@ def _pl_layout(db, data: dict) -> dict:
     data["has_other"] = _has_other(
         data.get("other_income", []) + data.get("other_expense", [])
     )
-    chart = account_chart(db)
-    section_of = {
-        aid: _pl_section_of(atype, detail)
-        for aid, atype, detail in db.query(
-            Account.id, Account.account_type, Account.detail_type
-        )
-    }
-    order = _account_order(db, data.get("sort") or "number")
+    section_of = {aid: _pl_section_of(row[3], row[4]) for aid, row in chart.items()}
+    order = _account_order(db, data.get("sort") or "number", chart)
+    accounts = account_chart(index=chart)
     keys = ("amount", "prior_amount") if data.get("prior") else ("amount",)
     data["tree"] = {
         key: family_rows(
             data.get(key, []),
-            chart,
+            accounts,
             lambda aid, key=key: section_of.get(aid) == key,
             keys,
             lambda aid: order({"account_id": aid}),
@@ -396,13 +409,14 @@ def _with_prior(
     totals: tuple,
     dates: tuple,
     sort: str = "number",
+    chart: dict | None = None,
 ) -> dict:
     """The current report with the prior year's figures beside it: every
     account line gets `prior_amount` (an account with activity in only one
     of the two years shows 0 in the other), the lines keep the chart's
     order (`sort`, see _account_order) with a computed line last, and
     `prior` carries the prior year's dates and totals."""
-    order = _account_order(db, sort)
+    order = _account_order(db, sort, chart)
     out = dict(current)
     for key in sections:
         prior_by = {_line_key(i): i for i in prior[key]}
@@ -423,7 +437,9 @@ def _with_prior(
     return out
 
 
-def _pl_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict:
+def _pl_with_prior(
+    db, current: dict, prior: dict, sort: str = "number", chart=None
+) -> dict:
     return _with_prior(
         db,
         current,
@@ -432,10 +448,13 @@ def _pl_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict
         _PL_TOTALS,
         ("start_date", "end_date"),
         sort,
+        chart,
     )
 
 
-def _bs_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict:
+def _bs_with_prior(
+    db, current: dict, prior: dict, sort: str = "number", chart=None
+) -> dict:
     return _with_prior(
         db,
         current,
@@ -444,6 +463,7 @@ def _bs_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict
         _BS_TOTALS,
         ("as_of_date",),
         sort,
+        chart,
     )
 
 
@@ -501,21 +521,31 @@ def balance_sheet(
     t = terms_from_db(db)
     if not as_of_date:
         as_of_date = date.today()
+    chart = _chart_index(db)
     if compare == "prior_year":
         return _bs_layout(
             _bs_with_prior(
                 db,
-                balance_sheet(as_of_date, db, sort=sort),
-                balance_sheet(_year_earlier(as_of_date), db, sort=sort),
+                _bs_period(db, as_of_date, sort, t, chart),
+                _bs_period(db, _year_earlier(as_of_date), sort, t, chart),
                 sort,
+                chart,
             )
         )
+    return _bs_layout(_bs_period(db, as_of_date, sort, t, chart))
 
-    assets = _totals_by_account(db, AccountType.ASSET, date_end=as_of_date, sort=sort)
-    liabilities = _totals_by_account(
-        db, AccountType.LIABILITY, date_end=as_of_date, sort=sort
-    )
-    equity = _totals_by_account(db, AccountType.EQUITY, date_end=as_of_date, sort=sort)
+
+def _bs_period(db, as_of_date, sort, t, chart) -> dict:
+    """One date's Balance Sheet figures, before the layout."""
+
+    def totals(acct_type, order="number"):
+        return _totals_by_account(
+            db, acct_type, date_end=as_of_date, sort=order, chart=chart
+        )
+
+    assets = totals(AccountType.ASSET, sort)
+    liabilities = totals(AccountType.LIABILITY, sort)
+    equity = totals(AccountType.EQUITY, sort)
 
     total_assets = sum(a["amount"] for a in assets)
     total_liabilities = sum(liab["amount"] for liab in liabilities)
@@ -526,9 +556,9 @@ def balance_sheet(
     # is income or expense activity that hasn't been formally closed into an
     # equity account (which is the normal state in this app — income/expense
     # accounts are never explicitly closed).
-    income_rows = _totals_by_account(db, AccountType.INCOME, date_end=as_of_date)
-    cogs_rows = _totals_by_account(db, AccountType.COGS, date_end=as_of_date)
-    expense_rows = _totals_by_account(db, AccountType.EXPENSE, date_end=as_of_date)
+    income_rows = totals(AccountType.INCOME)
+    cogs_rows = totals(AccountType.COGS)
+    expense_rows = totals(AccountType.EXPENSE)
     net_income = (
         sum(r["amount"] for r in income_rows)
         - sum(r["amount"] for r in cogs_rows)
@@ -548,20 +578,18 @@ def balance_sheet(
         ]
         total_equity += net_income
 
-    return _bs_layout(
-        {
-            "as_of_date": as_of_date.isoformat(),
-            "sort": sort,
-            "assets": assets,
-            "liabilities": liabilities,
-            "equity": equity,
-            "total_assets": total_assets,
-            "total_liabilities": total_liabilities,
-            "total_equity": total_equity,
-            **bs_group_totals(assets, "assets"),
-            **bs_group_totals(liabilities, "liabilities"),
-        }
-    )
+    return {
+        "as_of_date": as_of_date.isoformat(),
+        "sort": sort,
+        "assets": assets,
+        "liabilities": liabilities,
+        "equity": equity,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_equity": total_equity,
+        **bs_group_totals(assets, "assets"),
+        **bs_group_totals(liabilities, "liabilities"),
+    }
 
 
 def _bs_layout(data: dict) -> dict:
