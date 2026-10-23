@@ -206,6 +206,15 @@ OTHER_KEY_MESSAGE = (
 )
 
 
+def is_encrypted_backup(path: Path | str | None) -> bool:
+    """Whether a backup is an encrypted company file. Only a SQLite backup
+    (.db) can be one: a Postgres backup is pg_dump's own format, which is
+    not SQLite either but is not encrypted, and restoring it needs no key."""
+    if path is None or Path(path).suffix != ".db":
+        return False
+    return company_file.is_encrypted_file(path)
+
+
 def backup_key_problem(filename: str, recovery_key: str | None = None) -> dict | None:
     """Whether a backup can be opened here: None when it can (plain, or
     encrypted under this company's key, or under the recovery key given),
@@ -213,7 +222,7 @@ def backup_key_problem(filename: str, recovery_key: str | None = None) -> dict |
     from app.services import company_keyring
 
     path = backup_path(filename)
-    if path is None or not company_file.is_encrypted_file(path):
+    if not is_encrypted_backup(path):
         return None
     key = company_file.resolve_key()
     if key is not None:
@@ -450,7 +459,7 @@ def list_backup_files() -> list[dict]:
                 "created": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
                 # a backup made before encryption was turned on is plain
                 # SQLite (2.24.0 gate, NEW-158): the page says which
-                "encrypted": company_file.is_encrypted_file(f),
+                "encrypted": is_encrypted_backup(f),
             }
         )
     return files
@@ -565,7 +574,7 @@ def list_company_backups(db: Session) -> list[dict]:
                 "id": row.id if row is not None else None,
                 # a backup made before encryption was turned on is plain
                 # SQLite (2.24.0 gate, NEW-158 / W-25); the page says which
-                "encrypted": company_file.is_encrypted_file(path),
+                "encrypted": is_encrypted_backup(path),
                 "filename": filename,
                 "file_size": stat.st_size,
                 "backup_type": (
