@@ -200,6 +200,85 @@ def test_gnucash_import(client, db_session, seed_accounts):
     assert any("trial balance" in w.lower() for w in data["warnings"])
 
 
+def test_a_dialect_child_takes_its_parents_detail_type(db_session, seed_accounts):
+    """A migration spec whose child declares a detail type its parent cannot
+    share: the link stands, so the child inherits the parent's and a warning
+    says so — the same rule the chart import follows (#416 / #390)."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.models.accounts import Account, AccountType
+    from app.services.migration_common import run_import_bundle
+
+    def _coa(_text):
+        return (
+            [
+                {
+                    "name": "Penalties",
+                    "code": "8900",
+                    "type": AccountType.EXPENSE,
+                    "description": "",
+                    "detail_type": "other_expense",
+                    "parent": None,
+                },
+                {
+                    "name": "Late fees",
+                    "code": "8910",
+                    "type": AccountType.EXPENSE,
+                    "description": "",
+                    "detail_type": "expense",
+                    "parent": "Penalties",
+                },
+            ],
+            [],
+        )
+
+    def _gl(_text):
+        return (
+            [
+                [
+                    {
+                        "account": "Penalties",
+                        "date": date(2026, 1, 15),
+                        "debit": Decimal("100"),
+                        "credit": Decimal("0"),
+                        "description": "fine",
+                        "reference": "J1",
+                    },
+                    {
+                        "account": "Late fees",
+                        "date": date(2026, 1, 15),
+                        "debit": Decimal("0"),
+                        "credit": Decimal("100"),
+                        "description": "fine",
+                        "reference": "J1",
+                    },
+                ]
+            ],
+            [],
+        )
+
+    result = run_import_bundle(
+        db_session,
+        {"coa": "x", "gl": "x"},
+        {"coa": _coa, "gl": _gl},
+        "test_inherit",
+        "Test",
+    )
+    assert result["imported_accounts"] == 2
+    late = db_session.query(Account).filter(Account.name == "Late fees").one()
+    penalties = db_session.query(Account).filter(Account.name == "Penalties").one()
+    assert late.detail_type == "other_expense"
+    assert late.parent_id == penalties.id
+    assert any(
+        "Late fees" in w
+        and "takes Other Expense" in w
+        and "parent 'Penalties'" in w
+        and "the file said Expense" in w
+        for w in result["warnings"]
+    )
+
+
 # ── Readiness metadata via the generic route ─────────────────────────────
 
 

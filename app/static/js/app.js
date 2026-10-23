@@ -1210,8 +1210,23 @@ const App = {
             }
             return out;
         };
+        // every account under this one, at any depth, in tree order (self
+        // excluded) — what a move retypes, and what the status line counts
+        const descendants = a => {
+            const out = [], seen = new Set([a.id]);
+            const walk = id => {
+                for (const c of children.get(id) || []) {
+                    if (seen.has(c.id)) continue;
+                    seen.add(c.id);
+                    out.push(c);
+                    walk(c.id);
+                }
+            };
+            walk(a.id);
+            return out;
+        };
         const collides = a => names[a.name.trim().toLowerCase()] > 1;
-        return { byId, children, path, family, collides };
+        return { byId, children, path, family, descendants, collides };
     },
 
     // Each detail type's accounts in tree order (the list sorted by detail
@@ -1442,9 +1457,27 @@ const App = {
         ).join('');
     },
 
+    // "Lodging and Hotel (2 sub-accounts)": up to two named, then "and N
+    // more", with the count. For the status line's cascade warning (#416).
+    _subAccountList(subs) {
+        const names = subs.map(s => s.name);
+        const list = subs.length <= 2
+            ? names.join(' and ')
+            : `${names.slice(0, 2).join(', ')} and ${subs.length - 2} more`;
+        return `${list} (${App._subAccountCount(subs)})`;
+    },
+
+    _subAccountCount(subs) {
+        return `${subs.length} sub-account${subs.length === 1 ? '' : 's'}`;
+    },
+
     // A parent other than 1100, 2000, a bank or a card hands its detail type
-    // down: choosing one sets the Type picker to it. The choice is kept as
-    // the one a type change comes back to.
+    // down: choosing one sets the Type picker to it, and the status says how
+    // many sub-accounts follow and that a later move out keeps the type —
+    // #428's cascade is silent and does not reverse (#416). Set back to None
+    // or a pinned parent, the type a parent gave stays: say so, so the P&L
+    // family (#429) is not left below Net Operating Income by surprise. The
+    // choice is kept as the one a type change comes back to.
     accountParentChanged() {
         const state = App._accountFormState;
         const sel = $('#account-parent');
@@ -1452,14 +1485,38 @@ const App = {
         const parent = state.tree.byId.get(Number(sel.value));
         state.wanted = parent ? parent.id : null;
         const status = $('#account-parent-status');
+        const name = (state.acct.name || '').trim() || 'This account';
+        const subs = state.acct.id ? state.tree.descendants(state.acct) : [];
+
         if (parent && picker && !picker.disabled
             && !App._PINNED_DETAILS.includes(parent.detail_type)
             && picker.value !== parent.detail_type) {
             picker.value = parent.detail_type;
-            status.textContent = `Type set to ${T(parent.detail_type_label)}, the type of ${parent.name}.`;
-        } else {
-            status.textContent = '';
+            let msg = `Type set to ${T(parent.detail_type_label)}, the type of ${parent.name}`;
+            if (subs.length) msg += `; ${App._subAccountList(subs)} follow`;
+            msg += subs.length
+                ? '. Moving it back out later keeps the type; change the Type picker then.'
+                : '. Moving it back out later keeps the type.';
+            status.textContent = msg;
+            return;
         }
+
+        // set to None or a pinned parent: a type handed down earlier stays
+        const toNoneOrPinned = !parent || App._PINNED_DETAILS.includes(parent.detail_type);
+        const cameFromParent = picker && !picker.disabled
+            && !App._PINNED_DETAILS.includes(picker.value)
+            && (picker.value !== picker.dataset.was
+                || subs.some(s => s.detail_type === picker.value));
+        if (toNoneOrPinned && cameFromParent) {
+            const label = (picker.selectedOptions[0]
+                ? picker.selectedOptions[0].textContent : picker.value).trim();
+            let msg = `${name} keeps ${label}`;
+            if (subs.length) msg += ` (and so do its ${App._subAccountCount(subs)})`;
+            msg += '; change the Type picker to move the family above Net Operating Income.';
+            status.textContent = msg;
+            return;
+        }
+        status.textContent = '';
     },
 
     // A new type re-lists the parents. The parent chosen (or the one the

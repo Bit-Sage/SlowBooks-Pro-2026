@@ -54,6 +54,23 @@ def loop_message(account_name: str, parent_name: str) -> str:
     )
 
 
+def chain_depth(db: Session, model, account_id) -> int:
+    """How many accounts from this one up to the root, counting itself
+    (#416). Stops at a repeat or MAX_DEPTH so a loop or a chain already too
+    deep in the data cannot run away."""
+    cur, seen, depth = account_id, set(), 0
+    while cur is not None and cur not in seen and depth < MAX_DEPTH:
+        seen.add(cur)
+        depth += 1
+        row = db.get(model, cur)
+        cur = row.parent_id if row else None
+    return depth
+
+
+def depth_message(name: str, depth: int) -> str:
+    return f"{name} would be {depth} levels deep; the chart stops at {MAX_DEPTH}."
+
+
 # "must be an asset too": a base type in a sentence
 BASE_WORDS = {
     "asset": "an asset",
@@ -83,7 +100,8 @@ def parent_link_problem(
     type; under any parent but 1100, 2000, a bank or a card it also takes
     the parent's detail type, so one that cannot carry it (a bank account
     under a plain folder) cannot go there. A declared detail type that
-    could follow is the importers' to keep (#390)."""
+    *can* follow is not refused here; the child takes the parent's instead
+    (``inherited_detail_type``, #390)."""
     from app.models.accounts import (
         PINNED_DETAIL_TYPES,
         detail_label,
@@ -105,6 +123,23 @@ def parent_link_problem(
     if why:
         return f"a sub-account of {parent_name} ({detail_label(detail)}) cannot be one: {why}"
     return None
+
+
+def inherited_detail_type(parent_detail, child_detail) -> str | None:
+    """The detail type a sub-account must take from its parent, or None
+    (#390). A parent other than a pinned one (1100, 2000, a bank, a card)
+    hands its detail type down; the account API sets it, so the importers
+    must too, even when the file declared a different type that would fit on
+    its own. Call this only for a link that stands (``parent_link_problem``
+    returned None), so the child can carry what comes down."""
+    from app.models.accounts import PINNED_DETAIL_TYPES
+
+    parent = _value(parent_detail)
+    if not parent or parent in PINNED_DETAIL_TYPES:
+        return None
+    if _value(child_detail) == parent:
+        return None
+    return parent
 
 
 def takes_no_new_parent(detail, number) -> bool:

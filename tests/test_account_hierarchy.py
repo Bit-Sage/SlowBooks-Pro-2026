@@ -197,6 +197,42 @@ def test_a_mixed_pair_saved_before_stays_editable(client, db_session, seed_accou
 # --- the review's points (#416) ----------------------------------------------
 
 
+def test_an_inactive_parent_is_refused_on_create_and_move(client, seed_accounts):
+    """The form hides inactive accounts from the picker; the API refused one
+    sent straight to it (#416). An account already under one still saves."""
+    parent = _new(client, "Travel", account_number="8810")
+    child = _new(client, "Hotel", parent_id=parent["id"])
+    _ok(client.put(f"/api/accounts/{parent['id']}", json={"is_active": False}))
+
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Lodging", "account_type": "expense", "parent_id": parent["id"]},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == (
+        "8810 Travel is inactive and cannot take sub-accounts. "
+        "Reactivate it, or choose another parent."
+    )
+
+    other = _new(client, "Airfare")
+    r = client.put(f"/api/accounts/{other['id']}", json={"parent_id": parent["id"]})
+    assert r.status_code == 400
+    assert "is inactive and cannot take sub-accounts" in r.json()["detail"]
+
+    # the account already under the now-inactive parent: a full-object PUT
+    # that resends that same parent is no move, so it still saves
+    full = _ok(client.get(f"/api/accounts/{child['id']}"))
+    body = {
+        k: full[k]
+        for k in ("name", "account_number", "account_type", "parent_id", "description")
+    }
+    body["name"] = "Hotel room"
+    assert (
+        _ok(client.put(f"/api/accounts/{child['id']}", json=body))["name"]
+        == "Hotel room"
+    )
+
+
 def test_a_full_object_put_resending_the_parent_is_no_move(
     client, db_session, seed_accounts
 ):

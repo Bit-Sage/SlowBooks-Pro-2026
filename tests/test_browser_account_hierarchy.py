@@ -190,3 +190,35 @@ def test_the_chart_nests_sub_accounts_and_the_form_picks_a_parent(
         assert "stays a top-level account" in page.text_content("#account-parent-hint")
     finally:
         page.close()
+
+
+def test_moving_a_subtree_says_how_far_the_retype_reaches(browser, company, books):
+    """A move that hands a parent's detail type down (#428's cascade) says how
+    many sub-accounts follow and that moving back out keeps the type; set to a
+    top-level or pinned parent, the status says the type stays (#416)."""
+    travel = _new(company, "Travel", account_number="8810")
+    lodging = _new(company, "Lodging", account_number="8811", parent_id=travel["id"])
+    _new(company, "Hotel", account_number="8812", parent_id=lodging["id"])
+    interest = _new(
+        company, "Interest", account_number="8000", detail_type="other_expense"
+    )
+    page, handled = _open_at(browser, company, "#/accounts")
+    try:
+        page.evaluate(f"App.showAccountForm({travel['id']})")
+        page.wait_for_selector("#account-parent")
+        # under Interest (Other Expense): both sub-accounts follow, and a
+        # later move out keeps the type
+        page.select_option("#account-parent", str(interest["id"]))
+        status = page.text_content("#account-parent-status")
+        assert "Type set to Other Expense, the type of Interest" in status
+        assert "2 sub-accounts" in status and "follow" in status
+        assert "keeps the type" in status
+        assert page.input_value("select[name=detail_type]") == "other_expense"
+        # back to None: the type and its sub-accounts stay
+        page.select_option("#account-parent", "")
+        status = page.text_content("#account-parent-status")
+        assert "Travel keeps Other Expense" in status
+        assert "2 sub-accounts" in status
+        assert "Net Operating Income" in status
+    finally:
+        page.close()

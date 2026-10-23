@@ -198,6 +198,66 @@ def test_a_taken_number_gets_the_next_free_one_and_says_so(
     ] not in _by_number(db_session)
 
 
+def test_a_declared_child_detail_takes_the_parents_with_a_note(
+    client, db_session, seed_accounts
+):
+    """Trent's pair (#416 / #390): the file gives the child a detail type its
+    parent cannot share. The link is right, so the child takes the parent's
+    and the row says so — the account API would refuse the mismatch, and the
+    P&L needs the family together."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "8900,Penalties,Expense,Other Expense,\n"
+        "8910,Late fees,Expense,Expense,8900\n"
+    )
+    plan = _upload(client, text).json()
+    late = next(r for r in plan["rows"] if r["name"] == "Late fees")
+    assert late["detail_type"] == "other_expense"
+    assert "Expense in the file" in (late["note"] or "")
+    assert "Other Expense" in (late["note"] or "")
+
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    nums = _by_number(db_session)
+    pen, lf = nums["8900"], nums["8910"]
+    assert lf.detail_type == "other_expense" and lf.parent_id == pen.id
+
+    got = client.get(f"/api/accounts/{lf.id}").json()
+    assert got["detail_type"] == "other_expense" and got["parent_id"] == pen.id
+    # a PUT resending the now-saved pair is accepted, not refused
+    body = {
+        k: got[k]
+        for k in (
+            "name",
+            "account_number",
+            "account_type",
+            "detail_type",
+            "parent_id",
+            "description",
+        )
+    }
+    assert client.put(f"/api/accounts/{lf.id}", json=body).status_code == 200
+
+
+def test_a_child_under_a_pinned_parent_keeps_its_own_detail(
+    client, db_session, seed_accounts
+):
+    """Under 1100 (or a bank) a sub-account is checked on its own detail type
+    and keeps it — nothing is handed down (#416)."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "1105,Retainage Receivable,asset,Other Current Asset,1100\n"
+    )
+    plan = _upload(client, text).json()
+    row = next(r for r in plan["rows"] if r["name"] == "Retainage Receivable")
+    assert row["detail_type"] == "other_current_asset"
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    child = _by_number(db_session)["1105"]
+    assert child.detail_type == "other_current_asset"
+    assert child.parent.account_number == "1100"
+
+
 # --- replace mode -------------------------------------------------------------
 
 

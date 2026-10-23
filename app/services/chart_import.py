@@ -50,6 +50,8 @@ from app.models.transactions import TransactionLine
 from app.services import control_accounts
 from app.services.account_tree import (
     MAX_DEPTH,
+    depth_message,
+    inherited_detail_type,
     loop_message,
     parent_link_problem,
     takes_no_new_parent,
@@ -657,6 +659,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
 
     _flag_parent_types(db, plan)
     _flag_parent_loops(db, plan)
+    _flag_inherited_detail(db, plan)
 
     if replace:
         for a in existing:
@@ -859,24 +862,72 @@ def _flag_parent_loops(db: Session, plan: Plan) -> None:
             entry.pop("_parent", None)  # self-parent: just not set
             continue
         # walk up from the proposed parent through the links already accepted;
-        # reaching this node, a repeat, or MAX_DEPTH means the link loops
-        cur, seen, looped = parent, set(), False
+        # reaching this node or a repeat loops, past MAX_DEPTH is too deep —
+        # each gets its own note, not the loop one for both (#416)
+        cur, seen, looped, too_deep = parent, set(), False, False
         while cur is not None:
             if cur == node:
                 looped = True
                 break
-            if cur in seen or len(seen) >= MAX_DEPTH:
-                looped = True  # a pre-existing loop, or a chain too deep
+            if cur in seen:
+                looped = True  # a pre-existing loop
+                break
+            if len(seen) >= MAX_DEPTH:
+                too_deep = True
                 break
             seen.add(cur)
             cur = parent_of(cur)
-        if looped:
+        if looped or too_deep:
+            why = (
+                depth_message(entry["name"], len(seen) + 1)
+                if too_deep
+                else loop_message(entry["name"], name_of(parent))
+            )
             entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
-                loop_message(entry["name"], name_of(parent)) + " The link was left off."
+                why + " The link was left off."
             )
             entry.pop("_parent", None)
         else:
             accepted[node] = parent
+
+
+def _flag_inherited_detail(db: Session, plan: Plan) -> None:
+    """A sub-account whose link stands takes its parent's detail type (#390),
+    exactly as the account API sets it, even when the file declared a
+    different one that would fit on its own. Run after the parent links are
+    settled (refusals and loops already dropped) and in row order, so a
+    parent's inherited type is in hand before its children read it, and the
+    dry run and the apply agree on the detail type and its note."""
+
+    def parent_detail(hit):
+        kind, ref = hit
+        if kind == "new":
+            return plan.rows[ref].get("detail_type")
+        acct = db.get(Account, ref)
+        if acct is None:
+            return None
+        entry = next(
+            (e for e in plan.rows if e.get("existing_id") == ref and "_row" in e),
+            None,
+        )
+        retyped = entry is not None and any(
+            c.startswith("type ") for c in entry.get("changes", [])
+        )
+        return entry["_row"].detail_type if retyped else acct.detail_type
+
+    for entry in plan.rows:
+        hit = entry.get("_parent")
+        if not hit or entry["action"] in ("error", "deactivate", "keep"):
+            continue
+        inherited = inherited_detail_type(parent_detail(hit), entry.get("detail_type"))
+        if not inherited or inherited == entry.get("detail_type"):
+            continue
+        # note only when the file named a type that gives way; one built
+        # with none takes the parent's silently, as the model does
+        r = entry.get("_row")
+        if getattr(r, "detail_type", None):
+            _note_detail_fallback(entry, entry["detail_type"], inherited)
+        entry["detail_type"] = inherited
 
 
 # --- applying ---------------------------------------------------------------
@@ -939,6 +990,15 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             pid = created[ref].id if kind == "new" else ref
             if pid != a.id:
                 a.parent_id = pid
+                # the child takes the parent's detail type (#390); the ORM
+                # hook keeps a declared one that fits, so settle it here,
+                # after the link, to match the dry run's planned type
+                pacct = created[ref] if kind == "new" else db.get(Account, ref)
+                inherited = inherited_detail_type(
+                    pacct.detail_type if pacct else None, a.detail_type
+                )
+                if inherited:
+                    a.detail_type = inherited
         if r.detail_type:
             declared[i] = a
     db.flush()

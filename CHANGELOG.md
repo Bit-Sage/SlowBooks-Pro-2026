@@ -92,7 +92,11 @@ sub-account does not share its new type; and a control account takes no new
 parent. The chart import leaves off a link the API would refuse, the row's
 note saying why in the dry run and when applied, and the Xero, Wave, Sage
 50, Zoho Books, MYOB, GnuCash and QuickBooks Online imports bring such an
-account in unlinked, with a warning.
+account in unlinked, with a warning. Where the link stands but the file
+gives a sub-account a detail type its parent cannot share, the child takes
+the parent's instead — the link is right, so the family stays together on
+the Profit & Loss — with a note naming the type the file asked for; under a
+bank, card, 1100 or 2000 parent it keeps its own.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

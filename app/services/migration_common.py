@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, detail_label
 from app.models.transactions import Transaction
-from app.services.account_tree import parent_link_problem
+from app.services.account_tree import inherited_detail_type, parent_link_problem
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
 
@@ -322,6 +322,7 @@ def run_import_bundle(
         # whose sub-account it is ("Parent:Child", the parent listed first).
         if spec.get("bank_kind"):
             acct.bank_kind = spec["bank_kind"]
+        inherited = None
         parent_name = (spec.get("parent") or "").lower()
         if parent_name and parent_name in by_name:
             parent = by_name[parent_name]
@@ -342,6 +343,20 @@ def run_import_bundle(
                 )
             else:
                 acct.parent_id = parent.id
+                # the link stands: the child takes the parent's detail type
+                # (#390), even when the file declared a different one that
+                # would fit on its own; say so, as the chart import does
+                inherited = inherited_detail_type(
+                    parent.detail_type, spec.get("detail_type")
+                )
+                if inherited:
+                    if spec.get("detail_type"):
+                        warnings.append(
+                            f"'{spec['name']}' takes {detail_label(inherited)}, the "
+                            f"detail type of its parent '{parent.name}' (the file "
+                            f"said {detail_label(spec['detail_type'])})"
+                        )
+                    acct.detail_type = inherited
         # Source-system codes can collide with the seeded chart's numbers —
         # the name stays authoritative; drop the code rather than fail.
         if spec["code"] and (
@@ -351,9 +366,10 @@ def run_import_bundle(
         db.add(acct)
         db.flush()
         declared = getattr(spec.get("detail_type"), "value", spec.get("detail_type"))
-        if declared and acct.detail_type != declared:
+        if declared and acct.detail_type != declared and inherited is None:
             # an AR away from 1100, a Bank with no bank kind: the model gave
             # the default (#390); say so rather than drop the file's word
+            # (a type that gave way to the parent's is already noted above)
             warnings.append(
                 f"'{acct.name}' is {detail_label(declared)} in the file and came in "
                 f"as {detail_label(acct.detail_type)}"

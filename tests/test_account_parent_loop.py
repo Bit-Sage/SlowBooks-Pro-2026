@@ -55,6 +55,46 @@ def test_a_legal_reparent_still_works(client, seed_accounts):
     assert _move(client, c, None).json()["parent_id"] is None
 
 
+def test_the_chart_stops_at_max_depth_on_create_and_move(client, seed_accounts):
+    """A chain built to MAX_DEPTH with POST is fine; one deeper is refused on
+    create, and re-parenting another account onto the deepest one is refused
+    the same way — by its depth, not the misleading loop message (#416)."""
+    from app.services.account_tree import MAX_DEPTH
+
+    prev = None
+    deepest = None
+    for i in range(MAX_DEPTH):
+        row = _new(client, f"D{i}", parent=prev)
+        prev = deepest = row
+
+    # the next one down is one level too deep
+    r = client.post(
+        "/api/accounts",
+        json={"name": "TooDeep", "account_type": "expense", "parent_id": deepest},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == (
+        f"TooDeep would be {MAX_DEPTH + 1} levels deep; "
+        f"the chart stops at {MAX_DEPTH}."
+    )
+
+    # moving a separate account onto the deepest one is the same depth refusal
+    other = _new(client, "Elsewhere")
+    r = _move(client, other, deepest)
+    assert r.status_code == 400
+    assert "the chart stops at" in r.json()["detail"]
+    assert "sub-account of itself" not in r.json()["detail"]
+
+    # a real loop within the limit still gets the loop message
+    a = _new(client, "Vehicles")
+    b = _new(client, "Truck", parent=a)
+    r = _move(client, a, b)
+    assert r.status_code == 400
+    assert r.json()["detail"] == (
+        "That would make Vehicles a sub-account of itself (through Truck)."
+    )
+
+
 def test_an_account_still_cannot_be_its_own_parent(client, seed_accounts):
     a = _new(client, "Vehicles")
     r = _move(client, a, a)
@@ -108,7 +148,9 @@ def test_a_loop_deeper_than_the_walk_limit_is_still_refused(
     client, db_session, seed_accounts
 ):
     """A chain longer than the walk's depth cap used to exhaust the walk and
-    then be allowed, saving a loop the tree-walkers spin on. Refuse it."""
+    then be allowed, saving a loop the tree-walkers spin on. Refuse it — now
+    by its depth (#416: the depth guard runs before the loop guard), so the
+    message names the depth, not a false loop."""
     from app.services.account_tree import MAX_DEPTH
 
     prev = None
@@ -124,10 +166,10 @@ def test_a_loop_deeper_than_the_walk_limit_is_still_refused(
         chain.append(a.id)
     db_session.commit()
     # chain[0] is the root, chain[-1] the deepest leaf: hanging the root off
-    # the leaf closes a loop longer than the walk ever steps through.
+    # the leaf is both a loop and too deep; the depth guard catches it first.
     r = _move(client, chain[0], chain[-1])
     assert r.status_code == 400
-    assert "sub-account of itself" in r.json()["detail"]
+    assert "the chart stops at" in r.json()["detail"]
 
 
 def test_a_loop_already_saved_does_not_hang_the_chart_or_reports(

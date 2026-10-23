@@ -20,6 +20,9 @@ from app.models.accounts import (
 from app.services import control_accounts
 from app.services.account_tree import (
     BASE_WORDS,
+    MAX_DEPTH,
+    chain_depth,
+    depth_message,
     loop_message,
     loop_through,
     takes_no_new_parent,
@@ -79,11 +82,25 @@ def _check_account_number(number) -> None:
 _BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
 
 
-def _check_parent_exists(db: Session, parent_id) -> None:
-    """A parent id must name an account (SQLite does not enforce the FK)."""
-    if parent_id is not None and db.get(Account, parent_id) is None:
+def _check_parent_usable(db: Session, parent_id) -> None:
+    """A parent id must name an account that can take sub-accounts (#416):
+    it exists (SQLite does not enforce the FK) and is active. The form hides
+    inactive accounts from the picker; refuse one sent straight to the API,
+    so the two agree."""
+    if parent_id is None:
+        return
+    parent = db.get(Account, parent_id)
+    if parent is None:
         raise HTTPException(
             status_code=400, detail="That parent account does not exist."
+        )
+    if not parent.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{_named(parent)} is inactive and cannot take sub-accounts. "
+                f"Reactivate it, or choose another parent."
+            ),
         )
 
 
@@ -534,7 +551,15 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     data.detail_type = _create_detail_type(db, data)
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
-    _check_parent_exists(db, data.parent_id)
+    _check_parent_usable(db, data.parent_id)
+    # Refuse past MAX_DEPTH on create too (#416): a chain built this deep
+    # with POST could not be re-parented onto, and the loop guard's message
+    # would read as a loop. Beside the parent check, before the account is
+    # built.
+    if data.parent_id is not None:
+        depth = chain_depth(db, Account, data.parent_id) + 1
+        if depth > MAX_DEPTH:
+            raise HTTPException(status_code=400, detail=depth_message(data.name, depth))
     _check_pinned_parent_base(
         db.get(Account, data.parent_id) if data.parent_id else None, data.account_type
     )
@@ -593,7 +618,15 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
             status_code=400, detail="An account cannot be its own parent."
         )
     if fields.get("parent_id") is not None:
-        _check_parent_exists(db, fields["parent_id"])
+        _check_parent_usable(db, fields["parent_id"])
+        # Refuse past MAX_DEPTH before the loop guard (#416), so loop_message
+        # is only ever a real loop and never a too-deep chain.
+        depth = chain_depth(db, Account, fields["parent_id"]) + 1
+        if depth > MAX_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail=depth_message(fields.get("name", account.name), depth),
+            )
         # Testing #101: A under B, then B under A, was accepted, and every
         # walk up the tree went round forever.
         through = loop_through(db, account_id, fields["parent_id"])
