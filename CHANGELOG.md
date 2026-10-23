@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### Unreleased
 
 **A register deposit splits like a check, with a fee line** (#387, from a
 bookkeeper's notes). A card processor pays over the gross it collected less
@@ -39,6 +39,8 @@ loses it, and the answer says so. A void entry is not edited, an edit that
 would turn the entry into a transfer is refused (void it and post the
 transfer), and the closing date holds for the entry's old date and its new
 one. Journal entries and deposits still open their own views from the row.
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off
