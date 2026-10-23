@@ -12,6 +12,14 @@ now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
 path as a possible traceback; it never was one, and now cannot be).
 
+**A new Docker install no longer signs people out at random.** The image runs
+two server processes, and on a first start each made its own session key
+when none was on disk yet, so a request reaching the other process was
+refused as not signed in (12 of 30 in one session on a fresh stack) until
+the container restarted. The first process to write the key now wins and
+the other reads it. `SESSION_SECRET_KEY` in the environment still overrides
+the file.
+
 **A Postgres backup restores again** (Discussion #417, @teich). On the Docker and
 server installs that keep the books in PostgreSQL, every restore from the
 Backups page or `POST /api/backups/restore` was refused as "made under another
