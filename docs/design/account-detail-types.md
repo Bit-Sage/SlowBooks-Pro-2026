@@ -512,10 +512,13 @@ Where the build departs from the proposal above, and why:
   Long Term Liability. So a renamed 1500 is an Other Asset (still
   investing), not the default. 4900 Other Income, 6999 Exchange Gain/Loss
   and 7999 Gain/Loss on Asset Disposal by number and name. A sub-account
-  takes its parent's only when it fell to its type's default and the
-  parent's is not Bank / Credit Card / AR / AP; the one move out of
-  working capital that allows (a default-typed child under a Fixed Assets
-  folder) is the right one, and nothing moves into it. The regexes are
+  takes its parent's only when it fell to its type's default, the
+  parent's is not Bank / Credit Card / AR / AP, and the parent's keeps it
+  where the 2.26 cash flow placed it: a default-typed asset or liability was
+  working capital, so it does not take a Fixed Asset, Other Asset or Long
+  Term Liability parent's (Shop Shelving under 1500, Accrued Interest under
+  2400 stay current, and are named in the migration log). No account moves
+  between working capital, investing and financing. The regexes are
   copied into the revision so it never changes; a test pins them equal to
   `cash_flow.py`'s while that file still uses them.
 - **Importers.** `IIF_TO_DETAIL_TYPE` is the table; `IIF_TO_ACCOUNT_TYPE`

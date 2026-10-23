@@ -33,11 +33,15 @@ financing:
    Gain/Loss on Asset Disposal are Other Expense (number and the name they
    are created with, so a renumbered or renamed account keeps the default).
 6. Everything else takes its type's default. A sub-account that took the
-   default shares its parent's detail type where the base types agree,
-   walking down from the top. One the rules above placed (a bank account
-   under an asset folder, a numbered asset under a fixed-asset parent) keeps
-   its own, and is named in the migration log; the user can line it up on
-   the chart page.
+   default shares its parent's detail type where the base types agree and
+   the cash flow would place it where it did (walking down from the top):
+   a default-typed asset or liability is working capital, so it does not
+   take a Fixed Asset, Other Asset or Long Term Liability parent's type
+   (Shop Shelving under 1500 Equipment, Accrued Interest under 2400 Loan
+   Payable stay current). One the rules above placed (a bank account under
+   an asset folder, a numbered asset under a fixed-asset parent), or one
+   kept current that way, keeps its own and is named in the migration log;
+   the user can line it up on the chart page.
 
 The name rules are copied here, not imported, so this revision does the
 same thing however cash_flow.py changes later.
@@ -124,6 +128,9 @@ _BASE = {
     "expense": "EXPENSE",
     "other_expense": "EXPENSE",
 }
+# Where the cash flow puts a balance-sheet account outside working capital
+# (investing, financing) once it reads the detail type.
+_NON_CURRENT = {"fixed_asset", "other_asset", "long_term_liability"}
 # Pinned to a bank kind or a control number: never handed down to a child.
 _PINNED = {"bank", "credit_card", "accounts_receivable", "accounts_payable"}
 
@@ -207,6 +214,10 @@ def backfill(rows: list[dict], fixed_ids: set, accumulated_ids: set):
             not placed[r["id"]]
             and want not in _PINNED
             and _BASE[want] == _type_name(r["account_type"])
+            # the cash flow placed a default-typed asset or liability in
+            # working capital; it takes a non-current parent's type only if
+            # that keeps it there, so no figure moves (#390 review)
+            and (want in _NON_CURRENT) == (result[r["id"]] in _NON_CURRENT)
         ):
             result[r["id"]] = want
         else:
