@@ -12,6 +12,14 @@ now is always one of its own, looked up by the server rather than read off
 the exception that carried it (two code-scanning alerts on 2.25.0 read that
 path as a possible traceback; it never was one, and now cannot be).
 
+**A Postgres backup restores again** (Discussion #417, @teich). On the Docker and
+server installs that keep the books in PostgreSQL, every restore from the
+Backups page or `POST /api/backups/restore` was refused as "made under another
+key" and asked for a recovery key, since 2.24.0: the check meant for an
+encrypted company file took any backup that wasn't plain SQLite for one, and
+a pg_dump backup isn't SQLite. Only a `.db` backup is checked for a key now,
+and the backup lists no longer mark Postgres backups encrypted.
+
 **A processed pay run's direct deposit file, from the page** (discussion
 #211, @ContractorKeith). The NACHA file could only be made by an API client
 that sent the bank's numbers in the request body; the page had no button,
