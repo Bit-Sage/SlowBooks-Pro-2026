@@ -637,7 +637,15 @@ def financial_position_csv(data: dict) -> str:
     return _csv(["", f"As of {data['as_of_date']}"], rows)
 
 
+def _cell(v) -> Decimal:
+    """A money cell: a Decimal, which the safe writer leaves a number (a
+    "-500.00" string got the formula guard's apostrophe)."""
+    return _dec(v)
+
+
 def activities_csv(data: dict) -> str:
+    """The Statement of Activities as a spreadsheet. Amounts are number
+    cells (_cell), so a negative one stays a number, not guarded text."""
     t = data["totals"]
     cmp = data.get("compare") == "prior_year"
     pt = data.get("prior", {}).get("totals", {}) if cmp else {}
@@ -645,7 +653,7 @@ def activities_csv(data: dict) -> str:
     def ext(total, prior):
         if not cmp:
             return []
-        return [f"{prior or 0:.2f}", f"{(total or 0) - (prior or 0):.2f}"]
+        return [_cell(prior or 0), _cell((total or 0) - (prior or 0))]
 
     blank = [""] * 2 if cmp else []
     rows = [["Revenue & Support", "", "", ""] + blank]
@@ -653,18 +661,18 @@ def activities_csv(data: dict) -> str:
         rows.append(
             [
                 f"  {r.get('account_path') or r['account_name']}",  # #416
-                f"{r['without']:.2f}",
-                f"{r['with']:.2f}",
-                f"{r['total']:.2f}",
+                _cell(r["without"]),
+                _cell(r["with"]),
+                _cell(r["total"]),
             ]
             + ext(r["total"], r.get("prior_total"))
         )
     rows.append(
         [
             "Total Revenue & Support",
-            f"{t['revenue_without']:.2f}",
-            f"{t['revenue_with']:.2f}",
-            f"{t['revenue']:.2f}",
+            _cell(t["revenue_without"]),
+            _cell(t["revenue_with"]),
+            _cell(t["revenue"]),
         ]
         + ext(t["revenue"], pt.get("revenue"))
     )
@@ -672,9 +680,9 @@ def activities_csv(data: dict) -> str:
     rows.append(
         [
             "Net assets released from restrictions",
-            f"{rl['without']:.2f}",
-            f"{rl['with']:.2f}",
-            "0.00",
+            _cell(rl["without"]),
+            _cell(rl["with"]),
+            _cell(0),
         ]
         + ext(0, 0)
     )
@@ -683,22 +691,22 @@ def activities_csv(data: dict) -> str:
         rows.append(
             [
                 f"  {r.get('account_path') or r['account_name']}",  # #416
-                f"{r['without']:.2f}",
-                "0.00",
-                f"{r['total']:.2f}",
+                _cell(r["without"]),
+                _cell(0),
+                _cell(r["total"]),
             ]
             + ext(r["total"], r.get("prior_total"))
         )
     rows.append(
-        ["Total Expenses", f"{t['expenses']:.2f}", "0.00", f"{t['expenses']:.2f}"]
+        ["Total Expenses", _cell(t["expenses"]), _cell(0), _cell(t["expenses"])]
         + ext(t["expenses"], pt.get("expenses"))
     )
     rows.append(
         [
             "Change in Net Assets",
-            f"{t['change_without']:.2f}",
-            f"{t['change_with']:.2f}",
-            f"{t['change_total']:.2f}",
+            _cell(t["change_without"]),
+            _cell(t["change_with"]),
+            _cell(t["change_total"]),
         ]
         + ext(t["change_total"], pt.get("change_total"))
     )

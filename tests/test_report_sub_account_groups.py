@@ -335,3 +335,19 @@ def test_both_walkers_share_one_depth_limit():
     assert financial._chain(looped, 1) == [2, 1]
     chart = statement_layout.account_chart(index=looped)
     assert statement_layout.account_path(chart, 1) == "B: A"
+
+
+def test_the_activities_csv_writes_negatives_as_numbers(client, db_session, nonprofit):
+    """Expenses over revenue: the change in net assets is negative, and the
+    CSV writes it as a number, not as guarded text ('-...)."""
+    import csv
+    import io
+
+    a = nonprofit
+    _je(db_session, date(2026, 7, 1), [(a["6000"], 9000, 0), (a["1000"], 0, 9000)])
+    db_session.commit()
+    text = client.get(f"/api/reports/statement-of-activities/csv?{PERIOD}").text
+    assert "'-" not in text
+    rows = list(csv.reader(io.StringIO(text.lstrip("﻿"))))
+    change = next(r for r in rows if r[0] == "Change in Net Assets")
+    assert change[3] == "-4790.00"
