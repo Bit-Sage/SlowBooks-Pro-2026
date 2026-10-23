@@ -147,7 +147,8 @@ def generate_due_invoices(
                         "message": (
                             f"The schedule for {who} is due {rec.next_due}, which "
                             "is on or before the closing date, so nothing was "
-                            "created. Move the closing date or set a later start."
+                            "created. Move the closing date, or clear and re-tick "
+                            "Active to roll the next due date forward past it."
                         ),
                     }
                 )

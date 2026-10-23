@@ -17,8 +17,13 @@ Active now rolls next_due forward to the first occurrence on or after today:
 a template paused in January and re-activated in July no longer back-dates an
 invoice for every missed month, and a run no longer refuses every schedule
 because one back-dated installment fell inside the closing date. A schedule
-that has made nothing still deletes (found in PNWImport's fork,
-SlowBooks-Pro-Testing#101).
+skipped for a closed period is reported with advice the operator can follow —
+move the closing date, or clear and re-tick Active to roll the due date
+forward past it — not "set a later start", which the edit form has no field
+for. `scripts/run_recurring.py` now prints the skipped schedules (each with
+its reason) so the cron log shows the ones it passed over, instead of
+skipping them silently every day. A schedule that has made nothing still
+deletes (found in PNWImport's fork, SlowBooks-Pro-Testing#101).
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 

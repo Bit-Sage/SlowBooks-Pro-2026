@@ -10,10 +10,16 @@ skipped, not billed), and a single closed installment is skipped and reported
 while the rest generate.
 """
 
+import runpy
 from datetime import date
+from pathlib import Path
 
+import app.database
+import app.services.recurring_service as recurring_service
 from app.models.recurring import RecurringInvoice
 from app.services.recurring_service import roll_next_due_forward
+
+RUN_RECURRING = Path(__file__).resolve().parents[1] / "scripts" / "run_recurring.py"
 
 LINE = {"description": "Monthly service", "quantity": 1, "rate": 100}
 
@@ -93,12 +99,53 @@ def test_one_closed_installment_does_not_stop_the_other_schedules(
     skipped_ids = [s["recurring_id"] for s in out["skipped"]]
     assert closed in skipped_ids
     assert healthy not in skipped_ids
-    assert "closing date" in next(
-        s["message"] for s in out["skipped"] if s["recurring_id"] == closed
-    )
+    msg = next(s["message"] for s in out["skipped"] if s["recurring_id"] == closed)
+    assert "closing date" in msg
+    # The advice has to be one the operator can actually follow: RecurringUpdate
+    # has no start date or next-due field, so re-ticking Active (which rolls the
+    # date forward) is the way out, not "set a later start".
+    assert "re-tick Active" in msg
+    assert "later start" not in msg
 
     # The closed template kept its date for a later catch-up and stayed active.
     db_session.expire_all()
     rec = db_session.get(RecurringInvoice, closed)
     assert rec.next_due == date(2026, 9, 1)
     assert rec.is_active is True
+
+
+def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
+    # The cron script's log is what the operator reads: a template skipped for
+    # a closed period keeps its date and is skipped on every later run, so the
+    # script has to name each skipped schedule and the reason, not swallow it.
+    class _DummySession:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(app.database, "SessionLocal", lambda: _DummySession())
+
+    def fake_generate(db, as_of=None, skipped=None):
+        if skipped is not None:
+            skipped.append(
+                {
+                    "recurring_id": 7,
+                    "customer_name": "Acme LLC",
+                    "message": (
+                        "The schedule for Acme LLC is due 2026-09-01, which is "
+                        "on or before the closing date, so nothing was created. "
+                        "Move the closing date, or clear and re-tick Active to "
+                        "roll the next due date forward past it."
+                    ),
+                }
+            )
+        return []
+
+    monkeypatch.setattr(recurring_service, "generate_due_invoices", fake_generate)
+
+    runpy.run_path(str(RUN_RECURRING), run_name="__main__")
+
+    out = capsys.readouterr().out
+    assert "No recurring invoices due." in out
+    assert "Skipped 1 schedule(s):" in out
+    assert "The schedule for Acme LLC is due 2026-09-01" in out
+    assert "re-tick Active" in out
