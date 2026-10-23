@@ -170,7 +170,9 @@ jobs:
           # 128 with account detail types (#390): the chart page's browser
           # module (no Playwright here) and the migration's PostgreSQL run
           # (no SLOWBOOKS_TEST_POSTGRES_URL here)
-          MAX_SKIPS: "128"
+          # 129 with the review follow-up: the backfill migration test in
+          # tests/test_account_detail_types_migration.py also needs Postgres
+          MAX_SKIPS: "129"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
