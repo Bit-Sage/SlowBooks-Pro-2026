@@ -268,3 +268,19 @@ def test_balance_sheet_exports_with_prior_year(
 
     plain = client.get("/api/reports/balance-sheet/csv?as_of_date=2026-06-30").text
     assert "Prior year" not in plain
+
+
+def test_a_fall_in_the_csv_is_a_number_not_guarded_text():
+    """2.26.0 gate, W-29 / NEW-171: a falling % Change was written '-12.3%
+    (the formula guard's apostrophe on a text cell) while a rise was 62.8%."""
+    import csv
+    import io
+
+    from app.services.ledger_exports import _SafeWriter, _cmp_cells
+
+    buf = io.StringIO()
+    _SafeWriter(buf).writerow(["Rent"] + _cmp_cells(87.70, 100, True, True))
+    _SafeWriter(buf).writerow(["Sales"] + _cmp_cells(162.80, 100, True, True))
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[0] == ["Rent", "87.70", "100.00", "-12.30", "-12.3%"]
+    assert rows[1] == ["Sales", "162.80", "100.00", "62.80", "62.8%"]

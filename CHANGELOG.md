@@ -137,6 +137,9 @@ contend with a concurrent edit of the same accounts, which the database resolves
 by failing one of them. NULL balances are coalesced to zero, and in-session
 Account objects are refreshed so a response built in the same request reflects
 the new balance. Behaviour is unchanged on SQLite. Found in MorrisAEGIS's fork (arkcpa-slowbooks).
+The Audit Log no longer lists an account row for each balance a posting
+moves (a change of `balance` alone); the posting's own lines, which are what
+moved it, are recorded as before.
 
 **Reverse-proxy client IP and shared rate-limit counters** (fix). Behind a
 TLS-terminating reverse proxy the app saw the proxy's address on every request
