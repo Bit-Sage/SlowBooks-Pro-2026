@@ -34,7 +34,8 @@ accounts Other Expense. A sub-account left at the default shares its
 parent's only where that keeps it current or non-current as the cash flow
 had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
 stays current), so no figure moves between working capital, investing and
-financing. The statements below print by it, so after
+financing; the one exception is 2000 or 2200 renamed like a loan, a control
+account whose detail type stays Other Current Liability. The statements below print by it, so after
 upgrading, open Chart of Accounts and check the detail type of any loan,
 vehicle, equipment or long-term note; a line of credit kept in a loan
 account, for one, is current.
