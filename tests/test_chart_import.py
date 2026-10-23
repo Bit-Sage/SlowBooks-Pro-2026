@@ -312,7 +312,7 @@ def test_a_parent_segment_named_like_a_control_account_becomes_it_and_the_import
 
     text = (FIX / "accounts.txt").read_text(encoding="utf-8")
     plan = _upload(client, text).json()
-    control_names = {name.lower() for name, _ in CONTROL_ACCOUNTS.values()}
+    control_names = {entry[0].lower() for entry in CONTROL_ACCOUNTS.values()}
     twins = [
         r
         for r in plan["rows"]
@@ -381,3 +381,40 @@ def test_the_control_registry_is_fifteen_accounts():
 
     assert len(CONTROL_ACCOUNTS) == 15
     assert "3200" in CONTROL_ACCOUNTS
+
+
+def test_csv_import_refuses_a_foreign_account_on_a_reserved_number(
+    client, db_session, seed_accounts
+):
+    """The review's hole: `/api/csv/import/accounts` had no reserved-number
+    guard, so a `5900,Marketing Promotions,expense` row created 5900 under a
+    foreign name and every inventory write-off then posted there. The new-row
+    path now refuses it, the dry run shows the refusal, and apply creates
+    nothing. 5900 is on demand, so the slot is empty on a seeded chart."""
+    text = "Number,Name,Type\n5900,Marketing Promotions,expense\n"
+
+    out = _upload(client, text, dry_run=1).json()
+    row = next(x for x in out["rows"] if x["name"] == "Marketing Promotions")
+    assert row["action"] == "error"
+    assert "5900" in row["note"] and "reserved" in row["note"].lower()
+    assert out["row_errors"] >= 1
+    assert "5900" not in _by_number(db_session)
+
+    out = _upload(client, text, dry_run=0).json()
+    assert out["dry_run"] is False
+    assert "5900" not in _by_number(db_session)
+
+
+def test_csv_import_restores_the_control_account_itself(
+    client, db_session, seed_accounts
+):
+    """The guard refuses a FOREIGN account only: a row that IS the control
+    account — the registry's name and expected type — restores the empty
+    slot, the same exception the API's New Account form allows."""
+    text = "Number,Name,Type\n5900,Inventory Adjustments,expense\n"
+    out = _upload(client, text, dry_run=0).json()
+    assert out["row_errors"] == 0
+    created = _by_number(db_session)
+    assert "5900" in created
+    assert created["5900"].name == "Inventory Adjustments"
+    assert created["5900"].account_type.value == "expense"

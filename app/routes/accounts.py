@@ -61,7 +61,7 @@ def _check_account_number(number) -> None:
         )
 
 
-def _reject_reserved_number(number, name=None) -> None:
+def _reject_reserved_number(number, name=None, account_type=None) -> None:
     """A new or renumbered account may not land on a control-account number.
 
     The posting code resolves the control accounts BY NUMBER (see
@@ -73,24 +73,19 @@ def _reject_reserved_number(number, name=None) -> None:
     refuses a second account; this guard also covers the slot being empty on a
     hand-built chart. The control accounts themselves are created by the system
     paths (seeding, chart import, importers, ensure_account), none of which go
-    through this route, so only the user-facing form is guarded."""
-    if not number or not control_accounts.is_control_number(number):
+    through this route, so only the user-facing form is guarded.
+
+    Restoring the control account itself — the registry's exact name AND its
+    expected type, as MissingControlAccount tells the operator to — is allowed
+    while the slot is empty. A right name with the wrong type is a 400 (fix the
+    type); a foreign name is a 409 (the number is reserved)."""
+    reason = control_accounts.restore_conflict(number, name, account_type)
+    if not reason:
         return
-    control_name, purpose = control_accounts.describe(number)
-    # Restoring the control account itself, as MissingControlAccount tells
-    # the operator to (that exact number and name, with the slot empty), is
-    # allowed; the duplicate check has already refused an occupied slot.
-    if name and name.strip().casefold() == control_name.casefold():
-        return
-    name = control_name
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            f"Account number {number} is reserved for {name} — the software "
-            f"posts to it by number for {purpose}, so another account cannot "
-            f"use it. Choose a different number."
-        ),
-    )
+    # The right-name/wrong-type message names the type to set; a foreign-name
+    # collision is a 409 against the number itself.
+    status = 400 if "must be a" in reason else 409
+    raise HTTPException(status_code=status, detail=reason)
 
 
 _BANK_KIND_FOR_TYPE = {"bank": "asset", "credit_card": "liability"}
@@ -257,8 +252,17 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_bank_kind(data.bank_kind, data.account_type)
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
-    _reject_reserved_number(data.account_number, data.name)
+    _reject_reserved_number(data.account_number, data.name, data.account_type)
     account = Account(**data.model_dump())
+    # Restoring a SEEDED control account (the guard above let it through as
+    # the registry's name and type) brings it back is_system=True, as the seed
+    # creates it — otherwise the same account differs from a fresh company's.
+    # 4800 and 5900 are not seeded, so they restore is_system=False, unchanged.
+    if (
+        control_accounts.is_control(account.account_number, account.account_type)
+        and account.account_number in control_accounts.seeded_numbers()
+    ):
+        account.is_system = True
     db.add(account)
     try:
         db.commit()

@@ -454,3 +454,76 @@ def test_restoring_a_missing_control_account_by_its_number_and_name_works(
     )
     assert r.status_code == 201, r.text
     assert r.json()["account_number"] == "5900"
+
+
+def test_restoring_with_the_right_name_but_wrong_type_is_refused(client, seed_accounts):
+    """The restore exception requires the registry's TYPE as well as the name:
+    the posting code finds the control account by number AND type, so a right
+    name with the wrong type is refused (400) and names the type to set.
+    Otherwise 'inventory adjustments' as income would resolve as the 5900 every
+    write-off posts to."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "inventory adjustments",  # case-insensitive name match
+            "account_number": "5900",
+            "account_type": "income",
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert "5900" in r.json()["detail"] and "expense" in r.json()["detail"]
+
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Late Fee Income",
+            "account_number": "4800",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert "4800" in r.json()["detail"] and "income" in r.json()["detail"]
+
+
+def test_a_restored_control_account_matches_the_seed_is_system(
+    client, db_session, seed_accounts
+):
+    """A restored control account comes back is_system to match the seed —
+    but only where the seed actually creates it. 5900 is on-demand (not
+    seeded), so it stays is_system=False; 1100 is seeded, so it restores
+    is_system=True and is identical to a fresh company's."""
+    from app.models.accounts import Account
+
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Inventory Adjustments",
+            "account_number": "5900",
+            "account_type": "expense",
+        },
+    )
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    on_demand = (
+        db_session.query(Account).filter(Account.account_number == "5900").first()
+    )
+    assert on_demand.is_system is False
+
+    # Empty a SEEDED control-account slot at the DB level — the delete route
+    # refuses a control account — then restore it through New Account.
+    db_session.delete(seed_accounts["1100"])
+    db_session.commit()
+    r = client.post(
+        "/api/accounts",
+        json={
+            "name": "Accounts Receivable",
+            "account_number": "1100",
+            "account_type": "asset",
+        },
+    )
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    restored = (
+        db_session.query(Account).filter(Account.account_number == "1100").first()
+    )
+    assert restored.is_system is True
