@@ -18,9 +18,10 @@ the way the bank register does (reusing `payees_for`): a bill's or
 expense's vendor, else the payee read off a bank entry, check or card
 charge — so an IIF card charge with no "CC Charge:" prefix reads the same
 in both places; a journal entry has none. `GET /api/reclassify/lines`
-takes `vendor_id`, matched as a case-insensitive substring of a row's
-payee (so bank-feed spellings like `HOME DEPOT #4521 JOLIET IL` and check
-memos like `Check 1042 - Home Depot` come along with vendor "Home Depot"),
+takes `vendor_id`, matched as whole words anywhere in a row's payee,
+ignoring case (so bank-feed spellings like `HOME DEPOT #4521 JOLIET IL` and check
+memos like `Check 1042 - Home Depot` come along with vendor "Home Depot", while vendor "Ace" doesn't take
+"Space Coast Supply"),
 and `payee`, a case-insensitive part of the name; each row carries
 `vendor_id` and `payee`.
 

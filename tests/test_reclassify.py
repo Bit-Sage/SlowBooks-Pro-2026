@@ -564,3 +564,22 @@ def test_the_report_center_offers_the_tool_and_the_page_keeps_it_open_to_the_acc
     assert "ReportsPage.setParam('payee', this.value.trim())" in src
     assert "params.payee = p.payee" in src
     assert "&payee=${encodeURIComponent(payeeText)}" in src
+
+
+def test_a_vendor_name_inside_another_word_does_not_match(
+    client, db_session, seed_accounts
+):
+    """The spelling match is whole words: vendor "Ace" must not take the
+    lines of "Space Coast Supply" or "Acer" into a move."""
+    accounts = seed_accounts
+    ace = _ok(client.post("/api/vendors", json={"name": "Ace"}))["id"]
+    _bank_entry_payee(client, accounts, "6900", "-21.00", "ACE HARDWARE #12")
+    _bank_entry_payee(client, accounts, "6900", "-22.00", "Space Coast Supply")
+    _bank_entry_payee(client, accounts, "6900", "-23.00", "Acer Store")
+    found = _ok(
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&vendor_id={ace}"
+        )
+    )
+    assert [ln["payee"] for ln in found["lines"]] == ["ACE HARDWARE #12"]

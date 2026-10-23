@@ -36,6 +36,7 @@ name alone.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -368,12 +369,15 @@ def lines_on_account(
         # a contains match on the resolved payee, so the bank-feed spelling
         # (HOME DEPOT #4521 JOLIET IL), an IIF check memo (Home Depot —
         # lumber) and a QB report check (Check 1042 - Home Depot) all come
-        # along with vendor "Home Depot", not the exact name alone
-        wanted_name = vendor.name.casefold()
+        # along with vendor "Home Depot", not the exact name alone. Whole
+        # words only, so vendor "Ace" doesn't take "Space Coast Supply"'s.
+        wanted = re.compile(
+            r"(?<!\w)" + re.escape(vendor.name.strip()) + r"(?!\w)", re.IGNORECASE
+        )
         out = [
             ln
             for ln in out
-            if ln["vendor_id"] == vendor.id or wanted_name in ln["payee"].casefold()
+            if ln["vendor_id"] == vendor.id or wanted.search(ln["payee"] or "")
         ]
     if payee:
         out = [ln for ln in out if payee.casefold() in ln["payee"].casefold()]
