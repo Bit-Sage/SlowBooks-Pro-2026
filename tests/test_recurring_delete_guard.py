@@ -1,7 +1,9 @@
-"""A recurring template that has made invoices is ended, not deleted.
+"""A recurring template that has made invoices cannot be deleted.
 
 Deleting one answered 200 and left its invoices pointing at a template that
 no longer existed (found in PNWImport's fork, SlowBooks-Pro-Testing#101).
+Nothing ends on the delete: it is a 409 and the schedule keeps billing until
+the user sets an End Date (stop) or clears Active (pause).
 """
 
 from app.models.invoices import Invoice
@@ -36,9 +38,9 @@ def test_a_template_that_made_an_invoice_is_not_deleted(
 
     assert r.status_code == 409
     assert r.json()["detail"] == (
-        "This recurring invoice has made 1 invoice, so it cannot be deleted. "
-        "End it instead: edit it and clear Active, or set an End Date, and it "
-        "makes no more."
+        "This recurring invoice has made 1 invoice, so it cannot be deleted, "
+        "and it keeps billing until you act. Set an End Date to stop it for "
+        "good, or clear Active to pause it."
     )
     db_session.expire_all()
     assert db_session.get(RecurringInvoice, rec_id) is not None

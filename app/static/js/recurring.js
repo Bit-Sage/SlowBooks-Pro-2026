@@ -189,7 +189,9 @@ const RecurringPage = {
             class_id: classIdFromForm(form),
             lines,
         };
-        // Clearing Active ends a schedule that has made invoices (it cannot be deleted).
+        // Active pauses a schedule that has made invoices (it cannot be deleted);
+        // an End Date stops it for good. Re-ticking Active skips the missed
+        // periods rather than back-dating them.
         if (id) data.is_active = form.is_active.checked;
         if (!id) {
             data.customer_id = parseInt(form.customer_id.value);

@@ -77,6 +77,13 @@ actual and variance for the grant while the fund reports show restriction.
 - **A pledge that will never be paid** — **Write Off** on the pledge row.
   It posts a credit memo to Bad Debt Expense and applies it at once. Void
   the credit memo to undo.
+- **A recurring pledge that should stop** — set its **End Date**. That is
+  what ends a pledge and what the pledge report counts; clearing **Active**
+  only pauses it (the report still shows the full promise). A recurring
+  pledge that has already generated installments can't be deleted (its
+  pledges would be left orphaned) — set the End Date instead. Re-ticking
+  Active after a pause resumes from today and skips the paused months rather
+  than back-dating a pledge for each one.
 - **Property** — an **In-Kind Gift**: each line names what the property is
   (an asset or expense account) and the donor's estimate of its value. The
   credit is In-Kind Contributions. The acknowledgment describes the
