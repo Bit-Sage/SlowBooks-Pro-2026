@@ -37,6 +37,7 @@ const ReportsPage = {
         'budget-vs-actual':     { label: 'Budget vs Actual',   open: (p) => { if (/^\d{4}$/.test(p.year || '')) BudgetsPage._year = parseInt(p.year, 10); return BudgetsPage.showVariance(p); } },
         'financial-statements': { label: 'Financial Statements Pack', open: (p) => ReportsPage.financialStatementsPdf(p) },
         'fixed-asset-reconciliation': { label: 'Fixed Asset Reconciliation', open: () => ReportsPage.fixedAssetReconciliation() },
+        'reconciliation-reports': { label: 'Reconciliation Reports', open: () => ReportsPage.reconciliationReports() },
         'customer-statement':   { label: () => T('Customer Statement'), open: () => ReportsPage.customerStatementPicker() },
         '1099-summary':         { label: '1099 Summary',       open: (p) => ReportsPage.report1099(p) },
         'statement-of-financial-position': { label: 'Statement of Financial Position', open: (p) => ReportsPage.statementOfFinancialPosition(p), asOf: true },
@@ -335,35 +336,92 @@ const ReportsPage = {
             }
         } catch (e) { /* render anyway */ }
 
-        const card = ReportsPage._card;
+        // The pinned cards (#395): the preference report_center_pins, read
+        // beside the saved reports; none, or a failed read, is the fixed
+        // order. A name no view has (a nonprofit's, in a business) is left out.
+        ReportsPage._pins = [];
+        try {
+            const pref = await API.get('/preferences/report_center_pins');
+            const pinned = pref && pref.value && pref.value.pinned;
+            if (Array.isArray(pinned)) ReportsPage._pins = pinned.filter(v => typeof v === 'string' && ReportsPage._view(v));
+        } catch (e) { /* the fixed order */ }
+
         return `
             <div class="page-header"><h2>Reports</h2></div>
             ${savedHtml}
-            <div class="card-grid">
-                ${Terms.isNonprofit() ? ReportsPage._nonprofitCards() : card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))}
-                ${card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class'))}
-                ${card('profit-loss-unclassified', `${T('P&L')} Unclassified`, Terms.text('Income and expenses with no class yet — the end-of-month cleanup list'))}
-                ${card('job-budget-vs-actual', T('Job Budget vs Actual'), Terms.text('Budget, committed, actual, projected, variance per job'))}
-                ${card('job-profitability', T('Job Profitability'), Terms.text('Income, costs and margin per job'))}
-                ${card('profit-loss-by-job', `${T('P&L')} by ${T('Job')}`, Terms.text('Every account down the side, a column per job'))}
-                ${card('financial-statements', 'Financial Statements Pack (PDF)', Terms.text('Profit & Loss + Balance Sheet + Trial Balance, one audit-ready PDF'))}
-                ${card('fixed-asset-reconciliation', 'Fixed Asset Reconciliation', 'Register totals vs GL by asset type')}
-                ${Terms.isNonprofit() ? '' : card('balance-sheet', T('Balance Sheet'), Terms.text('Assets, liabilities, and equity'))}
-                ${card('ar-aging', T('A/R Aging'), 'Outstanding receivables by age')}
-                ${card('ap-aging', 'A/P Aging', 'Outstanding payables by age')}
-                ${card('sales-tax', 'Sales Tax', 'Tax collected by invoice')}
-                ${card('general-ledger', 'General Ledger', 'All journal entries by account')}
-                ${card('income-by-customer', T('Income by Customer'), Terms.isNonprofit() ? 'Contribution totals per donor' : 'Sales totals per customer')}
-                ${card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF'))}
-                ${card('trial-balance', 'Trial Balance', 'Debits and credits by account')}
-                ${card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each')}
-                ${card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after')}
-                ${card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log')}
-                ${card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change')}
-                ${card('cash-flow', 'Cash Flow', 'Operating, investing, financing')}
-                ${card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing')}
-                ${card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis')}
-            </div>`;
+            <div class="card-grid">${ReportsPage._cardGrid()}</div>`;
+    },
+
+    // The views pinned to the top of the grid, in the order they were pinned
+    // (render reads them; togglePin writes them).
+    _pins: [],
+
+    // The Report Center's cards in their fixed order, each as its view and
+    // its html (ReportsPage._pick): the nonprofit's own statements lead in
+    // place of the P&L and Balance Sheet.
+    _cards() {
+        const card = ReportsPage._pick;
+        return [
+            ...(Terms.isNonprofit() ? ReportsPage._nonprofitCards() : [card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))]),
+            card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class')),
+            card('profit-loss-unclassified', `${T('P&L')} Unclassified`, Terms.text('Income and expenses with no class yet — the end-of-month cleanup list')),
+            card('job-budget-vs-actual', T('Job Budget vs Actual'), Terms.text('Budget, committed, actual, projected, variance per job')),
+            card('job-profitability', T('Job Profitability'), Terms.text('Income, costs and margin per job')),
+            card('profit-loss-by-job', `${T('P&L')} by ${T('Job')}`, Terms.text('Every account down the side, a column per job')),
+            card('financial-statements', 'Financial Statements Pack (PDF)', Terms.text('Profit & Loss + Balance Sheet + Trial Balance, one audit-ready PDF')),
+            card('fixed-asset-reconciliation', 'Fixed Asset Reconciliation', 'Register totals vs GL by asset type'),
+            card('reconciliation-reports', 'Reconciliation Reports', 'Each completed bank reconciliation by account and statement date, on screen or as PDF'),
+            ...(Terms.isNonprofit() ? [] : [card('balance-sheet', T('Balance Sheet'), Terms.text('Assets, liabilities, and equity'))]),
+            card('ar-aging', T('A/R Aging'), 'Outstanding receivables by age'),
+            card('ap-aging', 'A/P Aging', 'Outstanding payables by age'),
+            card('sales-tax', 'Sales Tax', 'Tax collected by invoice'),
+            card('general-ledger', 'General Ledger', 'All journal entries by account'),
+            card('income-by-customer', T('Income by Customer'), Terms.isNonprofit() ? 'Contribution totals per donor' : 'Sales totals per customer'),
+            card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF')),
+            card('trial-balance', 'Trial Balance', 'Debits and credits by account'),
+            card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each'),
+            card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after'),
+            card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log'),
+            card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change'),
+            card('cash-flow', 'Cash Flow', 'Operating, investing, financing'),
+            card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
+            card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
+        ];
+    },
+
+    // A card and its view, for arranging; the html is ReportsPage._card's.
+    _pick(view, title, text) {
+        return { view, html: ReportsPage._card(view, title, text) };
+    },
+
+    // The grid: the pinned cards first, in the order they were pinned, then
+    // the rest in their fixed order (#395).
+    _cardGrid() {
+        const cards = ReportsPage._cards();
+        const pinned = ReportsPage._pins.map(v => cards.find(c => c.view === v)).filter(Boolean);
+        return [...pinned, ...cards.filter(c => !pinned.includes(c))].map(c => c.html).join('');
+    },
+
+    // Pin or unpin a card (#395): the list is saved as the preference
+    // report_center_pins ({ pinned: [view, …] }), the grid redrawn with
+    // focus back on the same star. A refused save (a read-only role: the
+    // star is data-write, hidden for one, and the server refuses the PUT)
+    // puts the list back and says so.
+    async togglePin(view) {
+        const was = ReportsPage._pins.slice();
+        ReportsPage._pins = was.includes(view) ? was.filter(v => v !== view) : [...was, view];
+        try {
+            await API.put('/preferences/report_center_pins', { value: { pinned: ReportsPage._pins } });
+        } catch (err) {
+            ReportsPage._pins = was;
+            toast(err.message, 'error');
+            return;
+        }
+        const grid = document.querySelector('#page-content .card-grid');
+        if (!grid) return;
+        grid.innerHTML = ReportsPage._cardGrid();
+        const star = grid.querySelector(`.card-pin[data-pin="${view}"]`);
+        if (star) star.focus();
     },
 
     // A report's card on the Report Center. The cards were a <div> with a
@@ -374,15 +432,24 @@ const ReportsPage = {
     // written (the heading's capitals are the stylesheet's, and reached the
     // name), the line under it its description; and its key, noted on its
     // click (ReportsPage._leaveFrom), puts focus back on it when Back
-    // returns here. It looks as the card did (.card-link).
+    // returns here. It looks as the card did (.card-link). Its pin (#395)
+    // is a star beside the link, not in it (a button in a link is neither):
+    // a toggle button, named for the card, pressed while pinned, reached by
+    // Tab after the card; the next Tab is the next card.
     _card(view, title, text) {
         const id = `report-card-${view}`;
-        return `<a class="card card-link" href="${ReportsPage.viewUrl(view, {})}" data-row-key="report:${view}"
+        const pinned = ReportsPage._pins.includes(view);
+        return `<div class="card-slot">
+                <a class="card card-link" href="${ReportsPage.viewUrl(view, {})}" data-row-key="report:${view}"
                     aria-label="${escapeHtml(title)}" aria-describedby="${id}-text"
                     onclick="ReportsPage._leaveFrom(this)" onkeydown="ReportsPage._cardKey(event)">
                     <div class="card-header">${title}</div>
                     <p id="${id}-text" style="font-size:13px; color:var(--gray-500);">${text}</p>
-                </a>`;
+                </a>
+                <button type="button" class="card-pin" data-write data-pin="${view}" aria-pressed="${pinned}"
+                    aria-label="Pin ${escapeHtml(title)}" title="${pinned ? 'Unpin' : 'Pin to the top'}"
+                    onclick="ReportsPage.togglePin('${view}')">${pinned ? '★' : '☆'}</button>
+            </div>`;
     },
 
     // Space on a card opens it, as Enter does (a link takes Enter alone).
@@ -2554,6 +2621,34 @@ ReportsPage.fixedAssetReconciliation = async function () {
         </div>`);
 };
 
+// Reconciliation Reports (#395): every completed bank reconciliation, by
+// account and statement date, each to its on-screen report (Banking's) or
+// its PDF. Nothing is made here: a list over GET /banking/reconciliations.
+ReportsPage.reconciliationReports = async function () {
+    ReportsPage.setAddress('reconciliation-reports', {});
+    const rows = await API.get('/banking/reconciliations?status=completed');
+    rows.sort((a, b) => (a.account_name || '').localeCompare(b.account_name || '')
+        || String(b.statement_date).localeCompare(String(a.statement_date)));
+    const body = rows.length ? `<div class="table-container"><table>
+        <thead><tr><th scope="col">Account</th><th scope="col">Statement date</th>
+            <th scope="col" class="amount">Statement balance</th><th scope="col" class="amount">Cleared</th>
+            <th scope="col">Completed</th><th scope="col">Actions</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+            <td>${escapeHtml(r.account_name || '')}</td>
+            <td>${formatDate(r.statement_date)}</td>
+            <td class="amount">${formatCurrency(r.statement_balance)}</td>
+            <td class="amount">${r.cleared_total === null ? '' : formatCurrency(r.cleared_total)}</td>
+            <td>${r.completed_at ? formatDate(r.completed_at) : ''}</td>
+            <td class="actions" style="white-space:nowrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.showReconReport(${r.id}, ReportsPage.reconciliationReports)">View</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="window.open('/api/banking/reconciliations/${r.id}/pdf', '_blank')">Save PDF</button>
+            </td>
+        </tr>`).join('')}</tbody></table></div>`
+        : '<p>No completed reconciliations yet. Finish one from Banking → Reconcile and it is listed here.</p>';
+    openModal('Reconciliation Reports', `${body}
+        <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button></div>`);
+};
+
 // Financial statements pack — one PDF with P&L, Balance Sheet, Trial Balance.
 ReportsPage.financialStatementsPdf = async function (prefill) {
     await ReportsPage.openPeriodModal("Financial Statements Pack", "this_year_to_date", async (_period, range) => {
@@ -2676,14 +2771,15 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
 // P&L / balance sheet (the server computes both from the same lines).
 // ---------------------------------------------------------------------------
 ReportsPage._nonprofitCards = function () {
-    const card = ReportsPage._card;
-    return `
-        ${card('statement-of-activities', 'Statement of Activities', 'Revenue, releases and expenses, with and without donor restrictions')}
-        ${card('statement-of-financial-position', 'Statement of Financial Position', 'Assets, liabilities, and net assets by restriction')}
-        ${card('fund-balances', 'Fund Balances', 'Each restricted fund: beginning, contributions, spent, released, ending')}
-        ${card('functional-expenses', 'Statement of Functional Expenses', 'Program / management / fundraising by expense account (Form 990 Part IX)')}
-        ${card('pledges', 'Pledge Report', 'Promised, received, written off and outstanding by donor and campaign')}
-        ${card('giving-statements', 'Year-End Giving Statements', 'One statement per donor for the tax year — print the stack or email them all')}`;
+    const card = ReportsPage._pick;
+    return [
+        card('statement-of-activities', 'Statement of Activities', 'Revenue, releases and expenses, with and without donor restrictions'),
+        card('statement-of-financial-position', 'Statement of Financial Position', 'Assets, liabilities, and net assets by restriction'),
+        card('fund-balances', 'Fund Balances', 'Each restricted fund: beginning, contributions, spent, released, ending'),
+        card('functional-expenses', 'Statement of Functional Expenses', 'Program / management / fundraising by expense account (Form 990 Part IX)'),
+        card('pledges', 'Pledge Report', 'Promised, received, written off and outstanding by donor and campaign'),
+        card('giving-statements', 'Year-End Giving Statements', 'One statement per donor for the tax year — print the stack or email them all'),
+    ];
 };
 
 ReportsPage.givingStatements = function (prefill) {

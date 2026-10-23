@@ -174,6 +174,7 @@ class ReconciliationUpdate(StrictModel):
 class ReconciliationResponse(BaseModel):
     id: int
     account_id: Optional[int]
+    account_name: Optional[str] = None
     bank_account_id: Optional[int]
     statement_date: dt_date
     statement_balance: Decimal

@@ -1254,3 +1254,55 @@ def test_the_apps_own_moves_keep_the_address_and_bring_the_page_back(
         assert not page.evaluate("() => document.getElementById('back-btn').disabled")
     finally:
         page.close()
+
+
+# ── #395: a pinned card is first, and stays so after a reload ──────────────
+
+PIN = '#page-content .card-pin[data-pin="ap-aging"]'
+FIRST_CARD = "() => document.querySelector('#page-content a.card-link').dataset.rowKey"
+
+
+def test_a_pinned_card_leads_the_report_center_and_a_reload_keeps_it(
+    browser, company, books
+):
+    """The star on A/P Aging pins it: pressed, the card first on the grid;
+    the pins are a preference (report_center_pins), so a fresh document
+    at #/reports still leads with it; the star again unpins it."""
+    page = _open_at(browser, company, "#/reports")[0]
+    try:
+        assert page.evaluate(FIRST_CARD) != "report:ap-aging"
+        assert page.get_attribute(PIN, "aria-pressed") == "false"
+        page.click(PIN)
+        page.wait_for_function(f"() => ({FIRST_CARD})() === 'report:ap-aging'")
+        assert page.get_attribute(PIN, "aria-pressed") == "true"
+        assert page.evaluate("() => document.activeElement.dataset.pin") == "ap-aging"
+    finally:
+        page.close()
+    page = _open_at(browser, company, "#/reports")[0]
+    try:
+        assert page.evaluate(FIRST_CARD) == "report:ap-aging"
+        page.click(PIN)
+        page.wait_for_function(f"() => ({FIRST_CARD})() !== 'report:ap-aging'")
+        assert page.get_attribute(PIN, "aria-pressed") == "false"
+    finally:
+        page.close()
+
+
+def test_close_from_a_viewed_reconciliation_returns_to_the_card_list(
+    browser, company, books
+):
+    """View on the Reconciliation Reports card opens a report in place of the
+    list; Close goes back to the list (#395 review), not past it to the
+    Report Center. The bakery has one completed reconciliation."""
+    page = _open_at(browser, company, "#/reports/reconciliation-reports")[0]
+    try:
+        page.wait_for_function(f"() => ({TITLE})() === 'Reconciliation Reports'")
+        page.click("#modal-overlay button:has-text('View')")
+        page.wait_for_function(
+            f"() => ({TITLE})().startsWith('Reconciliation \\u2014')"
+        )
+        page.click("#modal-overlay .form-actions button:has-text('Close')")
+        page.wait_for_function(f"() => ({TITLE})() === 'Reconciliation Reports'")
+        assert page.evaluate(MODAL_SHOWN)
+    finally:
+        page.close()

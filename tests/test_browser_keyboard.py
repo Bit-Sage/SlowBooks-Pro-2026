@@ -3321,6 +3321,7 @@ CARD_LIST = f"""() => {CARDS}.map(a => ({{ key: a.dataset.rowKey, href: a.getAtt
     title: a.querySelector('.card-header').textContent.trim(),
     text: a.querySelector('p').textContent.trim() }}))"""
 FOCUS_KEY = "() => document.activeElement && document.activeElement.dataset.rowKey"
+ON_PIN = "() => !!document.activeElement && document.activeElement.matches('.card-pin')"
 # A card whose report puts another view's address in place of its own: the
 # Unclassified P&L is the default class's P&L
 OPENS_AT = {"report:profit-loss-unclassified": "#/reports/profit-loss-class"}
@@ -3349,16 +3350,20 @@ def _ax(page, selector):
 
 
 def _cards_by_keyboard(page, handled, cards, opened=None, home="#/reports"):
-    """Tab reaches every card in turn; Enter on each (those in `opened`, or
-    all) opens what it links to — a report over the Report Center at its
-    view's address (or the one it puts in place of it, OPENS_AT), or a page
-    — and Back returns to `home` with focus on the card."""
+    """Tab reaches every card in turn (each Report Center card's pin, a
+    star reached right after it, #395, is stepped over); Enter on each
+    (those in `opened`, or all) opens what it links to — a report over the
+    Report Center at its view's address (or the one it puts in place of
+    it, OPENS_AT), or a page — and Back returns to `home` with focus on
+    the card."""
     first = f'#page-content a[data-row-key="{cards[0]["key"]}"]'
     page.focus(first)
     page.keyboard.press("Shift+Tab")
     walked = []
     for _ in cards:
         page.keyboard.press("Tab")
+        if page.evaluate(ON_PIN):
+            page.keyboard.press("Tab")
         walked.append(page.evaluate(FOCUS_KEY))
     assert walked == [c["key"] for c in cards], walked
     assert page.evaluate("() => document.activeElement.matches(':focus-visible')")
@@ -3407,8 +3412,8 @@ def test_every_report_center_card_is_reached_and_opened_by_the_keyboard(
         _visit(page, handled, "#/reports")
         cards = page.evaluate(CARD_LIST)
         assert (
-            len(cards) == 23
-        ), cards  # 2.24.0: four accountant's cards (#341–#343, #337)
+            len(cards) == 24
+        ), cards  # 2.24.0: four accountant's cards (#341–#343, #337); #395: one
         for c in cards:
             view = c["key"].split(":", 1)[1]
             assert c["href"] == f"#/reports/{view}", c
