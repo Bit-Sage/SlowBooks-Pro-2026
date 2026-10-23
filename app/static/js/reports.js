@@ -1415,9 +1415,9 @@ const ReportsPage = {
     async arAging(prefill) {
         await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params, who) => {
             const data = await API.get(`/reports/ar-aging?as_of_date=${params.as_of_date}`);
-            // Save CSV writes the file the Accountant's Package carries (#393);
-            // opened from a customer's page, that customer's row only.
-            const csvQs = `as_of_date=${params.as_of_date}${who.customer_id ? `&customer_id=${who.customer_id}` : ''}`;
+            // Save CSV writes the file the Accountant's Package carries (#393):
+            // the whole company, as the screen shows it.
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // The API nets a customer's credits (unapplied payments and
             // credit memos) into Current; show Current gross and the
             // credits on their own, so the row still adds up to Total and
@@ -1469,7 +1469,7 @@ const ReportsPage = {
     async apAging(prefill) {
         await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params, who) => {
             const data = await API.get(`/reports/ap-aging?as_of_date=${params.as_of_date}`);
-            const csvQs = `as_of_date=${params.as_of_date}${who.vendor_id ? `&vendor_id=${who.vendor_id}` : ''}`;
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // A vendor's name opens the vendor's page (R9)
             let rows = data.items.map(i =>
                 `<tr>

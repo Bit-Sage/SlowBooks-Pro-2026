@@ -138,35 +138,32 @@ def test_ap_aging_saves_the_package_file(client, seed_accounts, db_session):
     )
 
 
-def test_opened_from_a_customer_or_vendor_page_the_file_is_theirs(
+def test_opened_from_a_customer_or_vendor_page_the_file_is_the_whole_company(
     client, seed_accounts, db_session, customers
 ):
+    # The screen shows the whole company with that row highlighted, so the
+    # file is the same: no narrowing, no party in the file name.
     acme, muller = customers
     _invoice(client, acme, 400)
     _invoice(client, muller, 935)
+    whole = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}")
     r = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}&customer_id={acme}")
-    assert r.headers["content-disposition"].endswith(
-        f"filename=ar-aging_2026-09-30_customer-{acme}.csv"
-    )
-    rows = rows_of(r.text.lstrip(BOM))
-    assert [row[0] for row in rows] == ["Customer", "Acme Diner", "Total"]
-    assert rows[2][1:] == rows[1][1:]  # the total is that customer's figures
+    assert r.text == whole.text
+    assert r.headers["content-disposition"].endswith("filename=ar-aging_2026-09-30.csv")
+    names = [row[0] for row in rows_of(r.text.lstrip(BOM))]
+    assert names[0] == "Customer" and names[-1] == "Total"
+    assert "Acme Diner" in names and len(names) > 3
 
     cascade = _bill(db_session, "Cascade Flour Mill", "777.24", 75)
     _bill(db_session, "Puget Dairy", "120.00", 10)
+    whole = _csv(client, f"/api/reports/ap-aging/csv?as_of_date={AS_OF}")
     r = _csv(
         client, f"/api/reports/ap-aging/csv?as_of_date={AS_OF}&vendor_id={cascade}"
     )
-    assert r.headers["content-disposition"].endswith(
-        f"filename=ap-aging_2026-09-30_vendor-{cascade}.csv"
-    )
-    rows = rows_of(r.text.lstrip(BOM))
-    assert [row[0] for row in rows] == ["Vendor", "Cascade Flour Mill", "Total"]
-    assert rows[2] == ["Total", "0.00", "0.00", "777.24", "0.00", "777.24"]
-
-    # a customer who owes nothing: a file of zeros, not an error
-    r = _csv(client, f"/api/reports/ar-aging/csv?as_of_date={AS_OF}&customer_id=9999")
-    assert rows_of(r.text.lstrip(BOM)) == [AR_HEAD, ["Total"] + ["0.00"] * 6]
+    assert r.text == whole.text
+    assert r.headers["content-disposition"].endswith("filename=ap-aging_2026-09-30.csv")
+    names = [row[0] for row in rows_of(r.text.lstrip(BOM))]
+    assert "Cascade Flour Mill" in names and "Puget Dairy" in names
 
 
 def test_the_desktop_shell_gets_the_file_inline(client, seed_accounts):
@@ -188,5 +185,14 @@ def test_both_reports_offer_save_csv():
     js = (ROOT / "app/static/js/reports.js").read_text(encoding="utf-8")
     assert "ReportsPage._exportButtons('ar-aging', csvQs, ['csv'])" in js
     assert "ReportsPage._exportButtons('ap-aging', csvQs, ['csv'])" in js
-    assert "&customer_id=${who.customer_id}" in js
-    assert "&vendor_id=${who.vendor_id}" in js
+    assert (
+        "customer_id"
+        not in js.split("async arAging")[1]
+        .split("async apAging")[0]
+        .split("csvQs =")[1]
+        .split("\n")[0]
+    )
+    assert (
+        "vendor_id"
+        not in js.split("async apAging")[1].split("csvQs =")[1].split("\n")[0]
+    )

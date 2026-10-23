@@ -558,9 +558,6 @@ def adjusting_entries_csv(data: dict, company: str) -> str:
     return out.getvalue()
 
 
-_AGING_COLS = ("current", "over_30", "over_60", "over_90", "total", "unapplied_credits")
-
-
 def aging_csv(data: dict, company: str, side: str) -> str:
     """The A/R or A/P aging as the screen shows it: a row per customer or
     vendor with the buckets and the total, then the totals row. The
@@ -602,15 +599,3 @@ def aging_csv(data: dict, company: str, side: str) -> str:
         row.append(_money(t.get("unapplied_credits")))
     w.writerow(row)
     return out.getvalue()
-
-
-def aging_of_one(data: dict, side: str, party_id: int) -> dict:
-    """The aging narrowed to one customer or vendor (the report opened from
-    their page carries their id): their row, and a totals row that is the
-    same figures. Nobody's row leaves an aging of zeros."""
-    id_key = "customer_id" if side == "ar" else "vendor_id"
-    items = [i for i in data.get("items", []) if i.get(id_key) == party_id]
-    totals = dict(data.get("totals") or {})
-    for k in _AGING_COLS:
-        totals[k] = float(sum(Decimal(str(i.get(k) or 0)) for i in items))
-    return {**data, "items": items, "totals": totals}

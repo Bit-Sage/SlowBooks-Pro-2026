@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.26.0 — Direct deposit from the page, and last year beside this one
+### v2.27.0
 
 **Save CSV on the A/R and A/P Aging reports** (from a bookkeeper's notes,
 #393). A client who asks for the aging as a spreadsheet could only have it
@@ -14,8 +14,11 @@ Each aging report has a **Save CSV** button now (`GET
 /api/reports/ar-aging/csv` and `/ap-aging/csv`, `as_of_date` as the
 screen's) that writes the file the package carries — the same preamble,
 columns and totals row, made by the one function both use, so the two
-cannot drift. Opened from a customer's or vendor's page, the file is that
-one's row and total (`customer_id` / `vendor_id`), and its name says so.
+cannot drift. It is always the whole company, as the screen is, even when
+the report was opened from a customer's or vendor's page (which only
+highlights their row).
+
+### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
 now is always one of its own, looked up by the server rather than read off

@@ -360,21 +360,17 @@ def ap_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
 def ap_aging_csv_route(
     request: Request,
     as_of_date: date = Query(default=None),
-    vendor_id: int = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """The A/P Aging as a spreadsheet (#393): the file the Accountant's
-    Package carries, on its own. With vendor_id (the report opened from
-    the vendor's page) that vendor's row and total only."""
+    Package carries, on its own. Always the whole company, as the screen
+    is (opened from a vendor's page it only highlights their row)."""
     from app.routes.csv import _csv_response
     from app.routes.reports.financial import _company_name
-    from app.services.ledger_exports import aging_csv, aging_of_one
+    from app.services.ledger_exports import aging_csv
 
     data = ap_aging_report(db, as_of_date or date.today())
     name = f"ap-aging_{data['as_of_date']}"
-    if vendor_id:
-        data = aging_of_one(data, "ap", vendor_id)
-        name += f"_vendor-{vendor_id}"
     return _csv_response(
         aging_csv(data, _company_name(db), "ap"), f"{name}.csv", request
     )
