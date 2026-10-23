@@ -285,12 +285,14 @@ def _resolve_account_name(db: Session, account_id: int) -> str:
 def _full_account_name(db: Session, acct: Account) -> str:
     """Build colon-separated parent:child account name for QB convention.
     Neutralised as text (see _iif_text): the list row and every transaction
-    that names the account go through here, so they still match."""
-    if acct.parent_id:
-        parent = db.query(Account).filter(Account.id == acct.parent_id).first()
-        if parent:
-            return _iif_text(f"{_full_account_name(db, parent)}:{acct.name}")
-    return _iif_text(acct.name)
+    that names the account go through here, so they still match. Stops at
+    a repeat, so a parent loop saved before Testing #101 can't recurse."""
+    names, seen, cur = [], set(), acct
+    while cur is not None and cur.id not in seen:
+        seen.add(cur.id)
+        names.append(cur.name)
+        cur = db.get(Account, cur.parent_id) if cur.parent_id else None
+    return _iif_text(":".join(reversed(names)))
 
 
 # ============================================================================
