@@ -275,6 +275,13 @@ made for it, and a nonprofit page unticked on a nonprofit company no longer
 comes back on the next reload. The stored setting is
 unchanged (`hidden_menu` lists the hidden items), so a list saved by an
 earlier version keeps working.
+**A bookkeeper can sync SimpleFIN again.** Since 2.26.0 saving the SimpleFIN
+mapping is an administrator's, but Sync Now and Fetch older history saved the
+mapping first for every role, so a bookkeeper's sync stopped at "Admin role
+required". A bookkeeper now sees the mapping and the Reverse signs boxes
+locked, with a sentence saying an administrator chooses them, and Sync uses
+the saved mapping. Connect and Disconnect, also an administrator's, are no
+longer offered to other roles.
 
 ### v2.28.0 — Account types and sub-accounts
 
