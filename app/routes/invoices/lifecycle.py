@@ -363,6 +363,22 @@ def _post_write_off(db: Session, inv: Invoice, when: dt_date, amount: Decimal, m
     return cm
 
 
+def _locked_invoice(db: Session, invoice_id: int):
+    """The invoice, row-locked for the read-check-write a write-off is, as
+    the payment path locks it (#501): a payment landing at the same moment
+    waits for the write-off, or the write-off for it, and reads the balance
+    the other left. Without the lock both read the same balance and the
+    later write lost the other's (A/R off by the payment). populate_existing
+    refreshes a copy already in the session. No-op lock on SQLite."""
+    return (
+        db.query(Invoice)
+        .filter(Invoice.id == invoice_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 @router.post(
     "/{invoice_id}/write-off", response_model=CreditMemoResponse, status_code=201
 )
@@ -374,7 +390,7 @@ def write_off_invoice(
     posting DR Bad Debt Expense / CR A/R and applied to the invoice at
     once. Any company, since 2.22.2 (#255); undo it by voiding the memo."""
     check_closing_date(db, data.date)
-    inv = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    inv = _locked_invoice(db, invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if inv.status == InvoiceStatus.VOID:
@@ -472,7 +488,7 @@ def write_off_batch(data: WriteOffBatchRequest, db: Session = Depends(get_db)):
 
     written, skipped = [], []
     for invoice_id in dict.fromkeys(data.invoice_ids):
-        inv = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+        inv = _locked_invoice(db, invoice_id)
         if not inv:
             skipped.append({"invoice_id": invoice_id, "reason": "not found"})
             continue

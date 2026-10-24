@@ -5,6 +5,31 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Three races between two sign-ins on PostgreSQL** (#501). Each was a
+read-then-write two people could both pass at once; SQLite, with one writer
+at a time, never saw them, and behaves as before.
+
+- **One receipt deposited twice.** Make Deposits locked the payment lines it
+  took, but read back the copies it had loaded a moment earlier, so a deposit
+  that committed while it waited for the lock went unseen and the payment was
+  deposited a second time. The locked read now refreshes them: the second
+  deposit is told the payment was deposited a moment ago (409).
+- **A write-off without a lock.** Writing off an invoice read it plainly, so a
+  payment landing at the same moment was lost: the write-off saved the balance
+  it had read, and A/R was off by the payment. The write-off (one invoice, or
+  the small-balances batch) now locks the invoice the way a payment does, so
+  each waits for the other and reads the balance it left.
+- **Duplicate bill numbers.** Enter Bill checked a vendor's invoice number with
+  a read, then saved, so two sign-ins could both save the same one. A unique
+  index on (vendor, bill number) now refuses the second, with the same 409 the
+  check gives, on a new bill and on a renumbered one. The upgrade (migration
+  `f2e3d4c5b6a7`) first renames any pair already in the books: the earliest
+  bill keeps its number and the next becomes "111 (2)", then "(3)". A purchase
+  order turned into a bill whose "BILL-…" number the vendor already has takes
+  "BILL-…-2".
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
