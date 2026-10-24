@@ -586,6 +586,14 @@ transaction id happened to equal the document id was marked void. One module
 now owns which of a void's two conventions applies (`app/services/voids.py`),
 the register and reclassify route through it, and a test keeps every void
 type classified (#448).
+### v2.27.0
+
+**The IIF export guards the contact fields too.** The CUST and VEND rows'
+phone, mobile or fax, email, terms and tax id went out as typed, so a
+vendor whose email was `=HYPERLINK(...)` would run in Excel, the documented
+way to fix an IIF file before import (noted on #410). They take the same
+leading apostrophe a name does, and the importer takes it off again, so
+`+1 555…` comes back as typed.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
