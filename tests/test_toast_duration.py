@@ -78,7 +78,7 @@ def test_a_toast_stays_long_enough_to_read():
 
 
 def test_a_toast_takes_no_clicks():
-    css = (ROOT / "app/static/css/style.css").read_text()
+    css = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
     container = css[css.index("#toast-container {") :]
     container = container[: container.index("}")]
     assert "pointer-events: none;" in container

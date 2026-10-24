@@ -544,7 +544,7 @@ def test_an_unknown_file_is_refused(client):
 # The pages
 # ---------------------------------------------------------------------------
 def test_employee_page_has_the_opening_ytd_block_and_the_reason_path():
-    js = (ROOT / "app/static/js/employees.js").read_text()
+    js = (ROOT / "app/static/js/employees.js").read_text(encoding="utf-8")
     assert "emp-opening-section-${id}" in js
     assert "<h4>Opening YTD</h4>" in js
     assert "of which opening balance" in js
@@ -556,7 +556,7 @@ def test_employee_page_has_the_opening_ytd_block_and_the_reason_path():
 
 
 def test_payroll_page_has_the_import_button_and_the_template_link():
-    js = (ROOT / "app/static/js/payroll.js").read_text()
+    js = (ROOT / "app/static/js/payroll.js").read_text(encoding="utf-8")
     assert "PayrollPage.showOpeningImport()" in js
     assert "Import opening balances" in js
     assert "/api/payroll/opening-ytd/template" in js
@@ -565,5 +565,5 @@ def test_payroll_page_has_the_import_button_and_the_template_link():
     # Apply is drawn hidden until a Preview says there is something to write;
     # the attribute needs the stylesheet's help against .btn's display
     assert 'id="opening-import-apply" hidden' in js
-    css = (ROOT / "app/static/css/style.css").read_text()
+    css = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
     assert ".btn[hidden]" in css and ".form-group[hidden]" in css
