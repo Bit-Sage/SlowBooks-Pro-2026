@@ -377,6 +377,12 @@ payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
 
+### Unreleased
+
+- QuickBooks Desktop import: an account the report lists as two sections no
+  longer trips the cut-short check. Each "Total" row is measured against its
+  own section's lines (sub-accounts included) rather than every line posted to
+  that account path.
 
 ### v2.28.0 — Account types and sub-accounts
 
