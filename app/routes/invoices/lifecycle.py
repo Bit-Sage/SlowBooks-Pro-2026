@@ -116,21 +116,24 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
         )
         .all()
     )
+    from app.services.accounting import reversing_lines
+    from app.services.qbo_documents import reversed_already
+
     for fee_txn in fee_txns:
+        # A fee already voided in the journal is off A/R; reversing it again
+        # would leave A/R at minus the fee.
+        if reversed_already(db, fee_txn):
+            continue
         fee_lines = (
             db.query(TransactionLine)
             .filter(TransactionLine.transaction_id == fee_txn.id)
             .all()
         )
-        reverse_fee_lines = [
-            {
-                "account_id": fl.account_id,
-                "debit": fl.credit,  # swap debit/credit
-                "credit": fl.debit,
-                "description": void_line_memo(fl.description),
-            }
-            for fl in fee_lines
-        ]
+        # Each line's own job and class (and other dimensions) carried over,
+        # as a journal void does: a fee posted before fees carried the job,
+        # or before the invoice's job changed, comes off where it went on
+        # and never credits another job's A/R.
+        reverse_fee_lines = reversing_lines(fee_lines)
         if reverse_fee_lines:
             # On the fee's own date, as the invoice's reversal sits on the
             # invoice's: the fee came off the day it went on.
@@ -141,8 +144,8 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
                 reverse_fee_lines,
                 source_type="invoice_void",
                 source_id=invoice.id,
-                class_id=invoice.class_id,
-                job_id=invoice.job_id,
+                class_id=fee_txn.class_id,
+                job_id=fee_txn.job_id,
                 reference=invoice.invoice_number,
             )
 

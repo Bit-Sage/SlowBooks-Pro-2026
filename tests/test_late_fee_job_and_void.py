@@ -115,3 +115,57 @@ def test_voiding_a_late_fee_invoice_clears_ar_and_the_job(
     assert _ar_net(db_session, ar_id, job_id) == Decimal("0")
     bal = client.get(f"/api/customers/{seed_customer.id}").json()["balance"]
     assert Decimal(str(bal)) == Decimal("0")
+
+
+def _fee_txn(db_session, inv_id):
+    return (
+        db_session.query(Transaction)
+        .filter(
+            Transaction.source_type == "late_fee",
+            Transaction.source_id == inv_id,
+        )
+        .one()
+    )
+
+
+def test_a_fee_voided_in_the_journal_is_not_reversed_again(
+    client, db_session, seed_accounts, seed_customer
+):
+    ar_id = seed_accounts["1100"].id
+    job_id, inv_id = _overdue_job_invoice(client, seed_customer)
+    _apply_late_fees(client)
+    fee = _fee_txn(db_session, inv_id)
+
+    r = client.post(f"/api/journal/{fee.id}/void")
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert _ar_net(db_session, ar_id) == Decimal("100.00")
+
+    r = client.post(f"/api/invoices/{inv_id}/void")
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert _ar_net(db_session, ar_id) == Decimal("0")
+    assert _ar_net(db_session, ar_id, job_id) == Decimal("0")
+
+
+def test_a_fee_posted_without_the_job_does_not_credit_the_job(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A fee posted before fees carried the job (or after the invoice's
+    job changed): its reversal takes each line's own job, not the
+    invoice's, so the job's A/R is not credited for a debit it never had."""
+    ar_id = seed_accounts["1100"].id
+    job_id, inv_id = _overdue_job_invoice(client, seed_customer)
+    _apply_late_fees(client)
+    fee = _fee_txn(db_session, inv_id)
+    fee.job_id = None
+    for line in fee.lines:
+        line.job_id = None
+    db_session.commit()
+    assert _ar_net(db_session, ar_id, job_id) == Decimal("100.00")
+
+    r = client.post(f"/api/invoices/{inv_id}/void")
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert _ar_net(db_session, ar_id) == Decimal("0")
+    assert _ar_net(db_session, ar_id, job_id) == Decimal("0")
