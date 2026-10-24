@@ -91,19 +91,26 @@ def _voidable(txn, voided: bool) -> bool:
 _EDITABLE_SOURCES = ("manual",)
 
 
-def _je_editable(txn, voided: bool) -> bool:
+def _je_editable(txn, voided: bool, role: str = None) -> bool:
+    # The accountant's sign-in posts and voids journal entries but does not
+    # edit them (#340, #388): the middleware refuses the PUT, so the GET and
+    # the register say so too, and no Edit is offered.
+    if role == ROLE_ACCOUNTANT:
+        return False
     return (txn.source_type or "") in _EDITABLE_SOURCES and not voided
 
 
 def _reconciled_sentence(recon) -> str:
     """What the edit form says as it opens a journal entry a completed
-    reconciliation holds (#388): the amount and date are locked, the rest
-    can be corrected (an account change asks first)."""
+    reconciliation holds (#388): the reconciled line's amount, account and
+    the date are locked; only the lines the statement does not hold, and
+    the memo, reference, class and job, can be corrected."""
     return (
         f"This entry was reconciled on the {date_text(recon.statement_date)} "
-        "statement, so its amount and date stay as they are (a reconciled "
-        "entry cannot be voided either). Its memo, reference, accounts, "
-        "class and job can still be corrected."
+        "statement, so its amount and date stay as they are, and the "
+        "reconciled line keeps its account (a reconciled entry cannot be "
+        "voided either). Its memo, reference, class, job and the other "
+        "lines' accounts can still be corrected."
     )
 
 
@@ -140,23 +147,22 @@ def _journal_lines(db: Session, data) -> list[dict]:
             raise HTTPException(
                 status_code=404, detail=f"Account {line.account_id} not found"
             )
-        lines.append(
-            {
-                "account_id": line.account_id,
-                "debit": Decimal(str(line.debit)),
-                "credit": Decimal(str(line.credit)),
-                "description": line.description or "",
-                "job_id": line.job_id,
-                "class_id": line.class_id,
-                "cost_code_id": line.cost_code_id,
-                "is_billable": line.is_billable,
-                **(
-                    {"function": line.function}
-                    if "function" in line.model_fields_set
-                    else {}
-                ),
-            }
-        )
+        row = {
+            "account_id": line.account_id,
+            "debit": Decimal(str(line.debit)),
+            "credit": Decimal(str(line.credit)),
+            "description": line.description or "",
+            "cost_code_id": line.cost_code_id,
+        }
+        # class, job and the billable flag are carried only when the request
+        # names them (the `function` trick): on an edit, a field the body
+        # leaves out keeps what the line has, so a memo fix from a client
+        # that sends bare lines doesn't clear a line's class, job or
+        # billable mark (#388 review).
+        for key in ("class_id", "job_id", "is_billable", "function"):
+            if key in line.model_fields_set:
+                row[key] = getattr(line, key)
+        lines.append(row)
     return lines
 
 
@@ -242,7 +248,9 @@ def list_journal_entries(
 
 
 @router.get("/{entry_id}", response_model=JournalEntryResponse)
-def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
+def get_journal_entry(
+    entry_id: int, db: Session = Depends(get_db), request: Request = None
+):
     txn = db.query(Transaction).filter(Transaction.id == entry_id).first()
     if not txn:
         raise HTTPException(status_code=404, detail="Journal entry not found")
@@ -269,7 +277,7 @@ def get_journal_entry(entry_id: int, db: Session = Depends(get_db)):
         total_credit=float(sum(line.credit for line in txn.lines)),
         voided=voided,
         voidable=_voidable(txn, voided),
-        editable=_je_editable(txn, voided),
+        editable=_je_editable(txn, voided, _role(request)),
         reconciled_on=recon.statement_date if recon else None,
         reconciled_note=_reconciled_sentence(recon) if recon else None,
     )
@@ -314,15 +322,28 @@ def create_manual_journal_entry(
 
     db.commit()
     db.refresh(txn)
-    return get_journal_entry(txn.id, db)
+    return get_journal_entry(txn.id, db, request)
 
 
-def _recon_amounts(lines) -> list:
-    """The (debit, credit) of each line that a completed reconciliation
-    holds — what has to stay the same for the statement to still tie."""
+def _triples(rows) -> list:
+    """Each line as (account_id, debit, credit) — enough to tell a sign
+    flip (DR↔CR on the same account) and an account move apart."""
     return sorted(
-        (_q(ln.debit or 0), _q(ln.credit or 0)) for ln in lines if ln.reconciliation_id
+        (
+            r["account_id"] if isinstance(r, dict) else r.account_id,
+            _q((r["debit"] if isinstance(r, dict) else r.debit) or 0),
+            _q((r["credit"] if isinstance(r, dict) else r.credit) or 0),
+        )
+        for r in rows
     )
+
+
+def _recon_triples(lines) -> list:
+    """The (account_id, debit, credit) of each line a completed
+    reconciliation holds — each has to stay on its account for the same
+    amount for the statement to still tie (a bare amount check would pass a
+    sign flip, which moves the account's balance)."""
+    return _triples([ln for ln in lines if ln.reconciliation_id])
 
 
 def _in_multiset(subset: list, pool: list) -> bool:
@@ -366,12 +387,10 @@ def update_journal_entry(
             status_code=400,
             detail="Only a hand-entered journal entry can be edited here.",
         )
-    if _role(request) == ROLE_ACCOUNTANT and (txn.posted_by or "") != _acting(db):
-        raise HTTPException(
-            status_code=403,
-            detail="An accountant's sign-in edits only the journal entries it "
-            "posted; this one was posted by " + (txn.posted_by or "someone else") + ".",
-        )
+    # The accountant's sign-in never reaches here: the middleware admits
+    # only POST /api/journal and the void on this router, so PUT is 403'd
+    # before the route (#340). Its GET and the register say editable is
+    # false for the accountant, so no Edit is offered in the first place.
     lines = _journal_lines(db, data)
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="At least 2 lines required")
@@ -381,11 +400,13 @@ def update_journal_entry(
     recon = reconciled_on(db, txn)
     moves = False
     if recon is not None:
-        recon_amts = _recon_amounts(txn.lines)
-        new_amts = sorted((_q(n["debit"]), _q(n["credit"])) for n in lines)
-        # the reconciled lines' amounts must still be there, on the same day:
-        # a new amount or date would take the entry off that statement
-        if data.date != txn.date or not _in_multiset(recon_amts, new_amts):
+        recon_triples = _recon_triples(txn.lines)
+        new_triples = _triples(lines)
+        # every reconciled line must still be there, on its own account for
+        # its own amount, on the same day: a new amount or date — a sign
+        # flip among them — would take the entry off that statement, as a
+        # void would
+        if data.date != txn.date or not _in_multiset(recon_triples, new_triples):
             raise HTTPException(
                 status_code=400,
                 detail=f"This entry was reconciled on the "
@@ -393,17 +414,16 @@ def update_journal_entry(
                 "and date cannot be changed, just as it cannot be voided. "
                 "Correct the difference with a new entry.",
             )
-        old_exact = sorted(
-            (ln.account_id, _q(ln.debit or 0), _q(ln.credit or 0)) for ln in txn.lines
-        )
-        new_exact = sorted(
-            (n["account_id"], _q(n["debit"]), _q(n["credit"])) for n in lines
-        )
-        # amounts and date kept but an account changed: money moved between
-        # accounts in a period already reconciled — ask first (a pure memo,
-        # reference, class or job fix leaves every line's account and amount
-        # alone and goes straight through)
-        moves = old_exact != new_exact
+        # the reconciled lines are intact; only a line the statement does
+        # not hold may have moved account — that still shifts an amount
+        # between accounts in a reconciled period, so ask first (a pure
+        # memo, reference, class or job fix leaves every account alone and
+        # goes straight through)
+        rest = list(new_triples)
+        for t in recon_triples:
+            rest.remove(t)
+        old_rest = _triples([ln for ln in txn.lines if not ln.reconciliation_id])
+        moves = sorted(rest) != old_rest
         if moves and not data.confirm_reconciled:
             raise HTTPException(
                 status_code=409,
@@ -454,7 +474,7 @@ def update_journal_entry(
         )
     db.commit()
     db.refresh(txn)
-    out = get_journal_entry(txn.id, db)
+    out = get_journal_entry(txn.id, db, request)
     out.uncleared = [
         {
             "account_id": o["account_id"],

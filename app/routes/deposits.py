@@ -108,6 +108,32 @@ def _payment_line(tl: TransactionLine, txn: Transaction, d: dict):
     )
 
 
+def _lock_taken(db: Session, chosen, allow_deposit_id: int = None) -> None:
+    """Row-lock the chosen Undeposited Funds lines (no-op on SQLite) and
+    refuse (409) if any was taken by another deposit since the page loaded
+    — so two deposits at once can't both take the same payment. A line this
+    deposit already holds (`allow_deposit_id`) is fine when editing."""
+    if not chosen:
+        return
+    locked = (
+        db.query(TransactionLine)
+        .filter(TransactionLine.id.in_([ln.id for ln in chosen]))
+        .with_for_update()
+        .all()
+    )
+    if any(
+        ln.deposit_transaction_id and ln.deposit_transaction_id != allow_deposit_id
+        for ln in locked
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "One of the payments you ticked was deposited a moment ago. "
+                "Reload Make Deposits and tick them again."
+            ),
+        )
+
+
 @router.get("/pending", response_model=list[PendingDepositResponse])
 def list_pending_deposits(db: Session = Depends(get_db)):
     """Payments sitting in Undeposited Funds (1200), newest first."""
@@ -275,22 +301,7 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
                     ),
                 )
             chosen.append(line)
-        # Row-lock the chosen lines so two deposits at once can't both take
-        # the same payment (no-op on SQLite).
-        locked = (
-            db.query(TransactionLine)
-            .filter(TransactionLine.id.in_([ln.id for ln in chosen]))
-            .with_for_update()
-            .all()
-        )
-        if any(ln.deposit_transaction_id for ln in locked):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "One of the payments you ticked was deposited a moment ago. "
-                    "Reload Make Deposits and tick them again."
-                ),
-            )
+        _lock_taken(db, chosen)
         total = _q(sum((Decimal(str(ln.debit)) for ln in chosen), Decimal("0")))
         if data.total is not None and _q(data.total) != total:
             raise HTTPException(
@@ -380,9 +391,12 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
         .filter(TransactionLine.deposit_transaction_id == txn.id)
         .all()
     )
-    if data.line_ids is not None:
-        # the payments it may take: the ones it holds now plus any still
-        # waiting — ticked by the person, each still available
+    # An empty or omitted `line_ids` leaves the payments alone — a legacy
+    # deposit that named none (imported, or an amount posted by hand) can
+    # still have its date or reference fixed, and the form omits `line_ids`
+    # when nothing was re-ticked (#388 review). A non-empty list sets which
+    # payments it takes: the ones it holds now plus any still waiting.
+    if data.line_ids:
         pool = {ln.id: ln for ln in held}
         for ln, _ in waiting_items(db, uf_id):
             pool.setdefault(ln.id, ln)
@@ -398,6 +412,7 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
                     ),
                 )
             chosen.append(line)
+        _lock_taken(db, chosen, allow_deposit_id=txn.id)
         new_total = _q(sum((Decimal(str(ln.debit)) for ln in chosen), Decimal("0")))
         if new_total <= 0:
             raise HTTPException(

@@ -400,7 +400,7 @@ const JournalPage = {
             const saved = await API.put(`/journal/${entryId}`, data);
             toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
             closeModal();
-            if (location.hash === '#/journal') App.navigate('#/journal'); else history.back();
+            App.navigate(location.hash.startsWith('#/banking') ? location.hash : '#/journal');
         } catch (err) {
             if (err.status === 409 && err.detail && err.detail.code === 'reconciled' && !data.confirm_reconciled) {
                 JournalPage._askReconciled(entryId, data, err.detail.message);

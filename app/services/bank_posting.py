@@ -543,9 +543,59 @@ def replace_journal_lines(
     sets). Returns the old lines that lost a cleared or reconciled mark."""
     from app.models.transactions import TransactionLine
     from app.routes.invoices.helpers import _reverse_and_delete_journal
+    from app.services.classes_service import default_function_of
 
     old_lines = list(txn.lines)
     pairs = _pair_lines(old_lines, lines)
+    # A dimension the caller left off a line keeps what the paired old line
+    # had (its counterpart by account, else by order): a class or job of its
+    # own, else the entry's; the billable flag; the cost code; the nonprofit
+    # function (#388 review — the same carry-over replace_bank_entry does).
+    for n, o in zip(lines, pairs):
+        for key, header_old, header_new in (
+            ("class_id", txn.class_id, class_id),
+            ("job_id", txn.job_id, job_id),
+        ):
+            if key in n:
+                continue
+            own = getattr(o, key) if o is not None else None
+            n[key] = own if own is not None and own != header_old else header_new
+        if "is_billable" not in n:
+            n["is_billable"] = bool(o.is_billable) if o is not None else False
+        if "cost_code_id" not in n:
+            n["cost_code_id"] = o.cost_code_id if o is not None else None
+        if "function" not in n and o is not None:
+            n["function"] = o.function
+
+    if all(_same_money(o, n) for o, n in zip(pairs, lines)) and len(lines) == len(
+        old_lines
+    ):
+        # nothing moves: update the header and the lines where they are, so
+        # a save that changes nothing writes nothing and the reconciled
+        # lines keep their marks without a DELETE/INSERT churn (#388)
+        check_closing_date(db, txn_date)
+        txn.date = txn_date
+        txn.description = description
+        txn.reference = reference or ""
+        txn.class_id = class_id
+        txn.job_id = job_id
+        txn.is_adjusting = bool(is_adjusting)
+        if posted_by is not None:
+            txn.posted_by = posted_by
+        fn_cache: dict = {}
+        for n, o in zip(lines, pairs):
+            o.description = n.get("description") or ""
+            o.is_billable = bool(n.get("is_billable"))
+            o.cost_code_id = n.get("cost_code_id")
+            o.job_id = n.get("job_id")
+            if o.class_id != n.get("class_id"):
+                o.class_id = n.get("class_id")
+                o.function = default_function_of(db, n.get("class_id"), fn_cache)
+            elif "function" in n:
+                o.function = n["function"]
+        db.flush()
+        return []
+
     old = [
         {
             "id": o.id,

@@ -227,7 +227,7 @@ const DepositsPage = {
             await API.put(`/deposits/${id}`, body);
             toast('Deposit saved');
             closeModal();
-            if (location.hash.startsWith('#/deposits')) App.navigate('#/deposits'); else history.back();
+            App.navigate(location.hash.startsWith('#/banking') ? location.hash : '#/deposits');
         } catch (err) { toast(err.message, 'error'); }
     },
 

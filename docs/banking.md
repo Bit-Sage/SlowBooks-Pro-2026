@@ -98,7 +98,9 @@ still waiting, so Save can swap which ones it includes — the dropped
 payments go back on the Make Deposits list. Both keep their amount and date
 when a completed reconciliation holds them, as a register entry does; a
 journal entry asks first before moving an amount to a different account in
-that period.
+that period, and its reconciled line keeps its own account. An accountant's
+sign-in posts and voids journal entries but does not edit them, so it is
+offered no Edit on these rows.
 
 The entry row at the foot of the register posts the same way (Enter or
 Post). A payee typed there, or in + Entry, that is not already a customer's
