@@ -9,6 +9,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
@@ -32,8 +33,10 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
     """Aggregate quarterly state unemployment (SUI/SUTA) totals.
 
     SUTA is an employer-side tax; the report lists SUTA-taxable wages and tax
-    per employee. When `state` is given, only employees whose `work_state`
-    matches are included.
+    per employee. When `state` is given, only stubs worked in it are
+    included (the stub's work state, else the employee's), and an opening
+    balance's rows by their own state.
+    The quarter's opening-balance state rows (#433) count with the stubs.
     """
     start, end = _quarter_bounds(year, quarter)
     stubs = (
@@ -46,7 +49,10 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
         .filter(PayRun.pay_date <= end)
     )
     if state:
-        stubs = stubs.filter(Employee.work_state == state)
+        # a stub's own work state (multi-state), else the employee's
+        stubs = stubs.filter(
+            func.coalesce(PayStub.work_state, Employee.work_state) == state
+        )
     stubs = stubs.all()
 
     # Accumulate per employee. SUTA-taxable wages are taken as the wages that
@@ -82,6 +88,37 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
         if suta > 0:
             entry["suta_taxable_wages"] += gross
         entry["suta_tax"] += suta
+
+    # Opening balances (#433): the old system's wages, SUTA wages and SUTA
+    # tax in this quarter, state by state, as it reported them.
+    from app.services.payroll_opening import openings_for_year
+
+    for emp_id, o in openings_for_year(db, year).items():
+        for row in o.states:
+            if row.quarter != quarter or (state and row.state != state):
+                continue
+            emp = o.employee
+            wages = Decimal(str(row.wages or 0))
+            suta = Decimal(str(row.suta_tax or 0))
+            total_wages += wages
+            total_suta_tax += suta
+            entry = by_employee.get(emp_id)
+            if entry is None:
+                entry = {
+                    "employee_id": emp_id,
+                    "name": emp.full_name if emp else f"#{emp_id}",
+                    "ssn_last_four": emp.ssn_last_four if emp else None,
+                    "work_state": (
+                        row.state if state else emp.work_state if emp else None
+                    ),
+                    "total_wages": Decimal("0"),
+                    "suta_taxable_wages": Decimal("0"),
+                    "suta_tax": Decimal("0"),
+                }
+                by_employee[emp_id] = entry
+            entry["total_wages"] += wages
+            entry["suta_taxable_wages"] += Decimal(str(row.suta_wages or 0))
+            entry["suta_tax"] += suta
 
     breakdown = []
     total_taxable = Decimal("0")
