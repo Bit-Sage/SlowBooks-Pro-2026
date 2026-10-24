@@ -16,6 +16,7 @@ const ReportsPage = {
     _VIEWS: {
         'profit-loss':          { label: () => T('Profit & Loss'),      open: (p) => ReportsPage.profitLoss(p) },
         'balance-sheet':        { label: () => T('Balance Sheet'),      open: (p) => ReportsPage.balanceSheet(p), asOf: true },
+        'profit-loss-detail':   { label: () => `${T('Profit & Loss')} Detail`, open: (p) => ReportsPage.profitLossDetail(p) },
         'profit-loss-by-class': { label: () => T('P&L by Class'),       open: (p) => ReportsPage.profitLossByClass(p) },
         'profit-loss-class':    { label: () => T('Profit & Loss'),      open: (p) => ReportsPage.profitLossOfClass(p.class_id, null, p, p.from || null), keep: ['class_id'] },
         'profit-loss-unclassified': { label: () => `${T('P&L')} Unclassified`, open: (p) => ReportsPage.profitLossUnclassified(p) },
@@ -367,6 +368,7 @@ const ReportsPage = {
         const card = ReportsPage._pick;
         return [
             ...(Terms.isNonprofit() ? ReportsPage._nonprofitCards() : [card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))]),
+            card('profit-loss-detail', `${T('Profit & Loss')} Detail`, Terms.text('Every transaction under each income and expense account, totals that match the P&L')),
             card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class')),
             card('profit-loss-unclassified', `${T('P&L')} Unclassified`, Terms.text('Income and expenses with no class yet — the end-of-month cleanup list')),
             card('job-budget-vs-actual', T('Job Budget vs Actual'), Terms.text('Budget, committed, actual, projected, variance per job')),
@@ -1325,6 +1327,103 @@ const ReportsPage = {
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+    },
+
+    // Profit & Loss Detail (#477): every posted line under each P&L
+    // account, QuickBooks Desktop's columns (Type, Date, Num, Name, Memo,
+    // Split, Amount, Balance), a running balance and a total per account,
+    // sub-accounts beneath their parents, and the P&L's section totals for
+    // the same dates and filters. A line's Type opens its document; Back
+    // returns here with focus on it. Class, job, sort and the adjusting
+    // entries ride on the address, a saved report and the exports.
+    async profitLossDetail(prefill) {
+        prefill = prefill || {};
+        const opts = ReportsPage._statementOpts(prefill);
+        const given = (v) => v !== undefined && v !== null && v !== '';
+        const params = {
+            ...opts.params,
+            class_id: /^\d+$/.test(prefill.class_id || '') ? prefill.class_id : undefined,
+            job_id: /^\d+$/.test(String(given(prefill.job_id) ? prefill.job_id : '')) ? String(prefill.job_id) : undefined,
+        };
+        let classes = [], jobs = [];
+        try { classes = await API.get('/classes?include_archived=true'); } catch (e) { classes = []; }
+        try { jobs = await API.get('/jobs?include_inactive=true'); } catch (e) { jobs = []; }
+        const jobItems = [{ id: 0, name: Terms.text('No job') }].concat(jobs.map(j => ({ id: j.id, name: j.name })));
+        const toolbar = ReportsPage._itemPicker('pld-class', T('Class'), classes.map(c => ({ id: c.id, name: c.is_archived ? `${c.name} (archived)` : c.name })), params.class_id, 'class_id')
+            + ReportsPage._itemPicker('pld-job', T('Job'), jobItems, params.job_id, 'job_id')
+            + opts.toolbar;
+        const title = `${T('Profit & Loss')} Detail`;
+        await ReportsPage.openPeriodModal(title, ReportsPage.defaultPeriod(), async (_period, range, p) => {
+            let qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(p)}`;
+            if (given(p.class_id)) qs += `&class_id=${encodeURIComponent(p.class_id)}`;
+            if (given(p.job_id)) qs += `&job_id=${encodeURIComponent(p.job_id)}`;
+            const data = await API.get(`/reports/profit-loss-detail?${qs}`);
+            return ReportsPage._plDetailHtml(data, qs);
+        }, "Dates", false, { reportType: 'profit_loss_detail', view: 'profit-loss-detail', prefill, params, toolbar, wide: true });
+    },
+
+    // The P&L Detail's body from the server's reply (the view's, and
+    // anything else that shows it).
+    _plDetailHtml(data, qs) {
+        const COLS = 8;
+        const pad = (depth) => 8 + 18 * depth;
+        const money = (v) => `<td class="amount">${formatCurrency(v)}</td>`;
+        const totalRow = (label, amount, depth, style) =>
+            `<tr class="pl-detail-total" style="${style || 'font-weight:600;'}"><td colspan="6" style="padding-left:${pad(depth)}px;">${escapeHtml(label)}</td>${money(amount)}<td></td></tr>`;
+        const headRow = (label, depth, em) =>
+            `<tr class="pl-family"><td colspan="${COLS}" style="padding-left:${pad(depth)}px; font-weight:600;">${em ? `<em>${escapeHtml(label)}</em>` : escapeHtml(label)}</td></tr>`;
+        const entryRow = (e, depth) => {
+            const link = e.source_link || `/#/journal/${e.transaction_id}`;
+            const name = `${e.type}${e.num ? ` ${e.num}` : ''}, ${formatDate(e.date)}`;
+            const type = `<a href="${escapeHtml(link)}" data-row-key="line:${escapeHtml(String(e.line_id))}" aria-label="${escapeHtml(name)}" onclick="ReportsPage._leaveFrom(this)" style="color:var(--text-link); text-decoration:none;">${escapeHtml(e.type)}</a>`;
+            return `<tr${e.voided ? ' class="row--void" style="color:var(--text-muted); text-decoration:line-through;"' : ''}>
+                <td style="padding-left:${pad(depth)}px;">${type}${e.voided ? ' <span class="badge badge-void" style="text-decoration:none;">void</span>' : ''}</td>
+                <td>${formatDate(e.date)}</td>
+                <td>${escapeHtml(e.num || '')}</td>
+                <td>${escapeHtml(e.name || '')}</td>
+                <td>${escapeHtml(e.memo || '')}</td>
+                <td>${escapeHtml(e.split || '')}</td>
+                ${money(e.amount)}${money(e.balance)}
+            </tr>`;
+        };
+        const account = (r) => headRow(r.label, r.depth + 1, r.kind === 'direct')
+            + (r.entries || []).map(e => entryRow(e, r.depth + 2)).join('')
+            + totalRow(`Total ${r.label}`, r.amount, r.depth + 1);
+        const section = (key) => {
+            const rows = (data.tree || {})[key] || [];
+            if (!rows.length) return `<tr><td colspan="${COLS}" style="padding-left:${pad(1)}px; color:var(--gray-400);">None</td></tr>`;
+            return rows.map(r => {
+                if (r.kind === 'heading') return headRow(r.label, r.depth + 1);
+                if (r.kind === 'total') return totalRow(r.label, r.amount, r.depth + 1);
+                return account(r);
+            }).join('');
+        };
+        const head = (label) => `<tr class="grid-section"><td colspan="${COLS}"><strong>${escapeHtml(label)}</strong></td></tr>`;
+        const sub = 'font-weight:600; background:var(--gray-50);';
+        const total = (label, key) => totalRow(label, data[key], 0, sub);
+        let body = head(T('Income')) + section('income') + total(T('Total Income'), 'total_operating_income')
+            + head('Cost of Goods Sold') + section('cogs') + total('Total Cost of Goods Sold', 'total_cogs')
+            + total('Gross Profit', 'operating_gross_profit')
+            + head('Expenses') + section('expenses') + total('Total Expenses', 'total_operating_expenses');
+        if (data.has_other) {
+            body += total(T('Net Operating Income'), 'net_operating_income');
+            if (data.has_other_income) body += head(T('Other Income')) + section('other_income') + total(T('Total Other Income'), 'total_other_income');
+            if (data.has_other_expense) body += head('Other Expense') + section('other_expense') + total('Total Other Expense', 'total_other_expense');
+            body += total(T('Net Other Income'), 'net_other_income');
+        }
+        body += totalRow(T('Net Income'), data.net_income, 0, 'font-weight:700; font-size:15px; background:var(--primary-light);');
+        const scope = [
+            data.class_name ? `${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong> only` : '',
+            data.job_name ? `${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong> only` : '',
+            data.exclude_adjusting ? 'adjusting entries left out' : '',
+        ].filter(Boolean).join(' &middot; ');
+        return `${ReportsPage._exportButtons('profit-loss-detail', qs)}
+            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${scope ? ` &middot; ${scope}` : ''} &middot; ${data.line_count} ${data.line_count === 1 ? 'line' : 'lines'}. A line's type opens its document.</p>
+            <div class="table-container"><table class="pl-detail">
+                <caption class="visually-hidden">${escapeHtml(`${T('Profit & Loss')} Detail`)}, ${escapeHtml(data.start_date)} to ${escapeHtml(data.end_date)}</caption>
+                <thead><tr><th scope="col">Type</th><th scope="col">Date</th><th scope="col">Num</th><th scope="col">Name</th><th scope="col">Memo</th><th scope="col">Split</th><th scope="col" class="amount">Amount</th><th scope="col" class="amount">Balance</th></tr></thead>
+                <tbody>${body}</tbody>
+            </table></div>`;
     },
 
     // A statement section's rows, sub-accounts indented beneath their

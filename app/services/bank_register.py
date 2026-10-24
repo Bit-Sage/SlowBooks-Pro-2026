@@ -172,6 +172,73 @@ _LINKS = {
 }
 
 
+# A posting's kind in the app's words, as utils.js sourceWord() writes it
+# on the screen: the PDF and CSV of a report with a Type column (the P&L
+# Detail, #477) print the same word. The two maps are held together by
+# tests/test_pl_detail.py.
+_WORDS = {
+    "invoice": "Invoice",
+    "bill": "Bill",
+    "payment": "Payment",
+    "bill_payment": "Bill payment",
+    "vendor_credit": "Vendor credit",
+    "credit_memo": "Credit memo",
+    "sales_receipt": "Sales receipt",
+    "journal": "Journal entry",
+    "manual_journal": "Journal entry",
+    "manual": "Journal entry",
+    "expense": "Expense",
+    "deposit": "Deposit",
+    "cc_charge": "Card charge",
+    "transfer": "Transfer",
+    "bank_entry": "Bank entry",
+    "opening_balance": "Opening balance",
+    "item_opening": "Opening inventory",
+    "check": "Check",
+    "job_cost": "Job cost",
+    "payroll": "Pay run",
+    "pto": "Time off accrual",
+    "in_kind_gift": "In-kind gift",
+    "restriction_release": "Release from restriction",
+    "functional_allocation": "Functional allocation",
+    "late_fee": "Late fee",
+    "adjustment": "Inventory adjustment",
+    "sales_tax_payment": "Sales tax payment",
+    "iif_import": "IIF import",
+    "depreciation": "Depreciation",
+    "asset_acquisition": "Asset acquisition",
+    "asset_disposal": "Asset disposal",
+    "qbo_ledger": "QuickBooks import",
+    "qbo_journal": "QuickBooks journal",
+    "qbo_cogs": "QuickBooks cost of goods",
+    "qbo_export_import": "QuickBooks Online export",
+    "xero_import": "Xero import",
+    "myob_import": "MYOB import",
+    "sage_import": "Sage 50 import",
+    "wave_import": "Wave import",
+    "zoho_import": "Zoho Books import",
+    "gnucash_import": "GnuCash import",
+    "qb_ledger_import": "QuickBooks Desktop import",
+}
+_WORD_ENDS = (("_void", "void"), ("_edit", "edit"), ("_apply", "applied"))
+
+
+def source_word(source_type: str | None, words=None) -> str:
+    """ "Invoice", "Bill payment void": a posting's kind as the screen names
+    it; `words` (Terms) renames Invoice and Job for a nonprofit."""
+    t = str(source_type or "journal")
+    for end, word in _WORD_ENDS:
+        if t.endswith(end) and len(t) > len(end):
+            return f"{source_word(t[: -len(end)], words)} {word}"
+    if t == "job_cost":
+        return f"{words('Job') if words else 'Job'} cost"
+    w = _WORDS.get(t)
+    if w:
+        return words(w) if words and t == "invoice" else w
+    plain = t.replace("_", " ")
+    return plain[:1].upper() + plain[1:]
+
+
 def source_link(txn: Transaction) -> str | None:
     """Where the SPA can jump to for this posting. Documents link by their
     own id; postings that are their own document link to the journal view."""
@@ -265,6 +332,31 @@ def references_for(db: Session, txns) -> dict[int, str]:
     return out
 
 
+def line_scope(db: Session, class_id: int | None = None, job_id: int | None = None):
+    """The SQL test for a posted line in the class and job asked for, or
+    None for every line: the line's own class, else its transaction's, else
+    Uncategorized, as P&L by Class groups them (#213); the line's own job,
+    else its transaction's, 0 meaning the lines with no job (#242). The
+    drill-down and the P&L Detail (#477) scope their lines with it, so the
+    two and the statements they open from count the same lines."""
+    test = None
+    if class_id is not None:
+        from app.services.classes_service import (
+            class_attribution,
+            uncategorized_class_id,
+        )
+
+        test = class_attribution(uncategorized_class_id(db)) == class_id
+    if job_id is not None:
+        from app.services.jobs_service import job_attribution
+
+        in_job = (
+            job_attribution().is_(None) if job_id == 0 else job_attribution() == job_id
+        )
+        test = in_job if test is None else and_(test, in_job)
+    return test
+
+
 def account_register(
     db: Session,
     account: Account,
@@ -281,21 +373,7 @@ def account_register(
     only that job's lines the same way (the line's own, else its
     transaction's), 0 meaning the lines with no job (#242)."""
     debit_normal = is_debit_normal(account)
-    in_class = None
-    if class_id is not None:
-        from app.services.classes_service import (
-            class_attribution,
-            uncategorized_class_id,
-        )
-
-        in_class = class_attribution(uncategorized_class_id(db)) == class_id
-    if job_id is not None:
-        from app.services.jobs_service import job_attribution
-
-        in_job = (
-            job_attribution().is_(None) if job_id == 0 else job_attribution() == job_id
-        )
-        in_class = in_job if in_class is None else and_(in_class, in_job)
+    in_class = line_scope(db, class_id, job_id)
 
     opening = ZERO
     if start:

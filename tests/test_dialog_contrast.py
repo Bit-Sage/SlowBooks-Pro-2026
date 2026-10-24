@@ -140,6 +140,7 @@ BANKING = [
 ]
 REPORTS = [
     "ReportsPage.profitLoss()",
+    "ReportsPage.profitLossDetail()",
     "ReportsPage.profitLossByClass()",
     "ReportsPage.profitLossUnclassified()",
     "ReportsPage.profitLossByJob()",

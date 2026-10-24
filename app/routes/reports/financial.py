@@ -285,6 +285,26 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
         DetailType.OTHER_EXPENSE,
     )
 
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "class_id": cls.id if cls else None,
+        "class_name": cls.name if cls else None,
+        "sort": sort,
+        "exclude_adjusting": bool(exclude_adjusting),
+        "income": income,
+        "cogs": cogs,
+        "expenses": expenses,
+        "other_income": other_income,
+        "other_expense": other_expense,
+        **pl_totals(income, cogs, expenses, other_income, other_expense),
+    }
+
+
+def pl_totals(income, cogs, expenses, other_income, other_expense) -> dict:
+    """The P&L's totals from its sections' lines (each a dict with an
+    `amount`): the statement's and every report that ties to it (the P&L
+    Detail, #477) add up the same way."""
     # The rows are floats: totals rounded to the cent, or 777.40 of sales
     # less cost answers 777.4000000000001 and stops matching the by-class
     # grid, which sums in Decimal (#413). The Other sections (#390) the same.
@@ -299,17 +319,6 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
     net_other_income = round(total_other_income - total_other_expense, 2)
 
     return {
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "class_id": cls.id if cls else None,
-        "class_name": cls.name if cls else None,
-        "sort": sort,
-        "exclude_adjusting": bool(exclude_adjusting),
-        "income": income,
-        "cogs": cogs,
-        "expenses": expenses,
-        "other_income": other_income,
-        "other_expense": other_expense,
         # total_income / total_expenses keep their 2.27.0 meaning for API
         # clients: every income / expense account, Other included. The
         # statement prints the operating sections' own totals (#390).
