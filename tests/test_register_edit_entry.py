@@ -28,7 +28,11 @@ def _entry(client, seed_accounts, account="1000", **over):
         "check_number": "1042",
     }
     body.update(over)
-    r = client.post("/api/banking/transactions", json=body)
+    # the same number on several entries is the point of some tests here;
+    # the duplicate-number question is tests/test_transaction_warnings.py
+    r = client.post(
+        "/api/banking/transactions?allow_duplicate_check_number=true", json=body
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -939,7 +943,10 @@ def test_the_register_row_opens_the_entry_for_editing():
     assert "if (entry) BankingPage._fillEntryForm(entry);" in js
     assert "title.textContent = 'Edit entry'" in js
     assert "API.get(`/banking/entries/${txnId}`)" in js
-    assert "API.put(`/banking/entries/${entryId}`, data)" in js
+    assert (
+        "API.put(`/banking/entries/${entryId}`, data, q ? { query: q } : undefined)"
+        in js
+    )
 
 
 def test_a_reconciled_refusal_is_asked_in_the_form_not_a_browser_dialog():

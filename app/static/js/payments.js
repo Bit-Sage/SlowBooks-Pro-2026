@@ -538,6 +538,8 @@ const PaymentsPage = {
             allocations,
         };
 
+        if (!(await TxnWarn.ok(form))) return;
+
         // One key per form: a second Save while the first is in flight is
         // ignored, and a Save sent again after a lost response answers with
         // the payment already recorded instead of a second one (#292)

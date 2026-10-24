@@ -9,12 +9,13 @@ from types import SimpleNamespace
 from typing import Optional
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.accounting import _q
+from app.services.check_numbers import refuse_duplicate
 from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.models.accounts import Account
 from app.models.banking import (
@@ -575,13 +576,23 @@ def _category_and_splits(db: Session, account: Account, data) -> tuple:
 
 
 @router.post("/transactions", response_model=BankEntryResponse, status_code=201)
-def create_bank_transaction(data: BankTransactionCreate, db: Session = Depends(get_db)):
+def create_bank_transaction(
+    data: BankTransactionCreate,
+    db: Session = Depends(get_db),
+    allow_duplicate_check_number: bool = Query(False),
+):
     """A register entry posts to the ledger (issue #114): DR category /
     CR account for money out, the reverse for money in; a bank or card
-    category makes it a transfer."""
+    category makes it a transfer. A payment whose check number the account
+    already has is a 409 the person answers (#481): keep the number (send
+    it again with allow_duplicate_check_number=true) or edit it."""
     check_closing_date(db, data.date)
     account = _resolve_account(db, data.account_id, data.bank_account_id)
     category, splits = _category_and_splits(db, account, data)
+    if data.amount < 0:
+        refuse_duplicate(
+            db, account.id, data.check_number, allow=allow_duplicate_check_number
+        )
     txn = post_bank_entry(
         db,
         account,
@@ -728,7 +739,10 @@ def _other_side(txn: Transaction, account_id: int) -> list:
 
 @router.put("/entries/{txn_id}", response_model=BankEntryDetail)
 def update_bank_entry(
-    txn_id: int, data: BankEntryUpdate, db: Session = Depends(get_db)
+    txn_id: int,
+    data: BankEntryUpdate,
+    db: Session = Depends(get_db),
+    allow_duplicate_check_number: bool = Query(False),
 ):
     """Rewrite a register entry in place (#388): same journal entry, new
     date, amount, category or splits, payee, memo, reference, class and
@@ -831,6 +845,18 @@ def update_bank_entry(
 
     def keep(field, value):
         return getattr(data, field) if field in given else value
+
+    # a new check number on a payment is checked as a new entry's is (#481);
+    # an entry keeping its own number is not asked about it again
+    new_ref = keep("check_number", txn.reference or None)
+    if _q(new_amount) < 0 and (new_ref or "").strip() != (txn.reference or "").strip():
+        refuse_duplicate(
+            db,
+            account.id,
+            new_ref,
+            allow=allow_duplicate_check_number,
+            exclude_txn_id=txn.id,
+        )
 
     uncleared = replace_bank_entry(
         db,

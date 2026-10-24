@@ -6,7 +6,7 @@
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,6 +16,7 @@ from app.models.transactions import Transaction
 from app.schemas.expenses import ExpenseCreate, ExpenseResponse
 from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.bank_posting import assert_not_reconciled, release_statement_links
+from app.services.check_numbers import refuse_duplicate
 from app.services.closing_date import check_closing_date
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
@@ -141,7 +142,11 @@ def void_expense(expense_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=ExpenseResponse, status_code=201)
-def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
+def create_expense(
+    data: ExpenseCreate,
+    db: Session = Depends(get_db),
+    allow_duplicate_check_number: bool = Query(False),
+):
     check_closing_date(db, data.date)
 
     amount = Decimal(str(data.amount))
@@ -168,6 +173,12 @@ def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400, detail="Expense and paid-from accounts must differ"
         )
+
+    # a check whose number the bank account already has (#481): the 409
+    # the person answers, keep the number or edit it
+    refuse_duplicate(
+        db, paid_from.id, data.reference, allow=allow_duplicate_check_number
+    )
 
     vendor = None
     if data.vendor_id is not None:

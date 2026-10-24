@@ -130,7 +130,7 @@ def test_the_register_reads_oldest_first_and_takes_entries_in_place():
     js = (ROOT / "app/static/js/banking.js").read_text(encoding="utf-8")
     assert "reg.entries.slice().reverse()" not in js
     assert 'id="reg-quick-entry"' in js and "postQuickEntry" in js
-    assert "API.post('/banking/transactions', data)" in js
+    assert "API.post('/banking/transactions', data, q ? { query: q } : undefined)" in js
 
 
 # ---------------------------------------------------------------- #331

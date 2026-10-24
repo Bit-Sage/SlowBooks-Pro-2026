@@ -203,6 +203,7 @@ const PurchaseOrdersPage = {
             notes: form.notes.value || null,
             lines,
         };
+        if (!(await TxnWarn.ok(form, { editing: !!id }))) return;
         try {
             if (id) { await API.put(`/purchase-orders/${id}`, data); toast('PO updated'); }
             else { await API.post('/purchase-orders', data); toast('PO created'); }

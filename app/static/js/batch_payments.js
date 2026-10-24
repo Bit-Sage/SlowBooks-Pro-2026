@@ -112,6 +112,7 @@ const BatchPaymentsPage = {
         });
         if (allocations.length === 0) { toast('Enter payment amounts', 'error'); return; }
 
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const result = await API.post('/batch-payments', {
                 date: form.date.value,

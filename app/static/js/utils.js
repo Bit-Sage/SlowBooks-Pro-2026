@@ -1010,6 +1010,152 @@ const ClassWarn = {
     },
 };
 
+// ---- QuickBooks Desktop's transaction warnings (#481) --------------------
+// Company settings (Settings → Transaction Warnings), on by default as in
+// QuickBooks. They arrive with the company settings the shell loads
+// (App.settings); a setting the server never sent is off.
+//   warn_date_past / _days, warn_date_future / _days: a transaction dated
+//       more than N days before today (90) or after it (30) asks before it
+//       saves. The books are still in last year in January. The closing
+//       date keeps its own lock.
+//   warn_edit_transaction: saving changes to a transaction already saved
+//       asks first (a void and a delete already ask).
+// Every transaction form asks TxnWarn.ok before it saves, beside the class
+// and credit-limit questions, and so does the register's quick row.
+const TxnWarn = {
+    _on(key) {
+        return typeof App !== 'undefined' && !!App.settings && App.settings[key] === 'true';
+    },
+    _days(key, fallback) {
+        const n = parseInt(typeof App !== 'undefined' && App.settings ? App.settings[key] : '', 10);
+        return n > 0 ? n : fallback;
+    },
+    // Calendar days from `today` to the ISO date `iso`: negative before it,
+    // null for no date.
+    daysFrom(iso, today = new Date()) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+        if (!m) return null;
+        const day = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+        const now = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+        return Math.round((day - now) / 86400000);
+    },
+    // The question for a date far from today, or null.
+    dateMessage(iso, today = new Date()) {
+        const days = TxnWarn.daysFrom(iso, today);
+        if (days === null) return null;
+        const plural = (n) => `${n} day${n === 1 ? '' : 's'}`;
+        if (days < 0 && TxnWarn._on('warn_date_past') && -days > TxnWarn._days('warn_date_past_days', 90)) {
+            return `The date ${formatDate(iso)} is ${plural(-days)} in the past. Save it with this date?`;
+        }
+        if (days > 0 && TxnWarn._on('warn_date_future') && days > TxnWarn._days('warn_date_future_days', 30)) {
+            return `The date ${formatDate(iso)} is ${plural(days)} in the future. Save it with this date?`;
+        }
+        return null;
+    },
+    EDIT_MESSAGE: 'You are changing a transaction that was already saved. Save your changes?',
+    // Before a save: true to go ahead. `opts.date` when the form has no
+    // date field named "date"; `opts.editing` for a transaction already saved.
+    async ok(form, opts = {}) {
+        const date = opts.date !== undefined ? opts.date : (form && form.date ? form.date.value : '');
+        const message = TxnWarn.dateMessage(date);
+        if (message && !confirm(message)) return false;
+        if (opts.editing && TxnWarn._on('warn_edit_transaction') && !confirm(TxnWarn.EDIT_MESSAGE)) return false;
+        return true;
+    },
+};
+
+// A question with two answers named for what they do, over whatever is
+// open: resolves true for `yes`, false for `no` (and for Escape). Focus
+// starts on `no`, the safe answer, and Tab stays between the two.
+function askChoice({ title, message, yes, no }) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'choice-overlay';
+        overlay.setAttribute('style', 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.45);'
+            + 'display:flex;align-items:center;justify-content:center;padding:16px;');
+        const box = document.createElement('div');
+        box.setAttribute('role', 'alertdialog');
+        box.setAttribute('aria-modal', 'true');
+        box.setAttribute('aria-labelledby', 'choice-title');
+        box.setAttribute('aria-describedby', 'choice-text');
+        box.setAttribute('style', 'background:var(--panel-bg,#fff);color:var(--text-primary,#111);'
+            + 'border:1px solid var(--panel-border,#c0c8d0);border-radius:6px;padding:18px 20px;'
+            + 'max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.35);font-size:13px;');
+        const h = document.createElement('h3');
+        h.id = 'choice-title';
+        h.textContent = title;
+        h.setAttribute('style', 'margin:0 0 8px;font-size:15px;');
+        const p = document.createElement('p');
+        p.id = 'choice-text';
+        p.textContent = message;
+        p.setAttribute('style', 'margin:0 0 12px;line-height:1.45;');
+        const buttons = document.createElement('div');
+        buttons.setAttribute('style', 'display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;');
+        const noBtn = document.createElement('button');
+        noBtn.type = 'button';
+        noBtn.className = 'btn btn-secondary';
+        noBtn.textContent = no;
+        const yesBtn = document.createElement('button');
+        yesBtn.type = 'button';
+        yesBtn.className = 'btn btn-primary';
+        yesBtn.textContent = yes;
+        buttons.append(noBtn, yesBtn);
+        box.append(h, p, buttons);
+        overlay.appendChild(box);
+        const opener = document.activeElement;
+        const finish = (value) => {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            if (opener && document.contains(opener)) focusFor(opener, _byKeyboard());
+            resolve(value);
+        };
+        // capture: Escape answers this question, not the form underneath
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return; }
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                e.stopPropagation();
+                (document.activeElement === noBtn ? yesBtn : noBtn).focus();
+            }
+        };
+        document.addEventListener('keydown', onKey, true);
+        noBtn.addEventListener('click', () => finish(false));
+        yesBtn.addEventListener('click', () => finish(true));
+        document.body.appendChild(overlay);
+        noBtn.focus();
+    });
+}
+
+// A duplicate check number (#481): the server's 409 (code
+// duplicate_check_number) asks "keep the number / go back and edit". Keep
+// sends the same request again with allow_duplicate_check_number; Go back
+// leaves the form open on its check number (`field`). `send(query)` makes
+// the request; resolves to its answer, or null when the person went back.
+const CheckNumberWarn = {
+    isDuplicate(err) {
+        return !!err && err.status === 409 && !!err.detail && err.detail.code === 'duplicate_check_number';
+    },
+    async send(send, field = null) {
+        try {
+            return await send(undefined);
+        } catch (err) {
+            if (!CheckNumberWarn.isDuplicate(err)) throw err;
+            const keep = await askChoice({
+                title: 'This check number is already used',
+                message: `${err.detail.message} Keep the number, or go back and edit it?`,
+                yes: 'Keep the number',
+                no: 'Go back and edit',
+            });
+            if (keep) return send({ allow_duplicate_check_number: true });
+            if (field && document.contains(field)) {
+                focusFor(field, true);
+                try { field.select(); } catch (e) { /* not selectable */ }
+            }
+            return null;
+        }
+    },
+};
+
 // ---------------------------------------------------------------------------
 // Nonprofit function dimension — program / management / fundraising (the
 // Form 990 Part IX columns). Only rendered in nonprofit mode; a blank

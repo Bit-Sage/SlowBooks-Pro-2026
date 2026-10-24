@@ -418,6 +418,7 @@ const SalesReceiptsPage = {
             lines,
         };
 
+        if (!(await TxnWarn.ok(form))) return;
         if (!(await ClassWarn.ok(form))) return;
         try {
             const result = await API.post('/sales-receipts', data);

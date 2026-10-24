@@ -40,6 +40,8 @@ const ctx = {
   toast: (msg, kind) => toasts.push([msg, kind || 'success']),
   openModal: () => {}, closeModal: () => {},
   App: { navigate: () => {} },
+  // the date question (#481) has tests of its own
+  TxnWarn: { ok: async () => true },
   API: { post: async (path, body) => { posts.push([path, body]); return {}; }, get: async () => [] },
   location: { hash: '#/payments' },
 };

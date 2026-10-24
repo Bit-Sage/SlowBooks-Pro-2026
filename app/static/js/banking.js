@@ -1004,8 +1004,14 @@ const BankingPage = {
             description: v('qe-memo') || null,
             check_number: v('qe-ref') || null,
         };
+        // a date far from today asks first, as every form does (#481)
+        if (!(await TxnWarn.ok(null, { date: data.date }))) return;
         try {
-            await API.post('/banking/transactions', data);
+            // a check number the account already has: keep it or edit it
+            const posted = await CheckNumberWarn.send(
+                q => API.post('/banking/transactions', data, q ? { query: q } : undefined),
+                document.getElementById('qe-ref'));
+            if (!posted) return;
             toast('Entry posted');
             BankingPage.payeeTyped(data.payee, inn > 0, 'qe-payee');
             await BankingPage.go(`#/banking/${accountId}`);
@@ -1293,11 +1299,15 @@ const BankingPage = {
         const form = e.target;
         let data;
         try { data = BankingPage._entryData(form, accountId); } catch (err) { toast(err.message, 'error'); return; }
-        if (!(await ClassWarn.ok(form))) return;
         const entryId = form.dataset.entryId ? parseInt(form.dataset.entryId, 10) : null;
+        if (!(await TxnWarn.ok(form, { editing: !!entryId }))) return;
+        if (!(await ClassWarn.ok(form))) return;
         if (entryId) { await BankingPage._putEntry(entryId, data, accountId); return; }
         try {
-            await API.post('/banking/transactions', data);
+            const posted = await CheckNumberWarn.send(
+                q => API.post('/banking/transactions', data, q ? { query: q } : undefined),
+                form.check_number || null);
+            if (!posted) return;
             toast('Entry posted');
             BankingPage.payeeTyped(data.payee, parseFloat(data.amount) > 0, 'qe-payee');
             closeModal();
@@ -1313,7 +1323,11 @@ const BankingPage = {
     // holds then, with confirm_reconciled.
     async _putEntry(entryId, data, accountId) {
         try {
-            const saved = await API.put(`/banking/entries/${entryId}`, data);
+            const form = document.querySelector('#modal-body form');
+            const saved = await CheckNumberWarn.send(
+                q => API.put(`/banking/entries/${entryId}`, data, q ? { query: q } : undefined),
+                (form && form.check_number) || null);
+            if (!saved) return;
             toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
@@ -1574,6 +1588,7 @@ const BankingPage = {
     async saveTransfer(e) {
         e.preventDefault();
         const form = e.target;
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const t = await API.post('/transfers', {
                 date: form.date.value,

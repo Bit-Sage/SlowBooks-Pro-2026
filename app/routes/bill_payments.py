@@ -5,7 +5,7 @@
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
@@ -18,6 +18,7 @@ from app.services.accounting import (
     get_checking_account_id,
     void_line_memo,
 )
+from app.services.check_numbers import refuse_duplicate
 from app.services.closing_date import check_closing_date
 from app.services import request_keys
 from app.services.audit import _actor
@@ -79,6 +80,7 @@ def create_bill_payment(
     db: Session = Depends(get_db),
     request: Request = None,
     response: Response = None,
+    allow_duplicate_check_number: bool = Query(False),
 ):
     check_closing_date(db, data.date)
     # A retry of a request whose response was lost must not pay the bill
@@ -112,6 +114,9 @@ def create_bill_payment(
     # when 1000 was missing, and the payment committed without a journal).
     ap_id = get_ap_account_id(db)
     bank_id = data.pay_from_account_id or get_checking_account_id(db)
+    # a check number the paying account already has (#481): after the
+    # replay check, so a payment sent again answers with itself
+    refuse_duplicate(db, bank_id, data.check_number, allow=allow_duplicate_check_number)
 
     payment = BillPayment(
         vendor_id=data.vendor_id,
