@@ -36,6 +36,17 @@ does not add one.
 
 Two reports QuickBooks users look for and did not find (#435): Sales by Item, one row per item for a period with quantity, amount, average price and — for an item whose stock is tracked — COGS, gross margin and margin % from the item's own inventory movements, built from posted invoices and sales receipts less credit memos with voids left out; and Purchases by Item, the same shape from bills less vendor credits with an average cost (expense lines carry no item, so purchases are bills and vendor credits only). A line without an item is one "No item" row so the sales total ties to the P&L's income for the same accounts. Both narrow by customer or vendor, class and job (a line's own class or job wins, else the header's), open the documents behind a row, and save as PDF, CSV and a saved report.
 
+Sales by Item counts only the lines that post to an income account, the
+item's own or the default income account, so an item pointed at a liability
+(a deposit held, say) is not a sale and the total ties to the P&L's income
+from sales; a write-off credit memo, which posts to bad debt, is not a
+return. COGS follows an edited invoice: sell 5 and edit it to 3 and the
+COGS is the cost of 3, the P&L's figure. A credit memo's return puts stock
+back without a COGS entry, so it leaves the COGS column alone as it leaves
+the P&L's. Foreign-currency lines count at their invoice's rate, rounded per
+line as the invoice's journal is. Both reports open on the fiscal year to
+date, and an item's lines open under its name as it is ("Nuts & Bolts").
+
 ### v2.28.0 — Account types and sub-accounts
 
 **Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
