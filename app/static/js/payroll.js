@@ -363,13 +363,11 @@ const PayrollPage = {
         } catch (e) { /* a failed lookup never blocks processing */ }
         // A draft figured before an employee's opening YTD changed (#433):
         // say so, and process it as figured only when asked to.
-        let q = '';
-        if (stale) {
-            if (!confirm(`${stale}\n\nProcess it as figured anyway?`)) return;
-            q = '?acknowledge_stale=1';
-        }
+        if (stale && !confirm(`${stale}\n\nProcess it as figured anyway?`)) return;
         try {
-            await API.post(`/payroll/${id}/process${q}`);
+            await (stale
+                ? API.post(`/payroll/${id}/process?acknowledge_stale=1`)
+                : API.post(`/payroll/${id}/process`));
             toast('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }
