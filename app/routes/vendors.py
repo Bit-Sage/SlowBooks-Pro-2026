@@ -11,6 +11,7 @@ from app.routes._helpers import get_or_404, reject_null_updates
 from app.services.contact_balances import ZERO, vendor_balances
 from app.services.duplicate_detection import find_duplicates
 from app.services.form_1099 import clear_type_unless_1099
+from app.services.vendor_bank_rule import set_vendor_rule, vendor_rules
 
 router = APIRouter(prefix="/api/vendors", tags=["vendors"])
 
@@ -19,10 +20,14 @@ def _responses(db: Session, vendors: list[Vendor]) -> list[VendorResponse]:
     """The vendors with what is owed to each, summed from the open bills,
     credits and unapplied payments (Vendor.balance is never written)."""
     balances = vendor_balances(db, [v.id for v in vendors])
+    rules = vendor_rules(db, [v.id for v in vendors])
     out = []
     for v in vendors:
         resp = VendorResponse.model_validate(v)
         resp.balance = balances.get(v.id, ZERO)
+        if v.id in rules:
+            resp.bank_feed_rule = True
+            resp.bank_rule_id = rules[v.id].id
         out.append(resp)
     return out
 
@@ -83,6 +88,9 @@ def create_vendor(
     vendor = Vendor(**data.model_dump())
     clear_type_unless_1099(vendor)
     db.add(vendor)
+    if data.bank_feed_rule:
+        db.flush()
+        set_vendor_rule(db, vendor, True)
     db.commit()
     db.refresh(vendor)
     return _response(db, vendor)
@@ -95,6 +103,8 @@ def update_vendor(vendor_id: int, data: VendorUpdate, db: Session = Depends(get_
     for key, val in update_data.items():
         setattr(vendor, key, val)
     clear_type_unless_1099(vendor)
+    if data.bank_feed_rule is not None:
+        set_vendor_rule(db, vendor, data.bank_feed_rule)
     db.commit()
     db.refresh(vendor)
     return _response(db, vendor)

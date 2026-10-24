@@ -35,5 +35,8 @@ class BankRuleResponse(BaseModel):
     priority: int
     is_active: bool
     created_at: datetime
+    # names for the list and the form (#493)
+    account_name: Optional[str] = None
+    vendor_name: Optional[str] = None
 
     model_config = {"from_attributes": True}

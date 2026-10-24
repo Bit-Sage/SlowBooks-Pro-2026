@@ -20,6 +20,18 @@ the entry. The entry stores its vendor (`transactions.vendor_id`, migration
 this year and all time count them, and its payments CSV has them as "Bank
 entry" rows. A transfer names no vendor.
 
+**A bank-feed rule from the vendor form** (#493). A bank rule could be made
+from the feed or on the Bank Rules page, but not from the vendor, and the rule
+form had no field for the vendor its model already carried; the rules engine
+matched on the account only. The vendor form now has "Bank feed: lines from
+this payee post to the default account": ticked, it makes the vendor's bank
+rule (its name as the pattern, Contains, any case, the default expense or COGS
+account as the category) or updates the one it has; unticked, it turns it off.
+A rule that names a vendor also matches the vendor's own name, and a line it
+categorises is added for that vendor. The Bank Rule form has a Vendor field,
+and the Bank Rules list names each rule's account and vendor (it showed the
+account's id).
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

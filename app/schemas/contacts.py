@@ -152,6 +152,11 @@ class VendorCreate(StrictModel):
     # it until 2.22.2 (#257), so every form said No.
     w9_on_file: bool = False
     notes: Optional[str] = None
+    # The vendor form's "Bank feed: lines from this payee post to <the
+    # default expense account>" (#493): true makes or updates the vendor's
+    # bank rule, false turns it off, left out leaves it as it is. Not a
+    # vendor column, so never part of model_dump().
+    bank_feed_rule: Optional[bool] = Field(None, exclude=True)
 
 
 class VendorUpdate(StrictModel):
@@ -176,6 +181,11 @@ class VendorUpdate(StrictModel):
     w9_on_file: Optional[bool] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    # The vendor form's "Bank feed: lines from this payee post to <the
+    # default expense account>" (#493): true makes or updates the vendor's
+    # bank rule, false turns it off, left out leaves it as it is. Not a
+    # vendor column, so never part of model_dump().
+    bank_feed_rule: Optional[bool] = Field(None, exclude=True)
 
 
 class VendorResponse(BaseModel):
@@ -204,5 +214,8 @@ class VendorResponse(BaseModel):
     balance: Decimal
     created_at: datetime
     updated_at: datetime
+    # the vendor's active bank rule, if it has one (#493)
+    bank_feed_rule: bool = False
+    bank_rule_id: Optional[int] = None
 
     model_config = {"from_attributes": True}

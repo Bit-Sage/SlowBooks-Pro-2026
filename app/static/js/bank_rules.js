@@ -23,14 +23,15 @@ const BankRulesPage = {
             html += `<div class="table-container"><table>
                 <thead><tr>
                     <th scope="col">Name</th><th scope="col">Pattern</th><th scope="col">Match Type</th>
-                    <th scope="col">Category Account</th><th scope="col">Priority</th><th scope="col">Active</th><th scope="col">Actions</th>
+                    <th scope="col">Category Account</th><th scope="col">Vendor</th><th scope="col">Priority</th><th scope="col">Active</th><th scope="col">Actions</th>
                 </tr></thead><tbody>`;
             for (const r of rules) {
                 html += `<tr>
                     <td><strong>${escapeHtml(r.name)}</strong></td>
                     <td><code>${escapeHtml(r.pattern)}</code></td>
                     <td>${escapeHtml(r.rule_type)}</td>
-                    <td>${r.account_id || '—'}</td>
+                    <td>${r.account_name ? escapeHtml(r.account_name) : '—'}</td>
+                    <td>${r.vendor_name ? escapeHtml(r.vendor_name) : '—'}</td>
                     <td>${r.priority}</td>
                     <td>${r.is_active ? 'Yes' : 'No'}</td>
                     <td class="actions">
@@ -61,7 +62,15 @@ const BankRulesPage = {
             BankRulesPage._afterSave = null;
         }
 
-        const accounts = await API.get('/accounts');
+        const [accounts, vendors] = await Promise.all([
+            API.get('/accounts'),
+            API.get('/vendors').catch(() => []),
+        ]);
+        // the vendor a matched line is posted for (#493): active vendors,
+        // and the rule's own even when it has been made inactive
+        const vendorOpts = vendors
+            .filter(v => v.is_active !== false || v.id == rule.vendor_id)
+            .map(v => `<option value="${v.id}" ${rule.vendor_id==v.id?'selected':''}>${escapeHtml(v.name)}</option>`).join('');
         const acctOpts = accounts
             .filter(a => ['expense','income','asset','liability','cogs'].includes(a.account_type))
             .map(a => `<option value="${a.id}" ${rule.account_id==a.id?'selected':''}>${accountLabel(a)}</option>`).join('');
@@ -82,6 +91,9 @@ const BankRulesPage = {
                         </select></div>
                     <div class="form-group"><label>Category Account</label>
                         <select name="account_id"><option value="">-- None --</option>${acctOpts}</select></div>
+                    <div class="form-group"><label for="bank-rule-vendor">Vendor</label>
+                        <select id="bank-rule-vendor" name="vendor_id" aria-describedby="bank-rule-vendor-hint"><option value="">-- None --</option>${vendorOpts}</select>
+                        <div id="bank-rule-vendor-hint" class="form-hint" style="font-size:11px; color:var(--gray-500);">A line this rule matches is added for this vendor. The vendor's own name matches too.</div></div>
                     <div class="form-group"><label>Priority</label>
                         <input name="priority" type="number" value="${rule.priority}" title="Higher = checked first"></div>
                     <div class="form-group"><label>Active</label>

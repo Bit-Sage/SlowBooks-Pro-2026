@@ -207,15 +207,23 @@ def vendor_named(db: Session, name: str | None) -> Vendor | None:
 
 
 def _entry_vendor(
-    db: Session, payee: str | None, vendor_id: int | None
+    db: Session, bt: BankTransaction, payee: str | None, vendor_id: int | None
 ) -> Vendor | None:
-    """The vendor a feed line posts to (#491): the one asked for, else
-    the vendor its payee names."""
+    """The vendor a feed line posts to (#491): the one asked for; else the
+    one named by the bank rule the statement line follows (#493); else the
+    vendor its payee names."""
+    from app.services.bank_rules_engine import rule_for
+
     if vendor_id is not None:
         vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
         if not vendor:
             raise HTTPException(status_code=404, detail="Vendor not found")
         return vendor
+    rule = rule_for(db, bt.payee)
+    if rule is not None and rule.vendor_id:
+        vendor = db.query(Vendor).filter(Vendor.id == rule.vendor_id).first()
+        if vendor is not None:
+            return vendor
     return vendor_named(db, payee)
 
 
@@ -248,7 +256,7 @@ def add(
         raise HTTPException(status_code=404, detail="Category account not found")
     check_closing_date(db, bt.date)
     payee = payee or bt.payee
-    vendor = _entry_vendor(db, payee, vendor_id)
+    vendor = _entry_vendor(db, bt, payee, vendor_id)
     txn = post_bank_entry(
         db,
         acct,
