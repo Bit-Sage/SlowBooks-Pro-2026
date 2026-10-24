@@ -1,7 +1,10 @@
 # ============================================================================
 # Opening YTD import (#433) — every employee's opening balance from one CSV.
 #
-# One reader: the SlowBooks template (opening_template_csv). A reader for
+# One reader: the SlowBooks template (opening_template_csv): one row per
+# employee per quarter (Quarter blank = the quarter As of falls in), a
+# further state for that quarter on a row with only the state columns. A
+# reader for
 # QuickBooks Desktop's Payroll Summary waits for a real export to build
 # against; a named third-party format is never read from a hand-made file.
 #
@@ -15,13 +18,13 @@ import csv
 import io
 import re
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.benefits import BenefitCode
 from app.models.payroll import Employee
-from app.models.payroll_opening import OPENING_AMOUNT_FIELDS
 from app.services import payroll_opening as po
 
 # Template columns, in order, and the field each fills.
@@ -36,8 +39,6 @@ TEMPLATE_AMOUNT_COLUMNS = (
     ("Employer Medicare tax", "employer_medicare_tax"),
     ("FUTA wages", "futa_wages"),
     ("FUTA tax", "futa_tax"),
-    ("SUTA wages", "suta_wages"),
-    ("SUTA tax", "suta_tax"),
     ("Pre-tax deductions", "pretax_deductions"),
     ("Post-tax deductions", "posttax_deductions"),
     ("Garnishments", "garnishments"),
@@ -47,53 +48,89 @@ TEMPLATE_STATE_COLUMNS = (
     ("State", "state"),
     ("State wages", "wages"),
     ("State withholding", "withholding"),
+    ("SUTA wages", "suta_wages"),
+    ("SUTA tax", "suta_tax"),
+    ("State other (employee)", "other_employee"),
+    ("State other (employer)", "other_employer"),
 )
 TEMPLATE_COLUMNS = (
-    ["Employee", "Email", "Year", "As of"]
+    ["Employee", "Email", "Year", "As of", "Quarter"]
     + [c for c, _ in TEMPLATE_AMOUNT_COLUMNS]
     + [c for c, _ in TEMPLATE_STATE_COLUMNS]
 )
 
 _BENEFIT_EMPLOYER_RE = re.compile(r"^benefit employer:\s*(.+)$", re.I)
 _BENEFIT_RE = re.compile(r"^benefit:\s*(.+)$", re.I)
+_QUARTER_RE = re.compile(r"^q?\s*([1-4])$", re.I)
 
 
 def opening_template_csv() -> str:
-    """The template: the columns, and an example of a two-state employee
-    with a 401(k) code (the example's name matches no one, so importing
-    the file unchanged writes nothing)."""
+    """The template: the columns, and an example of a May switch, Q1 and
+    Q2 to date, in two states in Q1, with a 401(k) code (the example's name
+    matches no one, so importing the file unchanged writes nothing)."""
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
     w.writerow(TEMPLATE_COLUMNS + ["Benefit:401K", "Benefit employer:401K"])
-    example = {
-        "Employee": "Example, Pat",
-        "Email": "",
-        "Year": "2026",
-        "As of": "2026-06-30",
-        "Gross": "30000.00",
-        "Federal withholding": "3100.00",
-        "SS wages": "29000.00",
-        "SS tax": "1798.00",
-        "Employer SS tax": "1798.00",
-        "Medicare wages": "29000.00",
-        "Medicare tax": "420.50",
-        "Employer Medicare tax": "420.50",
-        "FUTA wages": "7000.00",
-        "FUTA tax": "42.00",
-        "SUTA wages": "7000.00",
-        "SUTA tax": "189.00",
-        "Pre-tax deductions": "1500.00",
-        "Post-tax deductions": "0.00",
-        "Garnishments": "0.00",
-        "Net": "21772.50",
-        "State": "GA",
-        "State wages": "20000.00",
-        "State withholding": "800.00",
-    }
-    w.writerow([example.get(c, "") for c in TEMPLATE_COLUMNS] + ["1500.00", "750.00"])
-    second = {"Employee": "Example, Pat", "State": "AL"}
-    second.update({"State wages": "8500.00", "State withholding": "340.00"})
-    w.writerow([second.get(c, "") for c in TEMPLATE_COLUMNS] + ["", ""])
+
+    def row(cells, benefits=("", "")):
+        w.writerow([cells.get(c, "") for c in TEMPLATE_COLUMNS] + list(benefits))
+
+    row(
+        {
+            "Employee": "Example, Pat",
+            "Year": "2026",
+            "As of": "2026-05-15",
+            "Quarter": "1",
+            "Gross": "18000.00",
+            "Federal withholding": "1860.00",
+            "SS wages": "17100.00",
+            "SS tax": "1060.20",
+            "Employer SS tax": "1060.20",
+            "Medicare wages": "17100.00",
+            "Medicare tax": "247.95",
+            "Employer Medicare tax": "247.95",
+            "FUTA wages": "7000.00",
+            "FUTA tax": "42.00",
+            "Pre-tax deductions": "900.00",
+            "Net": "13931.85",
+            "State": "GA",
+            "State wages": "12000.00",
+            "State withholding": "480.00",
+            "SUTA wages": "9500.00",
+            "SUTA tax": "256.50",
+        },
+        ("900.00", "450.00"),
+    )
+    row(
+        {
+            "Employee": "Example, Pat",
+            "State": "AL",
+            "State wages": "5100.00",
+            "State withholding": "204.00",
+            "SUTA wages": "5100.00",
+            "SUTA tax": "137.70",
+        }
+    )
+    row(
+        {
+            "Employee": "Example, Pat",
+            "Quarter": "2",
+            "Gross": "9000.00",
+            "Federal withholding": "930.00",
+            "SS wages": "8550.00",
+            "SS tax": "530.10",
+            "Employer SS tax": "530.10",
+            "Medicare wages": "8550.00",
+            "Medicare tax": "123.98",
+            "Employer Medicare tax": "123.98",
+            "Pre-tax deductions": "450.00",
+            "Net": "6965.92",
+            "State": "GA",
+            "State wages": "8550.00",
+            "State withholding": "342.00",
+        },
+        ("450.00", "225.00"),
+    )
     return out.getvalue()
 
 
@@ -174,11 +211,9 @@ def _plan_row(db, line, name, employee, payload, errors, notes, reason):
     if not errors and employee is not None:
         existing = po.opening_for(db, employee.id, clean["year"])
         first = po.first_processed_pay_date(db, employee.id, clean["year"])
-        if first is not None and existing is None and clean["as_of"] >= first:
-            errors.append(
-                f"as_of {clean['as_of'].isoformat()} is not before the first "
-                f"processed pay run of {clean['year']} ({first.isoformat()})."
-            )
+        refusal = po.as_of_refusal(clean["as_of"], first, clean["year"])
+        if refusal:
+            errors.append(refusal)
         elif first is not None and not reason:
             errors.append(po.lock_message(first) + " Import again with a reason.")
         else:
@@ -197,16 +232,7 @@ def _plan_row(db, line, name, employee, payload, errors, notes, reason):
         "note": "; ".join(errors + notes) or None,
         "errors": errors,
     }
-    for f in OPENING_AMOUNT_FIELDS:
-        row[f] = float(clean[f])
-    row["states"] = [
-        {k: (v if k == "state" else float(v)) for k, v in s.items()}
-        for s in clean["states"]
-    ]
-    row["benefits"] = [
-        {k: (v if k == "benefit_code_id" else float(v)) for k, v in b.items()}
-        for b in clean["benefits"]
-    ]
+    row.update(po.plain(clean))
     return row, (clean if action != "error" else None)
 
 
@@ -247,88 +273,144 @@ def _read_template(db: Session, rows: list[list[str]], reason) -> dict:
         i = col.get(_norm(name))
         return r[i].strip() if i is not None and i < len(r) else ""
 
-    amount_cols = [c for c, _ in TEMPLATE_AMOUNT_COLUMNS] + ["Year", "As of"]
+    def state_of(r):
+        return {
+            f: (cell(r, c) if f == "state" else _num(cell(r, c)))
+            for c, f in TEMPLATE_STATE_COLUMNS
+        }
+
+    amount_cols = [c for c, _ in TEMPLATE_AMOUNT_COLUMNS]
     entries: list[dict] = []
-    by_key: dict[str, dict] = {}
+    by_key: dict[tuple, dict] = {}
+    last_quarter: dict | None = None  # the quarter a state-only row adds to
     for n, r in enumerate(rows[1:], start=2):
         if not any((c or "").strip() for c in r):
             continue
         name = cell(r, "Employee")
+        key = _person_key(name)
+        year_s, as_of_s, quarter_s = (
+            cell(r, "Year"),
+            cell(r, "As of"),
+            cell(r, "Quarter"),
+        )
         has_amounts = any(cell(r, c) for c in amount_cols) or any(
             i < len(r) and r[i].strip() for i, _, _ in benefit_cols
         )
-        state = {f: cell(r, c) for c, f in TEMPLATE_STATE_COLUMNS}
-        key = _person_key(name)
-        prior = by_key.get(key) if key else (entries[-1] if entries else None)
-        if not has_amounts and prior is not None:
-            # a second state for the employee above
-            if state["state"]:
-                prior["payload"]["states"].append(
-                    {
-                        "state": state["state"],
-                        "wages": _num(state["wages"]),
-                        "withholding": _num(state["withholding"]),
-                    }
-                )
-            continue
-        entry = {"line": n, "name": name, "email": cell(r, "Email"), "errors": []}
-        if not has_amounts:
-            entry["errors"].append(
-                "The row has no Year, As of or amounts, and no employee above "
-                "it to add a state to."
+        starts_quarter = has_amounts or bool(quarter_s or year_s or as_of_s)
+        state = state_of(r)
+        if not starts_quarter:
+            # a further state for the quarter above
+            if last_quarter is not None and (not key or key == last_quarter["key"]):
+                if state["state"]:
+                    last_quarter["states"].append(state)
+                continue
+            entries.append(
+                {
+                    "line": n,
+                    "name": name,
+                    "email": cell(r, "Email"),
+                    "errors": [
+                        "The row has no Quarter, Year, As of or amounts, and no "
+                        "quarter of the same employee above it to add a state to."
+                    ],
+                    "payload": {"quarters": []},
+                }
             )
-        year_s, as_of_s = cell(r, "Year"), cell(r, "As of")
+            continue
+
+        errors: list[str] = []
         as_of = _parse_date(as_of_s)
         if as_of_s and as_of is None:
-            entry["errors"].append(f"As of {as_of_s!r} is not a date.")
+            errors.append(f"As of {as_of_s!r} is not a date.")
         year = None
         if year_s:
             try:
                 year = int(year_s)
             except ValueError:
-                entry["errors"].append(f"Year {year_s!r} is not a year.")
+                errors.append(f"Year {year_s!r} is not a year.")
         elif as_of:
             year = as_of.year
-        payload = {"year": year, "as_of": as_of, "states": [], "benefits": []}
-        for c, f in TEMPLATE_AMOUNT_COLUMNS:
-            payload[f] = _num(cell(r, c))
-        if state["state"]:
-            payload["states"].append(
-                {
-                    "state": state["state"],
-                    "wages": _num(state["wages"]),
-                    "withholding": _num(state["withholding"]),
-                }
+        # the employee's entry for the year: a later quarter's row may leave
+        # Year and As of blank
+        entry = None
+        if key:
+            if year is None:
+                entry = next(
+                    (e for (k, _y), e in reversed(by_key.items()) if k == key), None
+                )
+            else:
+                entry = by_key.get((key, year))
+        if entry is None:
+            entry = {
+                "line": n,
+                "name": name,
+                "email": cell(r, "Email"),
+                "errors": [],
+                "payload": {
+                    "year": year,
+                    "as_of": as_of,
+                    "quarters": [],
+                    "benefits": {},
+                },
+            }
+            if key and year is not None:
+                by_key[(key, year)] = entry
+            entries.append(entry)
+        elif as_of and entry["payload"]["as_of"] and as_of != entry["payload"]["as_of"]:
+            errors.append(
+                f"As of {as_of.isoformat()} differs from the "
+                f"{entry['payload']['as_of'].isoformat()} on line {entry['line']}; "
+                "an employee's year has one As of."
             )
-        by_code: dict[str, dict] = {}
+        elif as_of:
+            entry["payload"]["as_of"] = as_of
+        payload = entry["payload"]
+
+        quarter = None
+        if quarter_s:
+            m = _QUARTER_RE.match(quarter_s)
+            if m:
+                quarter = int(m.group(1))
+            else:
+                errors.append(f"Quarter {quarter_s!r} is not 1 to 4.")
+        elif payload["as_of"]:
+            quarter = po.quarter_of(payload["as_of"])
+        else:
+            errors.append("Quarter is blank and there is no As of to take it from.")
+        q = {"quarter": quarter, "states": [state] if state["state"] else []}
+        for c, f in TEMPLATE_AMOUNT_COLUMNS:
+            q[f] = _num(cell(r, c))
+        if quarter is not None:
+            payload["quarters"].append(q)
         for i, code, side in benefit_cols:
             value = _num(r[i]) if i < len(r) else None
             if value is None:
                 continue
             bc = codes.get(code.lower())
             if bc is None:
-                entry["errors"].append(f"Benefit code {code!r} does not exist.")
+                errors.append(f"Benefit code {code!r} does not exist.")
                 continue
-            by_code.setdefault(bc.code, {"benefit_code_id": bc.id})[side] = value
-        payload["benefits"] = list(by_code.values())
-        entry["payload"] = payload
-        if key and key in by_key and by_key[key]["payload"].get("year") == year:
-            entry["errors"].append(
-                f"{name} is in the file twice for {year}; a second state goes "
-                "on a row with only the state columns filled."
-            )
-        elif key:
-            by_key[key] = entry
-        entries.append(entry)
+            # a code's amounts on several quarter rows add up to the year's
+            b = payload["benefits"].setdefault(bc.code, {"benefit_code_id": bc.id})
+            try:
+                b[side] = str(Decimal(b.get(side) or "0") + Decimal(value))
+            except InvalidOperation:
+                errors.append(f"Benefit:{code} {value!r} is not an amount.")
+        entry["errors"].extend(f"Line {n}: {e}" for e in errors)
+        last_quarter = {"key": key, "states": q["states"]}
 
     plan_rows = []
     for e in entries:
         employee, err = _match_employee(db, e["name"], e["email"])
         errors = e["errors"] + ([err] if err else [])
+        payload = dict(e["payload"])
+        payload["benefits"] = list((payload.get("benefits") or {}).values())
         row, clean = _plan_row(
-            db, e["line"], e["name"], employee, e["payload"], errors, [], reason
+            db, e["line"], e["name"], employee, payload, errors, [], reason
         )
-        row["_clean"] = clean
+        # what apply_plan saves: the payload itself (save_opening checks it
+        # again), only for a row that is not an error
+        row["_clean"] = payload if clean is not None else None
         plan_rows.append(row)
     return {"format": "template", "rows": plan_rows, "errors": [], "warnings": warnings}
 
@@ -374,7 +456,7 @@ def apply_plan(db: Session, plan: dict, reason: str | None = None) -> int:
         if row["action"] == "error" or clean is None:
             continue
         po.save_opening(db, row["employee_id"], clean, reason)
-        years.add(clean["year"])
+        years.add(row["year"])
         written += 1
     db.commit()
     for year in sorted(years):
