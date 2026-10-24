@@ -35,6 +35,7 @@ _ALLOWED_TYPES = {
     "profit_loss_by_class",
     "profit_loss_class",
     "profit_loss_by_job",
+    "profit_loss_detail",  # every line under each P&L account (#477)
     "balance_sheet",
     "ar_aging",
     "ap_aging",

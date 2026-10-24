@@ -50,6 +50,16 @@ A/R and the job's A/R all return to zero. A fee already voided in the
 journal is not reversed a second time, and each fee line comes off with its
 own job and class, so a fee posted before this release (with no job) or
 before the invoice's job changed never credits the job's A/R.
+- **Profit & Loss Detail** (#477): a new report on the Report Center with every
+  transaction under each income, cost of goods and expense account for the
+  period, in the P&L's order and QuickBooks Desktop's columns (Type, Date, Num,
+  Name, Memo, Split, Amount, Balance). Each account has a running balance and a
+  total, sub-accounts sit beneath their parents with a total per family, and
+  Total Income, Total Cost of Goods Sold, Gross Profit, Total Expenses, Other
+  Income / Other Expense (when there are any) and Net Income are the Profit &
+  Loss's for the same dates. It narrows to one class or one job, sorts by
+  number or name and can leave the adjusting entries out; a line's Type opens
+  its document. Saves as PDF (landscape) and CSV, and as a saved report.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

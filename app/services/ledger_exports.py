@@ -336,6 +336,75 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     return out.getvalue()
 
 
+def profit_loss_detail_csv(data: dict, company: str, words) -> str:
+    """The P&L Detail (#477) as a spreadsheet: one row per posted line
+    (Section, Account number, Account, Type, Date, Num, Name, Memo, Split,
+    Amount, Balance), each account's total after its lines, a family's
+    total after its sub-accounts (Level says how deep), then the section
+    totals and Net Income — the screen's rows, so the lines of a section add
+    up to its total and the totals are the Profit & Loss's."""
+    from app.routes.reports.pl_detail import detail_layout, detail_scope, detail_title
+
+    out = io.StringIO()
+    w = _SafeWriter(out)
+    period = _range(data)
+    scope = detail_scope(data, words)
+    if data.get("class_name") or data.get("job_name"):
+        period += f" ({scope.replace(', adjusting entries left out', '')})"
+    _preamble(w, company, detail_title(data, words), period)
+    w.writerow(
+        [
+            "Section",
+            "Level",
+            "Account number",
+            "Account",
+            "Type",
+            "Date",
+            "Num",
+            "Name",
+            "Memo",
+            "Split",
+            "Amount",
+            "Balance",
+        ]
+    )
+
+    def total_row(section, level, label, amount):
+        w.writerow([section, level, "", label] + [""] * 6 + [_money(amount), ""])
+
+    for head, key, total_label, total_key in detail_layout(data, words):
+        if key:
+            for r in data["tree"][key]:
+                level = r["depth"]
+                if r["kind"] in ("account", "direct"):
+                    account = r.get("account_path") or r.get("account_name") or ""
+                    if r["kind"] == "direct":
+                        account = r["label"]
+                    for e in r.get("entries", []):
+                        w.writerow(
+                            [
+                                head,
+                                level,
+                                r.get("account_number") or "",
+                                account,
+                                e["type"] + (" (void)" if e.get("voided") else ""),
+                                e["date"],
+                                e.get("num") or "",
+                                e.get("name") or "",
+                                e.get("memo") or "",
+                                e.get("split") or "",
+                                _money(e["amount"]),
+                                _money(e["balance"]),
+                            ]
+                        )
+                    total_row(head, level, f"Total {r['label']}", r["amount"])
+                elif r["kind"] == "total":
+                    total_row(head, level, r["label"], r["amount"])
+        total_row(head or "", "", total_label, data[total_key])
+    total_row("", "", words("Net Income"), data["net_income"])
+    return out.getvalue()
+
+
 def profit_loss_csv_class_line(data: dict, words) -> str:
     """The preamble's report line for one class's P&L: which class, and
     that the figures are that class's alone — the PDF's words (NEW-29)."""
