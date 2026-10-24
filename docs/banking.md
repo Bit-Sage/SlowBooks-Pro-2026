@@ -148,10 +148,13 @@ import as a `mapping` form field (JSON: column indexes for `date`,
 `description`, `payee`, `amount` or `debit`/`credit`, `check_number`, plus
 `date_format` and `has_header`).
 
-Nothing has to exist before the import: the payee on a line is free text
-until it is matched or a rule names a vendor, and a line with no category
-arrives uncategorised and is categorised in the review queue. You do not
-set up vendors or accounts first.
+Apart from the bank account you import into, linked to its ledger account,
+nothing has to exist first: no vendors, no expense accounts. The import
+needs the bank account (any other is a 404), and adding a line from the
+review queue needs it linked to its ledger account (a 400, "Link this feed
+to a ledger account first"). The payee on a line is free text until it is
+matched or a rule names a vendor, and a line with no category arrives
+uncategorised and is categorised in the review queue.
 
 1. **Duplicates are skipped** (bank transaction id / FITID, or a
    content-derived id for CSV).
