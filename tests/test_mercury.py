@@ -1,7 +1,7 @@
 """Mercury feed: API pagination, credential protection, and bank-review integration."""
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import httpx
@@ -325,10 +325,14 @@ def test_non_usd_books_and_future_start_are_rejected(
     client, db_session, bank, transport
 ):
     connect_and_map(client, bank)
+    # a year past the schema's bound is refused as bad input (422) before the
+    # route's own check; a date that's merely in the future is the route's 400
     assert (
         client.post("/api/mercury/sync", json={"since": "2999-01-01"}).status_code
-        == 400
+        == 422
     )
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    assert client.post("/api/mercury/sync", json={"since": tomorrow}).status_code == 400
     set_setting(db_session, "home_currency", "EUR")
     db_session.commit()
     assert (
@@ -369,5 +373,7 @@ def test_readonly_and_bookkeeper_permissions(client, db_session, bank, transport
             == 403
         )
         assert client.delete("/api/mercury/webhook-settings").status_code == 403
+        # mapping wires the books: an administrator's, as SimpleFIN's (#384)
+        assert client.post("/api/mercury/map", json={"mapping": {}}).status_code == 403
         response = client.post("/api/mercury/sync", json={"since": "2026-08-01"})
         assert response.status_code == (200 if role == "bookkeeper" else 403)

@@ -919,6 +919,9 @@ _ADMIN_WRITE_PREFIXES = (
     "/api/tokens",
     "/api/settings",
     "/api/mercury/connect",
+    # which Mercury account feeds which bank account wires the books, as
+    # SimpleFIN's mapping is admin-only since 2.26.0 (#384)
+    "/api/mercury/map",
     "/api/mercury/disconnect",
     "/api/mercury/webhook-settings",
     "/api/backups",

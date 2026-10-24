@@ -1,5 +1,10 @@
 # Mercury bank feed
 
+> Mercury is a trademark of Mercury Technologies, Inc. SlowBooks Pro is not
+> affiliated with, endorsed by, or sponsored by Mercury. This connection uses
+> Mercury's public API with a read-only token you create in your own Mercury
+> account; the token stays on your SlowBooks server.
+
 SlowBooks reads posted deposits and withdrawals from Mercury into Banking's
 **To review** list. This tracks incoming payments to your business alongside
 its other bank activity. The connector only reads Mercury; it cannot send money.
@@ -35,8 +40,8 @@ comes from your ledger; connecting does not create an opening balance.
 ## Credentials and connectivity
 
 The token is encrypted using the company's settings encryption key and masked
-in settings responses. Connecting and disconnecting require an administrator;
-bookkeepers can map and sync, and read-only users can view the feed status.
+in settings responses. Connecting, disconnecting and mapping accounts require an administrator;
+bookkeepers can sync, and read-only users can view the feed status.
 Disconnecting forgets the token and mapping while keeping imported transactions.
 Reconnect and map to the same bank feed to continue without duplicate imports.
 
@@ -114,3 +119,13 @@ endpoint in Mercury to stop deliveries. Disconnecting the Mercury feed clears
 its webhook configuration as well. Mercury does not offer webhook delivery in
 its sandbox. See [Mercury's webhook guide](https://docs.mercury.com/reference/webhooks)
 for registration, verification, and delivery behavior.
+
+
+**One company per server for webhooks.** A webhook arrives with no sign-in, so
+on a Server Edition host that serves several companies it is checked against the
+company the server was started for. A delivery meant for another company is
+refused (401) and Mercury does not retry it; nothing reaches another company's
+books, the balance simply isn't updated. Point Mercury's webhook only at a
+server started for the company it belongs to. Transactions still come in with
+**Sync Mercury** for any company. (Payment webhooks work the same way; see
+[server-edition.md](server-edition.md).)
