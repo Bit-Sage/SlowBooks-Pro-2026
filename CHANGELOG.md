@@ -5,6 +5,19 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**A typed deposit can't exceed Undeposited Funds** (#494). Make Deposits with
+no payments ticked took the typed total as given and posted it, so a $5,000
+figure went into the bank against a single $100 payment waiting to be
+deposited. The ticked-payments path already refused a total that disagreed
+with what was waiting; the no-ticket path now caps the typed total at the
+Undeposited Funds balance the same way and answers 400 with what is actually
+waiting when it is asked for more. The cap is the live Undeposited Funds
+balance: after a partial typed deposit ($60 of a $100 payment) only the $40
+left can be deposited, where the payment used to count in full and a second
+$100 deposit drove Undeposited Funds to -$60.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
