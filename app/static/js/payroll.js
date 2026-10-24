@@ -275,12 +275,23 @@ const PayrollPage = {
     },
 
     // Void a processed run (#432): reverse the payroll journal entry, free
-    // the time entries, mark the stubs void. Any warning (a NACHA file was
-    // already made) comes back on the response and is toasted after.
+    // the time entries, mark the stubs void. When the server needs a second
+    // look (a NACHA file was made, the run's liabilities were since paid,
+    // its quarter's 941 or year's W-2s were generated) it answers 409 with
+    // the warnings; they are shown and the void is sent again with
+    // confirm=true only if the user says so.
     async void(id) {
         if (!confirm('Void this pay run? The payroll journal entry is reversed, the time entries go back to approved, and the stubs are marked void.')) return;
         try {
-            const run = await API.post(`/payroll/${id}/void`);
+            let run;
+            try {
+                run = await API.post(`/payroll/${id}/void`);
+            } catch (err) {
+                if (!(err.status === 409 && err.detail && err.detail.code === 'confirm_void')) throw err;
+                const list = (err.detail.warnings || []).map(w => '\u2022 ' + w).join('\n\n');
+                if (!confirm('Before voiding this pay run:\n\n' + list + '\n\nVoid it anyway?')) return;
+                run = await API.post(`/payroll/${id}/void`, undefined, { query: { confirm: true } });
+            }
             toast('Pay run voided');
             for (const w of (run.warnings || [])) toast(w, 'warning');
             App.navigate('#/payroll');
