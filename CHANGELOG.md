@@ -359,7 +359,7 @@ ledger account: no vendors, no expense accounts (#446, @ContractorKeith).
 Three schema changes, run in every company file one after the other: the
 payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
-`c4e5d6f7a8b9`. 631 API operations.
+`c4e5d6f7a8b9`. 632 API operations.
 
 
 ### v2.28.0 — Account types and sub-accounts
