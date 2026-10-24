@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A Recent dropdown instead of the Open list** (#462). Since 2.24.0 every
+screen opened added a line with an × at the top of the sidebar, up to
+twelve, pushing the menu down. It is one line now, "Recent: <the screen
+showing> ▾", a button that opens the last seven screens, most recent first,
+the one showing marked, each a link back with its report period, register
+account or document title as before; a screen opened again moves to the
+top rather than listing twice, and Clear at the foot empties the list. The
+button says whether it is open to a screen reader, the arrow keys, Home and
+End move through the list, Esc closes it and returns to the button, and Tab
+moves on. The list is still kept for the session, per sign-in and company,
+and survives a reload; it fits a 320 px window in both themes.
+
 **Hidden menu items stay hidden** (#457, reported by tithetaker). Settings →
 Sidebar dropped every item already hidden from its list, so it could not be
 shown again, and the next Save wrote only the items on the page, which

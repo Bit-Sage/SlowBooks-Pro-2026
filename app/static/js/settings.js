@@ -1230,7 +1230,7 @@ const SettingsPage = {
         let html = '';
         const items = (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') ? [...document.querySelectorAll('#sidebar li')] : [];
         items.forEach(li => {
-            if (li.closest && li.closest('#open-screens, .recent-screens')) return;
+            if (li.closest && li.closest('#recent-screens')) return;
             const byMenu = !!(li.dataset && li.dataset.hiddenByMenu);
             const parent = li.parentElement;
             if ((li.hidden && !byMenu) || (parent && typeof parent.closest === 'function' && parent.closest('[hidden]'))) return;
