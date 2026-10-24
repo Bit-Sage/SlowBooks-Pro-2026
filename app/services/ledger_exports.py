@@ -317,9 +317,9 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     def summary(label, key):
         w.writerow(["", "", label] + figures(data[key], p_tot.get(key, 0)))
 
-    section(words("Income"), "income", "total_income")
+    section(words("Income"), "income", "total_operating_income")
     section("Cost of Goods Sold", "cogs", "total_cogs")
-    section("Expenses", "expenses", "total_expenses")
+    section("Expenses", "expenses", "total_operating_expenses")
     summary("Gross Profit", "gross_profit")
     if data.get("has_other"):
         # Other Income / Other Expense below Net Operating Income (#390)

@@ -231,7 +231,9 @@ def test_the_classes_pages_count_other_income_with_income(browser, company, book
         "/api/classes/activity?start_date=2026-09-01&end_date=2026-09-30"
     ).json()
     row = next(c for c in act["classes"] if c["other_income"])
-    shown = row["income"] + row["other_income"]
+    # the activity's income includes Other Income, as 2.27.0's API had it
+    shown = row["income"]
+    operating = row["income"] - row["other_income"]
     page, _handled = _open_at(browser, company, f"#/classes?{span}&show=all")
     try:
         page.wait_for_selector("#page-content tbody tr")
@@ -247,7 +249,7 @@ def test_the_classes_pages_count_other_income_with_income(browser, company, book
     try:
         page.wait_for_selector("#class-stats")
         stats = " | ".join(page.evaluate(STATS))
-        assert f"Income ${row['income']:,.2f}" in stats
+        assert f"Income ${operating:,.2f}" in stats
         other = row["other_income"] - row.get("other_expense", 0)
         assert f"Net other income ${other:,.2f}" in stats
         assert f"${shown:,.2f}" not in stats

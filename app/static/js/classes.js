@@ -182,10 +182,9 @@ const ClassesPage = {
         if (!all.some(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived)) {
             return `<div class="empty-state"><p>${s.show === 'archived' ? `No archived ${T('classes').toLowerCase()}.` : Terms.text('No classes yet. Add them under Settings → Classes; every entry form then offers them.')}</p></div>`;
         }
-        // Other Income / Other Expense (#390) count with income and
-        // expenses here, so each row's four figures add up to net
-        const shown = all.map(c => ({ ...c, income: (c.income || 0) + (c.other_income || 0), expenses: (c.expenses || 0) + (c.other_expense || 0) }));
-        const rows = shown.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
+        // income and expenses count Other Income / Other Expense (#390),
+        // so each row's four figures add up to net
+        const rows = all.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
         const keys = ['income', 'cogs', 'expenses', 'net_income'];
         const sum = {};
         for (const k of keys) sum[k] = rows.reduce((t, c) => t + (c[k] || 0), 0);
@@ -344,10 +343,10 @@ const ClassesPage = {
         const fund = Terms.isNonprofit() ? ClassesPage._fundHtml(c) : '';
         return `
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px" id="class-stats">
-                ${stat(T('Income'), ClassesPage.money(d.total_income))}
+                ${stat(T('Income'), ClassesPage.money(d.total_operating_income))}
                 ${stat('Cost of goods', ClassesPage.money(d.total_cogs))}
                 ${stat('Gross profit', ClassesPage.money(d.gross_profit))}
-                ${stat('Expenses', ClassesPage.money(d.total_expenses))}
+                ${stat('Expenses', ClassesPage.money(d.total_operating_expenses))}
                 ${(d.total_other_income || d.total_other_expense)
                     ? stat('Net other income', ClassesPage.money(d.net_other_income), d.net_other_income < 0 ? 'var(--text-danger)' : null)
                     : ''}
@@ -365,13 +364,13 @@ const ClassesPage = {
                         <tbody>
                             <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
                             ${section(d.income)}
-                            ${subtotal(T('Total Income'), d.total_income)}
+                            ${subtotal(T('Total Income'), d.total_operating_income)}
                             <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
                             ${section(d.cogs)}
                             ${subtotal('Gross Profit', d.gross_profit)}
                             <tr><td><strong>Expenses</strong></td><td></td></tr>
                             ${section(d.expenses)}
-                            ${subtotal('Total Expenses', d.total_expenses)}
+                            ${subtotal('Total Expenses', d.total_operating_expenses)}
                             ${ReportsPage._plOther(d, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, d[key]))}
                             <tr style="font-weight:700; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${ClassesPage.money(d.net_income)}</td></tr>
                         </tbody>

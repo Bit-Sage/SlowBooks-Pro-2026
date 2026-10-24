@@ -86,9 +86,9 @@ def classes_activity(
     db.commit()
     report = profit_loss_by_class(start_date, end_date, db)
     by_id = {c["class_id"]: c for c in report["classes"]}
-    # the grid's figures (#390): income and expenses are operating, other
-    # income and other expense apart, so income - cogs - expenses + other
-    # income - other expense = net (the list page adds them for display)
+    # the grid's figures: income and expenses include Other Income / Other
+    # Expense, as in 2.27.0 (#390), so income - cogs - expenses = net; the
+    # two Other figures ride along on their own
     keys = (
         "income",
         "cogs",

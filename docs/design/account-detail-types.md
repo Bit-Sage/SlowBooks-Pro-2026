@@ -559,10 +559,15 @@ because both change how the statements present accounts.
 - **Grids** (decision 3): `_pl_pivot` buckets by `_pl_section_of` (type,
   then detail type for Other Income / Other Expense); every column and the
   Total carry the new totals; `_grid_layout` lists the rows once for the
-  PDF and the CSV. `/api/classes/activity` carries the grid's figures
-  (operating income and expenses, `other_income`, `other_expense`); the
-  Classes list and a class page's stat cards add the other two back for
-  display, so their four figures still add to net. `has_other` needs an
+  PDF and the CSV. **API totals (2.28.0, owner's call):** `total_income` /
+  `total_expenses` (and a grid column's `income` / `expenses`) keep their
+  2.27.0 meaning, every income / expense account with Other included;
+  the operating-only figures the statements print are
+  `total_operating_income` / `total_operating_expenses` (a column's
+  `operating_income` / `operating_expenses`). `/api/classes/activity`
+  carries the grid's figures (income and expenses with Other included,
+  `other_income`, `other_expense` beside them), so the Classes list's
+  four figures add to net; a class page's stat cards are operating. `has_other` needs an
   Other line with a figure on the P&L and the grids alike.
 - **One chart read per statement**: `_chart_index` (number, name, parent,
   type, detail type) is built once in `profit_loss` / `balance_sheet` and
