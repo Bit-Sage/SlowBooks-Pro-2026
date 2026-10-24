@@ -115,7 +115,13 @@ def test_a_bill_line_finds_its_account_by_number(browser, company, books):
                 return li.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
                     && li.closest('.cbx-popup').parentElement === document.body; }"""
         )
-        page.keyboard.press("Tab")  # Tab takes it too, and moves on
+        # Tab takes it too, and moves on: to the Add button beside the
+        # picker (#485), then the line's description
+        page.keyboard.press("Tab")
+        on_add = page.evaluate(
+            "() => document.activeElement.classList.contains('aqa-add')"
+        )
+        page.keyboard.press("Tab")
         chosen = page.evaluate(
             """() => { const s = document.querySelector('#modal tbody tr select.line-account');
                 return [s.options[s.selectedIndex].textContent,
@@ -125,6 +131,7 @@ def test_a_bill_line_finds_its_account_by_number(browser, company, books):
     finally:
         page.close()
     assert shown == [["6500 - Rent or Lease", "Expenses"]] and reachable
+    assert on_add is True
     assert chosen == ["6500 - Rent or Lease", "6500 - Rent or Lease", True]
 
 

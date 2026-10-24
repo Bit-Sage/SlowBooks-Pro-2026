@@ -62,6 +62,7 @@ const ctx = {
 vm.createContext(ctx);
 const pages = {
   'item_quick_add.js': ['ItemQuickAdd'],  // every line's item picker (#445)
+  'account_quick_add.js': ['AccountQuickAdd'],  // a purchase line's Account (#485)
   'vendors.js': ['PurchaseLines'],
   'invoices.js': ['SalesLines', 'InvoicesPage'],
   'estimates.js': ['EstimatesPage'],

@@ -84,7 +84,7 @@ const ctx = {
   },
 };
 vm.createContext(ctx);
-for (const f of ['deposits.js', 'bills.js', 'banking.js']) {
+for (const f of ['account_quick_add.js', 'deposits.js', 'bills.js', 'banking.js']) {
   vm.runInContext(fs.readFileSync(`app/static/js/${f}`, 'utf8'), ctx, { filename: f });
 }
 vm.runInContext('this.DepositsPage = DepositsPage; this.BillsPage = BillsPage; this.BankingPage = BankingPage;', ctx);
