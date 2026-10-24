@@ -855,6 +855,25 @@ does not add one.
 ### v2.28.0 — Sales by Item and Purchases by Item
 
 Two reports QuickBooks users look for and did not find (#435): Sales by Item, one row per item for a period with quantity, amount, average price and — for an item whose stock is tracked — COGS, gross margin and margin % from the item's own inventory movements, built from posted invoices and sales receipts less credit memos with voids left out; and Purchases by Item, the same shape from bills less vendor credits with an average cost (expense lines carry no item, so purchases are bills and vendor credits only). A line without an item is one "No item" row so the sales total ties to the P&L's income for the same accounts. Both narrow by customer or vendor, class and job (a line's own class or job wins, else the header's), open the documents behind a row, and save as PDF, CSV and a saved report.
+### v2.28.0 — Items: quick-add from any line, and an item code
+
+An item can be added from the line being typed (#445). The item picker on
+an invoice, estimate, sales receipt, credit memo, recurring invoice,
+purchase order, vendor credit, bill or Quick Entry line offers **+ Add
+item**, which opens a small form in the line: name, code, type, rate and
+an income account that follows the type (4000 to 4300 in the seeded
+chart). Save creates the item and picks it on that line, filled in as a
+pick would be, and nothing else on the document changes; a name typed in
+the picker before taking **+ Add item** comes along. A picker value that
+is not an item (`--`, `+ Add item`) saves as no item. Items also take an
+optional code (`items.code`, migration `c4e5d6f7a8b9`), unique when set
+without regard to capitals (409 "Item code X is already used by ..."),
+shown before the name in every line picker so typing either finds it, on
+the Items page with a search box over name and code, in
+`GET /api/items?q=`, and as a Code column in the items CSV export and
+import (a code already used is left off that row, with a note). The IIF
+export is unchanged: QuickBooks 2003's `!INVITEM` header has no field for
+a code.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
