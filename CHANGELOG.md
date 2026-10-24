@@ -45,7 +45,41 @@ per quarter, a further state on a row with only the state columns).
   date stays before that run.
 - **A draft run figured from the old figures says so.** Changing or deleting
   an opening marks the employee's draft runs for the year; processing one
-  asks first.
+  asks first, and offers to discard it instead.
+- **The Social Security wage base is the year's own.** A 2025 opening,
+  paycheck, 941 and W-2 are measured against 2025's $176,100, not 2026's
+  $184,500 (2023 through 2026 are known). A year SlowBooks has no base for
+  is measured against the nearest one, and the opening and the pay run say
+  so rather than refusing.
+
+**Discard draft.** A draft pay run can now be discarded, from the Payroll
+list or the run's view (`DELETE /api/payroll/{id}`, admin only like the rest
+of payroll). Its stubs go, and so does everything creating it changed: the
+benefit year-to-date its stubs added (a row only it made is removed), the
+loan balances it paid down, the time entries it took, which the next run can
+pay. A later draft figured while it counted toward the year-to-date is
+flagged, as an opening change flags one. A processed run is never discarded.
+
+**Paychecks count their taxable wages toward the caps.** Each stub counted
+its gross toward the Social Security base, the Additional Medicare
+threshold, FUTA and SUTA, so an employee with a Section 125 plan reached
+them early and the next check was short-taxed. A stub now counts what it
+was taxed on, gross less Section 125 and HSA (a 401(k) still counts), the
+same way the openings do, and the 941, 940 and state SUI report measure the
+same way. The W-2 follows each tax's treatment too: box 1 and 16 drop the
+pre-tax amounts that reduce income tax, boxes 3 and 5 those that reduce
+FICA (they were gross).
+
+**A W-2 line per state.** Boxes 15 to 17 were one total under the
+employee's work state. They are now one line per state the employee had
+wages or state withholding in (stubs by the state worked in, the opening's
+state rows by theirs), two to a form; a third state prints on an additional
+W-2 that carries only the state lines, as the IRS instructions say. The
+W-3's boxes 16 and 17 still total every line. Form history keeps every
+earlier record: a one-state W-2 has the shape (and hash) it always had, and
+Check re-figures a form generated before this release the way it was
+figured then, so it still matches when the pay runs behind it have not
+changed, and says when today's figures differ.
 
 It is not a pay run and not a journal entry: the old system booked that
 payroll and the opening balance sheet carries what it still owed, so benefit
