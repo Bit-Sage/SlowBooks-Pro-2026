@@ -33,6 +33,7 @@ from app.services.terminology import document_reference, terms_from_db
 from app.services.undeposited_funds import (
     dead_transaction_ids,
     reconciled,
+    waiting_balance,
     waiting_items,
 )
 
@@ -296,16 +297,11 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
             )
     else:
         # No payments ticked: a typed lump sum. Cap it at what is actually
-        # waiting in Undeposited Funds, the same balance the line_ids path
-        # checks each ticked payment against — otherwise a number the page
-        # added up can post more than ever came in.
+        # waiting in Undeposited Funds — the waiting items less what an
+        # earlier partial lump deposit already took from them — otherwise a
+        # number the page added up can post more than ever came in.
         total = _q(data.total or 0)
-        waiting_total = _q(
-            sum(
-                (Decimal(str(ln.debit)) for ln, _ in waiting_items(db, uf_id)),
-                Decimal("0"),
-            )
-        )
+        waiting_total = _q(waiting_balance(db, uf_id))
         if total > waiting_total:
             raise HTTPException(
                 status_code=400,

@@ -95,9 +95,30 @@ def waiting_items(
     db: Session, uf_id: Optional[int] = None
 ) -> list[tuple[TransactionLine, Transaction]]:
     """The 1200 debits still waiting for a deposit, oldest first."""
+    return _waiting_and_pool(db, uf_id)[0]
+
+
+def waiting_balance(db: Session, uf_id: Optional[int] = None) -> Decimal:
+    """What is actually still waiting in Undeposited Funds.
+
+    waiting_items() nets a lump deposit (one that named no items) only
+    against WHOLE items, so after a partial lump deposit — $60 of a $100
+    payment — the item still shows in full. The leftover of that deposit's
+    credit is subtracted here, so a typed deposit can't take the $40 twice.
+    """
+    waiting, pool = _waiting_and_pool(db, uf_id)
+    total = sum((Decimal(str(ln.debit)) for ln, _ in waiting), ZERO)
+    return max(total - pool, ZERO)
+
+
+def _waiting_and_pool(
+    db: Session, uf_id: Optional[int] = None
+) -> tuple[list[tuple[TransactionLine, Transaction]], Decimal]:
+    """The waiting items, and what is left of the lump-deposit credits
+    after netting them against whole items oldest first."""
     uf_id = uf_id or uf_account_id(db)
     if not uf_id:
-        return []
+        return [], ZERO
     rows = _uf_rows(db, uf_id)
     dead = dead_transaction_ids(db, (t for _, t in rows))
     # A deposit that named its items took exactly those; its credit is not
@@ -129,7 +150,7 @@ def waiting_items(
             pool -= amount
             continue
         waiting.append((ln, t))
-    return waiting
+    return waiting, pool
 
 
 def reconciled(txn: Transaction) -> bool:
