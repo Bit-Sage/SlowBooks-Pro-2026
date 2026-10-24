@@ -30,7 +30,9 @@ def test_a_number_that_is_not_digits_is_refused(client, number):
     assert "6150.1 or 6150-01" in r.json()["detail"]
 
 
-@pytest.mark.parametrize("number", ["6150", "6150.1", "6150-01", "1000.10.2"])
+# 7150 (not 6150, a control-account number the reserved-number guard refuses):
+# these pin number FORMAT, not control-account behaviour.
+@pytest.mark.parametrize("number", ["7150", "7150.1", "7150-01", "1000.10.2"])
 def test_plain_and_sub_account_numbers_are_accepted(client, number):
     r = _create(client, number, name=f"Acct {number}")
     assert r.status_code == 201, r.text
@@ -38,10 +40,10 @@ def test_plain_and_sub_account_numbers_are_accepted(client, number):
 
 
 def test_renumbering_to_letters_is_refused(client):
-    acct = _create(client, "6150").json()
+    acct = _create(client, "7150").json()
     r = client.put(f"/api/accounts/{acct['id']}", json={"account_number": "ABC"})
     assert r.status_code == 400
-    assert client.get(f"/api/accounts/{acct['id']}").json()["account_number"] == "6150"
+    assert client.get(f"/api/accounts/{acct['id']}").json()["account_number"] == "7150"
 
 
 def test_the_account_form_asks_for_digits():

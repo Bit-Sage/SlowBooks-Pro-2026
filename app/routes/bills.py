@@ -364,8 +364,8 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400,
             detail=(
-                "A bill must be for more than zero. Enter the quantity and "
-                "rate the vendor charged on at least one line."
+                "A bill must be for more than zero. Enter the amount the "
+                "vendor charged, or its quantity and rate, on at least one line."
             ),
         )
 
@@ -536,8 +536,8 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "A bill must be for more than zero. Enter the quantity and "
-                    "rate the vendor charged on at least one line."
+                    "A bill must be for more than zero. Enter the amount the "
+                    "vendor charged, or its quantity and rate, on at least one line."
                 ),
             )
         if total < amount_paid:

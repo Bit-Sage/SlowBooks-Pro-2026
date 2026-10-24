@@ -25,6 +25,7 @@ def seed():
                 account_number=entry["account_number"],
                 account_type=AccountType(entry["account_type"]),
                 bank_kind=entry.get("bank_kind"),
+                detail_type=entry.get("detail_type"),
                 is_system=True,
             )
             db.add(account)

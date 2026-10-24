@@ -99,17 +99,8 @@ def test_split_lines_must_add_up_and_take_the_sign_and_no_bank_among_them(
         },
     )
     assert short.status_code == 400 and "must agree" in short.json()["detail"]
-    sign = client.post(
-        "/api/banking/transactions",
-        json={
-            **base,
-            "splits": [
-                {"category_account_id": seed_accounts["6300"].id, "amount": "-620.00"},
-                {"category_account_id": seed_accounts["6000"].id, "amount": "120.00"},
-            ],
-        },
-    )
-    assert sign.status_code == 400 and "sign" in sign.json()["detail"]
+    # a line against the entry's sign is allowed since #387 (a fee on a
+    # deposit, a refund netted against a check): test_register_split_deposits
     transfer = client.post(
         "/api/banking/transactions",
         json={

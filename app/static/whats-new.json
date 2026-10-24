@@ -1,4 +1,23 @@
 {
+  "2.28.0": {
+    "title": "Account types and sub-accounts",
+    "items": [
+      "Every account carries a QuickBooks-style detail type, picked on the account form; a new account gets a sensible one from its number and name, and you can change it.",
+      "The Balance Sheet groups current and long-term assets and liabilities; the Profit & Loss puts Other Income and Other Expense below Net Operating Income.",
+      "Sub-accounts nest under their parents on the Chart of Accounts and the statements, with family subtotals, and move from the account form.",
+      "Upgrading moves no figure: every statement shows the same numbers as before, only grouped."
+    ]
+  },
+  "2.27.0": {
+    "title": "A register you can edit, and a bookkeeper's wish list",
+    "items": [
+      "The bank register adds a payee or category as you type, splits a deposit with a fee line, and opens an entry for editing (a reconciled one warns).",
+      "A bill line can be an amount alone; the reconcile screen corrects the statement's ending balance; Reclassify filters by payee.",
+      "Saved invoice messages, one the default, and a giving statement with the ministry's own message and footer.",
+      "A Possible Duplicates report for bank and card accounts, Save CSV on the agings, and a Reconciliation Reports card with pinned Report Center cards.",
+      "An item created with stock on hand posts its value, and a QuickBooks Desktop deposit printed under several check numbers imports."
+    ]
+  },
   "2.26.0": {
     "title": "Direct deposit from the page, and last year beside this one",
     "items": [

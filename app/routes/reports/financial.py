@@ -7,14 +7,26 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
 from app.database import get_db
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
+from app.services.statement_layout import (
+    BS_GROUP_TOTALS,
+    BS_GROUPS,
+    MAX_DEPTH,
+    account_chart,
+    bs_group_totals,
+    bs_groups,
+    bs_print_details,
+    mark_bs_lines,
+    family_rows,
+)
 from app.services.terminology import Terms, terms_from_db
 
 # Debit-normal account types. For these, natural balance = debit - credit.
 # For the rest (liability, equity, income), natural balance = credit - debit.
 from app.services.bank_register import DEBIT_NORMAL as _DEBIT_NORMAL  # noqa: E402
+from app.services.entry_text import header_text
 
 
 def _in_class(db, class_id):
@@ -45,19 +57,34 @@ _SORT_QUERY = Query(
 
 
 def _chart_index(db) -> dict:
-    """Every account's number, name and parent, by id."""
+    """Every account's (number, name, parent, type, detail type), by id: one
+    query a statement builds once and hands to every helper that needs the
+    chart (#390 review: the compare P&L read it some sixteen times)."""
     return {
-        a.id: (a.account_number or "", a.name or "", a.parent_id)
+        a.id: (
+            a.account_number or "",
+            a.name or "",
+            a.parent_id,
+            a.account_type,
+            a.detail_type,
+        )
         for a in db.query(
-            Account.id, Account.account_number, Account.name, Account.parent_id
+            Account.id,
+            Account.account_number,
+            Account.name,
+            Account.parent_id,
+            Account.account_type,
+            Account.detail_type,
         )
     }
 
 
 def _chain(chart: dict, account_id) -> list:
-    """The account's ids from the root down, the account itself last."""
-    path = []
-    while account_id in chart and len(path) < 32:
+    """The account's ids from the root down, the account itself last; stops
+    at a parent loop or MAX_DEPTH, the sub-account walk's limit (#416)."""
+    path, seen = [], set()
+    while account_id in chart and account_id not in seen and len(path) < MAX_DEPTH:
+        seen.add(account_id)
         path.append(account_id)
         account_id = chart[account_id][2]
     return list(reversed(path))
@@ -75,7 +102,7 @@ def _account_order(db, sort="number", chart: dict | None = None):
     chart = chart if chart is not None else _chart_index(db)
 
     def level(account_id):
-        number, name, _ = chart[account_id]
+        number, name = chart[account_id][:2]
         name = name.lower()
         if sort == "name":
             return (0, name, number)
@@ -125,11 +152,12 @@ def _totals_by_account(
     in_class=None,
     sort="number",
     exclude_adjusting=False,
+    chart: dict | None = None,
 ):
-    """Return a list of {account_id, account_name, account_number, amount}
-    rows where amount is signed by the account type's natural balance
-    (always positive for a normal-balance ledger), in the chart's order
-    (`sort`: number or name, see _account_order).
+    """Return a list of {account_id, account_name, account_number,
+    detail_type, amount} rows where amount is signed by the account type's
+    natural balance (always positive for a normal-balance ledger), in the
+    chart's order (`sort`: number or name, see _account_order).
 
     `account_id` is included so the SPA can drill into /account-transactions
     for any line — Phase 11 drill-down support. `exclude_adjusting` leaves
@@ -140,6 +168,7 @@ def _totals_by_account(
             Account.id,
             Account.name,
             Account.account_number,
+            Account.detail_type,
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
         )
@@ -155,11 +184,13 @@ def _totals_by_account(
         q = q.filter(in_class)
     if exclude_adjusting:
         q = q.filter(Transaction.is_adjusting == False)  # noqa: E712
-    q = q.group_by(Account.id, Account.name, Account.account_number)
+    q = q.group_by(
+        Account.id, Account.name, Account.account_number, Account.detail_type
+    )
 
     rows = []
-    chart = _chart_index(db)
-    for acct_id, name, number, dr, cr in q.all():
+    chart = chart if chart is not None else _chart_index(db)
+    for acct_id, name, number, detail, dr, cr in q.all():
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
         path, label = _account_words(chart, acct_id)
         rows.append(
@@ -169,6 +200,7 @@ def _totals_by_account(
                 "account_number": number,
                 "account_path": path or name,
                 "account_label": label or name,
+                "detail_type": detail,
                 "amount": float(amount),
             }
         )
@@ -200,39 +232,70 @@ def profit_loss(
         start_date = date(date.today().year, 1, 1)
     if not end_date:
         end_date = date.today()
+    cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
+    chart = _chart_index(db)
+
+    def period(start, end):
+        return _pl_period(db, start, end, cls, in_class, sort, exclude_adjusting, chart)
+
     if compare == "prior_year":
-        current = profit_loss(
+        current = period(start_date, end_date)
+        prior = period(_year_earlier(start_date), _year_earlier(end_date))
+        return _pl_layout(db, _pl_with_prior(db, current, prior, sort, chart), chart)
+    return _pl_layout(db, period(start_date, end_date), chart)
+
+
+def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting, chart):
+    """One period's P&L figures, before the layout."""
+    income, other_income = _split_other(
+        _totals_by_account(
+            db,
+            AccountType.INCOME,
             start_date,
             end_date,
-            db,
-            class_id=class_id,
-            sort=sort,
-            exclude_adjusting=exclude_adjusting,
-        )
-        prior = profit_loss(
-            _year_earlier(start_date),
-            _year_earlier(end_date),
-            db,
-            class_id=class_id,
-            sort=sort,
-            exclude_adjusting=exclude_adjusting,
-        )
-        return _pl_with_prior(db, current, prior, sort)
-    cls, in_class = _in_class(db, class_id) if class_id is not None else (None, None)
-
-    income = _totals_by_account(
-        db, AccountType.INCOME, start_date, end_date, in_class, sort, exclude_adjusting
+            in_class,
+            sort,
+            exclude_adjusting,
+            chart,
+        ),
+        DetailType.OTHER_INCOME,
     )
     cogs = _totals_by_account(
-        db, AccountType.COGS, start_date, end_date, in_class, sort, exclude_adjusting
+        db,
+        AccountType.COGS,
+        start_date,
+        end_date,
+        in_class,
+        sort,
+        exclude_adjusting,
+        chart,
     )
-    expenses = _totals_by_account(
-        db, AccountType.EXPENSE, start_date, end_date, in_class, sort, exclude_adjusting
+    expenses, other_expense = _split_other(
+        _totals_by_account(
+            db,
+            AccountType.EXPENSE,
+            start_date,
+            end_date,
+            in_class,
+            sort,
+            exclude_adjusting,
+            chart,
+        ),
+        DetailType.OTHER_EXPENSE,
     )
 
-    total_income = sum(i["amount"] for i in income)
-    total_cogs = sum(c["amount"] for c in cogs)
-    total_expenses = sum(e["amount"] for e in expenses)
+    # The rows are floats: totals rounded to the cent, or 777.40 of sales
+    # less cost answers 777.4000000000001 and stops matching the by-class
+    # grid, which sums in Decimal (#413). The Other sections (#390) the same.
+    total_operating_income = round(sum(i["amount"] for i in income), 2)
+    total_cogs = round(sum(c["amount"] for c in cogs), 2)
+    total_operating_expenses = round(sum(e["amount"] for e in expenses), 2)
+    total_other_income = round(sum(i["amount"] for i in other_income), 2)
+    total_other_expense = round(sum(e["amount"] for e in other_expense), 2)
+    net_operating_income = round(
+        total_operating_income - total_cogs - total_operating_expenses, 2
+    )
+    net_other_income = round(total_other_income - total_other_expense, 2)
 
     return {
         "start_date": start_date.isoformat(),
@@ -244,12 +307,81 @@ def profit_loss(
         "income": income,
         "cogs": cogs,
         "expenses": expenses,
-        "total_income": total_income,
+        "other_income": other_income,
+        "other_expense": other_expense,
+        # total_income / total_expenses keep their 2.27.0 meaning for API
+        # clients: every income / expense account, Other included. The
+        # statement prints the operating sections' own totals (#390).
+        "total_income": round(total_operating_income + total_other_income, 2),
+        "total_operating_income": total_operating_income,
         "total_cogs": total_cogs,
-        "gross_profit": total_income - total_cogs,
-        "total_expenses": total_expenses,
-        "net_income": total_income - total_cogs - total_expenses,
+        # gross_profit keeps its 2.27.0 meaning too (all income less cost of
+        # goods); the statement prints the operating one (#390)
+        "gross_profit": round(
+            total_operating_income + total_other_income - total_cogs, 2
+        ),
+        "operating_gross_profit": round(total_operating_income - total_cogs, 2),
+        "total_expenses": round(total_operating_expenses + total_other_expense, 2),
+        "total_operating_expenses": total_operating_expenses,
+        "net_operating_income": net_operating_income,
+        "total_other_income": total_other_income,
+        "total_other_expense": total_other_expense,
+        "net_other_income": net_other_income,
+        # the same figure as before the split: a move between sections,
+        # never in or out of the total (#390)
+        "net_income": round(net_operating_income + net_other_income, 2),
     }
+
+
+def _split_other(lines: list, other) -> tuple[list, list]:
+    """(the section's lines, its Other Income / Other Expense lines), by
+    the account's detail type (#390)."""
+    return (
+        [i for i in lines if i.get("detail_type") != other.value],
+        [i for i in lines if i.get("detail_type") == other.value],
+    )
+
+
+def _has_other(lines) -> bool:
+    """An Other Income / Other Expense line with a figure: an account that
+    nets to nothing (this year and last) does not open the block, as the
+    grids leave out an account with nothing in any column (#390)."""
+    return any(
+        abs(i.get("amount") or 0) >= 0.005 or abs(i.get("prior_amount") or 0) >= 0.005
+        for i in lines
+    )
+
+
+def _pl_layout(db, data: dict, chart: dict) -> dict:
+    """How the P&L prints, for every writer to read:
+
+    - `has_other`: Other Income / Other Expense below Net Operating Income,
+      and Net Operating Income itself, only when either has a line (#390,
+      the owner's answer 4); without, it is the P&L it was in 2.26.
+    - `tree`: each section's lines with sub-accounts beneath their parents,
+      a family total under each parent (#416), for the screen and the PDF.
+      The flat lists stay, with full paths, for the CSV and the prior-year
+      pairing. A parent of another section does not gather a line."""
+    # each section opens on its own figures, not whether the list has a row:
+    # a section with only a $0 account does not print a heading (#390)
+    data["has_other_income"] = _has_other(data.get("other_income", []))
+    data["has_other_expense"] = _has_other(data.get("other_expense", []))
+    data["has_other"] = data["has_other_income"] or data["has_other_expense"]
+    section_of = {aid: _pl_section_of(row[3], row[4]) for aid, row in chart.items()}
+    order = _account_order(db, data.get("sort") or "number", chart)
+    accounts = account_chart(index=chart)
+    keys = ("amount", "prior_amount") if data.get("prior") else ("amount",)
+    data["tree"] = {
+        key: family_rows(
+            data.get(key, []),
+            accounts,
+            lambda aid, key=key: section_of.get(aid) == key,
+            keys,
+            lambda aid: order({"account_id": aid}),
+        )
+        for key in _PL_SECTIONS
+    }
+    return data
 
 
 def _year_earlier(d: date) -> date:
@@ -270,10 +402,20 @@ _PL_TOTALS = (
     "total_income",
     "total_cogs",
     "gross_profit",
+    "operating_gross_profit",
     "total_expenses",
     "net_income",
+    "net_operating_income",
+    "total_other_income",
+    "total_other_expense",
+    "net_other_income",
+    "total_operating_income",
+    "total_operating_expenses",
 )
-_BS_TOTALS = ("total_assets", "total_liabilities", "total_equity")
+# the P&L's account sections, in print order
+_PL_SECTIONS = ("income", "cogs", "expenses", "other_income", "other_expense")
+# the group subtotals (#390) ride along so the prior year has them too
+_BS_TOTALS = ("total_assets", "total_liabilities", "total_equity") + BS_GROUP_TOTALS
 
 
 def _line_key(item: dict):
@@ -290,13 +432,14 @@ def _with_prior(
     totals: tuple,
     dates: tuple,
     sort: str = "number",
+    chart: dict | None = None,
 ) -> dict:
     """The current report with the prior year's figures beside it: every
     account line gets `prior_amount` (an account with activity in only one
     of the two years shows 0 in the other), the lines keep the chart's
     order (`sort`, see _account_order) with a computed line last, and
     `prior` carries the prior year's dates and totals."""
-    order = _account_order(db, sort)
+    order = _account_order(db, sort, chart)
     out = dict(current)
     for key in sections:
         prior_by = {_line_key(i): i for i in prior[key]}
@@ -317,19 +460,24 @@ def _with_prior(
     return out
 
 
-def _pl_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict:
+def _pl_with_prior(
+    db, current: dict, prior: dict, sort: str = "number", chart=None
+) -> dict:
     return _with_prior(
         db,
         current,
         prior,
-        ("income", "cogs", "expenses"),
+        _PL_SECTIONS,
         _PL_TOTALS,
         ("start_date", "end_date"),
         sort,
+        chart,
     )
 
 
-def _bs_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict:
+def _bs_with_prior(
+    db, current: dict, prior: dict, sort: str = "number", chart=None
+) -> dict:
     return _with_prior(
         db,
         current,
@@ -338,6 +486,7 @@ def _bs_with_prior(db, current: dict, prior: dict, sort: str = "number") -> dict
         _BS_TOTALS,
         ("as_of_date",),
         sort,
+        chart,
     )
 
 
@@ -395,36 +544,57 @@ def balance_sheet(
     t = terms_from_db(db)
     if not as_of_date:
         as_of_date = date.today()
+    chart = _chart_index(db)
     if compare == "prior_year":
-        return _bs_with_prior(
-            db,
-            balance_sheet(as_of_date, db, sort=sort),
-            balance_sheet(_year_earlier(as_of_date), db, sort=sort),
-            sort,
+        return _bs_layout(
+            _bs_with_prior(
+                db,
+                _bs_period(db, as_of_date, sort, t, chart),
+                _bs_period(db, _year_earlier(as_of_date), sort, t, chart),
+                sort,
+                chart,
+            )
+        )
+    return _bs_layout(_bs_period(db, as_of_date, sort, t, chart))
+
+
+def _bs_period(db, as_of_date, sort, t, chart) -> dict:
+    """One date's Balance Sheet figures, before the layout."""
+
+    def totals(acct_type, order="number"):
+        return _totals_by_account(
+            db, acct_type, date_end=as_of_date, sort=order, chart=chart
         )
 
-    assets = _totals_by_account(db, AccountType.ASSET, date_end=as_of_date, sort=sort)
-    liabilities = _totals_by_account(
-        db, AccountType.LIABILITY, date_end=as_of_date, sort=sort
-    )
-    equity = _totals_by_account(db, AccountType.EQUITY, date_end=as_of_date, sort=sort)
+    # a default-typed sub-account prints in its parent's group (2.28.0):
+    # display only, its detail type and figures stay its own
+    placed = bs_print_details(index=chart)
+    assets = mark_bs_lines(totals(AccountType.ASSET, sort), placed)
+    liabilities = mark_bs_lines(totals(AccountType.LIABILITY, sort), placed)
+    equity = totals(AccountType.EQUITY, sort)
 
-    total_assets = sum(a["amount"] for a in assets)
-    total_liabilities = sum(liab["amount"] for liab in liabilities)
-    total_equity = sum(e["amount"] for e in equity)
+    # Round the totals to the cent as the P&L does (profit_loss above), so a
+    # sum of floats never shows 777.4000000000001 beside the P&L's 777.40.
+    total_assets = round(sum(a["amount"] for a in assets), 2)
+    total_liabilities = round(sum(liab["amount"] for liab in liabilities), 2)
+    total_equity = round(sum(e["amount"] for e in equity), 2)
 
     # Net income for all periods up to as_of_date flows into equity as retained
     # earnings. Without this, the balance sheet fails to balance whenever there
     # is income or expense activity that hasn't been formally closed into an
     # equity account (which is the normal state in this app — income/expense
     # accounts are never explicitly closed).
-    income_rows = _totals_by_account(db, AccountType.INCOME, date_end=as_of_date)
-    cogs_rows = _totals_by_account(db, AccountType.COGS, date_end=as_of_date)
-    expense_rows = _totals_by_account(db, AccountType.EXPENSE, date_end=as_of_date)
-    net_income = (
-        sum(r["amount"] for r in income_rows)
-        - sum(r["amount"] for r in cogs_rows)
-        - sum(r["amount"] for r in expense_rows)
+    income_rows = totals(AccountType.INCOME)
+    cogs_rows = totals(AccountType.COGS)
+    expense_rows = totals(AccountType.EXPENSE)
+    # Rounded to the cent the same way profit_loss rounds its net income
+    # (each total to the cent, then subtract and round), so the two reports
+    # agree and no float noise leaks into equity (#413).
+    net_income = round(
+        round(sum(r["amount"] for r in income_rows), 2)
+        - round(sum(r["amount"] for r in cogs_rows), 2)
+        - round(sum(r["amount"] for r in expense_rows), 2),
+        2,
     )
 
     if net_income != 0:
@@ -438,7 +608,7 @@ def balance_sheet(
                 "amount": float(net_income),
             }
         ]
-        total_equity += net_income
+        total_equity = round(total_equity + net_income, 2)
 
     return {
         "as_of_date": as_of_date.isoformat(),
@@ -449,7 +619,24 @@ def balance_sheet(
         "total_assets": total_assets,
         "total_liabilities": total_liabilities,
         "total_equity": total_equity,
+        **bs_group_totals(assets, "assets"),
+        **bs_group_totals(liabilities, "liabilities"),
     }
+
+
+def _bs_layout(data: dict) -> dict:
+    """The Balance Sheet's groups (#390) beside its flat lists: for assets
+    and liabilities, [{heading, total_key, lines}] in print order, so the
+    screen, the PDF and the CSV classify nothing. The flat lists stay what
+    the prior-year pairing and the drill-down read."""
+    data["groups"] = {
+        side: [
+            {"heading": heading, "total_key": key, "lines": lines}
+            for heading, key, lines in bs_groups(data[side], side)
+        ]
+        for side in BS_GROUPS
+    }
+    return data
 
 
 @router.get("/general-ledger")
@@ -555,7 +742,7 @@ def general_ledger(
         a["entries"].append(
             {
                 "date": txn.date.isoformat(),
-                "description": txn.description or tl.description or "",
+                "description": header_text(txn, tl.description),
                 "reference": txn.reference or "",
                 "debit": float(tl.debit),
                 "credit": float(tl.credit),
@@ -743,6 +930,19 @@ def cash_flow(
 
 
 _PL_TYPES = (AccountType.INCOME, AccountType.COGS, AccountType.EXPENSE)
+# the grids' sections (#390): the P&L's, so the three reports tie line for
+# line (the owner's answer 3)
+_GRID_SECTIONS = ("income", "cogs", "expenses", "other_income", "other_expense")
+
+
+def _pl_section_of(acct_type, detail) -> str:
+    """The P&L section an account prints in: by base type, with Other
+    Income and Other Expense apart by detail type (#390)."""
+    if acct_type == AccountType.INCOME:
+        return "other_income" if detail == DetailType.OTHER_INCOME.value else "income"
+    if acct_type == AccountType.COGS:
+        return "cogs"
+    return "other_expense" if detail == DetailType.OTHER_EXPENSE.value else "expenses"
 
 
 def _ids_param(values, name: str) -> Optional[set[int]]:
@@ -800,6 +1000,7 @@ def _pl_pivot(
 
     An account that nets to nothing in every column shown is left out.
     """
+    chart = _chart_index(db)
     rows = (
         db.query(
             key_expr.label("k"),
@@ -807,6 +1008,7 @@ def _pl_pivot(
             Account.account_number,
             Account.name,
             Account.account_type,
+            Account.detail_type,
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
         )
@@ -824,6 +1026,7 @@ def _pl_pivot(
             Account.account_number,
             Account.name,
             Account.account_type,
+            Account.detail_type,
         )
         .all()
     )
@@ -831,30 +1034,23 @@ def _pl_pivot(
     by_key: dict = {}
     # each account's amount in each column: the rows of the report (#213)
     by_account: dict[int, dict] = {}
-    for key, acct_id, number, name, acct_type, dr, cr in rows:
+    for key, acct_id, number, name, acct_type, detail, dr, cr in rows:
+        section = _pl_section_of(acct_type, detail)
         acct = by_account.setdefault(
             acct_id,
             {
                 "id": acct_id,
                 "number": number,
                 "name": name,
-                "type": acct_type,
+                "section": section,
                 "by": {},
             },
         )
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         natural = (cr - dr) if acct_type == AccountType.INCOME else (dr - cr)
         acct["by"][key] = acct["by"].get(key, Decimal("0")) + natural
-        bucket = by_key.setdefault(
-            key,
-            {"income": Decimal("0"), "cogs": Decimal("0"), "expenses": Decimal("0")},
-        )
-        if acct_type == AccountType.INCOME:
-            bucket["income"] += cr - dr
-        elif acct_type == AccountType.COGS:
-            bucket["cogs"] += dr - cr
-        else:
-            bucket["expenses"] += dr - cr
+        bucket = by_key.setdefault(key, {f: Decimal("0") for f in _GRID_SECTIONS})
+        bucket[section] += natural
 
     def _meta(key):
         return meta.get(key) or {"name": "Unknown", "inactive": False}
@@ -880,18 +1076,29 @@ def _pl_pivot(
     filtered = bool(with_activity - column_keys)
 
     def totals_of(keys):
-        t = {"income": Decimal("0"), "cogs": Decimal("0"), "expenses": Decimal("0")}
+        t = {f: Decimal("0") for f in _GRID_SECTIONS}
         for k in keys:
             b = by_key.get(k)
             if b:
                 for f in t:
                     t[f] += b[f]
+        operating = t["income"] - t["cogs"] - t["expenses"]
+        other = t["other_income"] - t["other_expense"]
+        # income / expenses as in 2.27.0 (Other included); the operating
+        # sections' totals beside them, for the rows the grid prints (#390)
         return {
-            "income": float(t["income"]),
+            "income": float(t["income"] + t["other_income"]),
+            "operating_income": float(t["income"]),
             "cogs": float(t["cogs"]),
-            "gross_profit": float(t["income"] - t["cogs"]),
-            "expenses": float(t["expenses"]),
-            "net_income": float(t["income"] - t["cogs"] - t["expenses"]),
+            "gross_profit": float(t["income"] + t["other_income"] - t["cogs"]),
+            "operating_gross_profit": float(t["income"] - t["cogs"]),
+            "expenses": float(t["expenses"] + t["other_expense"]),
+            "operating_expenses": float(t["expenses"]),
+            "net_operating_income": float(operating),
+            "other_income": float(t["other_income"]),
+            "other_expense": float(t["other_expense"]),
+            "net_other_income": float(other),
+            "net_income": float(operating + other),
         }
 
     columns = []
@@ -911,23 +1118,24 @@ def _pl_pivot(
     # Accounts down the side, an amount per column in the order of
     # `columns` and the account's total, by section.
     order = [c["key"] for c in columns]
-    section_of = {
-        AccountType.INCOME: "income",
-        AccountType.COGS: "cogs",
-        AccountType.EXPENSE: "expenses",
-    }
-    accounts: dict[str, list] = {"income": [], "cogs": [], "expenses": []}
+    # a sub-account right after its parent, and full paths where a leaf name
+    # repeats, as the P&L flat list does (#416)
+    row_order = _account_order(db, "number", chart)
+    accounts: dict[str, list] = {f: [] for f in _GRID_SECTIONS}
     for a in sorted(
-        by_account.values(), key=lambda a: (a["number"] or "", a["name"].lower())
+        by_account.values(), key=lambda a: row_order({"account_id": a["id"]})
     ):
         amounts = [a["by"].get(k, Decimal("0")) for k in order]
         if not any(amounts):
             continue
-        accounts[section_of[a["type"]]].append(
+        path, label = _account_words(chart, a["id"])
+        accounts[a["section"]].append(
             {
                 "account_id": a["id"],
                 "account_number": a["number"],
                 "account_name": a["name"],
+                "account_path": path or a["name"],
+                "account_label": label or a["name"],
                 "amounts": [float(x) for x in amounts],
                 "total": float(sum(amounts, Decimal("0"))),
             }
@@ -940,10 +1148,21 @@ def _pl_pivot(
         "columns": columns,
         "accounts": accounts,
         "total_income": shown["income"],
+        "total_operating_income": shown["operating_income"],
         "total_cogs": shown["cogs"],
         "total_gross_profit": shown["gross_profit"],
+        "total_operating_gross_profit": shown["operating_gross_profit"],
         "total_expenses": shown["expenses"],
+        "total_operating_expenses": shown["operating_expenses"],
+        "total_net_operating_income": shown["net_operating_income"],
+        "total_other_income": shown["other_income"],
+        "total_other_expense": shown["other_expense"],
+        "total_net_other_income": shown["net_other_income"],
         "total_net_income": shown["net_income"],
+        # the Other Income / Other Expense rows print, as on the P&L, only
+        # when an account in them has a figure in the columns shown (#390)
+        # an account with nothing in every column is not in `accounts`
+        "has_other": bool(accounts["other_income"] or accounts["other_expense"]),
         "filtered": filtered,
         "columns_total": len(with_activity),
         "chosen_empty": chosen_empty,
@@ -1017,9 +1236,16 @@ def profit_loss_by_class(
             "archived": c["inactive"],
             "empty": c["empty"],
             "income": c["income"],
+            "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
+            "operating_gross_profit": c["operating_gross_profit"],
             "expenses": c["expenses"],
+            "operating_expenses": c["operating_expenses"],
+            "net_operating_income": c["net_operating_income"],
+            "other_income": c["other_income"],
+            "other_expense": c["other_expense"],
+            "net_other_income": c["net_other_income"],
             "net_income": c["net_income"],
         }
         for c in out.pop("columns")
@@ -1113,9 +1339,16 @@ def profit_loss_by_job(
             "inactive": c["inactive"],
             "empty": c["empty"],
             "income": c["income"],
+            "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
+            "operating_gross_profit": c["operating_gross_profit"],
             "expenses": c["expenses"],
+            "operating_expenses": c["operating_expenses"],
+            "net_operating_income": c["net_operating_income"],
+            "other_income": c["other_income"],
+            "other_expense": c["other_expense"],
+            "net_other_income": c["net_other_income"],
             "net_income": c["net_income"],
         }
         for c in out.pop("columns")
@@ -1270,6 +1503,26 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
             )
         }
 
+    def tree_row(r):
+        """A printed row of the section's tree (#416): an account, a
+        parent's heading, its direct postings or its family's total."""
+        indent = r["depth"] + 1
+        if r["kind"] == "heading":
+            return {
+                "cells": [f"  {r['label']}"] + blank,
+                "style": "group",
+                "indent": indent,
+            }
+        figures = _compare_figures(
+            r["amount"], r.get("prior_amount", 0), prior, show_changes
+        )
+        row = {"cells": [f"  {r['label']}"] + figures, "indent": indent}
+        if r["kind"] == "total":
+            row["style"] = "subtotal"
+        return row
+
+    tree = data.get("tree") or {}
+
     def total(label, key, style="subtotal"):
         return {
             "cells": [label]
@@ -1279,18 +1532,27 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
             "style": style,
         }
 
-    rows = []
-    for label, key, total_key in (
-        (t("Income"), "income", "total_income"),
-        ("Cost of Goods Sold", "cogs", "total_cogs"),
-    ):
+    def section(label, key, total_key):
         rows.append({"cells": [label] + blank, "style": "subtotal"})
-        rows.extend(line(item) for item in data[key])
+        if key in tree:
+            rows.extend(tree_row(r) for r in tree[key])
+        else:
+            rows.extend(line(item) for item in data.get(key, []))
         rows.append(total(f"Total {label}", total_key))
-    rows.append(total("Gross Profit", "gross_profit"))
-    rows.append({"cells": ["Expenses"] + blank, "style": "subtotal"})
-    rows.extend(line(item) for item in data["expenses"])
-    rows.append(total("Total Expenses", "total_expenses"))
+
+    rows = []
+    section(t("Income"), "income", "total_operating_income")
+    section("Cost of Goods Sold", "cogs", "total_cogs")
+    rows.append(total("Gross Profit", "operating_gross_profit"))
+    section("Expenses", "expenses", "total_operating_expenses")
+    if data.get("has_other"):
+        # below Net Operating Income, only when there is something (#390)
+        rows.append(total(t("Net Operating Income"), "net_operating_income"))
+        if data.get("has_other_income"):
+            section(t("Other Income"), "other_income", "total_other_income")
+        if data.get("has_other_expense"):
+            section("Other Expense", "other_expense", "total_other_expense")
+        rows.append(total(t("Net Other Income"), "net_other_income"))
     rows.append(total(t("Net Income"), "net_income", "grand-total"))
     cls = data.get("class_name")
     period = _period_words(data)
@@ -1309,6 +1571,78 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
 # past it the grid goes over several pages, each with the Account column
 # and the same Total column (the total across every column shown).
 GRID_COLUMNS_PER_PAGE = 8
+
+
+def _grid_layout(data: dict, t) -> list[tuple]:
+    """The P&L by Class / by Job grid's rows above Net Income, in print
+    order, for the screen's twin in the PDF and the CSV: (section heading,
+    accounts key or None for a summary row, subtotal label, column key,
+    total key). Other Income / Other Expense below Net Operating Income
+    when the grid has either (#390), as the P&L prints them."""
+    out = [
+        (
+            t("Income"),
+            "income",
+            t("Total Income"),
+            "operating_income",
+            "total_operating_income",
+        ),
+        (
+            "Cost of Goods Sold",
+            "cogs",
+            "Gross Profit",
+            "operating_gross_profit",
+            "total_operating_gross_profit",
+        ),
+        (
+            "Expenses",
+            "expenses",
+            "Total Expenses",
+            "operating_expenses",
+            "total_operating_expenses",
+        ),
+    ]
+    if data.get("has_other"):
+        out.append(
+            (
+                None,
+                None,
+                t("Net Operating Income"),
+                "net_operating_income",
+                "total_net_operating_income",
+            )
+        )
+        accounts = data.get("accounts") or {}
+        if accounts.get("other_income"):
+            out.append(
+                (
+                    t("Other Income"),
+                    "other_income",
+                    t("Total Other Income"),
+                    "other_income",
+                    "total_other_income",
+                )
+            )
+        if accounts.get("other_expense"):
+            out.append(
+                (
+                    "Other Expense",
+                    "other_expense",
+                    "Total Other Expense",
+                    "other_expense",
+                    "total_other_expense",
+                )
+            )
+        out.append(
+            (
+                None,
+                None,
+                t("Net Other Income"),
+                "net_other_income",
+                "total_net_other_income",
+            )
+        )
+    return out
 
 
 def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
@@ -1335,8 +1669,9 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             return r
 
         def account_row(a):
+            # the number and full path, as the P&L PDF prints a flat line (#416)
             return row(
-                f"  {a['account_number'] + ' - ' if a['account_number'] else ''}{a['account_name']}",
+                f"  {_row_words(a)}",
                 [_money(a["amounts"][i]) if a["amounts"][i] else "" for i in idx]
                 + [_money(a["total"])],
             )
@@ -1345,34 +1680,11 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             return row(label, [_money(c[key]) for c in cols] + [_money(total)], style)
 
         rows = []
-        for label, key in (
-            (t("Income"), "income"),
-            ("Cost of Goods Sold", "cogs"),
-            ("Expenses", "expenses"),
-        ):
-            rows.append(row(label, [""] * (len(cols) + 1), "subtotal"))
-            rows.extend(account_row(a) for a in data["accounts"][key])
-            if key == "income":
-                rows.append(
-                    sum_row(
-                        t("Total Income"), "income", data["total_income"], "subtotal"
-                    )
-                )
-            elif key == "cogs":
-                rows.append(
-                    sum_row(
-                        "Gross Profit",
-                        "gross_profit",
-                        data["total_gross_profit"],
-                        "subtotal",
-                    )
-                )
-            else:
-                rows.append(
-                    sum_row(
-                        "Total Expenses", "expenses", data["total_expenses"], "subtotal"
-                    )
-                )
+        for label, key, sub_label, sub_key, total_key in _grid_layout(data, t):
+            if key:
+                rows.append(row(label, [""] * (len(cols) + 1), "subtotal"))
+                rows.extend(account_row(a) for a in data["accounts"][key])
+            rows.append(sum_row(sub_label, sub_key, data[total_key], "subtotal"))
         rows.append(
             sum_row(
                 t("Net Income"), "net_income", data["total_net_income"], "grand-total"
@@ -1400,7 +1712,9 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
 
 
 def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
-    """Balance Sheet rows for the PDF. With a prior-year comparison
+    """Balance Sheet rows for the PDF. Assets and liabilities print under
+    their groups (#390: Current / Fixed / Other Assets, Current / Long Term
+    Liabilities), each with its subtotal. With a prior-year comparison
     (`prior` on the data) the columns are Current | Prior Year, and
     $ Change | % Change unless show_changes is off."""
     t = t or Terms()
@@ -1408,9 +1722,17 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
     columns = _compare_columns(prior, show_changes)
     blank = [""] * (len(columns) - 1)
     p = prior or {}
+    groups = data.get("groups") or {}
 
     def figures(cur, before):
         return _compare_figures(cur, before, prior, show_changes)
+
+    def line(item, indent):
+        return {
+            "cells": [f"  {_row_words(item)}"]
+            + figures(item["amount"], item.get("prior_amount", 0)),
+            "indent": indent,
+        }
 
     rows = []
     for label, key, total_key in (
@@ -1419,13 +1741,22 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
         (t("Equity"), "equity", "total_equity"),
     ):
         rows.append({"cells": [label] + blank, "style": "subtotal"})
-        for item in data[key]:
-            rows.append(
-                {
-                    "cells": [f"  {_row_words(item)}"]
-                    + figures(item["amount"], item.get("prior_amount", 0))
-                }
-            )
+        if key in groups:
+            for g in groups[key]:
+                rows.append(
+                    {"cells": [g["heading"]] + blank, "style": "group", "indent": 1}
+                )
+                rows.extend(line(item, 2) for item in g["lines"])
+                rows.append(
+                    {
+                        "cells": [f"Total {g['heading']}"]
+                        + figures(data[g["total_key"]], p.get(g["total_key"], 0)),
+                        "style": "subtotal",
+                        "indent": 1,
+                    }
+                )
+        else:
+            rows.extend(line(item, 1) for item in data[key])
         rows.append(
             {
                 "cells": [f"Total {label}"]
@@ -1996,7 +2327,7 @@ def adjusting_entries(
                 "id": txn.id,
                 "date": txn.date.isoformat(),
                 "reference": txn.reference or "",
-                "description": txn.description or "",
+                "description": header_text(txn),
                 "posted_by": txn.posted_by or "",
                 "source_type": txn.source_type or "",
                 "voided": txn.id in voided,
