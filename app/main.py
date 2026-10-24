@@ -97,6 +97,7 @@ from app.routes import journal, deposits, cc_charges, checks, expenses, transfer
 
 # Phase 10: Quick Wins + Medium Effort Features
 from app.routes import bank_rules, budgets, attachments, email_templates
+from app.routes import invoice_messages as invoice_messages_routes
 
 # Phase 9: Analytics (real-time business intelligence)
 from app.routes import analytics
@@ -929,6 +930,9 @@ _ADMIN_WRITE_PREFIXES = (
     # Staff records carry SSN, pay rate and W-4 elections: creating or
     # editing one is HR, not daily books (GHSA-rh75-6834-f66j).
     "/api/employees",
+    # The saved invoice messages are company settings by another name
+    # (#392): kept under Settings, written by an administrator.
+    "/api/invoice-messages",
 )
 # HR and payroll are admin functions, reads included: pay stubs, W-2s and
 # 941s, NACHA files, benefit elections, garnishments and onboarding
@@ -1364,6 +1368,8 @@ app.include_router(bank_rules.router)
 app.include_router(budgets.router)
 app.include_router(attachments.router)
 app.include_router(email_templates.router)
+# the saved invoice messages, chosen on the invoice form (#392)
+app.include_router(invoice_messages_routes.router)
 # Phase 11: Saved Reports (inventory endpoints live on the items router)
 app.include_router(saved_reports.router)
 

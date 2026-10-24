@@ -17,7 +17,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.services.migration_common import (
     build_code_map,
     dry_run_bundle,
@@ -85,6 +85,28 @@ _SAGE_TYPE_MAP = {
     "other expense": AccountType.EXPENSE,
 }
 
+# Sage's types that say more than the base type (#390). AR / AP hold only
+# on 1100 / 2000; elsewhere the model gives the default.
+_SAGE_DETAIL = {
+    "1": DetailType.ACCOUNTS_RECEIVABLE,
+    "5": DetailType.FIXED_ASSET,
+    "6": DetailType.FIXED_ASSET,  # accumulated depreciation nets inside
+    "8": DetailType.OTHER_ASSET,
+    "10": DetailType.ACCOUNTS_PAYABLE,
+    "14": DetailType.LONG_TERM_LIABILITY,
+    "accounts receivable": DetailType.ACCOUNTS_RECEIVABLE,
+    "fixed assets": DetailType.FIXED_ASSET,
+    "fixed asset": DetailType.FIXED_ASSET,
+    "accumulated depreciation": DetailType.FIXED_ASSET,
+    "other assets": DetailType.OTHER_ASSET,
+    "other asset": DetailType.OTHER_ASSET,
+    "accounts payable": DetailType.ACCOUNTS_PAYABLE,
+    "long term liabilities": DetailType.LONG_TERM_LIABILITY,
+    "long term liability": DetailType.LONG_TERM_LIABILITY,
+    "other income": DetailType.OTHER_INCOME,
+    "other expense": DetailType.OTHER_EXPENSE,
+}
+
 classify_filename = make_classifier()
 
 
@@ -105,6 +127,7 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
                 or None,
                 "name": name,
                 "type": acct_type,
+                "detail_type": _SAGE_DETAIL.get(sage_type),
                 "description": None,
             }
         )

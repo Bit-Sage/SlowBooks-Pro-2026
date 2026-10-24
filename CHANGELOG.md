@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.27.0
+### Unreleased
 
 **The IIF export guards the contact fields too.** The CUST and VEND rows'
 phone, mobile or fax, email, terms and tax id went out as typed, so a
@@ -14,6 +14,568 @@ way to fix an IIF file before import (noted on #410). They take the same
 leading apostrophe a name does, and the importer takes it off again, so
 `+1 555…` comes back as typed.
 
+### v2.28.0 — Account types and sub-accounts
+
+**Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
+account now carries one of QuickBooks' fifteen account types beside its
+type: Bank, Accounts Receivable, Other Current Asset, Fixed Asset, Other
+Asset; Accounts Payable, Credit Card, Other Current Liability, Long Term
+Liability; Equity; Income, Other Income; Cost of Goods Sold; Expense, Other
+Expense. The account form has one picker, grouped by type, and the Chart of
+Accounts lists each type's accounts under a heading per detail type, so a
+loan sitting among the current liabilities shows in the first scroll. The
+detail type cannot contradict the type, a bank or card account is Bank or
+Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
+sixteen control accounts keep theirs. A sub-account shares its parent's
+detail type, except under a bank, card, Accounts Receivable or Accounts
+Payable parent, where it is set on its own — QuickBooks' rule. So a Savings
+account (bank kind bank) under an Other Current Asset folder is a 400 here
+where it was allowed before; an existing one is kept and logged
+(`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
+`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`). A bank
+or card account with reconciliations, feed rows or register entries keeps
+its bank kind: changing it would take the register away.
+
+The upgrade fills the detail type in from where the cash flow statement
+already puts each account: the fixed-asset register's accounts, accumulated
+depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
+1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
+(the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
+Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
+accounts Other Expense. A sub-account left at the default shares its
+parent's only where that keeps it current or non-current as the cash flow
+had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
+stays current), so no figure moves between working capital, investing and
+financing; the one exception is 2000 or 2200 renamed like a loan, a control
+account whose detail type stays Other Current Liability. The statements below print by it, so after
+upgrading, open Chart of Accounts and check the detail type of any loan,
+vehicle, equipment or long-term note; a line of credit kept in a loan
+account, for one, is current.
+
+The QuickBooks lists import keeps the type each account has in the file
+(FIXASSET, LTLIAB, EXINC…) and the IIF export writes it back, CCARD included:
+2400 Loan Payable went out as OCLIAB and 2500 Other Current Liabilities as
+LTLIAB, guessed from their numbers. Non-posting accounts (estimates,
+purchase orders) are skipped with a note rather than made assets, and an
+account already in the chart keeps its own detail type, the import naming
+any the file disagrees with. The Xero, Wave, Sage 50, Zoho Books, MYOB and
+QuickBooks Online imports keep their files' fixed-asset, long-term and
+other-income / other-expense types the same way; the chart CSV export has a
+Detail type column, and the chart import reads it.
+
+**The statements print by detail type** (#390). The Balance Sheet groups
+its assets under Current / Fixed / Other Assets and its liabilities under
+Current / Long Term Liabilities, each with its subtotal, on the screen, in
+the PDF (and the accountant's package) and in the CSV, whose Section column
+is now the group, with the side in a new last column, Type. A group with no
+account is left out; accumulated depreciation is a Fixed Asset and nets
+inside its group; the prior-year columns carry the subtotals. A
+sub-account still at its default detail type prints in its parent's group,
+with its family (1520 Trucks under 1500 Equipment among the Fixed Assets,
+Accrued Interest under a loan among the Long Term Liabilities); its detail
+type, its cash flow line and every figure stay its own, and one given
+another detail type keeps its group. The nonprofit
+Statement of Financial Position groups the same way. The Profit & Loss
+prints Other Income and Other Expense below Net Operating Income, with Net
+Other Income; Net Income is the same figure, and a company with nothing in
+them sees the P&L it saw, Net Operating Income included only when there is
+something below it. The printed Total Income and Total Expenses no longer
+include the Other Income / Other Expense accounts (4900 Other Income, 6999
+and 7999 among them): the two together are the old figures. The API keeps
+`total_income`, `total_expenses` and `gross_profit` as they were (every
+income / expense account, Other included) and adds `total_operating_income`,
+`total_operating_expenses` and `operating_gross_profit` for the printed
+figures (on the grids, also `operating_income` / `operating_expenses` /
+`operating_gross_profit` per column and `total_operating_gross_profit`). P&L by Class and by Job
+get the same rows, so the three reports tie line for line; the Classes list
+counts other income and expense with income and expenses, as before. The
+cash flow statement reads the detail type instead of guessing from numbers
+and names: Fixed Asset and Other Asset are investing, Long Term Liability
+financing; the fixed-asset register's accounts stay investing and
+accumulated depreciation an adjustment. The upgrade's detail types put
+every account where the old rules did, so an upgraded company's statement
+is unchanged.
+An account created without a detail type (the register's Add account panel,
+the API, the chart import, the QuickBooks and other imports) takes it from 2.27.0's
+number and name rule: an asset numbered 1500–1999 or named like equipment
+is a Fixed Asset, a liability named like a loan, note or mortgage a Long
+Term Liability, so a new Truck Loan is financing as before; a sub-account
+still shares its parent's, and a type given always wins.
+The QuickBooks Online report import brings Cost of Goods Sold in as cost of
+goods sold, above Gross Profit; it came in as an expense.
+
+**Sub-accounts print under their parents** (#416, from Chris Cree). The
+Profit & Loss (and one class's P&L) and the nonprofit Statement of
+Activities print a parent's family together on the screen and in the PDF:
+the sub-accounts indented beneath it, the parent's own postings as "Direct
+postings to Travel", and "Total Travel" for the family, a parent heading
+its family even with no postings of its own. Each account prints once and
+every total is the one the flat list gives; the prior-year columns add up
+by family too. The CSV stays flat, each account named by its full path
+("Travel: Hotel"), now on the Statement of Activities as well, which
+printed the bare "Hotel". An account under a parent of another section, or
+in a parent loop, prints at the top level with its path.
+
+**Sub-accounts show and move on the Chart of Accounts** (#416, from Chris
+Cree; the chart half — the statements' family subtotals are a separate
+change). An imported Travel › Hotel was kept in the books but listed flat,
+and the account form had no way to see or change a parent. The chart now
+lists each sub-account indented under its parent within its detail type,
+says "sub-account of Travel" to a screen reader, gives the full path
+("Travel: Hotel") on hover, and writes it beside the name where two accounts
+share a leaf name, the parent is listed elsewhere, or the filter has hidden
+the parent; the filter matches the path. The form has a **Sub-account of**
+picker, opened on the current parent, offering active accounts of the same
+type and never the account itself or one under it; a parent other than 1100,
+2000, a bank or a card sets the Type to its own. Choosing a type the parent
+cannot take lets the parent go in the same save, and choosing one it can
+brings it back, so the base-type change the detail types refuse under a
+parent is now done from the form, and that 400 says "(Parent account: none,
+on its form)". The server's refusals show in the form, where a passing toast
+had them. New rules, refused on a move or a type change (a pair saved before
+stays editable, and resending the parent it has is no move): under 1100,
+2000, a bank or a card a sub-account keeps its own detail type but not
+another base type — an expense under a bank account is refused, either side
+of the pair; a Bank or Credit Card parent turned plain is refused while a
+sub-account does not share its new type; and a control account takes no new
+parent. The chart import leaves off a link the API would refuse, the row's
+note saying why in the dry run and when applied, and the Xero, Wave, Sage
+50, Zoho Books, MYOB, GnuCash and QuickBooks Online imports bring such an
+account in unlinked, with a warning. Where the link stands but the file
+gives a sub-account a detail type its parent cannot share, the child takes
+the parent's instead — the link is right, so the family stays together on
+the Profit & Loss — with a note naming the type the file asked for; under a
+bank, card, 1100 or 2000 parent it keeps its own.
+
+**Possible Duplicates counts the groups it shows** (#458, from the 2.27.0
+release check). With "Show groups marked not a duplicate" ticked, the line
+read "0 groups" above the marked group it was showing; the open groups are
+counted, and the marked ones apart, "(shown)" when the box is ticked.
+
+**The macOS release staples on any retry** (#459). The 2.27.0 build's
+notarization ticket failed to staple once with a message the retry didn't
+recognize; once Apple has accepted the app, any stapler failure is retried
+within the same bound, and the error names what the stapler said.
+
+One schema change, run in every company file: `accounts.detail_type`
+(4ac01efbd72a), filled in so every statement shows the same figures as
+before. 603 API operations.
+
+### v2.27.0 — A register you can edit, and a bookkeeper's wish list
+
+**The register adds a payee or a category as it is typed** (#386, from a
+bookkeeper's notes). A payee typed into the register's entry row or the +
+Entry form that is not already a customer's or a vendor's name gets a toast,
+on leaving the box and again when the entry posts: "Add … as a customer?"
+for money in (a deposit) and "Add … as a vendor?" for money out — the
+categorized import's rule — with Add and Not now. Add makes the customer or
+the vendor (`POST /api/customers` or `/api/vendors`, the name alone), so the
+entry's payee resolves to it by name; either way the entry posts with the
+text as before, and a name answered Not now is not asked about again that
+session. The toast moves focus to itself and gives it back to the row only
+when it is answered (or still has the focus as it goes), and holds its
+auto-dismiss while it has focus or the pointer, so the keyboard can answer
+it; a toast left to time out does not take the caret back from wherever the
+typing moved on to. In the + Entry dialog, whose Tab is trapped, the toast's
+buttons are folded into the dialog's Tab cycle so the keyboard reaches and
+answers the offer. A new account is added from an **Add** button
+beside the category picker (not an option on the select, which trapped the
+keyboard) — name, type, an optional parent of that type and an optional
+number, in a panel under the picker; the parent list leaves out the control
+accounts the software posts to by number. Added, the account is in every
+picker on the page (the split lines' too), chosen, and the cursor moves on
+to the amount or the memo. No server change.
+
+**A register deposit splits like a check, with a fee line** (#387, from a
+bookkeeper's notes). A card processor pays over the gross it collected less
+its fee, and only the net reaches the bank; a check could be split across
+lines since 2.23.5, a deposit could not, so it never matched the statement.
+A split line may now go the other way from its entry: the dialog's split
+table has a **Taken out** box per line, so the fee is typed as the positive
+number the statement shows, and a 97.00 deposit is Income 100.00, Bank
+Charges & Fees 3.00 taken out, posted as one entry (CR income 100, DR fees
+3, DR bank 97). A ticked line always runs opposite the entry, whichever way
+the entry goes, so the same box on a check is a refund netted against it (a
+−500 check paying Insurance 620 less a 120 refund), and the check's printed
+stub lists that refund as a negative line so the stub still totals the
+check. On the API each split line is signed on its own, and a line of 0.00
+is refused rather than dropped.
+
+**A register entry opens for editing** (part of #388, from a bookkeeper's
+notes). A typo in an entry made from the bank register meant voiding it and
+entering it again; now the row has **Edit**, which opens the + Entry form
+filled in (the split lines included), and Save rewrites the entry in place
+— the same journal entry, so its links, statement match and audit trail
+stay with it (`GET` and `PUT /api/banking/entries/{id}`). A fix that leaves
+every line's account and amount alone (payee, memo, check number, date,
+class, job) updates the entry where it is, and saving it unchanged writes
+nothing; a new amount or category replaces the lines the way a bill's are
+on edit, each old line a DELETE in the audit log and each new one an
+INSERT. A field the PUT leaves out keeps what the entry has, and the form
+carries back what it has no box for: the entry's job, a split line's own
+class or job, and a class archived since. A line with its own class (an
+imported check's lines can have one) keeps it through an edit. A memo-only
+entry (a memo, no payee) now reopens with the memo in Memo, not in Payee: no
+payee carries the sentinel "Bank entry" on the entry's header instead of the
+memo, so a memo-only entry is told apart from a payee-only one, and the
+register shows its Payee column blank rather than the memo or the sentinel.
+This needs no migration and changes only new entries; a memo-only entry
+posted before this release was stored the same as a payee-only one, so it
+still reopens with its text in Payee.
+
+An entry a completed reconciliation holds says so as it opens, and its
+amount and date stay as the statement has them: a change to either is
+refused, as voiding it is ("so its amount and date cannot be changed, just
+as it cannot be voided. Correct the difference with a new entry."). Its
+payee, memo, check number, class and job can be fixed without a word; a
+new category or split asks first — "Changing its category moves its amount
+between accounts in a period already reconciled." — with **Change it
+anyway**, which saves the form as it is then (`confirm_reconciled`, and the
+audit log says the edit moved past that reconciliation). On an entry that
+is only cleared, a changed amount loses the tick and the answer says so.
+An entry added from a statement line keeps that link through an edit (on
+PostgreSQL too, where the edit failed); one whose amount changed sends the
+statement line back to review without its category, so **Add all
+categorised** cannot post it a second time. A void entry is not edited, an
+edit that would turn the entry into a transfer is refused (void it and post
+the transfer), the closing date holds for the old date and the new one, and
+a read-only or accountant's sign-in is not offered Edit. Journal entries
+and deposits still open their own views from the row; editing them in
+place is still to come.
+
+**A bill line can be an amount alone** (#391, from a bookkeeper's notes).
+A utility bill or a pest-control bill has an amount, not a quantity and a
+rate, and Enter Bill asked for both on every line. Qty and Rate now start
+blank and the Amount cell is a box: type what the bill says and the line
+is that amount; type a quantity or a rate and the amount is worked from
+them as before. Typing a quantity on an amount-alone line seeds the rate
+from that amount, so the line prices at quantity x amount (and clearing the
+quantity brings the amount back) rather than multiplying a blank rate to
+zero. Typing the amount after a quantity reads the amount as the line total,
+so the rate is amount / quantity — Qty 3 then Amount 30 gives Rate 10 and
+posts 3 x 10, instead of dropping the quantity and posting 1 x 30. A stock
+item is shown with the quantity 1 it is received as, both when it is drawn
+from a stored line and as soon as it is picked on a new line, not as a bare
+amount or a blank Qty box. On the API a line may send `amount` by itself; it
+is stored as
+quantity 1 at that rate, so the journal, job costing, the PDF and the
+exports read it as they always have, and a bill opened for editing draws
+such a line as an amount. An `amount` sent with a quantity and rate must
+agree to the cent or the line is refused (422); the strict model used to
+refuse any `amount` field outright, also with a 422.
+
+**The statement's ending balance can be corrected while reconciling**
+(#389, from a bookkeeper's notes). The ending balance was typed once, at
+the start; a transposed digit meant abandoning the reconciliation and
+ticking every line again. The reconcile screen's Statement Balance card
+has a **Change…** button now, for the balance and the statement date
+(`PUT /api/banking/reconciliations/{id}`, either field optional). The
+ticks stay and the difference is refigured from them. A date moved later
+brings the lines up to it onto the session; one moved earlier leaves the
+lines after it off the session with their ticks kept, as Abandon keeps
+them. The ticks an earlier move leaves behind — lines that were in reach
+of the old date but fall after the new one — are reported back as a count,
+with a note that they carry to the next reconciliation still ticked, in the
+change response and on the reconcile screen, since completing this session
+won't stamp them. The count is only those lines: a deposit cleared by a
+bank-feed match or a register clear, dated after a date that never moved,
+is not among them, so a fresh reconciliation of a feed-linked account
+reports none. A date on or before the last completed
+statement is refused as a fresh start is, and a completed reconciliation
+refuses the change. The change leaves an `UPDATE` row in the audit trail.
+
+**Reclassify Transactions filters by payee** (#394, from a bookkeeper's
+notes). An unrecognized vendor is parked in Other expenses until the
+client says what it was, and the tool found lines by account and period
+only, so moving that vendor's meant picking them out of everything else
+parked there. A Payee text box and a vendor select beside the account and
+period list one payee's lines, ready to tick and move in one pass, both
+riding on the address like the account does. Each row now names its payee
+the way the bank register does (reusing `payees_for`): a bill's or
+expense's vendor, else the payee read off a bank entry, check or card
+charge — so an IIF card charge with no "CC Charge:" prefix reads the same
+in both places; a journal entry has none. `GET /api/reclassify/lines`
+takes `vendor_id`, matched as whole words anywhere in a row's payee,
+ignoring case (so bank-feed spellings like `HOME DEPOT #4521 JOLIET IL` and check
+memos like `Check 1042 - Home Depot` come along with vendor "Home Depot", while vendor "Ace" doesn't take
+"Space Coast Supply"),
+and `payee`, a case-insensitive part of the name; each row carries
+`vendor_id` and `payee`.
+
+**Save CSV on the A/R and A/P Aging reports** (from a bookkeeper's notes,
+#393). A client who asks for the aging as a spreadsheet could only have it
+from the Accountant's Package, so one file meant building the whole zip.
+Each aging report has a **Save CSV** button now (`GET
+/api/reports/ar-aging/csv` and `/ap-aging/csv`, `as_of_date` as the
+screen's) that writes the file the package carries — the same preamble,
+columns and totals row, made by the one function both use, so the two
+cannot drift. It is always the whole company, as the screen is, even when
+the report was opened from a customer's or vendor's page (which only
+highlights their row).
+
+**A Reconciliation Reports card, and pinned cards first on the Report
+Center** (#395, from a bookkeeper's notes). CPAs ask for bank reconciliation
+reports; each completed one was in the Accountant's Package but had no card
+of its own. Reports → Reconciliation Reports lists every completed
+reconciliation by account and statement date, with the statement balance,
+the cleared total and the day it was finished, each to the on-screen report
+or its PDF (`GET /api/banking/reconciliations?status=completed`, which now
+takes `status` and carries `account_name`; nothing new is generated). A
+reconciliation from before 2.10 whose ledger account is gone has no account
+to name and no report, so it is left off the list, as the Accountant's
+Package already leaves it out. Close on an on-screen report opened from the
+card returns to that list, not past it to the Report Center. And the cards
+can be arranged: each has a star, a toggle button reached by Tab after the
+card, and pinned cards lead the grid in the order they were pinned, the rest
+in their fixed order. The pins are the preference `report_center_pins`
+(`{"pinned": [view, …]}`), kept per company file and, once the company has
+users, per user, as the dashboard's layout is; the star is hidden from a
+read-only sign-in, whose preference writes the server refuses. The saved
+reports strip is as it was.
+
+**Saved invoice messages, one the default, chosen on the invoice** (#392,
+from a bookkeeper's notes). The note that says how to pay — Zelle to this
+address, ask for a card link — was typed into every invoice's Notes by
+hand. Settings → Invoice Messages keeps a short list of them now (name,
+text, a Default radio; add, edit, delete, an administrator's writes like
+the settings around it), and the invoice form offers the list in a
+**Message** select above Notes, "(none)" first: choosing one copies its
+text into Notes, where it can still be edited — appended on a new line
+when Notes already hold something typed by hand, so nothing is thrown
+away, and replacing them only when they are empty or still hold a saved
+message's text; "(none)" clears Notes only in that same last case. A new
+invoice starts with the default message's text (with no default, the
+Default Invoice Notes setting as before; an estimate converted with no
+notes of its own starts the same way). The invoice keeps the text, not
+the choice, so a message edited later leaves old invoices alone, and the
+PDF and email print it where they printed Notes.
+`GET/POST /api/invoice-messages`, `PUT/DELETE /api/invoice-messages/{id}`;
+setting one message's `is_default` clears the others in the same
+transaction, each through the ORM so the old default turning off is
+audited. The email templates are unchanged.
+
+**A ministry's own message and footer on the giving statement** (#415, a
+bookkeeper for several ministries; stacked on #392's saved messages). The
+year-end statement ended with a fixed "Generated by Slowbooks Pro 2026"
+footer and had no place for the ministry's words, so statements were merged
+in a third-party program to add each ministry's header and footer. The saved
+messages (#392) gained a **kind** so one list holds both: invoice messages
+fill an invoice's Notes as before, and **giving-statement messages** open the
+year-end statement. Settings → Giving Statement (nonprofit mode) manages the
+giving-statement messages with the same saved-message UI — the default one
+prints above the gift table (a thank-you from the pastor or the board) — plus
+a **Footer text** setting (`giving_statement_footer`) that replaces the
+product footer (the ministry's address, website, EIN, a verse). Both are
+plain text with line breaks, printed as typed and escaped as text (no HTML
+injection), an administrator's to write and audited like the settings around
+them. The default is **per kind**: one default invoice message and one
+default giving-statement message, never crossed; the invoice picker and list
+still show only invoice messages (`/api/invoice-messages?kind=` filters, the
+invoice behaviour unchanged). The same words ride on all three outputs — the
+single PDF, the all-donors stack and the emailed copy (one code path). An
+empty message or footer prints what printed before, and the product-name
+footer is gone either way so a donor's statement carries no product name; the
+IRS acknowledgment sentence is always printed and is not editable. The footer
+is a **running element** in each page's bottom margin box (`@bottom-center`),
+so a six-line footer on a multi-page statement no longer overprints the gift
+table the way the old `position: fixed` footer did (verified with a real
+WeasyPrint render). Length caps hold a pasted block on the page: a
+giving-statement message is at most **1500 characters** and the footer at most
+**500** characters and **six lines** (a line over 90 characters counts as two),
+enforced server-side (422), so the footer always fits above the page's edge. **Preview one donor's statement**
+(`GET /api/donors/giving-statement/preview`) renders the first donor's with
+the saved words (a sample donor on a file with no gifts yet). A new migration
+(`f9a0b1c2d3e4`, stacked on `e4f5a6b7c8d9`) adds the `kind` column with a
+server default of `invoice`, so a file upgraded from #392 keeps every saved
+message as an invoice message.
+
+**Possible Duplicates, for bank and card accounts** (#414). A migration
+brings the old books across as they are, so a QuickBooks register line the
+bank feed added on top of one someone had keyed, or a statement entered
+twice, arrives as two real entries. Reports → Possible Duplicates lists,
+for one bank or card account and a period, groups of entries with the same
+amount on the same side and the same or a similar payee at most three days
+apart (two equal monthly payments are not grouped). A group is bounded by
+the window measured from its first entry, so a run of like charges a few
+days apart breaks into small groups instead of chaining into one, and a
+daily charge never becomes one giant group. A payee that is only a number
+(a store or pump number) matches nothing, and a one-word payee must be the
+start of a longer name, not sit anywhere inside it. Each entry shows its
+date, number, payee, memo, source (imported, keyed or migrated) and whether
+it is reconciled, opens, or voids through its own void route — including an
+imported QuickBooks Desktop check, which voids through the journal route —
+so a reconciled entry is not offered and a closed period asks for the
+closing-date password. **Not a duplicate** keeps a group off the report for
+everyone, stored in a new `duplicate_dismissals` table (migration
+`b7d2e9a41c63`), keyed by a fixed-length hash of the group so a long group's
+key never overflows on PostgreSQL; a new copy joining the group brings it
+back. Save PDF and
+Save CSV as the other reports. Read-only and accountant sign-ins read it;
+dismissing is refused to them. The QuickBooks migration guide's *After the
+import* suggests running it once. It never voids anything by itself.
+
+**The Interoperability page says where a bank statement goes** (#396, from
+a bookkeeper's notes). Its CSV imports take lists and reports; a bank or
+credit card statement (CSV, OFX, QFX) is imported from the account itself,
+under Banking → the account → Import file, and the Report CSV section now
+says so with a link, as does the QuickBooks migration guide. The guide also
+answers whether the vendors and accounts on a statement must be entered
+first: they need not — each line comes in as a statement line with its
+payee as text, and waits in the account's To review list to match or
+categorize unless it matches one entry already in the books, which it is
+matched to on import.
+
+An inventory item created with a starting quantity on hand posts that stock
+now, as QuickBooks does (found in PNWImport's fork,
+SlowBooks-Pro-Testing#101). Ten on hand at $4.00 used to write 10 onto the
+item and nothing else: no movement, no journal entry, so the $40 never
+reached the balance sheet and the first sale took its cost of goods out of
+an Inventory account that had never been given it. The item's opening
+quantity is a movement at its cost and one entry, DR Inventory / CR 3900
+Opening Balance Equity, under its own source type (`item_opening`), so a
+fixed asset that happens to share the item's id is no longer mistaken for
+its purchase. The entry is dated the day the item is created, or an `as_of`
+date you give (books set up as of a prior year-end); the form notes that an
+opening trial balance's 1300 already counts this stock, and the entry is
+refused on a closed date. Only a stock item posts — a service item with
+tracking forced on through the API does not. A zero cost moves the stock
+with no entry; a negative starting quantity is refused. The entry is listed
+on the Journal page but not voidable there (reversing it would leave the
+stock without its value); correct it with an inventory adjustment. Opening
+Balance Equity is matched by account number 3900, so a chart that already
+holds it under another name — a renamed account, or QuickBooks' "Opening Bal
+Equity" — is reused rather than grown a second one. Only an **equity** 3900
+counts, both for that resolution and as the control account the renumber and
+delete guards now protect; the registry matches on number **and** the type the
+posting code expects, so an imported chart's non-equity 3900 (an expense "3900
+Miscellaneous Expense", say) is an ordinary account you can still renumber or
+delete, and the same holds for any other control number carrying the wrong
+type. A later change to
+on-hand still posts as an inventory adjustment, as the item form already
+sends it; `PUT /api/items/{id}` never sets it. The Balance Sheet now rounds
+its current-period net income and total equity to the cent the same way the
+Profit & Loss does, so the two reports agree and no 777.4000000000001 sits
+beside the P&L's 777.40.
+
+A recurring invoice that has made invoices can no longer be deleted. Deleting
+one answered 200 and left its invoices pointing at a template that no longer
+existed; now the delete is refused (409). Nothing ends on the delete — it
+keeps billing until the user acts — so the sentence counts the invoices it
+made and says to set an End Date to stop it for good or clear Active to pause
+it, and the edit form has the Active box that sentence names. Re-ticking
+Active now rolls next_due forward to the first occurrence on or after today:
+a template paused in January and re-activated in July no longer back-dates an
+invoice for every missed month, and a run no longer refuses every schedule
+because one back-dated installment fell inside the closing date. A schedule
+skipped for a closed period is reported with advice the operator can follow —
+move the closing date, or clear and re-tick Active to roll the due date
+forward past it — not "set a later start", which the edit form has no field
+for. `scripts/run_recurring.py` now prints the skipped schedules (each with
+its reason) so the cron log shows the ones it passed over, instead of
+skipping them silently every day. A schedule that has made nothing still
+deletes (found in PNWImport's fork, SlowBooks-Pro-Testing#101).
+
+**A negative number in a CSV stays a number, an identifier stays text**
+(found in PNWImport's fork, SlowBooks-Pro-Testing#101; reviewer follow-up,
+#410). The formula guard every CSV export shares put an apostrophe in front
+of any cell starting with `-`, so a Schedule C loss (`-1234.56`) opened as
+text and would not sum. A cell that is only a signed amount (`-1234.56`,
+`-0.5`, the reconciliation's `-$1,234.56`) is now written as is; `=1+1`,
+`-1+1`, `-SUM(A1)`, `@x` and the like keep the apostrophe. A value that only
+looks like a number but is really an identifier keeps its apostrophe too, so
+a spreadsheet shows it verbatim: a phone like `+15551234567` or
+`+447911123456` (the Phone columns on the customer and vendor exports are
+marked identifiers), a leading-`+` code with no decimal point, and a
+leading-zero reference like `-0001`. Nothing that goes through the IIF
+export's text path is an amount, so its names, memos and descriptions always
+stay text; the audit log's and closing-date-exceptions' before/after columns
+stay text as well.
+
+**A file the bank import can't read is said so, not a 500** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Random bytes, a PDF, a CSV, a
+truncated statement, an OFX with broken markup or a nonsense amount
+(`NaN`, `Infinity`, `1e999999999`), or a CSV with an absurd date all raised
+an error as a 500. The OFX/QFX and CSV preview and import now answer "That
+file isn't a bank statement this can read: an OFX, QFX or CSV export from
+the bank." for any file they can't parse (an empty one says it is empty),
+and write nothing; an unrecognised CSV still goes to the column-mapping
+step. A UTF-16 export (either byte order) is decoded by its byte-order mark
+and read, and a complete statement that is only missing its closing
+`</OFX>` or carries trailing NUL padding still imports. A file that is
+nothing but a byte-order mark (UTF-8 or UTF-16) decodes to no content, so it
+answers the empty-file sentence like any other empty file rather than a 200
+or an "unreadable".
+
+**An account can't become a sub-account of its own sub-account** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Only an account named as its
+own parent was refused: Vehicles under Truck with Truck already under
+Vehicles was saved, and the IIF export's full names recursed until they
+failed. The API that sets a parent refuses it now ("That would make Vehicles
+a sub-account of itself (through Truck).") at any depth — including a loop
+longer than the walk's safety cap, which used to slip through — a parent id
+that names no account is refused on create and edit, and a chart file whose
+rows name each other as parents leaves the closing link off with that
+sentence as the row's note, shown in the dry-run preview and when applied
+alike. The report paths and IIF names stop at a loop saved before this
+release. The same one walk now guards the cost-code tree too.
+
+`POST /api/accounts`, `PUT /api/accounts/{id}` and the CSV chart import
+(`/api/csv/import/accounts`) now refuse the account numbers the posting code
+resolves control accounts by. A new expense numbered 5900 used to become where
+every inventory adjustment posts, because the software finds that account by
+its number; the same slots (1100, 1200, 2000, 2200, 3200, 5900, …) are now
+reserved, and creating or renumbering an ordinary account onto one — or a chart
+import row that lands a new account on one — is refused with a message naming
+what the number is for (the import shows it in the dry run). The one exception
+is restoring the control account itself: the registry's exact name AND its
+expected type restore an empty slot, which is what the "account missing"
+message tells you to do — a right name with the wrong type (an "Inventory
+Adjustments" booked as income) is refused and names the type to set. A restored
+account that the standard chart seeds comes back `is_system`, so it matches a
+fresh company's. The internal paths that create the control accounts directly —
+seeding, the chart import's match-and-rename of an existing account, the
+IIF/QuickBooks/Xero/MYOB migrations, and on-demand ensure_account creation —
+do not go through these guards and are unaffected.
+
+- The vendor payments CSV (`/api/vendors/{id}/payments/csv`) now goes through
+  the shared export helpers: a vendor, method, check number, account or note
+  that begins with `=`, `+`, `-` or `@` is written as text with the same
+  leading apostrophe as every other export (it was written raw, so a vendor
+  named `=HYPERLINK(...)` was a live formula), and the file starts with the
+  UTF-8 byte-order mark so Excel reads accented names correctly. Amounts stay
+  numbers. The download's file name goes through the shared
+  `content_disposition` helper, so a vendor whose name Latin-1 can't carry
+  (`Łódź Supply`) no longer fails the download with a 500 in the
+  Content-Disposition header: the header sends an ASCII fallback
+  (`Payments_Lodz-Supply.csv`) plus `filename*=UTF-8''…` with the exact name.
+  The desktop shim's inline header is honored too.
+
+**A deposit QuickBooks prints under several numbers imports** (discussion #349). In a
+Transaction Detail by Account export, a bank deposit of several customer checks
+shows its bank line with no number and each income line with that check's own
+number. The ledger import grouped by number, so the deposit came apart into
+halves that only balance together and the file was refused. An unnumbered half
+and the same-day numbered halves that add up to it now post as one journal entry.
+
+**The macOS build's Pillow moves to 13.0.0.** Dependabot had ten open alerts
+on the 12.3.0 pin in `packaging/macos/requirements-build.txt`, two of them
+high (a JPEG comment heap overflow and a libopenjp2 heap overflow), all
+fixed in 13.0.0. The HarfBuzz rule in the mac spec (#141) excludes Pillow's
+font module by name, so it holds unchanged; nothing in the app draws text
+with Pillow.
+
+**macOS release tooling (testing-repo #104).** `release.py` now waits for
+Apple's notarization ticket before giving up. Right after notarization is
+accepted, the ticket may not have reached Apple's CDN yet: `stapler staple`
+exits 0 and `stapler validate` fails a second later, or staple itself fails
+with "Could not find base64 encoded ticket" or "Record not found" (three of
+the four 2.26.0 sign jobs; each passed on rerun). The staple and validate pair
+is retried, up to six attempts over about five minutes, and the final error
+names the attempts. Any other staple error stops the run on the first try.
+
+Four schema changes, each run in every company file: `reconciliations.max_statement_date`
+(a1f2e3d4c5b6), `invoice_messages` (e4f5a6b7c8d9) and its `kind` (f9a0b1c2d3e4), and
+`duplicate_dismissals` (b7d2e9a41c63). 602 API operations.
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open

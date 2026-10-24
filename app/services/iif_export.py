@@ -33,9 +33,10 @@ from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
 from app.models.estimates import Estimate, EstimateLine
 from app.services.addresses import city_line
-from app.services.csv_export import _csv_safe
+from app.services.csv_export import _Identifier, _csv_safe
 from app.services.currency import convert_lines, to_home
 from app.services.iif_common import account_to_iif_type, item_to_iif_type
+from app.services.entry_text import is_bank_entry_placeholder
 
 
 def _iif_date(d: date) -> str:
@@ -72,9 +73,11 @@ def _iif_text(value) -> str:
     export neutralises a cell: people edit IIF files in Excel (it is the
     documented way to fix one before import), and a customer named
     `=HYPERLINK(...)` would run there. The leading apostrophe makes it
-    text; the importer takes it off again. Only text goes through here —
-    an amount like -850.00 must stay a number."""
-    return _csv_safe(_iif_clean(value))
+    text; the importer takes it off again. Only names, memos and the like go
+    through here — never an amount (those are written as numbers directly) —
+    so a memo that reads "-0001" keeps its apostrophe rather than opening as
+    -1 if the file is edited in Excel (reviewer, #410)."""
+    return _csv_safe(_Identifier(_iif_clean(value)))
 
 
 # Letters with no Windows-1252 form and no accent to drop (NFKD leaves
@@ -285,12 +288,14 @@ def _resolve_account_name(db: Session, account_id: int) -> str:
 def _full_account_name(db: Session, acct: Account) -> str:
     """Build colon-separated parent:child account name for QB convention.
     Neutralised as text (see _iif_text): the list row and every transaction
-    that names the account go through here, so they still match."""
-    if acct.parent_id:
-        parent = db.query(Account).filter(Account.id == acct.parent_id).first()
-        if parent:
-            return _iif_text(f"{_full_account_name(db, parent)}:{acct.name}")
-    return _iif_text(acct.name)
+    that names the account go through here, so they still match. Stops at
+    a repeat, so a parent loop saved before Testing #101 can't recurse."""
+    names, seen, cur = [], set(), acct
+    while cur is not None and cur.id not in seen:
+        seen.add(cur.id)
+        names.append(cur.name)
+        cur = db.get(Account, cur.parent_id) if cur.parent_id else None
+    return _iif_text(":".join(reversed(names)))
 
 
 # ============================================================================
@@ -1249,8 +1254,17 @@ def export_register_entries(
         cls = _class_name(db, txn.class_id)
         # the register stores the payee as the entry's description; a card
         # charge's posting prefixes it
-        name = (txn.description or "").removeprefix("CC Charge: ").strip()
-        memo = _memo_text(side.description or txn.description)
+        # a register entry typed with no payee carries a placeholder there,
+        # which is no one's name
+        name = (
+            ""
+            if is_bank_entry_placeholder(txn)
+            else (txn.description or "").removeprefix("CC Charge: ").strip()
+        )
+        memo = _memo_text(
+            side.description
+            or ("" if is_bank_entry_placeholder(txn) else txn.description)
+        )
         lines += _iif_line(
             [
                 "TRNS",

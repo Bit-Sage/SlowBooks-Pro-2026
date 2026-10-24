@@ -380,6 +380,7 @@ def seed_accounts(db_session):
             name=data["name"],
             account_type=AccountType(data["account_type"]),
             bank_kind=data.get("bank_kind"),
+            detail_type=data.get("detail_type"),
             is_system=True,
             balance=Decimal("0"),
         )

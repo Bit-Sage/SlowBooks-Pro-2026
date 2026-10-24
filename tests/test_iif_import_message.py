@@ -5,9 +5,8 @@ test_browser_ui.py; this needs none."""
 
 from pathlib import Path
 
-JS = (
-    Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "iif.js"
-).read_text(encoding="utf-8")
+JS_PATH = Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "iif.js"
+JS = JS_PATH.read_text(encoding="utf-8")
 
 
 def test_both_imports_report_through_the_one_helper():
@@ -22,3 +21,14 @@ def test_only_the_helper_says_import_complete():
         "_reportImport(total, errors, unsupported = 0, words = null) {", 1
     )[1].split("\n    },", 1)[0]
     assert "Import complete" in helper and "if (errors > 0)" in helper
+
+
+def test_the_report_csv_section_sends_statements_to_banking():
+    """A bank or card statement is imported under Banking, from the account
+    (#396): the Report CSV section says so, with a link, in the words the
+    Banking page uses for its button."""
+    section = JS.split("Import from Report CSV</h3>", 1)[1].split("</div>", 1)[0]
+    assert '<a href="#/banking">Banking</a>' in section
+    assert "<strong>Import file</strong>" in section
+    banking = (JS_PATH.parent / "banking.js").read_text(encoding="utf-8")
+    assert ">Import file</button>" in banking
