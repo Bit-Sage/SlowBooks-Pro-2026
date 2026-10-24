@@ -291,5 +291,7 @@ def test_every_void_source_type_in_app_is_classified():
             found.add(match.group(1))
 
     assert found, "expected to find some _void source types in app/"
-    missing = found - known
+    # a literal that is not a Transaction.source_type: the pay-run void's 409
+    # answers with code "confirm_void" until the caller sends confirm=true (#432)
+    missing = found - known - {"confirm_void"}
     assert not missing, f"unclassified *_void source types in app/: {sorted(missing)}"

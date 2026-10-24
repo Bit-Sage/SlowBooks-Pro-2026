@@ -37,6 +37,7 @@ from app.models.invoices import Invoice
 from app.models.job_costing import JobCost
 from app.models.nonprofit import FunctionalAllocation, RestrictionRelease
 from app.models.payments import Payment
+from app.models.payroll import PayRun
 from app.models.transactions import Transaction
 from app.models.vendor_credits import VendorCredit
 
@@ -70,6 +71,11 @@ DOCUMENT_KEYED_VOIDS = {
     "credit_memo_void": (CreditMemo, CreditMemo.id, CreditMemo.transaction_id),
     "vendor_credit_void": (VendorCredit, VendorCredit.id, VendorCredit.transaction_id),
     "job_cost_void": (JobCost, JobCost.id, JobCost.transaction_id),
+    "payroll_void": (
+        PayRun,
+        PayRun.id,
+        PayRun.transaction_id,
+    ),  # #432: source_id is the run
     "in_kind_gift_void": (InKindGift, InKindGift.id, InKindGift.transaction_id),
     "restriction_release_void": (
         RestrictionRelease,

@@ -200,9 +200,11 @@ def test_csv_header_guard_bom_and_filename(client, db_session, seed_past):
         "Last job type,Last job name"
     )
     assert "'=cmd" in body  # the formula guard's leading apostrophe
-    assert (
-        r.headers["content-disposition"]
-        == "attachment; filename=Past-Customers_2020-01-01_2024-12-31.csv"
+    # the repo's download header (request_utils): the quoted name and the
+    # RFC 5987 form beside it, as every other CSV sends it
+    assert r.headers["content-disposition"] == (
+        'attachment; filename="Past-Customers_2020-01-01_2024-12-31.csv"; '
+        "filename*=UTF-8''Past-Customers_2020-01-01_2024-12-31.csv"
     )
 
 
