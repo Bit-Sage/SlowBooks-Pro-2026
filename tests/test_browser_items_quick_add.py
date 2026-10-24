@@ -229,6 +229,14 @@ def test_cancel_puts_the_focus_back_on_the_item_picker(browser, company, books):
 
 
 BILL_ROW = "#bill-lines tr:nth-child(1)"
+# The stock label's geometry: the form's box, the label's, the checkbox's,
+# and the text's lines (one client rect per line the text takes).
+STOCK_LABEL = """() => { const b = document.querySelector('#bill-lines tr:nth-child(1) .iqa-form');
+    const l = b.querySelector('.iqa-stock-row');
+    const r = document.createRange(); r.selectNodeContents(l.querySelector('span'));
+    const box = (e) => { const x = e.getBoundingClientRect(); return [x.left, x.top, x.right, x.bottom]; };
+    return { form: box(b), label: box(l), check: box(l.querySelector('input')),
+        lines: r.getClientRects().length, text: l.textContent.trim() }; }"""
 BILL_LINE = """() => { const r = document.querySelector('#bill-lines tr:nth-child(1)');
     const a = r.querySelector('select.line-account');
     return { item: r.querySelector('select.line-item').value,
@@ -266,6 +274,15 @@ def test_a_bill_line_asks_for_the_expense_account_and_posts_there(
                     cost: !!b.querySelector('.iqa-cost'),
                     stock: !b.querySelector('.iqa-stock-row').hidden }}; }}"""
         )
+        # the stock label at the line's width, then at the panel's 200px minimum
+        stock = [page.evaluate(STOCK_LABEL)]
+        page.evaluate(
+            f"() => {{ document.querySelector('{BILL_ROW} .iqa-form').style.width = '200px'; }}"
+        )
+        stock.append(page.evaluate(STOCK_LABEL))
+        page.evaluate(
+            f"() => {{ document.querySelector('{BILL_ROW} .iqa-form').style.width = ''; }}"
+        )
         page.fill(f"{BILL_ROW} .iqa-cost", "6.25")
         page.click(f"{BILL_ROW} .iqa-save")
         page.wait_for_function(
@@ -287,6 +304,17 @@ def test_a_bill_line_asks_for_the_expense_account_and_posts_there(
     # cost of goods only: no income or operating expense account is offered
     assert form["kinds"] and all(n[0] == "5" for n in form["kinds"]), form
     assert "6000" not in form["kinds"], form
+    # the stock label sits on one line inside the panel, its box beside the
+    # text, at the line's width and at the panel's narrowest (NEW-176: the
+    # line table's input{width:100%} stretched the box and the words stacked)
+    for seen in stock:
+        assert seen["text"] == "Track quantity on hand (stock)"
+        assert seen["lines"] == 1, seen
+        assert seen["check"][2] - seen["check"][0] < 30, seen
+        fl, ft, fr, fb = seen["form"]
+        ll, lt, lr, lb = seen["label"]
+        assert fl <= ll and lr <= fr and ft <= lt and lb <= fb, seen
+    assert stock[1]["form"][2] - stock[1]["form"][0] == 200, stock[1]
     assert (form["income"], form["rate"], form["cost"], form["stock"]) == (
         False,
         False,

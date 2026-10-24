@@ -89,7 +89,8 @@ instead for what the item costs and the cost of goods account it is
 recorded in (5000 to 5300 by type; only cost of goods accounts are
 offered, since an item bought for a job or resale is never an operating
 expense), and whether a product or material is
-stock, so the new item posts that line where it was asked to and a stock
+stock (the box and its label on one line inside the panel, however narrow
+the cell), so the new item posts that line where it was asked to and a stock
 item is received into Inventory. Save creates the item and picks it on
 that line, filled in as a pick would be, and nothing else on the document
 changes; a name typed in the picker before taking **+ Add item** comes
