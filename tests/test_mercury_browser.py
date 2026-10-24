@@ -103,3 +103,72 @@ def test_connect_map_sync_review_and_disconnect_in_browser(
             assert not errors
         finally:
             browser.close()
+
+
+def test_a_bookkeeper_syncs_with_the_saved_mapping(client, db_session, bank, transport):
+    """A bookkeeper sees the mapping locked with a sentence saying why, and
+    Sync imports through the administrator's mapping without posting /map."""
+    from tests.test_mercury import connect_and_map
+    from tests.test_rbac_users import _login_as, _mk_user
+
+    connect_and_map(client, bank)
+    _mk_user(db_session, "keeper", "a-test-password-123", "bookkeeper")
+    _login_as(client, "keeper", "a-test-password-123")
+    sent = []
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+        page = browser.new_page(viewport={"width": 1280, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def serve(route):
+            url = urlsplit(route.request.url)
+            if url.hostname != "testserver":
+                return route.abort()
+            sent.append((route.request.method, url.path))
+            response = client.request(
+                route.request.method,
+                url.path + ("?" + url.query if url.query else ""),
+                content=route.request.post_data_buffer,
+                headers={
+                    "Content-Type": route.request.headers.get(
+                        "content-type", "application/json"
+                    )
+                },
+            )
+            route.fulfill(
+                status=response.status_code,
+                body=response.content,
+                content_type=response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            )
+
+        page.route("**/*", serve)
+        try:
+            page.goto("http://testserver/#/banking")
+            page.locator("#splash-dismiss").click()
+            mapping = page.get_by_role("combobox", name="Import My LLC into")
+            mapping.wait_for()
+            assert mapping.is_disabled()
+            assert mapping.locator("option:checked").inner_text() == "Mercury LLC"
+            page.get_by_text(
+                "An administrator chooses which bank account each Mercury account",
+                exact=False,
+            ).wait_for()
+            assert (
+                page.get_by_role("button", name="Disconnect", exact=True).count() == 0
+            )
+            page.get_by_label("Import transactions posted since").fill("2026-08-01")
+            page.get_by_role("button", name="Sync Mercury", exact=True).click()
+            page.get_by_text(
+                "Mercury: 1 new, 0 already imported, 0 matched", exact=True
+            ).wait_for()
+            assert ("POST", "/api/mercury/map") not in sent
+            assert db_session.query(BankTransaction).count() == 1
+            assert errors == []
+        finally:
+            browser.close()

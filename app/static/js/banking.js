@@ -110,6 +110,7 @@ const BankingPage = {
                 Match them to payments already recorded, or review and add them to your books.
                 Syncing does not mark invoices paid.</p>
                 ${!choices.length ? '<p>Add a bank account using <strong>+ New Bank Account</strong> above, then map it here.</p>' : ''}
+                <p class="form-hint hidden" data-admin-note>An administrator chooses which bank account each Mercury account imports into${Object.keys(feed.account_map || {}).length ? '.' : '; until one does, Sync has nothing to import.'}</p>
                 <p>${feed.last_sync ? 'Last successful sync: ' + escapeHtml(feed.last_sync.replace('T', ' ')) : 'Not synced yet.'}</p>
                 <div class="table-container"><table id="mercury-balances">
                     <thead><tr><th scope="col">Mercury account</th><th scope="col" class="amount">Current balance</th><th scope="col" class="amount">Available</th><th scope="col" class="amount">Incoming transfers</th><th scope="col">Imports into</th></tr></thead>
