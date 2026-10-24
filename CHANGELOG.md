@@ -383,6 +383,14 @@ payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
   longer trips the cut-short check. Each "Total" row is measured against its
   own section's lines (sub-accounts included) rather than every line posted to
   that account path.
+### Unreleased
+
+**The Payables card nets vendor credits** (#495). The dashboard's Payables
+card summed open bill balances by itself, so a $100 bill with a $30 unapplied
+vendor credit read $100 against an A/P Aging total of $70. The card now reads
+the A/P Aging report's TOTAL row, the same source the report page shows and
+the way the Receivables card already reads A/R Aging, so the two can no longer
+disagree.
 
 ### v2.28.0 — Account types and sub-accounts
 
