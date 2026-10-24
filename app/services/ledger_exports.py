@@ -528,6 +528,8 @@ def profit_loss_by_class_csv(
         return out.getvalue()
 
     total_label = "Total (shown)" if data.get("filtered") else "Total"
+    if data.get("tree") is not None:
+        return _grid_tree_csv(data, columns, words, out, w, sections, total_label)
     w.writerow(
         ["Section", "Account number", "Account name"]
         + [c["name"] for c in columns]
@@ -544,6 +546,63 @@ def profit_loss_by_class_csv(
                 + [_money(x) if x else "" for x in a["amounts"]]
                 + [_money(a["total"])]
             )
+        w.writerow(
+            [label or "", "", sub]
+            + [_money(c[sub_col]) for c in columns]
+            + [_money(data[sub_key])]
+        )
+    w.writerow(
+        ["", "", words("Net Income")]
+        + [_money(c["net_income"]) for c in columns]
+        + [_money(data["total_net_income"])]
+    )
+    return out.getvalue()
+
+
+INDENT = "  "  # a family level in an export's Account name (#478, #489)
+
+
+def tree_csv_row(section: str, r: dict, figures: list) -> list:
+    """One printed row of a statement's family tree (#416) as a spreadsheet
+    row: Section, Account number, Account name, then the figures — the
+    columns the flat export had, in their places. The name is indented two
+    spaces a level, as the screen indents it, and an account is named by its
+    full path (W-8), so a row filtered out of its family still says where it
+    belongs. A
+    parent's heading has its number and path and no figures; its own
+    postings read "Direct postings to …" under the parent's number; the
+    family's total reads "Total …" with no number, as on the screen (#478,
+    #489). An account is named by its full path (W-8)."""
+    kind = r["kind"]
+    if kind == "total":
+        number, name = "", r["label"]
+    elif kind == "direct":
+        number, name = r.get("account_number") or "", r["label"]
+    else:
+        number = r.get("account_number") or ""
+        name = r.get("account_path") or r.get("account_name") or r["label"]
+    return [section, number, INDENT * r["depth"] + name] + figures
+
+
+def _grid_tree_csv(data, columns, words, out, w, sections, total_label) -> str:
+    """The grid by month or quarter (#478) with its families: the P&L by
+    Class layout, each section's rows as the screen prints them (a
+    sub-account's name indented beneath its parent), every column carrying
+    the families' totals."""
+    w.writerow(
+        ["Section", "Account number", "Account name"]
+        + [c["name"] for c in columns]
+        + [total_label]
+    )
+    for label, key, sub, sub_col, sub_key in sections:
+        for r in data["tree"].get(key, []) if key else ():
+            figures = (
+                [""] * (len(columns) + 1)
+                if r["kind"] == "heading"
+                else [_money(x) if x else "" for x in r["amounts"]]
+                + [_money(r["total"])]
+            )
+            w.writerow(tree_csv_row(label, r, figures))
         w.writerow(
             [label or "", "", sub]
             + [_money(c[sub_col]) for c in columns]

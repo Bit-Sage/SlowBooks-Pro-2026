@@ -364,7 +364,15 @@ def family_rows(
             rows.append({**line, "kind": "account", "depth": depth, "label": label})
             return
         rows.append(
-            {"kind": "heading", "depth": depth, "label": label, "account_id": node}
+            {
+                "kind": "heading",
+                "depth": depth,
+                "label": label,
+                "account_id": node,
+                # the parent's number and path, for an export's columns
+                "account_number": chart[node]["number"],
+                "account_path": account_path(chart, node),
+            }
         )
         for kid in kids:
             emit(kid, depth + 1)

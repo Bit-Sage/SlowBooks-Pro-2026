@@ -141,6 +141,7 @@ BANKING = [
 REPORTS = [
     "ReportsPage.profitLoss()",
     "ReportsPage.profitLossDetail()",
+    "ReportsPage.profitLoss({{columns: 'month'}})",  # by month (#478)
     "ReportsPage.profitLossByClass()",
     "ReportsPage.profitLossUnclassified()",
     "ReportsPage.profitLossByJob()",
