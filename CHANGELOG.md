@@ -567,6 +567,20 @@ names the attempts. Any other staple error stops the run on the first try.
 Four schema changes, each run in every company file: `reconciliations.max_statement_date`
 (a1f2e3d4c5b6), `invoice_messages` (e4f5a6b7c8d9) and its `kind` (f9a0b1c2d3e4), and
 `duplicate_dismissals` (b7d2e9a41c63). 602 API operations.
+### v2.28.0 — The register tells a voided payment from an unrelated posting
+
+The bank register marks a posting void when a `<type>_void` reversal points
+at it. It did that by matching the reversal's `source_id` against the
+transaction id, which is right only for reversals that store the voided
+transaction's id (an expense, a journal entry, a transfer). A payment's and
+a bill payment's reversal stores the document's id instead, whose posting is
+a different transaction, so a customer payment received straight to the bank
+and then voided still showed live, while an unrelated posting whose
+transaction id happened to equal the document id was marked void. One module
+now owns which of a void's two conventions applies (`app/services/voids.py`),
+the register and reclassify route through it, and a test keeps every void
+type classified (#448).
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open
