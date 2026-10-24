@@ -27,7 +27,7 @@ Data-only note: nothing is backfilled; there is no earlier representation of
 an opening balance to migrate from.
 
 Revision ID: a4330b1c2d3e
-Revises: d3e4f5a6b7c8
+Revises: 4ac01efbd72a
 Create Date: 2026-10-23
 """
 
@@ -37,7 +37,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "a4330b1c2d3e"
-down_revision: Union[str, None] = "d3e4f5a6b7c8"
+down_revision: Union[str, None] = "4ac01efbd72a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
