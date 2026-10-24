@@ -61,6 +61,17 @@ class AccountUpdate(StrictModel):
         return v.strip() or None if isinstance(v, str) else v
 
 
+class RetypedSubAccount(BaseModel):
+    """A sub-account the PUT's cascade retyped (#416): named so an API client
+    knows which ones changed with the parent."""
+
+    id: int
+    name: str
+    account_number: Optional[str] = None
+    from_detail_type: str
+    to_detail_type: str
+
+
 class AccountResponse(BaseModel):
     id: int
     name: str
@@ -75,6 +86,9 @@ class AccountResponse(BaseModel):
     # AI tools print, so neither keeps its own copy of the list.
     detail_type: Optional[str] = None
     detail_type_label: str = ""
+    # The sub-accounts a PUT's detail-type cascade retyped (#416); None on
+    # every response but that PUT, so a client can name what changed.
+    retyped_sub_accounts: Optional[list[RetypedSubAccount]] = None
     # Issue #122: the posting code finds these by number, so the number and
     # the type cannot change (PUT refuses with 400). The UI reads this rather
     # than keeping its own copy of the registry, which would drift.

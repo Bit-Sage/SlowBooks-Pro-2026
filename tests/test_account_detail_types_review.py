@@ -1,9 +1,10 @@
 """Account detail types (#390), the review's seven points:
 
-1. a detail type the file declares, and that fits, is kept under a parent
-   of another (the chart import set parents after inserting); one that
-   cannot be kept is named on the row (chart CSV, migration engine), and
-   the dry run shows each row's detail type;
+1. a sub-account takes its parent's detail type, as the account API sets
+   it, even when the file declared another that would fit alone (the #430
+   round: a pair the API refuses was being kept); the type that gave way is
+   named on the row, as is one that cannot be kept at all (chart CSV,
+   migration engine), and the dry run shows each row's detail type;
 2. sub-accounts of 1100 / 2000 / a bank / a card are checked on their own;
 3. a bank or card account in use keeps its bank kind;
 4. a base-type change a parent and its sub-account block for each other
@@ -53,12 +54,16 @@ NESTED = (
 )
 
 
-def test_a_declared_detail_type_is_kept_under_a_parent_of_another(client, db_session):
+def test_a_declared_detail_type_gives_way_to_the_parents(client, db_session):
     out = _chart(client, NESTED)
     assert out["errors"] == [], out
     got = {n: a.detail_type for n, a in _by_name(db_session).items()}
-    assert got["Truck note payable"] == "long_term_liability"
-    assert got["Backhoe"] == "fixed_asset"
+    # the link stands, so the child takes the parent's type, and says so
+    assert got["Truck note payable"] == "other_current_liability"
+    assert got["Backhoe"] == "other_current_asset"
+    notes = {r["name"]: r.get("note") or "" for r in out["rows"]}
+    assert "Long Term Liability in the file" in notes["Truck note payable"]
+    assert "Fixed Asset in the file" in notes["Backhoe"]
     # a row that declared none takes its parent's
     assert got["Bank note"] == "long_term_liability"
 
@@ -78,8 +83,9 @@ def test_a_declared_detail_type_that_cannot_be_kept_is_named(client, db_session)
 def test_the_dry_run_shows_each_rows_detail_type(client, seed_accounts):
     plan = _chart(client, NESTED + "6100,Rent,expense,\n", dry_run=1)
     got = {r["name"]: r["detail_type"] for r in plan["rows"]}
-    assert got["Truck note payable"] == "long_term_liability"
-    assert got["Backhoe"] == "fixed_asset"
+    # the dry run shows the type the apply will set: the parent's (#416)
+    assert got["Truck note payable"] == "other_current_liability"
+    assert got["Backhoe"] == "other_current_asset"
     assert got["Rent"] == "expense"
     plan = _chart(
         client,

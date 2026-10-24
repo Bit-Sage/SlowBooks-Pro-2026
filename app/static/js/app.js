@@ -1126,6 +1126,13 @@ const App = {
             const detail = tr.dataset.accountDetail;
             details[detail] = (details[detail] || 0) + (shown ? 1 : 0);
         });
+        // a sub-account left showing while its parent is filtered out says
+        // its full path, since the indent no longer can (#416)
+        $$('tr[data-parent-id]').forEach(tr => {
+            const span = tr.querySelector('.account-path');
+            const up = document.querySelector(`tr[data-account-id="${tr.dataset.parentId}"]`);
+            if (span) span.hidden = !(span.dataset.always || (!tr.hidden && up && up.hidden));
+        });
         $$('tr[data-account-group]').forEach(tr => { tr.hidden = !(groups[tr.dataset.accountGroup] || 0); });
         $$('tr[data-account-detail-group]').forEach(tr => { tr.hidden = !(details[tr.dataset.accountDetailGroup] || 0); });
         const note = $('#accounts-filter-note');
@@ -1169,9 +1176,118 @@ const App = {
         return App._detailTypeList;
     },
 
+    // The chart's parent links (#416), for the nested view and the parent
+    // picker. Every walk stops at a repeat: a loop saved before 2.27.0's
+    // guard must not hang the page.
+    _accountTree(accounts) {
+        const byId = new Map(accounts.map(a => [a.id, a]));
+        const children = new Map();
+        for (const a of accounts) {
+            if (a.parent_id == null || a.parent_id === a.id) continue;
+            if (!children.has(a.parent_id)) children.set(a.parent_id, []);
+            children.get(a.parent_id).push(a);
+        }
+        const names = {};
+        for (const a of accounts) {
+            const k = a.name.trim().toLowerCase();
+            names[k] = (names[k] || 0) + 1;
+        }
+        const path = a => {
+            const parts = [], seen = new Set();
+            for (let c = a; c && !seen.has(c.id); c = byId.get(c.parent_id)) {
+                seen.add(c.id);
+                parts.unshift(c.name);
+            }
+            return parts.join(': ');
+        };
+        // the account and every account under it, at any depth
+        const family = a => {
+            const out = new Set(), todo = [a.id];
+            while (todo.length) {
+                const id = todo.pop();
+                if (out.has(id)) continue;
+                out.add(id);
+                for (const c of children.get(id) || []) todo.push(c.id);
+            }
+            return out;
+        };
+        // every account under this one, at any depth, in tree order (self
+        // excluded) — what a move retypes, and what the status line counts
+        const descendants = a => {
+            const out = [], seen = new Set([a.id]);
+            const walk = id => {
+                for (const c of children.get(id) || []) {
+                    if (seen.has(c.id)) continue;
+                    seen.add(c.id);
+                    out.push(c);
+                    walk(c.id);
+                }
+            };
+            walk(a.id);
+            return out;
+        };
+        // the sub-accounts a detail-type change cascades to: descendants
+        // reached through sub-accounts that all share `detail`, in tree order
+        // (self excluded). A sub-account of another type stops the walk, as
+        // _cascade_detail_type stops — so a pinned child, or one of another
+        // type, and anything under it are left out (#416).
+        const sharing = (a, detail) => {
+            const out = [], seen = new Set([a.id]);
+            const walk = id => {
+                for (const c of children.get(id) || []) {
+                    if (seen.has(c.id) || c.detail_type !== detail) continue;
+                    seen.add(c.id);
+                    out.push(c);
+                    walk(c.id);
+                }
+            };
+            walk(a.id);
+            return out;
+        };
+        const collides = a => names[a.name.trim().toLowerCase()] > 1;
+        return { byId, children, path, family, descendants, sharing, collides };
+    },
+
+    // Each detail type's accounts in tree order (the list sorted by detail
+    // type; all as one when byDetail is false): each parent, then its
+    // sub-accounts indented under it, each level in the list's own order
+    // (number, then name). A sub-account whose parent is listed elsewhere
+    // (another detail type, or hidden) starts its own branch.
+    _accountTreeOrder(accts, byDetail = true) {
+        const out = [];
+        const groups = [];
+        for (const a of accts) {
+            const last = groups[groups.length - 1];
+            if (last && (!byDetail || last[0].detail_type === a.detail_type)) last.push(a);
+            else groups.push([a]);
+        }
+        for (const list of groups) {
+            const here = new Set(list.map(a => a.id));
+            const kids = new Map();
+            const roots = [];
+            for (const a of list) {
+                if (a.parent_id != null && a.parent_id !== a.id && here.has(a.parent_id)) {
+                    if (!kids.has(a.parent_id)) kids.set(a.parent_id, []);
+                    kids.get(a.parent_id).push(a);
+                } else roots.push(a);
+            }
+            const done = new Set();
+            const walk = (a, depth) => {
+                if (done.has(a.id)) return;
+                done.add(a.id);
+                out.push({ a, depth });
+                for (const c of kids.get(a.id) || []) walk(c, depth + 1);
+            };
+            roots.forEach(a => walk(a, 0));
+            list.forEach(a => walk(a, 0));  // a loop saved before the guard
+        }
+        return out;
+    },
+
     async renderAccounts() {
         const [accounts, detailTypes] = await Promise.all([API.get('/accounts'), App._detailTypes()]);
         const detailOrder = detailTypes.map(d => d.value);
+        const tree = App._accountTree(accounts);
         const grouped = {};
         let inactiveCount = 0;
         for (const a of accounts) {
@@ -1213,16 +1329,23 @@ const App = {
             const rank = d => { const i = detailOrder.indexOf(d); return i < 0 ? detailOrder.length : i; };
             accts.sort((x, y) => rank(x.detail_type) - rank(y.detail_type));
             let detailShown = null;
-            for (const a of accts) {
+            for (const { a, depth } of App._accountTreeOrder(accts)) {
                 if (a.detail_type !== detailShown) {
                     detailShown = a.detail_type;
                     html += `<tr data-account-detail-group="${escapeHtml(a.detail_type || '')}"><td colspan="5" style="font-weight:600; color:var(--gray-600); font-size:11px; padding:3px 10px 3px 22px; background:var(--gray-50);">${escapeHtml(T(a.detail_type_label || ''))}</td></tr>`;
                 }
                 const inactive = a.is_active === false;
-                const haystack = escapeHtml(`${a.account_number || ''} ${a.name}`.toLowerCase());
-                html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
+                const path = tree.path(a);
+                const parent = tree.byId.get(a.parent_id);
+                // the full path is written out where the indent cannot say
+                // it: a sub-account listed away from its parent (under 1100,
+                // a bank, or a parent left hidden as inactive), or a name
+                // another account has too
+                const showPath = parent && (depth === 0 || tree.collides(a));
+                const haystack = escapeHtml(`${a.account_number || ''} ${a.name} ${path}`.toLowerCase());
+                html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-id="${Number(a.id)}"${parent ? ` data-parent-id="${Number(parent.id)}"` : ''} data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
                     <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
-                    <td><a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="Open the register">${escapeHtml(a.name)}</a>${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
+                    <td style="padding-left:${10 + depth * 20}px;">${depth ? '<span aria-hidden="true" style="color:var(--gray-500);">└ </span>' : ''}<a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="${escapeHtml(parent ? `Open the register: ${path}` : 'Open the register')}">${escapeHtml(a.name)}</a>${parent ? `<span class="visually-hidden">, sub-account of ${escapeHtml(tree.path(parent))}</span>` : ''}${parent ? ` <span class="account-path" aria-hidden="true"${showPath ? ' data-always="1"' : ' hidden'} style="font-size:11px; color:var(--gray-500);">${escapeHtml(path)}</span>` : ''}${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${escapeHtml(T(a.detail_type_label || a.account_type))}</td>
                     <td class="amount">${formatCurrency(a.balance)}</td>
                     <td class="actions">
@@ -1242,8 +1365,10 @@ const App = {
     },
 
     async showAccountForm(id = null) {
-        let acct = { name: '', account_number: '', account_type: 'expense', detail_type: 'expense', description: '' };
-        if (id) acct = await API.get(`/accounts/${id}`);
+        let acct = { name: '', account_number: '', account_type: 'expense', detail_type: 'expense', description: '', parent_id: null };
+        const [loaded, accounts] = await Promise.all([id ? API.get(`/accounts/${id}`) : null, API.get('/accounts')]);
+        if (loaded) acct = loaded;
+        App._accountFormState = { acct, accounts, tree: App._accountTree(accounts) };
 
         // One picker (#390): a group per base type, QuickBooks' types inside;
         // the base type follows from the choice. Accounts Receivable and
@@ -1286,18 +1411,166 @@ const App = {
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
-                        <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint"${locked ? ' disabled' : ''}>
+                        <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint" onchange="App.accountTypeChanged()"${locked ? ' disabled' : ''}>
                             ${picker}
                         </select>
                         <span id="account-type-hint" class="hint">A bank or card account gets a register. A sub-account shares its parent's detail type, except under a bank, card, or a 1100 or 2000 parent, where it is set on its own.</span></div>
+                    <div class="form-group"><label for="account-parent">Sub-account of</label>
+                        <select name="parent_id" id="account-parent" data-was="${acct.parent_id == null ? '' : Number(acct.parent_id)}" aria-describedby="account-parent-hint" onchange="App.accountParentChanged()">
+                            ${App._accountParentOptions(acct.parent_id)}
+                        </select>
+                        <span id="account-parent-hint" class="hint">${App._accountStandsAlone(acct) ? 'Found by its number when the books post, so it stays a top-level account.' : 'Accounts of the same type. A sub-account is listed under its parent.'}</span>
+                        <span id="account-parent-status" class="hint" role="status"></span></div>
                     <div class="form-group full-width"><label>Description</label>
                         <textarea name="description">${escapeHtml(acct.description || '')}</textarea></div>
                 </div>
+                <div id="account-form-error" role="alert" style="color:var(--danger); font-size:12px; margin-top:8px;"></div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} Account</button>
                 </div>
             </form>`);
+    },
+
+    // The parents the server would take for the account on the form (#416):
+    // the same base type; never the account itself or one under it (the
+    // loop guard); under 1100, 2000, a bank or a card any detail type, under
+    // any other parent the sub-account takes the parent's detail type, so a
+    // bank or card account goes only under those, and a control account,
+    // whose detail type is fixed, only under a parent of its own. Inactive
+    // accounts are left out, except the parent it has.
+    _accountParentChoices(detail) {
+        const { acct, accounts, tree } = App._accountFormState;
+        if (App._accountStandsAlone(acct)) return [];
+        const d = (App._detailTypeList || []).find(x => x.value === detail);
+        const base = d ? d.account_type : acct.account_type;
+        const mine = acct.id ? tree.family(acct) : new Set();
+        return accounts.filter(p => {
+            if (mine.has(p.id) || p.account_type !== base) return false;
+            if (p.is_active === false && p.id !== acct.parent_id) return false;
+            if (App._PINNED_DETAILS.includes(p.detail_type)) return true;
+            if (['bank', 'credit_card'].includes(detail)) return false;
+            return !acct.is_control || p.detail_type === acct.detail_type;
+        });
+    },
+
+    _PINNED_DETAILS: ['bank', 'credit_card', 'accounts_receivable', 'accounts_payable'],
+
+    // A control account (1100, 2000, Checking…) is found by its number and
+    // takes no new parent; the server refuses one (#416).
+    _accountStandsAlone(acct) {
+        return !!acct.is_control || ['accounts_receivable', 'accounts_payable'].includes(acct.detail_type);
+    },
+
+    _accountParentOptions(selected, detail = App._accountFormState.acct.detail_type, keep = true) {
+        const { tree } = App._accountFormState;
+        const choices = App._accountParentChoices(detail);
+        // the parent it has is always offered on opening, whatever the rule
+        // (a chart imported before it): saving a rename must not move it
+        const current = tree.byId.get(selected);
+        if (keep && current && !choices.includes(current)) choices.push(current);
+        // tree order, each named by its full path so two Hotels differ
+        const order = App._accountTreeOrder(choices, false);
+        return `<option value="">None (a top-level account)</option>` + order.map(({ a: p }) =>
+            `<option value="${Number(p.id)}"${p.id === selected ? ' selected' : ''}>${escapeHtml([p.account_number, tree.path(p)].filter(Boolean).join(' '))}</option>`
+        ).join('');
+    },
+
+    // "Lodging and Hotel (2 sub-accounts)": up to two named, then "and N
+    // more", with the count. For the status line's cascade warning (#416).
+    _subAccountList(subs) {
+        const names = subs.map(s => s.name);
+        const list = subs.length <= 2
+            ? names.join(' and ')
+            : `${names.slice(0, 2).join(', ')} and ${subs.length - 2} more`;
+        return `${list} (${App._subAccountCount(subs)})`;
+    },
+
+    _subAccountCount(subs) {
+        return `${subs.length} sub-account${subs.length === 1 ? '' : 's'}`;
+    },
+
+    // A parent other than 1100, 2000, a bank or a card hands its detail type
+    // down: choosing one sets the Type picker to it, and the status says how
+    // many sub-accounts follow and that a later move out keeps the type —
+    // #428's cascade is silent and does not reverse (#416). Set back to None
+    // or a pinned parent, the type a parent gave stays: say so, so the P&L
+    // family (#429) is not left below Net Operating Income by surprise. The
+    // choice is kept as the one a type change comes back to.
+    accountParentChanged() {
+        const state = App._accountFormState;
+        const sel = $('#account-parent');
+        const picker = document.querySelector('select[name=detail_type]');
+        const parent = state.tree.byId.get(Number(sel.value));
+        state.wanted = parent ? parent.id : null;
+        const status = $('#account-parent-status');
+        const name = (state.acct.name || '').trim() || 'This account';
+        // the sub-accounts that follow are the ones _cascade_detail_type
+        // retypes: those sharing the account's own detail type, the "old" the
+        // cascade starts from (not the picker's, which may already hold the
+        // parent's). A child of another type, and anything under it, is left
+        // out (#416).
+        const subs = state.acct.id
+            ? state.tree.sharing(state.acct, state.acct.detail_type)
+            : [];
+
+        if (parent && picker && !picker.disabled
+            && !App._PINNED_DETAILS.includes(parent.detail_type)
+            && picker.value !== parent.detail_type) {
+            picker.value = parent.detail_type;
+            let msg = `Type set to ${T(parent.detail_type_label)}, the type of ${parent.name}`;
+            if (subs.length) msg += `; ${App._subAccountList(subs)} follow`;
+            msg += subs.length
+                ? '. Moving it back out later keeps the type; change the Type picker then.'
+                : '. Moving it back out later keeps the type.';
+            status.textContent = msg;
+            return;
+        }
+
+        // set to None or a pinned parent: a type handed down earlier stays
+        const toNoneOrPinned = !parent || App._PINNED_DETAILS.includes(parent.detail_type);
+        const cameFromParent = picker && !picker.disabled
+            && !App._PINNED_DETAILS.includes(picker.value)
+            && (picker.value !== picker.dataset.was || subs.length > 0);
+        if (toNoneOrPinned && cameFromParent) {
+            const label = (picker.selectedOptions[0]
+                ? picker.selectedOptions[0].textContent : picker.value).trim();
+            let msg = `${name} keeps ${label}`;
+            if (subs.length) msg += ` (and so do its ${App._subAccountCount(subs)})`;
+            // the P&L family sits below Net Operating Income only for the two
+            // Other types; any other type just needs the picker
+            msg += ['other_income', 'other_expense'].includes(picker.value)
+                ? `; change the Type picker to move the family back above the Other lines on the ${T('Profit & Loss')}.`
+                : '; change the Type picker to give the family another type.';
+            status.textContent = msg;
+            return;
+        }
+        status.textContent = '';
+    },
+
+    // A new type re-lists the parents. The parent chosen (or the one the
+    // account had) stays while the type allows it and comes back when the
+    // type does; one that cannot take the type is let go, the status saying
+    // so: a type change and a move out from under the parent in one save.
+    accountTypeChanged() {
+        const state = App._accountFormState;
+        const sel = $('#account-parent');
+        const picker = document.querySelector('select[name=detail_type]');
+        if (!sel || !picker) return;
+        if (!('wanted' in state)) state.wanted = state.acct.parent_id ?? null;
+        const wanted = state.wanted;
+        const original = picker.value === state.acct.detail_type && wanted === state.acct.parent_id;
+        sel.innerHTML = App._accountParentOptions(wanted, picker.value, original);
+        const parent = state.tree.byId.get(wanted);
+        const fits = parent && sel.value === String(wanted) && (original
+            || App._PINNED_DETAILS.includes(parent.detail_type) || parent.detail_type === picker.value);
+        const status = $('#account-parent-status');
+        if (parent && !fits) {
+            sel.value = '';
+            status.textContent = `No longer under ${parent.name}, which cannot take this type: saved, it is a top-level account.`;
+        } else {
+            status.textContent = '';
+        }
     },
 
     // Import a chart of accounts from a file (#139 / #161). Dry run first:
@@ -1449,12 +1722,26 @@ const App = {
                 data.bank_kind = null;
             }
         }
+        // the parent goes only when it moves: an untouched one must not set
+        // off the sub-account checks on a rename (#416)
+        const parentSel = e.target.parent_id;
+        if (parentSel) {
+            if (parentSel.value === (parentSel.dataset.was || '')) delete data.parent_id;
+            else data.parent_id = parentSel.value ? Number(parentSel.value) : null;
+        }
+        const box = $('#account-form-error');
+        if (box) box.textContent = '';
         try {
             if (id) { await API.put(`/accounts/${id}`, data); toast('Account updated'); }
             else { await API.post('/accounts', data); toast('Account created'); }
             closeModal();
             App.navigate('#/accounts');
-        } catch (err) { toast(err.message, 'error'); }
+        } catch (err) {
+            // the server's sentence, in the form beside what it is about
+            const msg = String(err.message || err);
+            if (box) box.textContent = msg.charAt(0).toUpperCase() + msg.slice(1);
+            else toast(msg, 'error');
+        }
     },
 
     // Feature 4: Unified Global Search

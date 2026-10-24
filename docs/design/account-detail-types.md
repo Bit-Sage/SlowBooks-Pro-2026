@@ -497,7 +497,8 @@ Where the build departs from the proposal above, and why:
   whose sub-accounts share its detail type (or of such a sub-account) is
   refused, and the 400 says the way out — move the sub-account out from
   under the parent first (`parent_id: null`), change the types, put it
-  back. The chart page has no parent field, so that is an API step today.
+  back. Since #416 the account form's Sub-account of picker does it: a
+  type the parent cannot take lets the parent go in the same save.
 - **The backfill** reproduces `cash_flow._place` instead of matching the
   seeded number + name pairs for assets and liabilities: the fifteen
   control accounts first take what the API then locks (1100 AR, 2000 AP,

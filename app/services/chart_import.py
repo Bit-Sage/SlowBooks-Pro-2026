@@ -19,7 +19,7 @@ accepted, both measured against real files rather than guessed at:
 Nothing is written on a dry run: `import_chart(..., dry_run=True)` returns
 the plan — what would be created, renamed, updated, skipped or deactivated,
 row by row, with a reason — and the same call with `dry_run=False` applies
-exactly that plan. The sixteen control accounts the posting code finds by
+exactly that plan. The fifteen control accounts the posting code finds by
 number are never removed and never renumbered; when the file names one of
 them (an account called Receivable, Payable, Checking, Sales tax payable,
 ...) the control account is **renamed to the file's name** so the operator's
@@ -48,7 +48,14 @@ from app.models.accounts import (
 )
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
-from app.services.account_tree import MAX_DEPTH, loop_message
+from app.services.account_tree import (
+    MAX_DEPTH,
+    depth_message,
+    inherited_detail_type,
+    loop_message,
+    parent_link_problem,
+    takes_no_new_parent,
+)
 from app.services.csv_export import strip_formula_guard
 
 # --- vocabulary -------------------------------------------------------------
@@ -578,9 +585,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             if target.name != r.name:
                 changes.append(f"rename '{target.name}' → '{r.name}'")
             if r.type and r.type != target.account_type.value:
-                if control_accounts.is_control(
-                    target.account_number, target.account_type
-                ):
+                if control_accounts.is_control_number(target.account_number):
                     entry["note"] = (
                         f"type stays {target.account_type.value}: control account "
                         f"(the software posts to it by number)"
@@ -614,19 +619,6 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 resolved[r.number] = ("existing", target.id)
             resolved[r.name.lower()] = ("existing", target.id)
         else:
-            # A new row may not land on a control-account number under a
-            # foreign name or type — it would silently become where that
-            # posting path resolves (a `5900,Marketing,expense` row becomes
-            # inventory adjustments). The same guard POST /api/accounts
-            # applies; a row that IS the control account (its registry name
-            # and type) is allowed through, restoring an empty slot.
-            reserved = control_accounts.restore_conflict(r.number, r.name, r.type)
-            if reserved:
-                entry["action"] = "error"
-                entry["note"] = reserved
-                entry["_row"] = r
-                plan.rows.append(entry)
-                continue
             if r.number and numbers.claim(r.number):
                 number = r.number
             else:
@@ -668,13 +660,15 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
         else:
             entry["_parent"] = hit
 
+    _flag_parent_types(db, plan)
     _flag_parent_loops(db, plan)
+    _flag_inherited_detail(db, plan)
 
     if replace:
         for a in existing:
             if a.id in matched or not a.is_active:
                 continue
-            if control_accounts.is_control(a.account_number, a.account_type):
+            if control_accounts.is_control_number(a.account_number):
                 plan.rows.append(
                     {
                         "row": None,
@@ -715,6 +709,143 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 }
             )
     return plan
+
+
+def _note_detail_fallback(entry: dict, declared: str, actual: str) -> None:
+    """One wording, used by the dry run and the apply, so the preview and
+    the import read the same when a declared detail type cannot stand."""
+    note = (
+        f"detail type {detail_label(declared)} in the file; came in "
+        f"as {detail_label(actual)}"
+    )
+    if note not in (entry.get("note") or ""):
+        entry["note"] = (entry["note"] + "; " if entry["note"] else "") + note
+
+
+def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
+    """The detail type the row will have (#390): the chart's own for an
+    account already there (an import never changes it, unless its type
+    changes), else the file's, else the default. A sub-account given none
+    takes its parent's when applied. A file detail type the account cannot
+    carry (Accounts Receivable away from 1100, Bank without a bank kind)
+    falls back to the default here exactly as the apply path does, so the
+    preview shows what the import will actually write, with the same note."""
+    retyped = any(c.startswith("type ") for c in entry.get("changes", []))
+    if target is not None and not retyped:
+        if r.detail_type and r.detail_type != target.detail_type:
+            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
+                f"detail type stays {detail_label(target.detail_type)} (the "
+                f"chart's), not {detail_label(r.detail_type)}"
+            )
+        return target.detail_type
+    if r.detail_type:
+        problem = detail_type_problem(
+            r.detail_type, r.type, r.bank_kind, entry.get("number")
+        )
+        if problem is None:
+            return r.detail_type
+        fell_back = default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+        _note_detail_fallback(entry, r.detail_type, fell_back)
+        return fell_back
+    return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+
+
+def _flag_parent_types(db: Session, plan: Plan) -> None:
+    """Leave off a parent link the account API would refuse (#416): a
+    sub-account of another base type (an expense under Checking or under an
+    income account), one that cannot carry a plain parent's detail type (a
+    bank account under an expense folder), and a new parent for a control
+    account or an Accounts Receivable / Payable one. The row says why, in
+    the dry run as when applied, as a loop does."""
+    by_existing = {
+        e["existing_id"]: e for e in plan.rows if "existing_id" in e and "_row" in e
+    }
+
+    def planned(entry: dict | None, acct: Account | None):
+        """(name, base type, detail type, bank kind, number) as applied."""
+        r: Row | None = entry.get("_row") if entry else None
+        if entry is None or r is None:
+            return (
+                acct.name,
+                acct.account_type.value,
+                acct.detail_type,
+                acct.bank_kind,
+                acct.account_number,
+            )
+        if acct is None:  # a new row: the file's own detail type, if any
+            return (r.name, r.type, r.detail_type, r.bank_kind, entry.get("number"))
+        retyped = any(c.startswith("type ") for c in entry.get("changes", []))
+        return (
+            r.name,
+            r.type if retyped else acct.account_type.value,
+            r.detail_type if retyped else acct.detail_type,
+            acct.bank_kind or r.bank_kind,
+            acct.account_number,
+        )
+
+    def node(kind, ref):
+        if kind == "new":
+            return planned(plan.rows[ref], None)
+        acct = db.get(Account, ref)
+        return planned(by_existing.get(ref), acct) if acct else None
+
+    def parent_inactive(hit) -> bool:
+        """The parent an importer cannot link under: an existing account
+        already inactive (or a plan row deactivating it), or a new row the
+        file marks inactive. Same rule as the API's _check_parent_usable."""
+        kind, ref = hit
+        if kind == "new":
+            r = plan.rows[ref].get("_row")
+            return getattr(r, "active", None) is False
+        pe = by_existing.get(ref)
+        if pe is not None:
+            if pe.get("action") == "deactivate" or "deactivate" in pe.get(
+                "changes", []
+            ):
+                return True
+            if "reactivate" in pe.get("changes", []):
+                return False
+        acct = db.get(Account, ref)
+        return acct is not None and not acct.is_active
+
+    for entry in plan.rows:
+        hit = entry.get("_parent")
+        if not hit or entry["action"] in ("error", "deactivate", "keep"):
+            continue
+        acct = db.get(Account, entry["existing_id"]) if "existing_id" in entry else None
+        child = planned(entry, acct)
+        parent = node(*hit)
+        if parent is None:
+            continue
+        problem = None
+        # an inactive parent takes no sub-accounts, as the API refuses one
+        # (#416); the same words, minus the "Reactivate it" an importer cannot
+        if parent_inactive(hit):
+            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            problem = f"{label} is inactive and cannot take sub-accounts"
+        moved = acct is None or hit != ("existing", acct.parent_id)
+        if (
+            problem is None
+            and acct is not None
+            and moved
+            and takes_no_new_parent(child[2], child[4])
+        ):
+            problem = f"{child[0]} is found by its number and takes no parent"
+        if problem is None:
+            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            # the planned detail type of a parent row is its default when the
+            # file names none; the rule reads the one it will have
+            pdetail = parent[2] or (
+                plan.rows[hit[1]].get("detail_type") if hit[0] == "new" else None
+            )
+            problem = parent_link_problem(
+                label, parent[1], pdetail, child[1], child[2], child[3], child[4]
+            )
+        if problem:
+            entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
+                problem[0].upper() + problem[1:] + ". The link was left off."
+            )
+            entry.pop("_parent", None)
 
 
 def _flag_parent_loops(db: Session, plan: Plan) -> None:
@@ -763,64 +894,133 @@ def _flag_parent_loops(db: Session, plan: Plan) -> None:
             entry.pop("_parent", None)  # self-parent: just not set
             continue
         # walk up from the proposed parent through the links already accepted;
-        # reaching this node, a repeat, or MAX_DEPTH means the link loops
-        cur, seen, looped = parent, set(), False
+        # reaching this node or a repeat loops, past MAX_DEPTH is too deep —
+        # each gets its own note, not the loop one for both (#416)
+        cur, seen, looped, too_deep = parent, set(), False, False
         while cur is not None:
             if cur == node:
                 looped = True
                 break
-            if cur in seen or len(seen) >= MAX_DEPTH:
-                looped = True  # a pre-existing loop, or a chain too deep
+            if cur in seen:
+                looped = True  # a pre-existing loop
+                break
+            if len(seen) >= MAX_DEPTH:
+                too_deep = True
                 break
             seen.add(cur)
             cur = parent_of(cur)
-        if looped:
+        if looped or too_deep:
+            why = (
+                depth_message(entry["name"], len(seen) + 1)
+                if too_deep
+                else loop_message(entry["name"], name_of(parent))
+            )
             entry["note"] = (entry["note"] + "; " if entry.get("note") else "") + (
-                loop_message(entry["name"], name_of(parent)) + " The link was left off."
+                why + " The link was left off."
             )
             entry.pop("_parent", None)
         else:
             accepted[node] = parent
-def _note_detail_fallback(entry: dict, declared: str, actual: str) -> None:
-    """One wording, used by the dry run and the apply, so the preview and
-    the import read the same when a declared detail type cannot stand."""
-    note = (
-        f"detail type {detail_label(declared)} in the file; came in "
-        f"as {detail_label(actual)}"
-    )
-    if note not in (entry.get("note") or ""):
-        entry["note"] = (entry["note"] + "; " if entry["note"] else "") + note
 
 
-def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
-    """The detail type the row will have (#390): the chart's own for an
-    account already there (an import never changes it, unless its type
-    changes), else the file's, else the default. A sub-account given none
-    takes its parent's when applied. A file detail type the account cannot
-    carry (Accounts Receivable away from 1100, Bank without a bank kind)
-    falls back to the default here exactly as the apply path does, so the
-    preview shows what the import will actually write, with the same note."""
-    retyped = any(c.startswith("type ") for c in entry.get("changes", []))
-    if target is not None and not retyped:
-        if r.detail_type and r.detail_type != target.detail_type:
-            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
-                f"detail type stays {detail_label(target.detail_type)} (the "
-                f"chart's), not {detail_label(r.detail_type)}"
-            )
-        return target.detail_type
-    if r.detail_type:
-        problem = detail_type_problem(
-            r.detail_type, r.type, r.bank_kind, entry.get("number")
+def _flag_inherited_detail(db: Session, plan: Plan) -> None:
+    """A sub-account whose link stands takes its parent's detail type (#390),
+    exactly as the account API sets it, even when the file declared a
+    different one that would fit on its own. Run after the parent links are
+    settled (refusals and loops already dropped). Walk the parent graph from
+    the roots, not the rows top to bottom (Trent, #416): a file can list a
+    grandchild above its parent, so settle each parent's inherited type —
+    however deep — before any child reads it, and the dry run and the apply
+    then agree on the detail type and its note."""
+
+    # the plan entry that is each parent node, for a parent that is a plan row
+    entry_of: dict[tuple, dict] = {}
+    for i, entry in enumerate(plan.rows):
+        if entry["action"] == "create":
+            entry_of[("new", i)] = entry
+        elif "existing_id" in entry and "_row" in entry:
+            entry_of[("existing", entry["existing_id"])] = entry
+
+    def eligible(entry: dict) -> bool:
+        return bool(entry.get("_parent")) and entry["action"] not in (
+            "error",
+            "deactivate",
+            "keep",
         )
-        if problem is None:
-            return r.detail_type
-        fell_back = default_detail_type(r.type, r.bank_kind, entry.get("number")).value
-        _note_detail_fallback(entry, r.detail_type, fell_back)
-        return fell_back
-    return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+
+    def parent_detail(hit):
+        """The settled detail type of a parent node, its own walk done first."""
+        entry = entry_of.get(hit)
+        if entry is not None:
+            if eligible(entry):
+                settle(entry)
+            return entry.get("detail_type")
+        if hit[0] == "existing":  # a parent not in the plan: the chart's own
+            acct = db.get(Account, hit[1])
+            return acct.detail_type if acct else None
+        return None
+
+    settled: set[int] = set()
+
+    def settle(entry: dict) -> None:
+        if id(entry) in settled:
+            return
+        settled.add(id(entry))  # DAG (loops already dropped): safe before recursing
+        inherited = inherited_detail_type(
+            parent_detail(entry["_parent"]), entry.get("detail_type")
+        )
+        if not inherited or inherited == entry.get("detail_type"):
+            return
+        # note only when the file named a type that gives way; one built
+        # with none takes the parent's silently, as the model does
+        r = entry.get("_row")
+        if getattr(r, "detail_type", None):
+            _note_detail_fallback(entry, entry["detail_type"], inherited)
+        entry["detail_type"] = inherited
+
+    for entry in plan.rows:
+        if eligible(entry):
+            settle(entry)
 
 
 # --- applying ---------------------------------------------------------------
+
+
+def _apply_order(plan: Plan) -> list[int]:
+    """Row indices with every parent before its children (Trent, #416), so a
+    grandchild reads its parent's settled detail type however the file ordered
+    the rows. Loops are already dropped, so the parent links form a forest;
+    any remnant is appended in row order."""
+    index_of_existing = {
+        e["existing_id"]: i for i, e in enumerate(plan.rows) if "existing_id" in e
+    }
+    children: dict[int, list[int]] = {}
+    parent_of: dict[int, int] = {}
+    for i, entry in enumerate(plan.rows):
+        hit = entry.get("_parent")
+        if not hit:
+            continue
+        pi = hit[1] if hit[0] == "new" else index_of_existing.get(hit[1])
+        if pi is not None and pi != i:
+            children.setdefault(pi, []).append(i)
+            parent_of[i] = pi
+    order: list[int] = []
+    seen: set[int] = set()
+
+    def visit(i: int) -> None:
+        if i in seen:
+            return
+        seen.add(i)
+        order.append(i)
+        for c in children.get(i, []):
+            visit(c)
+
+    for i in range(len(plan.rows)):
+        if i not in parent_of:  # a root: no parent that is also a plan row
+            visit(i)
+    for i in range(len(plan.rows)):  # a loop remnant, should not happen
+        visit(i)
+    return order
 
 
 def apply_chart_import(db: Session, plan: Plan) -> None:
@@ -843,7 +1043,10 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
         db.add(a)
         created[i] = a
     db.flush()  # ids for the parent links
-    for i, entry in enumerate(plan.rows):
+    # parents before children, so a grandchild reads its parent's settled
+    # detail type whatever order the file listed the rows in (Trent, #416)
+    for i in _apply_order(plan):
+        entry = plan.rows[i]
         r = entry.get("_row")
         if entry["action"] == "create":
             a = created[i]
@@ -880,6 +1083,15 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             pid = created[ref].id if kind == "new" else ref
             if pid != a.id:
                 a.parent_id = pid
+                # the child takes the parent's detail type (#390); the ORM
+                # hook keeps a declared one that fits, so settle it here,
+                # after the link, to match the dry run's planned type
+                pacct = created[ref] if kind == "new" else db.get(Account, ref)
+                inherited = inherited_detail_type(
+                    pacct.detail_type if pacct else None, a.detail_type
+                )
+                if inherited:
+                    a.detail_type = inherited
         if r.detail_type:
             declared[i] = a
     db.flush()

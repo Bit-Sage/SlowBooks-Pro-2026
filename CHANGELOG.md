@@ -507,6 +507,50 @@ QuickBooks Online imports keep their files' fixed-asset, long-term and
 other-income / other-expense types the same way; the chart CSV export has a
 Detail type column, and the chart import reads it.
 
+**An account can't become a sub-account of its own sub-account** (found in
+PNWImport's fork, SlowBooks-Pro-Testing#101). Only an account named as its
+own parent was refused: Vehicles under Truck with Truck already under
+Vehicles was saved, and the IIF export's full names recursed until they
+failed. The API that sets a parent refuses it now ("That would make Vehicles
+a sub-account of itself (through Truck).") at any depth — including a loop
+longer than the walk's safety cap, which used to slip through — a parent id
+that names no account is refused on create and edit, and a chart file whose
+rows name each other as parents leaves the closing link off with that
+sentence as the row's note, shown in the dry-run preview and when applied
+alike. The report paths and IIF names stop at a loop saved before this
+release. The same one walk now guards the cost-code tree too.
+
+**Sub-accounts show and move on the Chart of Accounts** (#416, from Chris
+Cree; the chart half — the statements' family subtotals are a separate
+change). An imported Travel › Hotel was kept in the books but listed flat,
+and the account form had no way to see or change a parent. The chart now
+lists each sub-account indented under its parent within its detail type,
+says "sub-account of Travel" to a screen reader, gives the full path
+("Travel: Hotel") on hover, and writes it beside the name where two accounts
+share a leaf name, the parent is listed elsewhere, or the filter has hidden
+the parent; the filter matches the path. The form has a **Sub-account of**
+picker, opened on the current parent, offering active accounts of the same
+type and never the account itself or one under it; a parent other than 1100,
+2000, a bank or a card sets the Type to its own. Choosing a type the parent
+cannot take lets the parent go in the same save, and choosing one it can
+brings it back, so the base-type change the detail types refuse under a
+parent is now done from the form, and that 400 says "(Parent account: none,
+on its form)". The server's refusals show in the form, where a passing toast
+had them. New rules, refused on a move or a type change (a pair saved before
+stays editable, and resending the parent it has is no move): under 1100,
+2000, a bank or a card a sub-account keeps its own detail type but not
+another base type — an expense under a bank account is refused, either side
+of the pair; a Bank or Credit Card parent turned plain is refused while a
+sub-account does not share its new type; and a control account takes no new
+parent. The chart import leaves off a link the API would refuse, the row's
+note saying why in the dry run and when applied, and the Xero, Wave, Sage
+50, Zoho Books, MYOB, GnuCash and QuickBooks Online imports bring such an
+account in unlinked, with a warning. Where the link stands but the file
+gives a sub-account a detail type its parent cannot share, the child takes
+the parent's instead — the link is right, so the family stays together on
+the Profit & Loss — with a note naming the type the file asked for; under a
+bank, card, 1100 or 2000 parent it keeps its own.
+
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open

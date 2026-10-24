@@ -21,11 +21,13 @@ import io
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, detail_label
 from app.models.transactions import Transaction
+from app.services.account_tree import inherited_detail_type, parent_link_problem
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
 
@@ -111,6 +113,62 @@ def already_imported(db: Session, source_type: str | None) -> set[str]:
         .all()
     )
     return {r[0] for r in rows}
+
+
+def _spec_parent(spec: dict):
+    """A parsed COA spec seen as a parent for the parent rule, for the dry run
+    where the parent is another row not yet created (#416). A new account is
+    active."""
+    return SimpleNamespace(
+        name=spec["name"],
+        account_number=spec.get("code"),
+        account_type=spec["type"],
+        detail_type=spec.get("detail_type"),
+        is_active=True,
+    )
+
+
+def _parent_decision(parent, spec: dict) -> tuple[bool, str | None, str | None]:
+    """The migration's parent rule in one place (#416), so the dry run
+    previews exactly what the import applies: (link it, warning, the detail
+    type the child inherits). `parent` is the resolved parent (an Account, or
+    a spec seen through _spec_parent) or None."""
+    if parent is None:
+        return False, None, None
+    named = " ".join(p for p in (parent.account_number, parent.name) if p)
+    if not parent.is_active:
+        # same rule and words as the API / chart import, minus "Reactivate it"
+        return (
+            False,
+            f"'{spec['name']}' was not made a sub-account of '{parent.name}': "
+            f"{named} is inactive and cannot take sub-accounts",
+            None,
+        )
+    problem = parent_link_problem(
+        parent.name,
+        parent.account_type,
+        parent.detail_type,
+        spec["type"],
+        spec.get("detail_type"),
+        spec.get("bank_kind"),
+        spec["code"],
+    )
+    if problem:
+        return (
+            False,
+            f"'{spec['name']}' was not made a sub-account of '{parent.name}': {problem}",
+            None,
+        )
+    inherited = inherited_detail_type(parent.detail_type, spec.get("detail_type"))
+    warning = None
+    if inherited and spec.get("detail_type"):
+        # the link stands but the child takes the parent's detail type (#390)
+        warning = (
+            f"'{spec['name']}' takes {detail_label(inherited)}, the detail type "
+            f"of its parent '{parent.name}' (the file said "
+            f"{detail_label(spec['detail_type'])})"
+        )
+    return True, warning, inherited
 
 
 def dry_run_bundle(
@@ -278,6 +336,26 @@ def dry_run_bundle(
         # beside an accrual journal) has said so in a note of its own.
         warnings.append("No trial balance file supplied — balance verification skipped")
 
+    # Preview the parent rules the import applies (#416): resolve each parent
+    # by name within the bundle's own specs first, then the database (as the
+    # apply does), and carry the inheritance and refusal warnings — identical
+    # words — so the dry run shows what the import will do with the links.
+    spec_by_name: dict[str, dict] = {}
+    for a in accounts:
+        spec_by_name.setdefault(a["name"].lower(), a)
+    db_accounts = {a.name.lower(): a for a in db.query(Account).all()}
+    for spec in accounts:
+        pname = (spec.get("parent") or "").lower()
+        if not pname:
+            continue
+        parent_spec = spec_by_name.get(pname)
+        parent = _spec_parent(parent_spec) if parent_spec else db_accounts.get(pname)
+        if parent is None:
+            continue
+        _, warning, _ = _parent_decision(parent, spec)
+        if warning:
+            warnings.append(warning)
+
     existing = {a.name.lower() for a in db.query(Account).all()}
     return {
         "ok": not errors,
@@ -321,9 +399,17 @@ def run_import_bundle(
         # whose sub-account it is ("Parent:Child", the parent listed first).
         if spec.get("bank_kind"):
             acct.bank_kind = spec["bank_kind"]
+        inherited = None
         parent_name = (spec.get("parent") or "").lower()
-        if parent_name and parent_name in by_name:
-            acct.parent_id = by_name[parent_name].id
+        parent = by_name.get(parent_name) if parent_name else None
+        # one decision, shared with the dry run, so the preview matches (#416)
+        link, warning, inherited = _parent_decision(parent, spec)
+        if warning:
+            warnings.append(warning)
+        if link:
+            acct.parent_id = parent.id
+            if inherited:
+                acct.detail_type = inherited
         # Source-system codes can collide with the seeded chart's numbers —
         # the name stays authoritative; drop the code rather than fail.
         if spec["code"] and (
@@ -333,9 +419,10 @@ def run_import_bundle(
         db.add(acct)
         db.flush()
         declared = getattr(spec.get("detail_type"), "value", spec.get("detail_type"))
-        if declared and acct.detail_type != declared:
+        if declared and acct.detail_type != declared and inherited is None:
             # an AR away from 1100, a Bank with no bank kind: the model gave
             # the default (#390); say so rather than drop the file's word
+            # (a type that gave way to the parent's is already noted above)
             warnings.append(
                 f"'{acct.name}' is {detail_label(declared)} in the file and came in "
                 f"as {detail_label(acct.detail_type)}"
