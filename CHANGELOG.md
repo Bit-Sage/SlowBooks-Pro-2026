@@ -7,6 +7,8 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+#### The first month of the fiscal year
+
 **What a bank import needs first, written down.** `docs/banking.md` says a
 CSV or OFX import needs only the bank account you import into, linked to its
 ledger account: no vendors, no expense accounts (#446).
@@ -160,6 +162,20 @@ at rest, and audit rows in the token's name. Now:
   allowed them and leaves the restore to an administrator. See
   [docs/server-edition.md](docs/server-edition.md#api-tokens-programs-not-people)
   for what a token can and cannot do.
+Every report screen opens on the fiscal year to date: the Profit & Loss,
+Balance Sheet, Trial Balance, General Ledger, Income by Customer, the cash
+flow statement and the rest, the Classes page and the dashboard's "Full P&L"
+link with them. Custom starts on the fiscal year's first day, and a Balance
+Sheet line's drill-down on the first day of its date's fiscal year. New
+Previous / Next period buttons beside the period step by the period shown:
+a fiscal year on a fiscal preset (This Fiscal Year back one is Last Fiscal
+Year), a month or a quarter on those, and a Custom range by its own length.
+The Schedule C and the 1099 Summary stay on the calendar year. The Possible
+Duplicates report, asked with no dates, opens on the fiscal year to date too.
+
+The Balance Sheet's Net Income line is still every period's to date: the app
+has never posted a year-end close into retained earnings, and this release
+does not add one.
 
 ### v2.28.0 — Account types and sub-accounts
 

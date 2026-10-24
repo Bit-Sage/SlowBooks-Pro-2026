@@ -108,6 +108,23 @@ def test_a_january_year_leaves_the_defaults_unchanged(client, monkeypatch):
             assert data["start_date"] == "2026-01-01", path
 
 
+def test_possible_duplicates_default_period_follows_a_july_year(
+    client, seed_accounts, monkeypatch
+):
+    """The 2.28.0 Possible Duplicates report shares _range_or_year; asked with
+    no dates it opens on the fiscal year to date like the statements."""
+    from app.routes.reports import financial
+
+    monkeypatch.setattr(financial, "date", _frozen_date(TODAY))
+    client.put("/api/settings", json={"fiscal_year_start_month": "7"})
+    r = client.get(
+        f"/api/reports/possible-duplicates?account_id={seed_accounts['1000'].id}"
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["start_date"] == "2026-07-01"
+    assert r.json()["end_date"] == "2026-10-23"
+
+
 def test_nonprofit_default_period_follows_the_setting(client, db_session, monkeypatch):
     from app.services import nonprofit
 

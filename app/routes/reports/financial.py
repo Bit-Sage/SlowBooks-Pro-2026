@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
+from app.services.fiscal_year import fiscal_year_start
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
@@ -21,7 +22,6 @@ from app.services.statement_layout import (
     mark_bs_lines,
     family_rows,
 )
-from app.services.fiscal_year import fiscal_year_start
 from app.services.terminology import Terms, terms_from_db
 
 # Debit-normal account types. For these, natural balance = debit - credit.
