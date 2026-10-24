@@ -20,10 +20,23 @@ A move dated into a closed period takes the closing-date password, like
 any other change there, and shows on the Closing Date Exceptions report.
 The audit log carries one event for the move, naming every line, and the
 change to each line.
+
+The payee filter (#394): an unrecognized vendor is parked in Other
+expenses until the client says what it was, so the list takes a vendor
+(or a payee name) beside the account and period and shows that one's
+lines. Each line's payee reads the same as the bank register's (reusing
+``bank_register.payees_for``): a bill's or expense's vendor, else the
+payee read off a bank entry, check or card charge; a journal entry has
+none. A vendor chosen as the filter matches a line that names the vendor,
+or one whose resolved payee contains the vendor's name (case aside), so
+the bank-feed spelling (HOME DEPOT #4521 JOLIET IL) and the check memos
+(Home Depot — lumber, Check 1042 - Home Depot) come along, not the exact
+name alone.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -33,6 +46,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account
 from app.models.bills import Bill, BillLine
 from app.models.classes import TxnClass
+from app.models.contacts import Vendor
 from app.models.transactions import Transaction, TransactionLine
 
 # The documents and postings whose account was chosen by hand: these lines
@@ -50,6 +64,7 @@ SOURCE_LABELS = {
     "qb_ledger_import": "Imported journal",
     "qbo_ledger": "Imported entry",
     "opening_balance": "Opening balance",
+    "item_opening": "Opening inventory",
     "accountants_copy": "Accountant's entry",
     "bank_entry": "Bank entry",
     "check": "Check",
@@ -203,6 +218,24 @@ class _Context:
             else {}
         )
         self.bill_lines = _bill_lines_by_bill(db, bill_ids)
+        vendor_ids = {b.vendor_id for b in self.bills.values() if b.vendor_id} | {
+            ln.transaction.source_id
+            for ln in lines
+            if (ln.transaction.source_type or "") == "expense"
+            and ln.transaction.source_id
+        }
+        self.vendors = (
+            {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+            if vendor_ids
+            else {}
+        )
+        # The payee each line shows reads the same as the bank register's,
+        # so the two never disagree (reusing payees_for; an IIF card charge
+        # with no "CC Charge:" prefix keeps its payee instead of going blank).
+        from app.services.bank_register import payees_for
+
+        txns = list({ln.transaction.id: ln.transaction for ln in lines}.values())
+        self.payee_names = payees_for(db, txns) if txns else {}
 
     def verdict(
         self, line: TransactionLine
@@ -248,6 +281,27 @@ class _Context:
                 return f"Bill {bill.bill_number}"
         return None
 
+    def payee(self, txn: Transaction) -> tuple[int | None, str]:
+        """(vendor id, payee name): the vendor behind a bill or expense,
+        else the name the bank register reads for the entry (payees_for);
+        (None, "") for a journal entry and the rest. A journal has no payee
+        in the register's sense, so it stays blank here too."""
+        source = txn.source_type or ""
+        if source in BILL_SOURCES:
+            bill = self.bills.get(txn.source_id or 0)
+            vendor = self.vendors.get(bill.vendor_id) if bill is not None else None
+            return (vendor.id, vendor.name) if vendor is not None else (None, "")
+        if source == "expense":
+            # the vendor is an expense's only linked record (its source_id);
+            # the name (vendor, else the payee typed on it) comes from the
+            # register's own lookup so the two columns match
+            vendor = self.vendors.get(txn.source_id or 0)
+            vendor_id = vendor.id if vendor is not None else None
+            return vendor_id, self.payee_names.get(txn.id, "")
+        if source in ("cc_charge", "bank_entry", "check"):
+            return None, self.payee_names.get(txn.id, "")
+        return None, ""
+
 
 def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
     txn = line.transaction
@@ -255,6 +309,7 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
     cls_id = line.class_id if line.class_id is not None else txn.class_id
     debit = Decimal(line.debit or 0)
     credit = Decimal(line.credit or 0)
+    vendor_id, payee = ctx.payee(txn)
     return {
         "id": line.id,
         "transaction_id": txn.id,
@@ -263,6 +318,8 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
         "source_label": source_label(txn.source_type),
         "document": ctx.document(txn),
         "reference": txn.reference,
+        "vendor_id": vendor_id,
+        "payee": payee,
         "description": line.description or txn.description or "",
         "debit": str(debit),
         "credit": str(credit),
@@ -276,14 +333,25 @@ def _line_out(ctx: _Context, line: TransactionLine, classes: dict) -> dict:
 
 
 def lines_on_account(
-    db: Session, account_id: int, start_date: date, end_date: date
+    db: Session,
+    account_id: int,
+    start_date: date,
+    end_date: date,
+    vendor_id: int | None = None,
+    payee: str | None = None,
 ) -> dict:
-    """The account's lines in the period, each with whether it can move."""
+    """The account's lines in the period, each with whether it can move;
+    with ``vendor_id`` only that vendor's, with ``payee`` only those whose
+    payee name contains it (case does not matter)."""
     acct = db.get(Account, account_id)
     if acct is None:
         raise HTTPException(status_code=404, detail="Account not found")
     if start_date > end_date:
         raise HTTPException(status_code=400, detail="From is after To.")
+    vendor = db.get(Vendor, vendor_id) if vendor_id is not None else None
+    if vendor_id is not None and vendor is None:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    payee = (payee or "").strip()
     lines = (
         db.query(TransactionLine)
         .join(Transaction, TransactionLine.transaction_id == Transaction.id)
@@ -298,11 +366,31 @@ def lines_on_account(
     ctx = _Context(db, lines)
     classes = {c.id: c for c in db.query(TxnClass).all()}
     out = [_line_out(ctx, ln, classes) for ln in lines]
+    if vendor is not None:
+        # a contains match on the resolved payee, so the bank-feed spelling
+        # (HOME DEPOT #4521 JOLIET IL), an IIF check memo (Home Depot —
+        # lumber) and a QB report check (Check 1042 - Home Depot) all come
+        # along with vendor "Home Depot", not the exact name alone. Whole
+        # words only, so vendor "Ace" doesn't take "Space Coast Supply"'s.
+        wanted = re.compile(
+            r"(?<!\w)" + re.escape(vendor.name.strip()) + r"(?!\w)", re.IGNORECASE
+        )
+        out = [
+            ln
+            for ln in out
+            if ln["vendor_id"] == vendor.id or wanted.search(ln["payee"] or "")
+        ]
+    if payee:
+        out = [ln for ln in out if payee.casefold() in ln["payee"].casefold()]
     movable = [ln for ln in out if ln["movable"]]
     return {
         "account": _account_out(acct),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "vendor": (
+            {"id": vendor.id, "name": vendor.name} if vendor is not None else None
+        ),
+        "payee": payee or None,
         "lines": out,
         "count": len(out),
         "movable": len(movable),

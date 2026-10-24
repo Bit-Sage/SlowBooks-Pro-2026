@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.services.migration_common import (
     dry_run_bundle,
     field,
@@ -68,6 +68,17 @@ _FILE_KINDS = (
 )
 
 
+# Xero's types that say more than the base type (#390); the rest take the
+# default for their base type.
+_XERO_DETAIL = {
+    "fixed asset": DetailType.FIXED_ASSET,
+    "fixed assets": DetailType.FIXED_ASSET,
+    "non-current asset": DetailType.OTHER_ASSET,
+    "non-current liability": DetailType.LONG_TERM_LIABILITY,
+    "other income": DetailType.OTHER_INCOME,
+}
+
+
 def classify_filename(name: str) -> str | None:
     lowered = (name or "").lower()
     for fragment, kind in _FILE_KINDS:
@@ -92,6 +103,7 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
                 "code": field(row, "code", "account code", "*code") or None,
                 "name": name,
                 "type": acct_type,
+                "detail_type": _XERO_DETAIL.get(xero_type),
                 "description": field(row, "description") or None,
             }
         )

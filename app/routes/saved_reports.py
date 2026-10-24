@@ -42,6 +42,7 @@ _ALLOWED_TYPES = {
     "general_ledger",
     "adjusting_entries",  # the accountant's adjustments for a period (#341)
     "closing_date_exceptions",  # what moved inside a closed period (#342)
+    "possible_duplicates",  # one bank or card account's (#414)
     "income_by_customer",
     "account_transactions",
     "cash_flow",

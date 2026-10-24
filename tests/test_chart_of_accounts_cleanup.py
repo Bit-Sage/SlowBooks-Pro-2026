@@ -12,7 +12,7 @@ removed or hidden**:
     interface could not do.
 
 That is the same wrong flag 2.10.2 found hiding the Edit button, in a second
-place. The gate is the control-account registry: fifteen numbers the posting
+place. The gate is the control-account registry: sixteen numbers the posting
 code resolves literally and a document that cannot find one is #119. Those
 can be renamed, never removed. The other forty-two are ordinary accounts.
 """
@@ -142,7 +142,7 @@ def test_the_reference_scan_is_derived_from_the_schema_not_a_list():
 def test_deactivating_hides_an_account_without_deleting_it(
     client, db_session, seed_accounts
 ):
-    """The answer for anything that cannot be deleted, including all fifteen
+    """The answer for anything that cannot be deleted, including all sixteen
     control accounts. It was supported by the API and had no control on the
     page, which is why the delete error's advice was unfollowable."""
     acct = _seeded_ordinary(db_session)
@@ -160,7 +160,7 @@ def test_deactivating_hides_an_account_without_deleting_it(
 def test_a_control_account_can_be_deactivated_and_renamed(
     client, db_session, seed_accounts
 ):
-    """What the reporter is actually offered for the fifteen: they stay, but
+    """What the reporter is actually offered for the sixteen: they stay, but
     they can carry his names and drop out of the pickers."""
     ar = seed_accounts["1100"]
     assert (

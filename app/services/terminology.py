@@ -44,6 +44,10 @@ NONPROFIT: dict[str, str] = {
     # ledger
     "Income": "Revenue & Support",
     "Total Income": "Total Revenue & Support",
+    "Other Income": "Other Revenue & Support",
+    "Total Other Income": "Total Other Revenue & Support",
+    "Net Other Income": "Net Other Revenue & Support",
+    "Net Operating Income": "Change in Net Assets from Operations",
     "Net Income": "Change in Net Assets",
     "Equity": "Net Assets",
     "Total Equity": "Total Net Assets",

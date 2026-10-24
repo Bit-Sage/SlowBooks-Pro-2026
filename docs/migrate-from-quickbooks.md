@@ -156,10 +156,14 @@ posts those lines to the parent account itself.
 **Long histories.** QuickBooks' Save as CSV stops a report at 32,768 rows with
 no warning: the last section ends without its Total line, and the income and
 expense accounts, which come after the balance sheet accounts, may be missing
-altogether. Export in date ranges (set From and To, keep All accounts and the
-default columns) so each file stays under that, and import them oldest first;
-a transaction's lines share a date, so a range never splits one, and a line
-already posted is skipped on the next file.
+altogether. Export **one calendar year per file** (set From and To to January 1
+and December 31, keep All accounts and the default columns) and import them
+oldest first; a transaction's lines share a date, so a year never splits one,
+and a line already posted is skipped on the next file. Keep to one year even
+when a longer range would fit under the cap: in a range that spans several
+years, QuickBooks prints the balance sheet accounts for the whole range but the
+income and expense accounts for its last year only, so every earlier sale and
+expense arrives without its other half and the file is refused.
 
 ### Time: the Time by Name by Job detail report
 
@@ -264,6 +268,16 @@ Desktop does not export transactions to IIF natively. Two other options:
   IIF) so account and item names resolve — deposit and check blocks
   whose accounts are missing are reported with a pointer to do exactly
   that. All three are safe to re-upload; duplicates are skipped.
+- **A bank or credit card statement (CSV, OFX, QFX) is not an
+  Interoperability import.** It goes in from the account itself, under
+  **Banking → the account → Import file**. The vendors and accounts on the
+  statement do not need to exist first: each line comes in as a statement
+  line with its payee kept as text. A line that matches exactly one entry
+  already in the books is matched to it on import; every other line waits in
+  the account's **To review** list, to be matched or categorized from there
+  (a bank rule can suggest the category from the payee). Nothing new posts
+  until you add it. See
+  [docs/banking.md](banking.md).
 
   The messy-report trap is exporting a summary report; the sales
   receipt path uses a detail report filtered to one transaction type:
@@ -368,6 +382,16 @@ under Uncategorized is a posting QuickBooks had no class on either.
 - Spot-check **Reports → Trial Balance** against the same report in
   QuickBooks as of your cutover date (mind the date range — set it to
   cover the imported history).
+- Run **Reports → Possible Duplicates** once on each bank and card
+  account, with a Custom Date range covering the imported history. A
+  QuickBooks register often carries a bank-feed line on top of the same
+  payment keyed by hand, or a statement entered twice, and the import
+  brings those across as they are. The report groups entries with the
+  same amount on the same side and the same or a similar payee up to
+  three days apart; open each one, void the copy (the usual void, so a
+  reconciled entry or a closed period is protected as anywhere else), or
+  mark the group **Not a duplicate** so it stays off the report. It never
+  voids anything by itself.
 - Sales receipts are listed on **Sales Receipts** in the sidebar;
   regular invoices stay on **Invoices**.
 - Going forward, enter point-of-sale style sales on the **Sales
