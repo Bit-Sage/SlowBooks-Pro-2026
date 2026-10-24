@@ -53,7 +53,17 @@ function page() {
     return { App: context.App, els };
 }
 
-const text = html => html.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
+// The text of a cell: everything outside the tags. A character walk, not a
+// regex sanitizer (escaped text has no raw angle brackets to lose).
+const text = html => {
+    let out = '', depth = 0;
+    for (const ch of html) {
+        if (ch === '<') depth++;
+        else if (ch === '>') { if (depth) depth--; }
+        else if (!depth) out += ch;
+    }
+    return out.replace(/\s+/g, ' ').trim();
+};
 
 async function render() {
     const f = page();

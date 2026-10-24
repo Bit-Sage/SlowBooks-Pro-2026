@@ -175,12 +175,12 @@ jobs:
           # (CI 40031366864): each PR raised it from 126 on its own base.
           # 146 for 2.28.0, the count on the integrated tree's own Windows run:
           # the account detail types add Postgres-only migration tests.
-          # 150 for 2.29.0, PROVISIONAL: each PR raised it from 146 on its own
-          # base (opening YTD by quarter's Postgres-only migration test, the
-          # past-customers labels PDF without WeasyPrint, item quick-add's and
-          # #457's Playwright modules); the integrated tree's own Windows run
-          # gives the exact count, set in the release branch's final commit.
-          MAX_SKIPS: "150"
+          # 153 for 2.29.0, the count on the integrated tree's own Windows run
+          # (CI 40105648413: 4,964 passed, 153 skipped): opening YTD by
+          # quarter's Postgres-only migration test, the past-customers labels
+          # PDF without WeasyPrint, item quick-add's and #457's Playwright
+          # modules, each PR having raised it from 146 on its own base.
+          MAX_SKIPS: "153"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
