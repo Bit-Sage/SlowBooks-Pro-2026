@@ -1,5 +1,10 @@
 # Mercury bank feed
 
+> Mercury is a trademark of Mercury Technologies, Inc. SlowBooks Pro is not
+> affiliated with, endorsed by, or sponsored by Mercury. This connection uses
+> Mercury's public API with a read-only token you create in your own Mercury
+> account; the token stays on your SlowBooks server.
+
 SlowBooks reads posted deposits and withdrawals from Mercury into Banking's
 **To review** list. This tracks incoming payments to your business alongside
 its other bank activity. The connector only reads Mercury; it cannot send money.
@@ -35,8 +40,9 @@ comes from your ledger; connecting does not create an opening balance.
 ## Credentials and connectivity
 
 The token is encrypted using the company's settings encryption key and masked
-in settings responses. Connecting and disconnecting require an administrator;
-bookkeepers can map and sync, and read-only users can view the feed status.
+in settings responses. Connecting, disconnecting, mapping accounts and the webhook
+signing secret require an administrator; bookkeepers can sync and refresh accounts,
+and read-only users can view the feed status.
 Disconnecting forgets the token and mapping while keeping imported transactions.
 Reconnect and map to the same bank feed to continue without duplicate imports.
 
@@ -105,9 +111,17 @@ Keep the server clock synchronized for signature verification.
 
 These events update bank balance snapshots only. **Sync Mercury** still imports
 transactions for review; webhook delivery does not post income, change the
-ledger balance, or mark invoices paid. The endpoint serves the company currently
-open in this SlowBooks instance, using that company's signing secret and known
-Mercury accounts.
+ledger balance, or mark invoices paid.
+
+**One company per server for webhooks.** A webhook arrives with no sign-in, so
+the endpoint serves the company currently open in this SlowBooks instance (on a
+Server Edition host serving several companies, the last one opened), using that
+company's signing secret and known Mercury accounts. A delivery meant for
+another company is refused (401) and Mercury does not retry it; nothing reaches
+another company's books, the balance simply isn't updated. Point Mercury's
+webhook only at a server serving the company it belongs to. Transactions still
+come in with **Sync Mercury** for any company. (Payment webhooks work the same
+way; see [server-edition.md](server-edition.md).)
 
 **Disable webhooks** clears the local signing secret; also pause or delete the
 endpoint in Mercury to stop deliveries. Disconnecting the Mercury feed clears

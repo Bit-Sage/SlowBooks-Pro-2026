@@ -224,6 +224,15 @@ wildcard), and as a Code column in the items CSV export and
 import (a code already used is left off that row, with a note). The IIF
 export is unchanged: QuickBooks 2003's `!INVITEM` header has no field for
 a code.
+**Mercury bank feed** (PR #356, @yapishu). Connect a Mercury account with a
+read-only API token (Banking → Bank Feed (Mercury)), map each Mercury account
+to a bank account, and **Sync Mercury** brings posted deposits and withdrawals
+into the account's *To review* list, deduplicated by Mercury's transaction id
+and matched like any other feed. Optional signed balance webhooks keep the
+displayed balances current. The token and the webhook secret are encrypted at
+rest; connecting, disconnecting, mapping and webhook settings are an
+administrator's; disconnecting keeps imported transactions. SlowBooks Pro is
+not affiliated with Mercury; see `docs/setup-mercury.md`.
 
 ### v2.28.0 — Account types and sub-accounts
 

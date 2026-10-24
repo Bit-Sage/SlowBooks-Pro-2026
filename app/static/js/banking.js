@@ -86,6 +86,7 @@ const BankingPage = {
                 Create a <strong>Read Only</strong> token in
                 <a href="https://app.mercury.com/settings/tokens" target="_blank" rel="noopener">Mercury’s API token settings</a>,
                 then connect here. Your token is stored encrypted on this server.</p>
+                <p class="form-hint">SlowBooks Pro is not affiliated with, endorsed by, or sponsored by Mercury; Mercury is a trademark of Mercury Technologies, Inc.</p>
                 <form onsubmit="BankingPage.connectMercury(event)" data-admin>
                     <div class="form-group">
                         <label for="mercury-token">Mercury read-only API token</label>
@@ -100,7 +101,7 @@ const BankingPage = {
                 <td class="amount mercury-current">${escapeHtml(a.balance)} USD</td>
                 <td class="amount mercury-available">${escapeHtml(a.available_balance)} USD</td>
                 <td class="amount mercury-inflight">${a.in_flight_balance === undefined ? '—' : escapeHtml(a.in_flight_balance) + ' USD'}</td>
-                <td><select class="mercury-map" data-mercury-id="${escapeHtml(a.id)}" data-write
+                <td><select class="mercury-map" data-mercury-id="${escapeHtml(a.id)}" data-admin
                     aria-label="Import ${escapeHtml(a.name)} into">
                     <option value="">— not imported —</option>
                     ${choices.map(b => `<option value="${b.id}" ${feed.account_map[a.id] === b.id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
@@ -109,6 +110,7 @@ const BankingPage = {
                 Match them to payments already recorded, or review and add them to your books.
                 Syncing does not mark invoices paid.</p>
                 ${!choices.length ? '<p>Add a bank account using <strong>+ New Bank Account</strong> above, then map it here.</p>' : ''}
+                <p class="form-hint hidden" data-admin-note>An administrator chooses which bank account each Mercury account imports into${Object.keys(feed.account_map || {}).length ? '.' : '; until one does, Sync has nothing to import.'}</p>
                 <p>${feed.last_sync ? 'Last successful sync: ' + escapeHtml(feed.last_sync.replace('T', ' ')) : 'Not synced yet.'}</p>
                 <div class="table-container"><table id="mercury-balances">
                     <thead><tr><th scope="col">Mercury account</th><th scope="col" class="amount">Current balance</th><th scope="col" class="amount">Available</th><th scope="col" class="amount">Incoming transfers</th><th scope="col">Imports into</th></tr></thead>
@@ -240,7 +242,9 @@ const BankingPage = {
         button.disabled = true;
         button.textContent = 'Syncing…';
         try {
-            await API.post('/mercury/map', { mapping });
+            // the mapping is an administrator's to change (#384's rule); a
+            // bookkeeper syncs with the one saved
+            if (App.isAdmin()) await API.post('/mercury/map', { mapping });
             const r = await API.post('/mercury/sync', { since });
             toast(`Mercury: ${r.imported} new, ${r.skipped} already imported, ${r.matched} matched`);
             BankingPage.go('#/banking');
