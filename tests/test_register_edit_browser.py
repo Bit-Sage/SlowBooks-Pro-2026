@@ -28,6 +28,18 @@ from tests.test_theme_contrast import (  # noqa: E402,F401  (the fixtures)
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_edit_question(company):
+    """These are about what an edit saves: the "Warn when editing a
+    transaction" question before it, and the date question the books' fixed
+    dates will draw as they age (#481, tests/test_browser_transaction_warnings.py),
+    are turned off for them."""
+    company.put(
+        "/api/settings",
+        json={"warn_edit_transaction": "false", "warn_date_past": "false"},
+    )
+
+
 def _entry(client, books, seed_accounts, **over):
     body = {
         "account_id": books["checking"],

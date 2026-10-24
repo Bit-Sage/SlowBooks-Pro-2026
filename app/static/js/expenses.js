@@ -184,10 +184,11 @@ const ExpensesPage = {
         const form = e.target;
         const paidFrom = parseInt(form.paid_from_account_id.value);
         if (!(await Overdraft.confirm(paidFrom, parseFloat(form.amount.value) || 0))) return;
+        if (!(await TxnWarn.ok(form))) return;
         if (!(await ClassWarn.ok(form))) return;
         try {
             const vendorId = await VendorQuickAdd.ensure('expense-vendor');
-            const result = await API.post('/expenses', {
+            const body = {
                 date: form.date.value,
                 vendor_id: vendorId,
                 expense_account_id: parseInt(form.expense_account_id.value),
@@ -200,7 +201,11 @@ const ExpensesPage = {
                 job_id: jobIdFromForm(form),
                 cost_code_id: form.cost_code_id ? (form.cost_code_id.value ? parseInt(form.cost_code_id.value) : null) : null,
                 is_billable: !!(form.is_billable && form.is_billable.checked),
-            });
+            };
+            // a check number the bank account already has (#481)
+            const result = await CheckNumberWarn.send(
+                q => API.post('/expenses', body, q ? { query: q } : undefined), form.reference);
+            if (!result) return;
             await ScanHelper.attachAfterSave('expense', result.id);
             toastPosted('Expense recorded');
             closeModal();

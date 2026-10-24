@@ -1,0 +1,170 @@
+# ============================================================================
+# Duplicate check numbers (#481): QuickBooks Desktop's "Warn about duplicate
+# check numbers", on by default. A check, a register payment or a bill
+# payment whose number is already on that bank account is refused with a
+# 409 the person answers: keep the number (the client sends the same
+# request again with ?allow_duplicate_check_number=true) or go back and
+# edit it. Possible Duplicates matches amount, payee and date afterwards and
+# never looks at the number; this looks at the number before the save.
+#
+# A check number is digits alone ("5001"): "ACH", "DEBIT", "EFT" and an
+# expense's "rcpt 1187" repeat or name a receipt, and are not checks.
+# Only money out of the account counts (a deposit's slip number is not a
+# check), and a void, or the reversal that voided it, frees its number.
+# ============================================================================
+
+from decimal import Decimal
+
+from fastapi import HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.models.accounts import Account
+from app.models.bills import BillPayment
+from app.models.contacts import Vendor
+from app.models.transactions import Transaction, TransactionLine
+
+SETTING = "warn_duplicate_check_number"
+CODE = "duplicate_check_number"
+
+
+def _number(text) -> str:
+    n = (text or "").strip()
+    return n if n.isdigit() else ""
+
+
+def warning_on(db: Session) -> bool:
+    from app.services.settings_service import get_all_settings
+
+    return get_all_settings(db).get(SETTING, "true") == "true"
+
+
+def uses_of(
+    db: Session,
+    account_id: int,
+    number,
+    exclude_txn_id: int | None = None,
+    exclude_bill_payment_id: int | None = None,
+) -> list[dict]:
+    """Every live posting that already paid out of `account_id` under check
+    number `number`: register entries, expenses and checks (the posting's
+    reference) and bill payments (the payment's check number)."""
+    from app.services.accounting import get_checking_account_id
+    from app.services.bank_register import payees_for, voided_transaction_ids
+
+    num = _number(number)
+    if not num or account_id is None:
+        return []
+    wanted = num.lower()
+    rows = (
+        db.query(Transaction, TransactionLine)
+        .join(TransactionLine, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id == account_id)
+        .filter(TransactionLine.credit > 0)
+        .filter(func.lower(func.trim(Transaction.reference)) == wanted)
+        .all()
+    )
+    txns = {
+        t.id: (t, ln.credit)
+        for t, ln in rows
+        if t.id != exclude_txn_id and not (t.source_type or "").endswith("_void")
+    }
+    # a bill payment keeps its number on the payment, not the posting
+    try:
+        checking = get_checking_account_id(db)
+    except Exception:  # no 1000 Checking: no default to match against
+        checking = None
+    payments = [
+        bp
+        for bp in db.query(BillPayment)
+        .filter(func.lower(func.trim(BillPayment.check_number)) == wanted)
+        .filter(BillPayment.is_voided.is_(False))
+        .all()
+        if bp.id != exclude_bill_payment_id
+        and (bp.pay_from_account_id or checking) == account_id
+    ]
+    paid_txn_ids = {bp.transaction_id for bp in payments if bp.transaction_id}
+    for txn_id in paid_txn_ids:
+        txns.pop(txn_id, None)
+    voided = voided_transaction_ids(db, list(txns.keys()))
+    live = [(t, amt) for tid, (t, amt) in txns.items() if tid not in voided]
+    payees = payees_for(db, [t for t, _ in live])
+    out = [
+        {
+            "date": t.date.isoformat() if t.date else None,
+            "payee": payees.get(t.id, "") or "",
+            "amount": f"{Decimal(str(amt)):.2f}",
+        }
+        for t, amt in live
+    ]
+    if payments:
+        vendors = {
+            v.id: v.name
+            for v in db.query(Vendor).filter(
+                Vendor.id.in_({bp.vendor_id for bp in payments})
+            )
+        }
+        out += [
+            {
+                "date": bp.date.isoformat() if bp.date else None,
+                "payee": vendors.get(bp.vendor_id, ""),
+                "amount": f"{Decimal(str(bp.amount)):.2f}",
+            }
+            for bp in payments
+        ]
+    return sorted(out, key=lambda u: u["date"] or "")
+
+
+def _when(iso: str | None) -> str:
+    if not iso:
+        return ""
+    y, m, d = iso.split("-")
+    return f"{int(m)}/{int(d)}/{y}"
+
+
+def refuse_duplicate(
+    db: Session,
+    account_id: int,
+    number,
+    allow: bool = False,
+    exclude_txn_id: int | None = None,
+    exclude_bill_payment_id: int | None = None,
+) -> None:
+    """The 409, unless the person already said keep it (`allow`), the
+    company turned the warning off, or the number is new on the account."""
+    if allow or not _number(number) or not warning_on(db):
+        return
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if account is None or account.bank_kind == "credit_card":
+        return  # a card has no checks
+    uses = uses_of(db, account_id, number, exclude_txn_id, exclude_bill_payment_id)
+    if not uses:
+        return
+    first = uses[0]
+    name = (
+        f"{account.account_number} {account.name}"
+        if account.account_number
+        else account.name
+    )
+    said = ", ".join(
+        part
+        for part in (
+            first["payee"],
+            _when(first["date"]),
+            f"${Decimal(first['amount']):,.2f}",
+        )
+        if part
+    )
+    more = f" and {len(uses) - 1} more" if len(uses) > 1 else ""
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": CODE,
+            "number": _number(number),
+            "message": (
+                f"Check number {_number(number)} is already used on {name} "
+                f"({said}{more})."
+            ),
+            "uses": uses,
+        },
+    )

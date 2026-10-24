@@ -87,6 +87,7 @@ const ReleasesPage = {
     async save(e) {
         e.preventDefault();
         const form = e.target;
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const rel = await API.post('/nonprofit/releases', {
                 date: form.date.value,
@@ -349,6 +350,7 @@ const AllocationsPage = {
     async saveRun(e) {
         e.preventDefault();
         const form = e.target;
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const fa = await API.post('/nonprofit/allocations', {
                 date: form.date.value,

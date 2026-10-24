@@ -352,6 +352,26 @@ each person's own and both off unless they are turned on:
 My Preferences sits above the company settings and saves each box as it
 changes. Every sign-in sets its own, read-only and accountant sign-ins
 included; an API token sets none.
+### Unreleased
+
+**Three QuickBooks Desktop warnings** (#481). Settings → Transaction Warnings
+has them for the whole company, each on by default as QuickBooks has it, and
+each answered "save it anyway" when the entry is right:
+
+- *A date far from today.* A transaction dated more than 90 days in the past
+  or 30 days in the future (both numbers yours to change) asks before it saves,
+  on every transaction form and the register's new-entry row. A register entry
+  dated 2028-06-30 used to post without a word. January, with the books still
+  in last year, is when it catches most. The closing date keeps its own lock.
+- *A duplicate check number.* A check, register payment or bill payment whose
+  number is already used on that bank account asks: keep the number, or go
+  back and edit it. Two entries numbered 5001 used to post silently. The
+  number is looked up across register entries, expenses and bill payments on
+  the same account; a deposit's number, a void's and anything but digits
+  ("ACH", "DEBIT", "rcpt 1187") don't count. Through the API it is a 409 (`duplicate_check_number`)
+  that the request sent again with `allow_duplicate_check_number=true` passes.
+- *Editing a transaction.* Saving changes to a transaction already saved asks
+  first (a void and a delete already asked).
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

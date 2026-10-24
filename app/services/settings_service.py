@@ -206,6 +206,8 @@ _WHOLE_NUMBER_SETTINGS = {
     "estimate_next_number": ("Next estimate number", 1, None),
     "late_fee_grace_days": ("Grace days", 0, None),
     "smtp_port": ("SMTP port", 1, 65535),
+    "warn_date_past_days": ("Days in the past", 1, 3650),
+    "warn_date_future_days": ("Days in the future", 1, 3650),
 }
 # Document counters keep the zeros typed in front: "0001" numbers invoices
 # 0001, 0002 ... ("INV-0001" style), where "1" numbers them 1, 2 ...

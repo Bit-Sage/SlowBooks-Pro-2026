@@ -229,6 +229,7 @@ const CreditMemosPage = {
             class_id: classIdFromForm(form),
             lines,
         };
+        if (!(await TxnWarn.ok(form))) return;
         if (!(await ClassWarn.ok(form))) return;
         try {
             // $0.00 asks "Save it anyway?" first (SalesLines.sendAllowingZero)

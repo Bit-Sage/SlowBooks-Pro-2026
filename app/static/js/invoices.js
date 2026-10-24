@@ -942,6 +942,7 @@ const InvoicesPage = {
             lines,
         };
 
+        if (!(await TxnWarn.ok(form, { editing: !!id }))) return;
         if (!(await ClassWarn.ok(form, { rows: '#inv-lines tr', cls: 'line-class' }))) return;
         // Past the customer's credit limit? Say so, and let the user decide.
         const total = InvoicesPage.recalc().total;

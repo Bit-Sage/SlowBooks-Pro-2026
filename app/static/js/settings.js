@@ -144,6 +144,26 @@ const SettingsPage = {
         }
     },
 
+    // A Transaction Warnings checkbox (#481): sent as "true" or "false"
+    // (data-bool), on unless the setting says "false". `extra` is the
+    // days box that finishes its sentence.
+    // The box's name is its whole sentence, the days' unit included.
+    _warnBox(s, key, id, label, extra) {
+        const on = s[key] !== 'false';
+        const unit = extra ? ' ' + id + '-days-unit' : '';
+        return '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px; font-size:12px;">'
+            + '<input type="checkbox" id="' + id + '" name="' + key + '" value="true" data-bool'
+            + ' aria-labelledby="' + id + '-label' + unit + '"'
+            + ' style="width:auto; margin:0;"' + (on ? ' checked' : '') + '>'
+            + '<label id="' + id + '-label" for="' + id + '" style="font-weight:normal; margin:0;">' + label + '</label>' + extra + '</div>';
+    },
+    _warnDays(s, key, id, unit, fallback) {
+        const value = escapeHtml(s[key] || String(fallback));
+        return '<input type="number" id="' + id + '" name="' + key + '" min="1" max="3650" step="1" required value="' + value + '"'
+            + ' aria-label="Number of ' + unit + '" style="width:70px; padding:2px 4px;">'
+            + '<span id="' + id + '-unit" aria-hidden="true">' + unit + '</span>';
+    },
+
     async render() {
         const s = await API.get('/settings');
         const logo = s.company_logo_path ? await API.get('/uploads/logo').catch(() => null) : null;
@@ -337,6 +357,27 @@ const SettingsPage = {
                                 With a password set, a change dated on or before the closing date asks for it
                                 and goes through when it is right. Without one, such changes are refused.</div></div>
                     </div>
+                </div>
+
+                <div class="settings-section" id="settings-warnings" role="group" aria-labelledby="settings-h-warnings">
+                    <h3 id="settings-h-warnings">Transaction Warnings</h3>
+                    <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
+                        Questions every form asks before it saves, for everyone using these books. Each one can be answered
+                        &ldquo;save it anyway&rdquo;. Saved with Save Settings.
+                    </div>
+                    ${SettingsPage._warnBox(s, 'warn_date_past', 'warn-date-past', 'Warn when a transaction is dated more than',
+                        SettingsPage._warnDays(s, 'warn_date_past_days', 'warn-date-past-days', 'days in the past', 90))}
+                    ${SettingsPage._warnBox(s, 'warn_date_future', 'warn-date-future', 'Warn when a transaction is dated more than',
+                        SettingsPage._warnDays(s, 'warn_date_future_days', 'warn-date-future-days', 'days in the future', 30))}
+                    <div style="font-size:11px; color:var(--text-muted); margin:-2px 0 8px 22px;">
+                        A typing slip in the year, or January&rsquo;s work landing in the old year. The closing date keeps its own lock.</div>
+                    ${SettingsPage._warnBox(s, 'warn_duplicate_check_number', 'warn-duplicate-check', 'Warn about duplicate check numbers', '')}
+                    <div style="font-size:11px; color:var(--text-muted); margin:-2px 0 8px 22px;">
+                        A check, register payment or bill payment whose number is already used on that bank account asks:
+                        keep the number, or go back and edit it.</div>
+                    ${SettingsPage._warnBox(s, 'warn_edit_transaction', 'warn-edit', 'Warn when editing a transaction', '')}
+                    <div style="font-size:11px; color:var(--text-muted); margin:-2px 0 0 22px;">
+                        Saving changes to a transaction that was already saved asks first.</div>
                 </div>
 
                 <div class="settings-section" role="group" aria-labelledby="settings-h-email-smtp">
@@ -1542,6 +1583,11 @@ const SettingsPage = {
         if (logoOption) data.invoice_show_logo = logoOption.checked ? 'true' : 'false';
         const classWarn = e.target.querySelector('[name="class_warn_blank"]');
         if (classWarn) data.class_warn_blank = classWarn.checked ? 'true' : 'false';
+        // the transaction warnings' boxes (#481), on or off
+        if (typeof e.target.querySelectorAll === 'function') {
+            e.target.querySelectorAll('input[type="checkbox"][data-bool][name]')
+                .forEach(box => { data[box.name] = box.checked ? 'true' : 'false'; });
+        }
         // the hidden menu items, as a list (#334); the boxes are not form fields
         const menuBoxes = typeof e.target.querySelectorAll === 'function' ? [...e.target.querySelectorAll('input[data-show-menu]')] : [];
         if (menuBoxes.length) {

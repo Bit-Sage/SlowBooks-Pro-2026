@@ -277,6 +277,7 @@ const EstimatesPage = {
             lines,
         };
 
+        if (!(await TxnWarn.ok(form, { editing: !!id }))) return;
         if (!(await ClassWarn.ok(form))) return;
         try {
             if (id) { await API.put(`/estimates/${id}`, data); toast('Estimate updated'); }

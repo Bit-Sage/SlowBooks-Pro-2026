@@ -620,6 +620,7 @@ const BillsPage = {
             missing.sel.focus();
             return;
         }
+        if (!(await TxnWarn.ok(form, { editing: !!id }))) return;
         if (!(await ClassWarn.ok(form, { rows: '#bill-lines tr', cls: 'line-function' }))) return;
         try {
             const vendorId = await VendorQuickAdd.ensure('bill-vendor');
@@ -750,6 +751,7 @@ const BillsPage = {
         const fromId = form.pay_from_account_id.value ? parseInt(form.pay_from_account_id.value) : null;
         const outgoing = [...byVendor.values()].reduce((sum, v) => sum + v.total, 0);
         if (!(await Overdraft.confirm(fromId, outgoing, '1000'))) return;
+        if (!(await TxnWarn.ok(form))) return;
 
         const paid = [];
         // One key per form and vendor: a second Pay while one is in flight is
@@ -762,7 +764,7 @@ const BillsPage = {
         if (!BillsPage._payKey) BillsPage._payKey = App.requestKey ? App.requestKey() : 'k-' + Date.now();
         try {
             for (const [vendorId, v] of byVendor) {
-                await API.post('/bill-payments', {
+                const body = {
                     vendor_id: vendorId,
                     date: form.date.value,
                     amount: Math.round(v.total * 100) / 100,
@@ -770,7 +772,14 @@ const BillsPage = {
                     check_number: checkNumber,
                     pay_from_account_id: fromId,
                     allocations: v.allocations,
-                }, null, { 'Idempotency-Key': `${BillsPage._payKey}:${vendorId}` });
+                };
+                // a check number the paying account already has (#481):
+                // keep it, or go back to the form with nothing paid
+                const done = await CheckNumberWarn.send(
+                    q => API.post('/bill-payments', body, q ? { query: q } : null,
+                        { 'Idempotency-Key': `${BillsPage._payKey}:${vendorId}` }),
+                    form.check_number);
+                if (!done) return;
                 paid.push(v.name);
             }
             BillsPage._payKey = null;

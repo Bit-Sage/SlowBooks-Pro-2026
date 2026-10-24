@@ -54,6 +54,10 @@ ENUM_SETTINGS = {
     "class_warn_blank": frozenset({"true", "false"}),
     "new_lines_taxable": frozenset({"true", "false"}),
     "check_stock": frozenset({"plain", "preprinted"}),
+    "warn_date_past": frozenset({"true", "false"}),
+    "warn_date_future": frozenset({"true", "false"}),
+    "warn_duplicate_check_number": frozenset({"true", "false"}),
+    "warn_edit_transaction": frozenset({"true", "false"}),
 }
 
 

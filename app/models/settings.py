@@ -141,6 +141,18 @@ DEFAULT_SETTINGS = {
     # be reported under Uncategorized); "false" starts the picker on
     # Uncategorized and asks nothing.
     "class_warn_blank": "false",
+    # QuickBooks Desktop's warnings (#481), on by default as QuickBooks has
+    # them: a transaction dated more than N days before today or after it
+    # asks before it saves (the closing date keeps its own lock); a check,
+    # register payment or bill payment whose number the bank account
+    # already has is a 409 the person answers (keep the number or edit it);
+    # saving changes to a transaction already saved asks first.
+    "warn_date_past": "true",
+    "warn_date_past_days": "90",
+    "warn_date_future": "true",
+    "warn_date_future_days": "30",
+    "warn_duplicate_check_number": "true",
+    "warn_edit_transaction": "true",
     # Sidebar items a company doesn't use, hidden from the menu (#334): a
     # JSON list of nav-link pages ("payroll", "hr-onboarding", …) and nav
     # sections ("section:Payroll & HR"). The pages stay reachable by

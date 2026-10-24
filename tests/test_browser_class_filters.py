@@ -60,6 +60,18 @@ REG_ROWS = """() => { const t = [...document.querySelectorAll('#page-content tab
     return t ? [...t.tBodies[0].rows].map(r => r.textContent.replace(/\\s+/g, ' ').trim()) : []; }"""
 
 
+@pytest.fixture(autouse=True)
+def _no_edit_question(company):
+    """These are about what an edit saves: the "Warn when editing a
+    transaction" question before it, and the date question the books' fixed
+    dates will draw as they age (#481, tests/test_browser_transaction_warnings.py),
+    are turned off for them."""
+    company.put(
+        "/api/settings",
+        json={"warn_edit_transaction": "false", "warn_date_past": "false"},
+    )
+
+
 def _ok(r):
     assert r.status_code in (200, 201), (str(r.request.url), r.status_code, r.text)
     return r.json()

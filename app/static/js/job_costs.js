@@ -168,6 +168,7 @@ const JobCostsPage = {
             });
         });
         if (!lines.length) { toast('Add at least one line with a quantity and rate', 'error'); return; }
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const jc = await API.post('/job-costs', { date: form.date.value, job_id: parseInt(form.job_id.value), memo: form.memo.value || null, lines });
             toastPosted(`${jc.number} posted: ${formatCurrency(jc.total)}`);
@@ -224,6 +225,7 @@ const JobCostsPage = {
         const targets = [];
         $$('.alloc-job').forEach(cb => { if (cb.checked) targets.push({ job_id: parseInt(cb.value), weight: parseFloat(cb.parentElement.querySelector('.alloc-weight')?.value) || 1 }); });
         const num = n => form[n].value ? parseInt(form[n].value) : null;
+        if (!(await TxnWarn.ok(form))) return;
         try {
             const jc = await API.post('/job-costs/allocate', {
                 date: form.date.value, amount: parseFloat(form.amount.value), method: form.method.value,

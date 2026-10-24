@@ -480,8 +480,10 @@ def test_a_po_has_a_pdf_and_a_print_page(client, db_session, seed_accounts):
 
 
 def _pay(client, vendor_id, allocations, amount=None, day="2026-09-27"):
+    # every payment here is check 1050: kept on purpose past the
+    # duplicate-number question (#481)
     r = client.post(
-        "/api/bill-payments",
+        "/api/bill-payments?allow_duplicate_check_number=true",
         json={
             "vendor_id": vendor_id,
             "date": day,
