@@ -132,6 +132,9 @@ const IIFPage = {
                         columns. Safe to re-upload — what is already here is skipped.
                         <strong>A categorized bank sheet</strong> (the Transaction Pro / SaasAnt layout: Bank Account, Transaction Date, Memo, Payee, Account, Amount) posts each row as the register entry it is, rows sharing the date, payee and memo as one split entry; payees not on the lists are added.
                     </p>
+                    <p style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
+                        A bank or credit card <strong>statement</strong> (CSV, OFX, QFX) is not imported here: it goes in from the account itself, under <a href="#/banking">Banking</a> → the account → <strong>Import file</strong>.
+                    </p>
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:8px;">
                         <input type="checkbox" id="qbcsv-outflow-positive">
                         In this sheet money out is positive (the usual way round is money out negative)

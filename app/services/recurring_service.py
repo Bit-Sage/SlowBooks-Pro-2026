@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from dateutil.relativedelta import relativedelta
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -39,6 +40,24 @@ def _advance_next_due(current: date, frequency: str) -> date:
     elif frequency == "yearly":
         return current + relativedelta(years=1)
     return current + relativedelta(months=1)
+
+
+def roll_next_due_forward(current: date, frequency: str, as_of: date) -> date:
+    """Advance next_due by whole periods to the first occurrence on or after
+    as_of. Missed periods while a schedule was paused are skipped, not billed:
+    re-activating a template resumed from a stale next_due and back-dated an
+    invoice for every missed period (and a date inside the closing date made
+    /api/recurring/generate refuse every schedule). A next_due already on or
+    after as_of is left alone."""
+    d = current
+    guard = 0
+    while d < as_of and guard < 10000:
+        nxt = _advance_next_due(d, frequency)
+        if nxt <= d:
+            break
+        d = nxt
+        guard += 1
+    return d
 
 
 def generate_due_invoices(
@@ -102,6 +121,34 @@ def generate_due_invoices(
                             f"The schedule for {who} adds up to $0.00, so "
                             "nothing was created. Open it and enter a rate "
                             "on at least one line."
+                        ),
+                    }
+                )
+            continue
+
+        # One template whose installment lands in a closed period must not
+        # sink the whole batch: check_closing_date raised a 403 that aborted
+        # generation for every schedule (a healthy one made 0, and the daily
+        # run failed the same way). Skip and report this one, keep the rest.
+        # A valid override password on the request still passes through.
+        from app.services.closing_date import check_closing_date
+
+        try:
+            check_closing_date(db, rec.next_due)
+        except HTTPException as e:
+            if e.status_code != 403:
+                raise
+            if skipped is not None:
+                who = rec.customer.name if rec.customer else f"schedule {rec.id}"
+                skipped.append(
+                    {
+                        "recurring_id": rec.id,
+                        "customer_name": rec.customer.name if rec.customer else None,
+                        "message": (
+                            f"The schedule for {who} is due {rec.next_due}, which "
+                            "is on or before the closing date, so nothing was "
+                            "created. Move the closing date, or clear and re-tick "
+                            "Active to roll the next due date forward past it."
                         ),
                     }
                 )

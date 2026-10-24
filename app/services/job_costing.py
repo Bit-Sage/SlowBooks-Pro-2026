@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
 from app.models.cost_codes import CostCode
+from app.services.account_tree import forms_cycle
 from app.models.estimates import Estimate
 from app.models.job_costing import (
     DEFAULT_COST_TYPES,
@@ -115,15 +116,9 @@ def code_depth(db: Session, code: CostCode) -> int:
 
 
 def would_cycle(db: Session, code_id: int, new_parent_id: Optional[int]) -> bool:
-    cur = new_parent_id
-    seen = set()
-    while cur:
-        if cur == code_id or cur in seen:
-            return True
-        seen.add(cur)
-        parent = db.get(CostCode, cur)
-        cur = parent.parent_id if parent else None
-    return False
+    """A cost code can't become a child of its own descendant. Shares the
+    chart's parent-loop walk (account_tree.forms_cycle), over CostCode."""
+    return forms_cycle(db, CostCode, code_id, new_parent_id)
 
 
 def import_cost_codes(db: Session, rows: list[dict]) -> dict:

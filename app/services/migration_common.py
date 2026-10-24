@@ -21,11 +21,18 @@ import io
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account
+from app.models.accounts import (
+    Account,
+    default_detail_type,
+    detail_label,
+    detail_type_problem,
+)
 from app.models.transactions import Transaction
+from app.services.account_tree import inherited_detail_type, parent_link_problem
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
 
@@ -111,6 +118,173 @@ def already_imported(db: Session, source_type: str | None) -> set[str]:
         .all()
     )
     return {r[0] for r in rows}
+
+
+def _spec_parent(spec: dict):
+    """A parsed COA spec seen as a parent for the parent rule, for the dry run
+    where the parent is another row not yet created (#416). A new account is
+    active."""
+    return SimpleNamespace(
+        name=spec["name"],
+        account_number=spec.get("code"),
+        account_type=spec["type"],
+        detail_type=spec.get("detail_type"),
+        is_active=True,
+    )
+
+
+def _parent_decision(parent, spec: dict) -> tuple[bool, str | None, str | None]:
+    """The migration's parent rule in one place (#416), so the dry run
+    previews exactly what the import applies: (link it, warning, the detail
+    type the child inherits). `parent` is the resolved parent (an Account, or
+    a spec seen through _spec_parent) or None."""
+    if parent is None:
+        return False, None, None
+    named = " ".join(p for p in (parent.account_number, parent.name) if p)
+    if not parent.is_active:
+        # same rule and words as the API / chart import, minus "Reactivate it"
+        return (
+            False,
+            f"'{spec['name']}' was not made a sub-account of '{parent.name}': "
+            f"{named} is inactive and cannot take sub-accounts",
+            None,
+        )
+    problem = parent_link_problem(
+        parent.name,
+        parent.account_type,
+        parent.detail_type,
+        spec["type"],
+        spec.get("detail_type"),
+        spec.get("bank_kind"),
+        spec["code"],
+    )
+    if problem:
+        return (
+            False,
+            f"'{spec['name']}' was not made a sub-account of '{parent.name}': {problem}",
+            None,
+        )
+    inherited = inherited_detail_type(parent.detail_type, spec.get("detail_type"))
+    warning = None
+    if inherited and spec.get("detail_type"):
+        # the link stands but the child takes the parent's detail type (#390)
+        warning = (
+            f"'{spec['name']}' takes {detail_label(inherited)}, the detail type "
+            f"of its parent '{parent.name}' (the file said "
+            f"{detail_label(spec['detail_type'])})"
+        )
+    return True, warning, inherited
+
+
+def _value(v):
+    return getattr(v, "value", v)
+
+
+def _effective_detail(spec: dict, number, parent, link: bool, inherited):
+    """The detail type the account is created with, as the model would settle
+    it: the parent's when it hands one down, else the file's while it fits,
+    else a linked parent's when that fits, else the default for its type."""
+    if inherited:
+        return _value(inherited)
+
+    def fits(detail) -> bool:
+        if not detail:
+            return False
+        try:
+            problem = detail_type_problem(
+                detail, spec["type"], spec.get("bank_kind"), number
+            )
+        except ValueError:
+            return False
+        return problem is None
+
+    declared = _value(spec.get("detail_type"))
+    if fits(declared):
+        return declared
+    if link and fits(_value(parent.detail_type)):
+        return _value(parent.detail_type)
+    # a new account's default: 2.27.0's number and name rule (2.28.0)
+    return default_detail_type(
+        spec["type"], spec.get("bank_kind"), number, name=spec.get("name") or ""
+    ).value
+
+
+def _plan_accounts(db: Session, accounts: list[dict]) -> list[dict]:
+    """What the import does with the chart's accounts, decided once for the
+    dry run and the apply alike (#416), so the preview is what lands.
+
+    A spec whose name is already in the books is not created, and a parent
+    name resolves to the account in the books first (an inactive one too,
+    which refuses sub-accounts), then to another spec of the bundle. New
+    accounts are planned parents first, so a child listed above its parent
+    still links and a grandchild inherits through its parent's settled detail
+    type. Returns one decision per account to create, in creation order."""
+    in_books = {a.name.lower(): a for a in db.query(Account).all()}
+    used_numbers = {
+        n for (n,) in db.query(Account.account_number).all() if n is not None
+    }
+    new_index: dict[str, int] = {}
+    for i, spec in enumerate(accounts):
+        key = spec["name"].lower()
+        if key not in in_books and key not in new_index:
+            new_index[key] = i
+
+    order: list[int] = []
+    state: dict[int, str] = {}
+
+    def visit(i: int) -> None:
+        if i in state:
+            return  # done, or a loop back to a row still being visited
+        state[i] = "visiting"
+        pname = (accounts[i].get("parent") or "").lower()
+        j = new_index.get(pname) if pname not in in_books else None
+        if j is not None and j != i:
+            visit(j)
+        state[i] = "done"
+        order.append(i)
+
+    for i in sorted(new_index.values()):
+        visit(i)
+
+    planned: dict[int, SimpleNamespace] = {}
+    decisions: list[dict] = []
+    for i in order:
+        spec = accounts[i]
+        pname = (spec.get("parent") or "").lower()
+        parent = parent_ref = None
+        if pname in in_books:
+            parent = in_books[pname]
+            parent_ref = ("books", parent)
+        elif new_index.get(pname) in planned:
+            parent = planned[new_index[pname]]
+            parent_ref = ("new", new_index[pname])
+        link, warning, inherited = _parent_decision(parent, spec)
+        # source-system codes can collide with the books' numbers (or an
+        # earlier row's): the name stays authoritative, the code is dropped
+        code = spec.get("code")
+        number = code if code and code not in used_numbers else None
+        if number:
+            used_numbers.add(number)
+        detail = _effective_detail(spec, number, parent, link, inherited)
+        planned[i] = SimpleNamespace(
+            name=spec["name"],
+            account_number=number,
+            account_type=spec["type"],
+            detail_type=detail,
+            is_active=True,
+        )
+        decisions.append(
+            {
+                "index": i,
+                "spec": spec,
+                "number": number,
+                "parent": parent_ref if link else None,
+                "warning": warning,
+                "inherited": inherited,
+                "detail_type": detail,
+            }
+        )
+    return decisions
 
 
 def dry_run_bundle(
@@ -278,6 +452,13 @@ def dry_run_bundle(
         # beside an accrual journal) has said so in a note of its own.
         warnings.append("No trial balance file supplied — balance verification skipped")
 
+    # Preview the parent rules the import applies (#416): the same plan the
+    # apply follows, so the inheritance and refusal warnings — identical
+    # words — are what the import will do with the links.
+    for decision in sorted(_plan_accounts(db, accounts), key=lambda d: d["index"]):
+        if decision["warning"]:
+            warnings.append(decision["warning"])
+
     existing = {a.name.lower() for a in db.query(Account).all()}
     return {
         "ok": not errors,
@@ -302,33 +483,42 @@ def run_import_bundle(
 
     accounts, _ = parsers["coa"](bundle["coa"])
     created = 0
+    warnings = list(verdict.get("warnings") or [])
     by_name: dict[str, Account] = {a.name.lower(): a for a in db.query(Account).all()}
-    for spec in accounts:
-        key = spec["name"].lower()
-        if key in by_name:
-            continue
+    # The dry run's plan, parents first. Its parent warnings are already in
+    # `warnings` (carried from the verdict), so they are not added twice.
+    made: dict[int, Account] = {}
+    for decision in _plan_accounts(db, accounts):
+        spec = decision["spec"]
         acct = Account(
             name=spec["name"],
-            account_number=spec["code"],
+            account_number=decision["number"],
             account_type=spec["type"],
             description=spec["description"],
+            # the dialect's finer type (#390), the parent's when it hands one
+            # down, else the default where the file's does not fit
+            detail_type=decision["detail_type"],
         )
         # A dialect may say what kind of account it is (a bank, a card) and
-        # whose sub-account it is ("Parent:Child", the parent listed first).
+        # whose sub-account it is ("Parent:Child").
         if spec.get("bank_kind"):
             acct.bank_kind = spec["bank_kind"]
-        parent_name = (spec.get("parent") or "").lower()
-        if parent_name and parent_name in by_name:
-            acct.parent_id = by_name[parent_name].id
-        # Source-system codes can collide with the seeded chart's numbers —
-        # the name stays authoritative; drop the code rather than fail.
-        if spec["code"] and (
-            db.query(Account).filter(Account.account_number == spec["code"]).first()
-        ):
-            acct.account_number = None
+        if decision["parent"] is not None:
+            kind, ref = decision["parent"]
+            acct.parent_id = ref.id if kind == "books" else made[ref].id
         db.add(acct)
         db.flush()
-        by_name[key] = acct
+        declared = getattr(spec.get("detail_type"), "value", spec.get("detail_type"))
+        if declared and acct.detail_type != declared and not decision["inherited"]:
+            # an AR away from 1100, a Bank with no bank kind: the model gave
+            # the default (#390); say so rather than drop the file's word
+            # (a type that gave way to the parent's is already noted above)
+            warnings.append(
+                f"'{acct.name}' is {detail_label(declared)} in the file and came in "
+                f"as {detail_label(acct.detail_type)}"
+            )
+        made[decision["index"]] = acct
+        by_name[spec["name"].lower()] = acct
         created += 1
 
     journals, _ = parsers["gl"](bundle["gl"])
@@ -424,6 +614,7 @@ def run_import_bundle(
     db.commit()
     return {
         **verdict,
+        "warnings": warnings,
         "imported_accounts": created,
         "imported_journals": posted,
         # journals the file held that posted nothing (all-zero lines)

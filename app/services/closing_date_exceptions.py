@@ -320,7 +320,7 @@ def exceptions_csv(data: dict, company: str) -> str:
     gets one row of its own), the event's words on every row."""
     import io
 
-    from app.services.csv_export import _SafeWriter
+    from app.services.csv_export import _Identifier, _SafeWriter
 
     out = io.StringIO()
     w = _SafeWriter(out)
@@ -359,7 +359,16 @@ def exceptions_csv(data: dict, company: str) -> str:
                 w.writerow(head + [record, ch["action"], "", "", ""])
             for f in ch["fields"]:
                 w.writerow(
-                    head + [record, ch["action"], f["field"], f["before"], f["after"]]
+                    head
+                    + [
+                        record,
+                        ch["action"],
+                        f["field"],
+                        # a before/after snapshot is read, not summed: keep it
+                        # text so "-0001" or a phone stays verbatim (#410)
+                        _Identifier(f["before"]),
+                        _Identifier(f["after"]),
+                    ]
                 )
     w.writerow([])
     w.writerow(["Overrides", data["count"], "Changes", data["changes"]])

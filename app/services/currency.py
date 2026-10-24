@@ -20,7 +20,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType
 from app.services.accounting import _q
 from app.services.settings_service import get_all_settings
 
@@ -108,6 +108,8 @@ def fx_gain_loss_account_id(db: Session) -> int:
             name=FX_ACCOUNT_NAME,
             account_number=FX_ACCOUNT_NUMBER,
             account_type=AccountType.EXPENSE,
+            # below the operating line, as QuickBooks files it (#390)
+            detail_type=DetailType.OTHER_EXPENSE,
             is_system=True,
         )
         db.add(acct)

@@ -125,7 +125,8 @@ def test_profit_loss_and_balance_sheet_save_as_spreadsheets(client, books):
     bs = rows_of(
         client.get("/api/reports/balance-sheet/csv?as_of_date=2026-12-31").text
     )
-    assert bs[0] == ["Section", "Account number", "Account name", "Amount"]
+    # Type last (#390): Section is the group, Type the side
+    assert bs[0] == ["Section", "Account number", "Account name", "Amount", "Type"]
     assert any(r[2] == "Total Assets" for r in bs)
 
 

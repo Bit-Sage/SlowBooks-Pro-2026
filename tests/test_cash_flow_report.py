@@ -25,9 +25,16 @@ def test_cash_flow_matches_linked_cash_change_for_native_journals(client, db_ses
         name="Checking", account_type=AccountType.ASSET, bank_kind="bank"
     )
     savings = Account(name="Savings", account_type=AccountType.ASSET, bank_kind="bank")
-    equipment = Account(name="Equipment", account_type=AccountType.ASSET)
+    # the detail type says what is investing and financing (#390)
+    equipment = Account(
+        name="Equipment", account_type=AccountType.ASSET, detail_type="fixed_asset"
+    )
     payable = Account(name="Accounts payable", account_type=AccountType.LIABILITY)
-    loan = Account(name="Term loan", account_type=AccountType.LIABILITY)
+    loan = Account(
+        name="Term loan",
+        account_type=AccountType.LIABILITY,
+        detail_type="long_term_liability",
+    )
     equity = Account(name="Owner equity", account_type=AccountType.EQUITY)
     revenue = Account(name="Service revenue", account_type=AccountType.INCOME)
     expense = Account(name="Operating expense", account_type=AccountType.EXPENSE)
