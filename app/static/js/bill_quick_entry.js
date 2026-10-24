@@ -185,7 +185,7 @@ const BillQuickEntry = {
                 lines,
             });
             BillQuickEntry._logged(bill);
-            toast(`Bill ${bill.bill_number} saved`);
+            toastPosted(`Bill ${bill.bill_number} saved`);
             BillQuickEntry._next(form);
         } catch (err) {
             toast(err.message, 'error');

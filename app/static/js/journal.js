@@ -392,7 +392,7 @@ const JournalPage = {
         if (entryId) { await JournalPage._putEntry(entryId, data); return; }
         try {
             await API.post('/journal', data);
-            toastPosted(data.is_adjusting ? 'Adjusting entry created' : 'Journal entry created');
+            toastPosted(form.is_adjusting && form.is_adjusting.checked ? 'Adjusting entry created' : 'Journal entry created');
             closeModal();
             App.navigate('#/journal');
         } catch (err) { toast(err.message, 'error'); }
@@ -405,7 +405,7 @@ const JournalPage = {
     async _putEntry(entryId, data) {
         try {
             const saved = await API.put(`/journal/${entryId}`, data);
-            toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
+            toastPosted(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
             closeModal();
             App.navigate(location.hash.startsWith('#/banking') ? location.hash : '#/journal');
         } catch (err) {
