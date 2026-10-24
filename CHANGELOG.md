@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and feed payees as vendors
+### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every
 transaction under each income, cost of goods and expense account for the
@@ -86,6 +86,14 @@ choose it too; on the rule form it becomes the rule's category. Reviewing a
 feed with a new kind of expense no longer means leaving the review for the
 Chart of Accounts.
 
+**Invoice Quick Entry can add a customer** (#484). Its customer picker has the
+New Invoice form's "+ New Customer": type a name the books don't have and the
+quick add opens with it filled in, Save adds the customer and picks it, and the
+date, terms, PO number and lines you already typed stay as they were. The
+focus goes back to the customer picker. Before, the only way was the top bar's
+New Customer, which cleared the half-entered screen and left nobody picked.
+Read-only and accountant sign-ins are not offered it.
+
 **A payee from the bank feed reaches the vendor list** (#491). Adding a line
 from To review (Add, or Add all categorised) posted a bank entry that carried
 the payee as text only: no vendor was made or found, and the "Add X as a
@@ -110,6 +118,108 @@ A rule that names a vendor also matches the vendor's own name, and a line it
 categorises is added for that vendor. The Bank Rule form has a Vendor field,
 and the Bank Rules list names each rule's account and vendor (it showed the
 account's id).
+
+**Journal entries and deposits open for editing from the register** (#388, @ContractorKeith).
+The bank-entry edit shipped in 2.27.0 left two register rows still opening
+only their own view: a hand-entered journal entry and a deposit. Now each
+has **Edit** too. A journal entry opens the journal form filled in, and
+Save rewrites it in place (`GET` and `PUT /api/journal/{id}`) — the same
+journal entry, so its attachments, statement match and audit trail stay
+with it, its lines replaced the way a bill's are on edit (each old line a
+DELETE in the audit log, each new one an INSERT). A deposit opens the
+deposit form with its date, slip reference and the payments it took, plus
+any still waiting; Save reposts it through the posting helpers (`PUT
+/api/deposits/{id}`), moving the payments it no longer takes back onto the
+Make Deposits list and stamping the new ones with it, the register, the GL
+and the Undeposited Funds balance tying.
+
+Both follow the rules the bank-entry edit set. An entry a completed
+reconciliation holds keeps its amount and date — a change is refused with
+the same sentence ("…so its amount and date cannot be changed, just as it
+cannot be voided. Correct the difference with a new entry.") — while its
+memo, reference, class and job can still be corrected. For a journal entry,
+a change that moves an amount to a different account in a reconciled period
+warns first, with **Change it anyway** in the form, and the audit log
+records that the edit moved past that reconciliation. A line whose account
+and amount did not change keeps its cleared mark; one that changed loses
+it. A void entry is not edited, and only a hand-entered journal entry opens
+this way (an imported one keeps to its own correction path).
+
+A deposit imported from IIF or a QuickBooks report, posted with its own
+splits to income or other accounts (with their classes and memos), keeps
+every line when its date or reference is fixed; changing the payments it
+takes is refused with a reason, since reposting it as bank / Undeposited
+Funds would take its income off the books. A journal entry edited from a
+company with no line classes or cost codes keeps each line's own class and
+cost code (the form sends them only where it shows a picker for them). A
+deposit whose new total takes the cleared mark off its bank line returns the
+same note a journal entry's edit does.
+
+**Pre-printed check stock** (#440, @ContractorKeith, from @KWBsupport's note in discussion
+#354). Check stock that already carries "Pay to the order of", the memo and
+signature lines and the amount box no longer gets SlowBooks' own labels and
+lines printed on top of it. Settings → Check Printing adds a per-company
+choice: plain / voucher stock (the default, unchanged) or pre-printed stock,
+which prints only the values — payee, amount, amount in words, date and memo
+— in their places. A horizontal and a vertical alignment nudge (−0.5 to +0.5
+inches, in 0.01 steps) shift the check portion only, not the stubs, to line
+the values up with the pre-printed boxes, and a "Print a test check" button
+produces a sample check so the nudge can be set on plain paper held against
+the stock. The choice applies to every check print path — a bill payment,
+Pay Bills, a register check and an expense paid from a bank account — through
+one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
+`check_nudge_y_in`; `GET /api/checks/test-print`).
+
+On pre-printed stock the labels, signature rule, company name and address and
+check number are left blank in place rather than taken out, so every value
+sits where it does on plain stock and one nudge lines them all up; the test
+print uses the form's unsaved stock and nudges.
+
+**Recent sends under Settings → Email (SMTP)** (#447, @ContractorKeith, from discussion #422). A
+new user's test email failed with "see the email log for the reason" and there
+was no email log anywhere in the screens, though every send has always written
+one. Settings → Email (SMTP) now shows a Recent sends list: the last 50 emails,
+newest first, with when each went out, who it went to, its subject, what sent
+it (invoice, statement, test, collection letter, portal), and whether it sent.
+A failure shows the reason in a sentence a person can act on, with the raw SMTP
+error underneath; there is a "failed only" filter and a "Show more" for older
+rows. The list is the administrator's, like backups and API tokens
+(`GET /api/email-log?limit=&offset=&status=`, bounded to 200 a page).
+
+A failed test email now says why itself instead of pointing at a log — the
+server rejection ("535 Username and Password not accepted") in the response,
+plus a short hint for the mistakes new users actually hit: Gmail and Google
+Workspace need an app password, and a server that cannot be reached means the
+host, port, or Use TLS setting is wrong. The three "see the email log"
+messages (the test email, an emailed invoice, a collection letter) now point
+at Recent sends, and the collection-letter one names the customer whose send
+failed. Recent sends is an administrator's section, so anyone else is told
+"An administrator can see why under Settings → Recent sends." with no link to a
+page they cannot open, and a failed invoice email's toast is an error toast
+(an action toast can now be one, kept at least the six seconds an error stays).
+The failure sentences live in one place on the server; the list shows the
+sentence the API returns with each failed row (`failure`).
+
+Every saved secret field on Settings — the SMTP and closing-date passwords,
+the payment-provider keys and the ACH account — now says under it "Saved.
+Shown as a placeholder; type a new value only to change it." The placeholder
+stays eight characters so no password length leaks; the same new user had read
+it as a truncated password.
+
+**An optional sound when a transaction posts** (#476, @ContractorKeith, asked for by a
+QuickBooks Desktop user). QuickBooks Desktop played a short beep when a
+transaction saved, and the toast is easy to miss when you're keying a stack.
+Settings → Sounds now has a per-user toggle, "Play a sound when a transaction
+posts" — off by default, kept per sign-in so it follows you to another
+machine. When it's on, a short original chime plays when a transaction
+posts — an invoice, bill, payment, sales receipt, deposit, check or expense,
+journal entry, transfer, pay run, credit memo or a register row; a delete, a
+void, a copy, a saved setting, an error or a warning stays silent. The sound
+is generated in the browser (Web Audio, no asset) and guarded, so a browser or
+desktop WebView without it carries on quietly; its audio is started inside a
+click or key press so the macOS app's WebView does not leave it muted. A
+read-only or accountant sign-in, which cannot save preferences, does not see
+the toggle.
 
 **A company that charges no sales tax can stop unticking the Tax box on every
 line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
@@ -174,6 +284,21 @@ email, so they were left as they were. The email preview now shows the same
 address the send will use (it showed the typed one, empty, while the send
 went to the customer's email on file).
 
+**A reconciliation already open, and the typed statement kept** (#497, @ContractorKeith). Starting a reconciliation while one is already open for the account no longer
+quietly throws away the statement date and ending balance you just typed
+(#497). The server still answers that only one session can be open at a time,
+but the screen now says which statement is open and offers to move it onto the
+date and balance you just entered; confirm and it does, cancel and the open
+session is reopened unchanged.
+
+**A re-run migration import no longer posts a long-referenced journal twice** (#498, @ContractorKeith). The dedupe key was cut to the
+reference column's width while the journal was stored with the full reference,
+so the two never matched and a second import booked the entry again. The
+import now stores the same cut value the key uses, so a re-import recognises
+what it already posted.
+Books imported before this fix, which hold the full reference, are recognised
+too: the already-imported set is cut to the same width.
+
 **A no-charge invoice no longer leaves an empty journal entry behind** (#499, @ContractorKeith). A
 $0.00 invoice saved with the no-charge say-so used to post a journal whose
 A/R debit and every line were zero, so the invoice pointed at a transaction
@@ -206,101 +331,7 @@ cut-short check: each "Total" row is measured against its own section's lines
 Two schema changes, run in every company file one after the other:
 `transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice
 number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
-"111 (2)"; the head is `f2e3d4c5b6a7`. 637 API operations.
-
-Re-running a migration import no longer posts a journal twice when its source
-reference runs past 100 characters (#498). The dedupe key was cut to the
-reference column's width while the journal was stored with the full reference,
-so the two never matched and a second import booked the entry again. The
-import now stores the same cut value the key uses, so a re-import recognises
-what it already posted.
-Books imported before this fix, which hold the full reference, are recognised
-too: the already-imported set is cut to the same width.
-
-**Pre-printed check stock** (#440, from @KWBsupport's note in discussion
-#354). Check stock that already carries "Pay to the order of", the memo and
-signature lines and the amount box no longer gets SlowBooks' own labels and
-lines printed on top of it. Settings → Check Printing adds a per-company
-choice: plain / voucher stock (the default, unchanged) or pre-printed stock,
-which prints only the values — payee, amount, amount in words, date and memo
-— in their places. A horizontal and a vertical alignment nudge (−0.5 to +0.5
-inches, in 0.01 steps) shift the check portion only, not the stubs, to line
-the values up with the pre-printed boxes, and a "Print a test check" button
-produces a sample check so the nudge can be set on plain paper held against
-the stock. The choice applies to every check print path — a bill payment,
-Pay Bills, a register check and an expense paid from a bank account — through
-one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
-`check_nudge_y_in`; `GET /api/checks/test-print`).
-On pre-printed stock the labels, signature rule, company name and address and
-check number are left blank in place rather than taken out, so every value
-sits where it does on plain stock and one nudge lines them all up; the test
-print uses the form's unsaved stock and nudges.
-
-**An optional sound when a transaction posts** (#476, asked for by a
-QuickBooks Desktop user). QuickBooks Desktop played a short beep when a
-transaction saved, and the toast is easy to miss when you're keying a stack.
-Settings → Sounds now has a per-user toggle, "Play a sound when a transaction
-posts" — off by default, kept per sign-in so it follows you to another
-machine. When it's on, a short original chime plays when a transaction
-posts — an invoice, bill, payment, sales receipt, deposit, check or expense,
-journal entry, transfer, pay run, credit memo or a register row; a delete, a
-void, a copy, a saved setting, an error or a warning stays silent. The sound
-is generated in the browser (Web Audio, no asset) and guarded, so a browser or
-desktop WebView without it carries on quietly; its audio is started inside a
-click or key press so the macOS app's WebView does not leave it muted. A
-read-only or accountant sign-in, which cannot save preferences, does not see
-the toggle.
-
-A failed test email now says why itself instead of pointing at a log — the
-server rejection ("535 Username and Password not accepted") in the response,
-plus a short hint for the mistakes new users actually hit: Gmail and Google
-Workspace need an app password, and a server that cannot be reached means the
-host, port, or Use TLS setting is wrong. The three "see the email log"
-messages (the test email, an emailed invoice, a collection letter) now point
-at Recent sends, and the collection-letter one names the customer whose send
-failed. Recent sends is an administrator's section, so anyone else is told
-"An administrator can see why under Settings → Recent sends." with no link to a
-page they cannot open, and a failed invoice email's toast is an error toast
-(an action toast can now be one, kept at least the six seconds an error stays).
-The failure sentences live in one place on the server; the list shows the
-sentence the API returns with each failed row (`failure`).
-
-Every saved secret field on Settings — the SMTP and closing-date passwords,
-the payment-provider keys and the ACH account — now says under it "Saved.
-Shown as a placeholder; type a new value only to change it." The placeholder
-stays eight characters so no password length leaks; the same new user had read
-it as a truncated password.
-
-Both follow the rules the bank-entry edit set. An entry a completed
-reconciliation holds keeps its amount and date — a change is refused with
-the same sentence ("…so its amount and date cannot be changed, just as it
-cannot be voided. Correct the difference with a new entry.") — while its
-memo, reference, class and job can still be corrected. For a journal entry,
-a change that moves an amount to a different account in a reconciled period
-warns first, with **Change it anyway** in the form, and the audit log
-records that the edit moved past that reconciliation. A line whose account
-and amount did not change keeps its cleared mark; one that changed loses
-it. A void entry is not edited, and only a hand-entered journal entry opens
-this way (an imported one keeps to its own correction path).
-
-A deposit imported from IIF or a QuickBooks report, posted with its own
-splits to income or other accounts (with their classes and memos), keeps
-every line when its date or reference is fixed; changing the payments it
-takes is refused with a reason, since reposting it as bank / Undeposited
-Funds would take its income off the books. A journal entry edited from a
-company with no line classes or cost codes keeps each line's own class and
-cost code (the form sends them only where it shows a picker for them). A
-deposit whose new total takes the cleared mark off its bank line returns the
-same note a journal entry's edit does.
-### Unreleased
-
-**Invoice Quick Entry can add a customer** (#484). Its customer picker has the
-New Invoice form's "+ New Customer": type a name the books don't have and the
-quick add opens with it filled in, Save adds the customer and picks it, and the
-date, terms, PO number and lines you already typed stay as they were. The
-focus goes back to the customer picker. Before, the only way was the top bar's
-New Customer, which cleared the half-entered screen and left nobody picked.
-Read-only and accountant sign-ins are not offered it.
+"111 (2)"; the head is `f2e3d4c5b6a7`. 641 API operations.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
@@ -674,103 +705,6 @@ payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
 
-### Unreleased
-
-Starting a reconciliation while one is already open for the account no longer
-quietly throws away the statement date and ending balance you just typed
-(#497). The server still answers that only one session can be open at a time,
-but the screen now says which statement is open and offers to move it onto the
-date and balance you just entered; confirm and it does, cancel and the open
-session is reopened unchanged.
-### Unreleased
-
-Re-running a migration import no longer posts a journal twice when its source
-reference runs past 100 characters (#498). The dedupe key was cut to the
-reference column's width while the journal was stored with the full reference,
-so the two never matched and a second import booked the entry again. The
-import now stores the same cut value the key uses, so a re-import recognises
-what it already posted.
-### Unreleased
-
-**Pre-printed check stock** (#440, from @KWBsupport's note in discussion
-#354). Check stock that already carries "Pay to the order of", the memo and
-signature lines and the amount box no longer gets SlowBooks' own labels and
-lines printed on top of it. Settings → Check Printing adds a per-company
-choice: plain / voucher stock (the default, unchanged) or pre-printed stock,
-which prints only the values — payee, amount, amount in words, date and memo
-— in their places. A horizontal and a vertical alignment nudge (−0.5 to +0.5
-inches, in 0.01 steps) shift the check portion only, not the stubs, to line
-the values up with the pre-printed boxes, and a "Print a test check" button
-produces a sample check so the nudge can be set on plain paper held against
-the stock. The choice applies to every check print path — a bill payment,
-Pay Bills, a register check and an expense paid from a bank account — through
-one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
-`check_nudge_y_in`; `GET /api/checks/test-print`).
-### Unreleased
-
-**An optional sound when a transaction posts** (#476, asked for by a
-QuickBooks Desktop user). QuickBooks Desktop played a short beep when a
-transaction saved, and the toast is easy to miss when you're keying a stack.
-Settings → Sounds now has a per-user toggle, "Play a sound when a transaction
-posts" — off by default, kept per sign-in so it follows you to another
-machine. When it's on, a short original chime plays on a successful save,
-post, payment, or finished reconciliation; an error or warning stays silent.
-The sound is generated in the browser (Web Audio, no asset) and guarded, so a
-browser or desktop WebView without it carries on quietly.
-### Unreleased
-
-**Recent sends under Settings → Email (SMTP)** (#447, from discussion #422). A
-new user's test email failed with "see the email log for the reason" and there
-was no email log anywhere in the screens, though every send has always written
-one. Settings → Email (SMTP) now shows a Recent sends list: the last 50 emails,
-newest first, with when each went out, who it went to, its subject, what sent
-it (invoice, statement, test, collection letter, portal), and whether it sent.
-A failure shows the reason in a sentence a person can act on, with the raw SMTP
-error underneath; there is a "failed only" filter and a "Show more" for older
-rows. The list is the administrator's, like backups and API tokens
-(`GET /api/email-log?limit=&offset=&status=`, bounded to 200 a page).
-
-A failed test email now says why itself instead of pointing at a log — the
-server rejection ("535 Username and Password not accepted") in the response,
-plus a short hint for the mistakes new users actually hit: Gmail and Google
-Workspace need an app password, and a server that cannot be reached means the
-host, port, or Use TLS setting is wrong. The three "see the email log"
-messages (the test email, an emailed invoice, a collection letter) now point
-at Recent sends, and the collection-letter one names the customer whose send
-failed.
-
-Every saved secret field on Settings — the SMTP and closing-date passwords,
-the payment-provider keys and the ACH account — now says under it "Saved.
-Shown as a placeholder; type a new value only to change it." The placeholder
-stays eight characters so no password length leaks; the same new user had read
-it as a truncated password.
-### Unreleased
-
-**Journal entries and deposits open for editing from the register** (#388).
-The bank-entry edit shipped in 2.27.0 left two register rows still opening
-only their own view: a hand-entered journal entry and a deposit. Now each
-has **Edit** too. A journal entry opens the journal form filled in, and
-Save rewrites it in place (`GET` and `PUT /api/journal/{id}`) — the same
-journal entry, so its attachments, statement match and audit trail stay
-with it, its lines replaced the way a bill's are on edit (each old line a
-DELETE in the audit log, each new one an INSERT). A deposit opens the
-deposit form with its date, slip reference and the payments it took, plus
-any still waiting; Save reposts it through the posting helpers (`PUT
-/api/deposits/{id}`), moving the payments it no longer takes back onto the
-Make Deposits list and stamping the new ones with it, the register, the GL
-and the Undeposited Funds balance tying.
-
-Both follow the rules the bank-entry edit set. An entry a completed
-reconciliation holds keeps its amount and date — a change is refused with
-the same sentence ("…so its amount and date cannot be changed, just as it
-cannot be voided. Correct the difference with a new entry.") — while its
-memo, reference, class and job can still be corrected. For a journal entry,
-a change that moves an amount to a different account in a reconciled period
-warns first, with **Change it anyway** in the form, and the audit log
-records that the edit moved past that reconciliation. A line whose account
-and amount did not change keeps its cleared mark; one that changed loses
-it. A void entry is not edited, and only a hand-entered journal entry opens
-this way (an imported one keeps to its own correction path).
 
 ### v2.28.0 — Account types and sub-accounts
 
