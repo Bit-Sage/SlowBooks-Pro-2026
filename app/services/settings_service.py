@@ -320,6 +320,14 @@ def clean_setting_value(key: str, value) -> str:
                     "characters wraps and counts as two."
                 )
         return text
+    if key == "fiscal_year_start_month":
+        # The month a fiscal year starts, 1-12 (#444). "1" is the calendar year.
+        number = int(text) if _DIGITS.fullmatch(text) else None
+        if number is None or not 1 <= number <= 12:
+            raise SettingValueError(
+                "First month of the fiscal year must be a month, 1 to 12."
+            )
+        return str(number)
     if key in _DATE_SETTINGS:
         if text == "":
             return ""

@@ -1306,3 +1306,28 @@ def test_close_from_a_viewed_reconciliation_returns_to_the_card_list(
         assert page.evaluate(MODAL_SHOWN)
     finally:
         page.close()
+
+
+def test_a_non_january_fiscal_year_offers_the_fiscal_presets(browser, company, books):
+    """With a July fiscal year set, the period picker gains the four fiscal
+    presets after the calendar ones (#444)."""
+    company.put("/api/settings", json={"fiscal_year_start_month": "7"})
+    page, handled = _open_at(browser, company, PL_URL)
+    try:
+        page.wait_for_selector("#report-content table")
+        values = page.evaluate(
+            "() => Array.from(document.querySelectorAll('#report-period-select option'))"
+            ".map(o => o.value)"
+        )
+        for key in (
+            "this_fiscal_year",
+            "this_fiscal_year_to_date",
+            "last_fiscal_year",
+            "last_fiscal_year_to_date",
+        ):
+            assert key in values, key
+        # the fiscal presets fall after the calendar ones and before custom
+        assert values.index("last_year_to_date") < values.index("this_fiscal_year")
+        assert values.index("last_fiscal_year_to_date") < values.index("custom")
+    finally:
+        page.close()

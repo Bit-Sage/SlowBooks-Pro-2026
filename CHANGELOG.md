@@ -808,6 +808,19 @@ Export a mail-merge **CSV** (address parts in their own columns, the usual
 formula guard and BOM) or a **labels PDF** on Avery 5160 (30 up) with the
 service address. A row opens the customer's page, and the view carries its
 filter in the address so it can be bookmarked and saved as a report.
+### v2.28.0 — The first month of the fiscal year
+
+**A company whose fiscal year does not start in January can say so** (#444).
+Settings → Company Information has a "First month of fiscal year" choice. Set
+it to July or October and the reports' new This / Last Fiscal Year presets and
+their default period, the dashboard's profit card and nonprofit mode's year to
+date all run from that month instead of January 1. A January start is the
+calendar year and nothing changes. Payroll forms (W-2, 941) stay on the
+calendar year, as the law requires.
+
+The Balance Sheet's Net Income line is still every period's to date: the app
+has never posted a year-end close into retained earnings, and this release
+does not add one.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
