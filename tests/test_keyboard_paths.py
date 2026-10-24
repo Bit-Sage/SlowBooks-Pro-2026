@@ -28,7 +28,13 @@ def test_the_dialogs_tab_is_walked_in_script_in_the_browsers_order():
     walk = utils[utils.index("function modalKeydown(e)") :]
     walk = walk[: walk.index("document.addEventListener('keydown', modalKeydown)")]
     assert "if (e.key !== 'Tab' || e.defaultPrevented) return;" in walk
-    assert "const stops = _tabStops(modal, active);" in walk
+    # the dialog's own stops, plus a toastAction toast's (outside the dialog),
+    # so the + Entry add-payee offer is Tab-reachable from the trap (#386 review)
+    assert (
+        "const stops = _tabStops(modal, active)"
+        ".concat(toasts ? _tabStops(toasts, active) : []);" in walk
+    )
+    assert "const toasts = document.getElementById('toast-container');" in walk
     # wraps at the ends, and from the dialog itself goes to its first or last
     assert "stops[(i + (back ? -1 : 1) + stops.length) % stops.length]" in walk
     assert "next = back ? stops[stops.length - 1] : stops[0];" in walk

@@ -452,12 +452,17 @@ const BankingPage = {
             }
         }
         const filterQs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
-        const [reg, overview, classes, chart] = await Promise.all([
+        const [reg, overview, classes, chart, vendors, customers] = await Promise.all([
             API.get(`/banking/check-register?account_id=${id}${filterQs}`),
             API.get('/banking/overview'),
             API.get('/classes?include_archived=true').catch(() => []),
             API.get('/accounts?active_only=true').catch(() => []),
+            API.get('/vendors?active_only=true').catch(() => null),
+            API.get('/customers?active_only=true').catch(() => null),
         ]);
+        BankingPage._accounts = chart;
+        BankingPage._vendorNames = vendors ? new Set(vendors.map(v => v.name.toLowerCase())) : null;
+        BankingPage._customerNames = customers ? new Set(customers.map(c => c.name.toLowerCase())) : null;
         const info = overview.find(a => a.account_id === id) || {};
         const feed = info.feed || null;
         const kind = reg.bank_kind;
@@ -529,7 +534,7 @@ const BankingPage = {
                     <td class="amount">${e.deposit > 0 ? formatCurrency(e.deposit) : ''}</td>
                     <td class="amount" style="font-weight:700;">${formatCurrency(e.balance)}</td>
                     <td style="text-align:center;">${e.reconciliation_id ? 'R' : (e.cleared ? '✓' : '')}</td>
-                    <td style="white-space:nowrap;">${BankingPage._printCheckButton(e)}${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
+                    <td style="white-space:nowrap;">${BankingPage._printCheckButton(e)}${BankingPage._editButton(e, id)}${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="BankingPage.voidEntry('${e.source_type}', ${e.transaction_id}, ${id})">Void</button>` : ''}</td>
                 </tr>`).join('');
             // oldest first, so the balance brought forward (a start date's
             // doing) opens the table (2.23.5 round 2, NEW-142); the entry
@@ -551,6 +556,14 @@ const BankingPage = {
     // an import) — its journal entry. Every line opens something.
     _entryHref(e) {
         return e.source_link || `#/journal/${e.transaction_id}`;
+    },
+
+    // A register entry opens for editing (#388); the register says which
+    // (`editable`: a bank entry that is not void — a reconciled one too,
+    // its amount and date locked).
+    _editButton(e, accountId) {
+        if (!e.editable) return '';
+        return `<button class="btn btn-sm btn-secondary" onclick="BankingPage.editEntry(${e.transaction_id}, ${accountId})">Edit</button>`;
     },
 
     // A check written here, or an expense paid from this account, prints
@@ -734,7 +747,7 @@ const BankingPage = {
 
     _quickEntryRow(accountId, kind, chart, outLabel, inLabel) {
         const cats = (chart || [])
-            .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
+            .filter(a => a.id !== accountId && BankingPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}">${accountLabel(a, a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
         const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.postQuickEntry(${accountId}); }"`;
         const now = new Date();
@@ -743,15 +756,16 @@ const BankingPage = {
         // named for the new entry, apart from the page's other fields
         return `<tfoot><tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
                     <td><input type="date" id="qe-date" aria-label="New entry date" value="${today}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}></td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:180px;"><option value="">Category…</option>${cats}</select></td>
+                    <td><span style="display:inline-flex; gap:2px; align-items:center;"><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>${cats}</select><button type="button" id="qe-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" title="Add a new account" style="font-size:11px; padding:2px 6px;" onclick="BankingPage.openNewAccount('qe-category', ${accountId})">Add</button></span></td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td></td><td></td>
                     <td><button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.postQuickEntry(${accountId})">Post</button></td>
-                </tr></tfoot>`;
+                </tr>
+                <tr data-write><td colspan="10" style="padding:0; border:0;">${BankingPage._newAccountPanel('qe-category', accountId)}</td></tr></tfoot>`;
     },
 
     // The quick row posts through the same call as + Entry (#329): money
@@ -775,6 +789,7 @@ const BankingPage = {
         try {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
+            BankingPage.payeeTyped(data.payee, inn > 0, 'qe-payee');
             await BankingPage.go(`#/banking/${accountId}`);
             BankingPage._focusPayee();
         } catch (err) { toast(err.message, 'error'); }
@@ -785,6 +800,10 @@ const BankingPage = {
     // draw more than once as its lists arrive): tried every 50 ms for a
     // second until the box has the focus (W-17 / NEW-146).
     _focusPayee(tries = 20) {
+        // Yield to an open toast question (the Add payee / Not now prompt moves
+        // focus to itself); do not yank the keyboard back out of it.
+        const active = document.activeElement;
+        if (active && active.closest && active.closest('#toast-container')) return;
         const next = document.getElementById('qe-payee');
         if (next && document.activeElement !== next) {
             next.focus();
@@ -798,13 +817,22 @@ const BankingPage = {
     // ------------------------------------------------------------------
     // + Entry (posts) and Transfer
     // ------------------------------------------------------------------
-    async showEntryForm(accountId) {
+    async showEntryForm(accountId, entry = null) {
         const accounts = await API.get('/accounts?active_only=true');
         const me = accounts.find(a => a.id === accountId) || {};
         const isCard = me.bank_kind === 'credit_card';
         const catOpts = accounts
-            .filter(a => a.id !== accountId && ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type))
+            .filter(a => a.id !== accountId && BankingPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}">${accountLabel(a)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
+        BankingPage._accounts = accounts;
+        if (!BankingPage._vendorNames) {
+            const vendors = await API.get('/vendors?active_only=true').catch(() => null);
+            if (vendors) BankingPage._vendorNames = new Set(vendors.map(v => v.name.toLowerCase()));
+        }
+        if (!BankingPage._customerNames) {
+            const customers = await API.get('/customers?active_only=true').catch(() => null);
+            if (customers) BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
+        }
         const classGroup = await classFormGroupHtml();
         openModal('New Register Entry', `
             <form onsubmit="BankingPage.saveEntry(event, ${accountId})">
@@ -815,17 +843,18 @@ const BankingPage = {
                         <input name="amount" type="number" step="0.01" required>
                         <div style="font-size:10px; color:var(--gray-500);">${isCard ? 'Negative = a charge (owe more). Positive = a payment to the card.' : 'Negative = money out (a payment). Positive = money in (a deposit).'}</div></div>
                     <div class="form-group"><label>Payee</label>
-                        <input name="payee"></div>
+                        <input name="payee" id="entry-payee" onblur="BankingPage.payeeTyped(this.value, BankingPage._formMoneyIn(), 'entry-payee')"></div>
                     <div class="form-group"><label>Check / ref #</label>
                         <input name="check_number"></div>
                     <div class="form-group full-width"><label>Category * <span style="font-weight:normal; color:var(--gray-500);">(the other side of the entry; a bank or card account makes it a transfer)</span></label>
-                        <select name="category_account_id" id="entry-category"><option value="">Select…</option>${catOpts}</select></div>
+                        <span style="display:flex; gap:6px; align-items:center;"><select name="category_account_id" id="entry-category" style="flex:1;"><option value="">Select…</option>${catOpts}</select><button type="button" id="entry-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" onclick="BankingPage.openNewAccount('entry-category', ${accountId})">Add a new account…</button></span>
+                        ${BankingPage._newAccountPanel('entry-category', accountId)}</div>
                     <div class="form-group full-width"><label>Memo</label>
                         <input name="description"></div>
                     ${classGroup}
                     <div class="form-group full-width" id="entry-splits" style="display:none;">
-                        <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things)</span></label>
-                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
+                        <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things, a card processor's deposit as the gross with the fee taken out)</span></label>
+                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Taken out</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
                         <tbody id="entry-split-rows"></tbody></table>
                         <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
                             <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.addSplitRow()">+ Line</button>
@@ -842,11 +871,96 @@ const BankingPage = {
                 </div>
             </form>`);
         BankingPage._splitCats = catOpts;
+        if (entry) BankingPage._fillEntryForm(entry);
+    },
+
+    // Edit (#388): a register entry opens in the + Entry form, filled in;
+    // Save sends it back as a PUT and the row is rewritten in place.
+    async editEntry(txnId, accountId) {
+        try {
+            const entry = await API.get(`/banking/entries/${txnId}`);
+            await BankingPage.showEntryForm(accountId, entry);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The form as "Edit entry": the entry's fields in the boxes, its split
+    // lines when it has them, and the entry id on the form for saveEntry.
+    // What the form has no box for rides along on it and goes back with
+    // the save (#388 review): the entry's job, and each split line's own
+    // class and job. A class archived since keeps its place in the list.
+    _fillEntryForm(entry) {
+        const form = document.querySelector('#modal-body form');
+        if (!form) return;
+        const title = document.getElementById('modal-title');
+        if (title) title.textContent = 'Edit entry';
+        form.dataset.entryId = entry.id;
+        form.dataset.jobId = entry.job_id || '';
+        form.date.value = entry.date;
+        form.amount.value = Number(entry.amount).toFixed(2);
+        form.payee.value = entry.payee || '';
+        form.check_number.value = entry.reference || '';
+        form.description.value = entry.description || '';
+        form.category_account_id.value = entry.category_account_id || '';
+        if (form.class_id) {
+            const sel = form.class_id;
+            const want = entry.class_id ? String(entry.class_id) : '';
+            if (![...sel.options].some(o => o.value === want)) {
+                const opt = document.createElement('option');
+                opt.value = want;
+                opt.textContent = want ? `${entry.class_name || T('Class') + ' ' + want} (archived)` : '—';
+                sel.appendChild(opt);
+            }
+            sel.value = want;
+        }
+        const submit = form.querySelector('button[type="submit"]');
+        if (submit) submit.textContent = 'Save';
+        if (entry.splits && entry.splits.length) {
+            if (!BankingPage._splitsOpen()) BankingPage.toggleSplits();
+            const body = document.getElementById('entry-split-rows');
+            if (body) body.innerHTML = '';
+            entry.splits.forEach(sp => {
+                BankingPage.addSplitRow();
+                const row = body ? body.lastElementChild : null;
+                if (!row) return;
+                row.querySelector('.split-cat').value = sp.category_account_id;
+                // a line that goes the other way from the entry (a fee on a
+                // deposit, a refund on a check, #387) is shown as it was
+                // typed: its own number with Taken out ticked
+                const part = Number(sp.amount);
+                const against = (part < 0) !== (Number(entry.amount) < 0);
+                row.querySelector('.split-amt').value = (against ? -part : part).toFixed(2);
+                row.querySelector('.split-fee').checked = against;
+                row.querySelector('.split-memo').value = sp.description || '';
+                row.dataset.classId = sp.class_id || '';
+                row.dataset.jobId = sp.job_id || '';
+            });
+            BankingPage.splitNote();
+        }
+        // a reconciled entry says so as it opens: its amount and date stay
+        // as the statement has them (the server refuses a change)
+        if (entry.reconciled_note) {
+            form.date.readOnly = true;
+            form.amount.readOnly = true;
+            const note = document.createElement('div');
+            note.id = 'entry-reconciled-note';
+            note.setAttribute('role', 'note');
+            note.className = 'form-group full-width';
+            note.style.cssText = 'display:block; padding:8px 10px; border:1px solid var(--warning, #b7791f); border-radius:4px; font-size:12px;';
+            note.textContent = entry.reconciled_note;
+            const grid = form.querySelector('.form-grid');
+            if (grid) grid.prepend(note); else form.prepend(note);
+        }
     },
 
     // Splits (#330): the Category becomes the first line and more lines
     // take their share; the note says what is left to place. Posted as one
-    // entry with several lines, as the API's `splits`.
+    // entry with several lines, as the API's `splits`. A line can go the
+    // other way from the entry (#387): "Taken out" on a line makes it run
+    // opposite the entry's direction, so a card processor's fee is typed as
+    // the positive number the statement shows and the deposit's lines are
+    // the gross income and the fee, adding up to the net the bank got. The
+    // same box on a check is a refund netted against it. Only the magnitude
+    // typed counts, so the line's own sign (620 or −620) does not matter.
     // The table is shown and hidden by style, not the hidden attribute:
     // .form-group's display:flex won over `hidden`, so the lines showed
     // before "Split this entry…" and what was typed there did not count
@@ -872,18 +986,38 @@ const BankingPage = {
         body.insertAdjacentHTML('beforeend', `<tr>
             <td><select class="split-cat" aria-label="Split line ${n} account" data-no-search><option value="">Select…</option>${BankingPage._splitCats || ''}</select></td>
             <td class="amount"><input class="split-amt" type="number" step="0.01" aria-label="Split line ${n} amount" oninput="BankingPage.splitNote()" style="width:100px; text-align:right;"></td>
+            <td style="text-align:center;"><input class="split-fee" type="checkbox" aria-label="Split line ${n} taken out" title="A fee the processor kept, or a refund netted against a check: this line goes the other way from the entry" onchange="BankingPage.splitNote()"></td>
             <td><input class="split-memo" type="text" aria-label="Split line ${n} memo"></td>
             <td><button type="button" class="btn btn-sm btn-secondary" aria-label="Remove split line ${n}" onclick="this.closest('tr').remove(); BankingPage.splitNote();">×</button></td>
         </tr>`);
+    },
+    // The entry's direction: +1 for money in (a deposit), −1 for money out
+    // (a check). Nothing typed yet counts as +1. A split line follows this
+    // direction, and "Taken out" flips it (#387).
+    _entrySign(form) {
+        const amt = parseFloat(form.amount.value || '0') || 0;
+        return amt < 0 ? -1 : 1;
+    },
+    // A split line's signed amount. A plain line runs the entry's direction;
+    // "Taken out" makes it go the opposite way — a fee on a deposit, or a
+    // refund on a check. Only the magnitude typed is used, so 620 and −620
+    // both read as the entry's side. Null when nothing was typed.
+    _splitAmount(row, sign) {
+        const typed = row.querySelector('.split-amt').value;
+        if (typed === '') return null;
+        const mag = Math.abs(parseFloat(typed) || 0);
+        const dir = row.querySelector('.split-fee').checked ? -sign : sign;
+        return dir * mag;
     },
     splitNote() {
         const note = document.getElementById('entry-split-note');
         const form = note ? note.closest('form') : null;
         if (!note || !form) return;
         const total = parseFloat(form.amount.value || '0') || 0;
-        const placed = [...form.querySelectorAll('.split-amt')].reduce((sum, i) => sum + (parseFloat(i.value || '0') || 0), 0);
+        const sign = BankingPage._entrySign(form);
+        const placed = [...form.querySelectorAll('#entry-split-rows tr')].reduce((sum, r) => sum + (BankingPage._splitAmount(r, sign) || 0), 0);
         const left = Math.round((total - placed) * 100) / 100;
-        note.textContent = total ? (left === 0 ? `Every cent of ${formatCurrency(total)} is placed` : `${formatCurrency(left)} of ${formatCurrency(total)} still to place (each line takes the entry's sign)`) : 'Enter the amount first';
+        note.textContent = total ? (left === 0 ? `Every cent of ${formatCurrency(total)} is placed` : `${formatCurrency(left)} of ${formatCurrency(total)} still to place (a fee or a refund goes the other way: tick Taken out)`) : 'Enter the amount first';
     },
 
     // The split lines to post. A line with an amount but no account, or an
@@ -894,6 +1028,7 @@ const BankingPage = {
     _splitLines(form) {
         if (!BankingPage._splitsOpen()) return null;
         const rows = [...form.querySelectorAll('#entry-split-rows tr')];
+        const sign = BankingPage._entrySign(form);
         const splits = [];
         rows.forEach((r, i) => {
             const account = r.querySelector('.split-cat').value;
@@ -903,19 +1038,21 @@ const BankingPage = {
             if (amount === '') throw new Error(`Split line ${i + 1} has an account but no amount. Enter its share, or remove the line.`);
             splits.push({
                 category_account_id: parseInt(account, 10),
-                amount,
+                amount: BankingPage._splitAmount(r, sign).toFixed(2),
                 description: r.querySelector('.split-memo').value || null,
+                // a line's own class and job, carried from the entry (#388)
+                ...(r.dataset.classId ? { class_id: parseInt(r.dataset.classId, 10) } : {}),
+                ...(r.dataset.jobId ? { job_id: parseInt(r.dataset.jobId, 10) } : {}),
             });
         });
         return splits.length ? splits : null;
     },
 
-    async saveEntry(e, accountId) {
-        e.preventDefault();
-        const form = e.target;
-        let splits;
-        try { splits = BankingPage._splitLines(form); } catch (err) { toast(err.message, 'error'); return; }
-        if (!splits && !form.category_account_id.value) { toast('Choose a category, or split the entry', 'error'); return; }
+    // The entry as the form has it now, for a post or an edit's save.
+    // Throws the sentence to show when it can't be sent.
+    _entryData(form, accountId) {
+        const splits = BankingPage._splitLines(form);
+        if (!splits && !form.category_account_id.value) throw new Error('Choose a category, or split the entry');
         const data = {
             account_id: accountId,
             date: form.date.value,
@@ -927,13 +1064,269 @@ const BankingPage = {
             class_id: classIdFromForm(form),
             ...(splits ? { splits } : {}),
         };
+        // an edit sends the entry's job back: the form has no box for it,
+        // and leaving it out of the body would be read as "keep" anyway
+        if (form.dataset.entryId) data.job_id = form.dataset.jobId ? parseInt(form.dataset.jobId, 10) : null;
+        return data;
+    },
+
+    async saveEntry(e, accountId) {
+        e.preventDefault();
+        const form = e.target;
+        let data;
+        try { data = BankingPage._entryData(form, accountId); } catch (err) { toast(err.message, 'error'); return; }
         if (!(await ClassWarn.ok(form))) return;
+        const entryId = form.dataset.entryId ? parseInt(form.dataset.entryId, 10) : null;
+        if (entryId) { await BankingPage._putEntry(entryId, data, accountId); return; }
         try {
             await API.post('/banking/transactions', data);
             toast('Entry posted');
+            BankingPage.payeeTyped(data.payee, parseFloat(data.amount) > 0, 'qe-payee');
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The edit's save (#388). A change of category on an entry a completed
+    // reconciliation holds comes back 409 ("This entry was reconciled on the
+    // Sep 30, 2026 statement. Changing its category moves its amount
+    // between accounts in a period already reconciled."): the sentence is
+    // shown in the form with "Change it anyway", which saves what the form
+    // holds then, with confirm_reconciled.
+    async _putEntry(entryId, data, accountId) {
+        try {
+            const saved = await API.put(`/banking/entries/${entryId}`, data);
+            toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
+            closeModal();
+            BankingPage.go(`#/banking/${accountId}`);
+        } catch (err) {
+            if (err.status === 409 && err.detail && err.detail.code === 'reconciled' && !data.confirm_reconciled) {
+                BankingPage._askReconciled(entryId, accountId, err.detail.message);
+                return;
+            }
+            toast(err.message, 'error');
+        }
+    },
+
+    _askReconciled(entryId, accountId, message) {
+        const form = document.querySelector('#modal-body form');
+        if (!form) { toast(message, 'error'); return; }
+        BankingPage._pendingEdit = { entryId, accountId };
+        let box = document.getElementById('entry-reconciled-warning');
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'entry-reconciled-warning';
+            box.setAttribute('role', 'alert');
+            box.className = 'form-group full-width';
+            box.style.cssText = 'display:block; padding:8px 10px; border:1px solid var(--warning, #b7791f); border-radius:4px; font-size:12px;';
+            const actions = form.querySelector('.form-actions');
+            if (actions) actions.before(box); else form.appendChild(box);
+        }
+        box.innerHTML = `<p style="margin:0 0 8px;">${escapeHtml(message)}</p>
+            <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveEntryAnyway()">Change it anyway</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.keepEntry()">Keep it as it is</button>`;
+        const first = box.querySelector('button');
+        if (first) first.focus();
+    },
+
+    // "Change it anyway": the form as it is now, not as it was at the first
+    // Save — a change made after the warning is saved too (#388 review)
+    async saveEntryAnyway() {
+        const pending = BankingPage._pendingEdit;
+        const form = document.querySelector('#modal-body form');
+        if (!pending || !form) return;
+        let data;
+        try { data = BankingPage._entryData(form, pending.accountId); } catch (err) { toast(err.message, 'error'); return; }
+        BankingPage._pendingEdit = null;
+        await BankingPage._putEntry(pending.entryId, { ...data, confirm_reconciled: true }, pending.accountId);
+    },
+
+    // "Keep it as it is": the warning goes and the focus goes back to the
+    // form, on the category the warning was about (not lost to the page)
+    keepEntry() {
+        BankingPage._pendingEdit = null;
+        const box = document.getElementById('entry-reconciled-warning');
+        if (box) box.remove();
+        const form = document.querySelector('#modal-body form');
+        if (!form) return;
+        const target = BankingPage._splitsOpen()
+            ? form.querySelector('#entry-split-rows .split-cat')
+            : form.category_account_id;
+        // a picker with type-ahead is answered in its box, not the select
+        const el = target && target._cbx ? target._cbx.box : target;
+        (el || form.querySelector('button[type="submit"]')).focus();
+    },
+
+    // ------------------------------------------------------------------
+    // A payee or a category typed that is not on the list is added from
+    // the row or the form (#386, from a bookkeeper's notes): the payee as
+    // a customer or a vendor, offered once per name and session; the
+    // category as a new account under a chosen parent, made from the Add
+    // button beside the picker (never from arrowing the select, #386 review).
+    // ------------------------------------------------------------------
+    CATEGORY_TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'],
+    _accounts: null,      // the chart as last drawn: the parents offered, the picker's new option
+    _vendorNames: null,   // lower-cased; null until the register has loaded them
+    _customerNames: null, // lower-cased; null until the register has loaded them
+    _payeesAsked: new Set(),
+
+    // Which side the money is on for the quick-entry row and the + Entry
+    // form: true = money in (a deposit), false = money out, null = not
+    // known yet (no amount typed), so the offer waits until the entry posts.
+    _rowMoneyIn() {
+        const v = (id) => parseFloat((document.getElementById(id) || {}).value || '0') || 0;
+        const out = v('qe-out'), inn = v('qe-in');
+        if (inn > 0 && !(out > 0)) return true;
+        if (out > 0 && !(inn > 0)) return false;
+        return null;
+    },
+    _formMoneyIn() {
+        const amt = document.querySelector('#modal-body [name="amount"]');
+        const n = amt ? parseFloat(amt.value) : NaN;
+        return Number.isNaN(n) || n === 0 ? null : n > 0;
+    },
+
+    // The payee as typed, on blur and again when the entry posts: not a
+    // vendor's or a customer's name and not asked before, a toast offers to
+    // add it — a customer for money in, a vendor for money out, the
+    // categorized import's rule. Until the amount tells the side (moneyIn
+    // null), the offer waits for the post, which knows it. The entry goes
+    // on with the text either way; Not now, or no answer, is not asked
+    // again this session. The toast moves focus to itself and gives it back
+    // to the row, so the keyboard can answer (returnFocusId).
+    payeeTyped(payee, moneyIn, returnFocusId) {
+        const name = (payee || '').trim();
+        if (!name || (!BankingPage._vendorNames && !BankingPage._customerNames)) return;
+        const key = name.toLowerCase();
+        const onList = (BankingPage._vendorNames && BankingPage._vendorNames.has(key))
+            || (BankingPage._customerNames && BankingPage._customerNames.has(key));
+        if (onList || BankingPage._payeesAsked.has(key)) return;
+        if (moneyIn === null || moneyIn === undefined) return; // the post will ask once the side is known
+        BankingPage._payeesAsked.add(key);
+        const noun = moneyIn ? T('customer') : 'vendor';
+        // TEST SEAM: window.__payeeToastMs is read only so browser tests
+        // (test_browser_register_quick_add.py) can shorten the 15 s toast;
+        // nothing in the app sets it.
+        const ms = (typeof window !== 'undefined' && window.__payeeToastMs) || 15000;
+        toastAction(
+            `Add "${name}" as a ${noun}?`, 'Add',
+            () => BankingPage.addParty(name, moneyIn), ms, 'Not now',
+            { focusOnShow: true, returnFocus: () => document.getElementById(returnFocusId) },
+        );
+    },
+
+    // Money in makes the payee a customer, money out a vendor — the same
+    // name the entry posted with, so the register resolves to it (there is
+    // no counterparty foreign key on a register entry; the link is by name,
+    // as the categorized import's is).
+    async addParty(name, moneyIn) {
+        const path = moneyIn ? '/customers' : '/vendors';
+        const list = moneyIn ? T('Customers') : 'Vendors';
+        const noun = moneyIn ? T('customer') : 'vendor';
+        const names = moneyIn ? BankingPage._customerNames : BankingPage._vendorNames;
+        try {
+            await API.post(path, { name });
+            if (names) names.add(name.toLowerCase());
+            toast(`${name} added to ${list}`);
+        } catch (err) {
+            // a near match (409): the entry keeps its text; no second party
+            const dupes = err.status === 409 && err.detail && err.detail.duplicates;
+            toast(dupes ? `Not added: ${dupes.map(d => d.name).join(', ')} is already a ${noun}` : err.message, 'error');
+        }
+    },
+
+    // The panel under a category picker: name, type, an optional parent of
+    // that type, an optional number. Hidden until the Add button beside the
+    // picker opens it; nothing in it is `required`, so the entry form still
+    // submits while it is hidden.
+    _newAccountPanel(selectId, accountId) {
+        const id = `${selectId}-new`;
+        const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.saveNewAccount('${selectId}', ${accountId}); }"`;
+        const types = BankingPage.CATEGORY_TYPES
+            .map(t => `<option value="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('');
+        return `<div id="${id}" style="display:none; padding:8px; border:1px solid var(--gray-300); border-radius:4px; margin-top:4px;">
+            <div class="form-grid">
+                <div class="form-group"><label for="${id}-name">Account name *</label>
+                    <input id="${id}-name" aria-label="New account name" aria-required="true" ${key}></div>
+                <div class="form-group"><label for="${id}-type">Type</label>
+                    <select id="${id}-type" data-no-search onchange="BankingPage.newAccountTypeChanged('${selectId}', ${accountId})">${types}</select></div>
+                <div class="form-group"><label for="${id}-parent">Sub-account of</label>
+                    <select id="${id}-parent" data-no-search><option value="">None</option></select></div>
+                <div class="form-group"><label for="${id}-number">Number <span style="font-weight:normal; color:var(--gray-500);">(optional)</span></label>
+                    <input id="${id}-number" maxlength="20" placeholder="e.g. 6150, or leave blank" ${key}></div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:6px;">
+                <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveNewAccount('${selectId}', ${accountId})">Add account</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.cancelNewAccount('${selectId}')">Cancel</button>
+            </div>
+        </div>`;
+    },
+
+    // Opened by the Add button beside a category picker, never by the
+    // select itself: arrowing through the categories must not spring the
+    // panel open (#386 review — a native select with "+ Add…" on it trapped
+    // the keyboard one ArrowDown from the top).
+    openNewAccount(selectId, accountId) {
+        const panel = document.getElementById(`${selectId}-new`);
+        if (!panel) return;
+        panel.style.display = '';
+        BankingPage.newAccountTypeChanged(selectId, accountId);
+        focusFor(document.getElementById(`${selectId}-new-name`), true);
+    },
+
+    // The parents offered are the accounts of the chosen type (a
+    // sub-account takes its parent's type), never the register's own
+    // account, another bank or card, or a control account the software
+    // posts to by number (#386 review: 1100, 1200, 2000, 2200, 3200 …).
+    newAccountTypeChanged(selectId, accountId) {
+        const type = document.getElementById(`${selectId}-new-type`).value;
+        const parent = document.getElementById(`${selectId}-new-parent`);
+        parent.innerHTML = '<option value="">None</option>' + (BankingPage._accounts || [])
+            .filter(a => a.account_type === type && a.id !== accountId && !a.bank_kind && !a.is_control)
+            .map(a => `<option value="${a.id}">${accountLabel(a)}</option>`).join('');
+    },
+
+    cancelNewAccount(selectId) {
+        // The panel opens from the Add button now, not from a "__new__"
+        // choice, so the picker keeps whatever was already chosen — cancel
+        // only closes the panel and gives the keyboard back to the select.
+        const sel = document.getElementById(selectId);
+        const panel = document.getElementById(`${selectId}-new`);
+        if (panel) panel.style.display = 'none';
+        if (sel) { focusFor(sel._cbx ? sel._cbx.box : sel, true); }
+    },
+
+    // POST /accounts, then the new account goes into every category picker
+    // on the page (the split lines' list too) and is the choice; the cursor
+    // moves on, to the amount in the row or the memo in the form.
+    async saveNewAccount(selectId, accountId) {
+        const f = (part) => document.getElementById(`${selectId}-new-${part}`);
+        const name = f('name').value.trim();
+        if (!name) { toast('Name the account', 'error'); focusFor(f('name'), true); return; }
+        let made;
+        try {
+            made = await API.post('/accounts', {
+                name,
+                account_type: f('type').value,
+                parent_id: f('parent').value ? parseInt(f('parent').value, 10) : null,
+                account_number: f('number').value.trim() || null,
+            });
+        } catch (err) { toast(err.message, 'error'); return; }
+        (BankingPage._accounts = BankingPage._accounts || []).push(made);
+        const opt = `<option value="${made.id}">${accountLabel(made)}</option>`;
+        for (const id of ['qe-category', 'entry-category']) {
+            const s = document.getElementById(id);
+            if (s) s.insertAdjacentHTML('beforeend', opt);
+        }
+        if (BankingPage._splitCats) BankingPage._splitCats += opt;
+        f('name').value = ''; f('number').value = ''; f('parent').value = '';
+        document.getElementById(`${selectId}-new`).style.display = 'none';
+        document.getElementById(selectId).value = String(made.id);
+        toast(`${made.account_number ? made.account_number + ' - ' : ''}${made.name} added to the chart`);
+        const next = selectId === 'qe-category'
+            ? document.getElementById('qe-out')
+            : document.querySelector('#modal-body input[name="description"]');
+        focusFor(next, true);
     },
 
     async showTransferForm(fromId = null) {
@@ -1104,13 +1497,17 @@ const BankingPage = {
                 </div>
             </div>
             <div id="recon-finish-msg" role="alert" style="font-size:12px; color:var(--danger); margin-bottom:8px;"></div>
+            ${data.ticked_after_date > 0 ? `<div role="status" style="font-size:12px; color:var(--gray-600); margin-bottom:8px;">${data.ticked_after_date} ticked line${data.ticked_after_date === 1 ? '' : 's'} ${data.ticked_after_date === 1 ? 'falls' : 'fall'} after the statement date and won't be stamped when you finish; ${data.ticked_after_date === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.</div>` : ''}
             <div class="card-grid" style="margin-bottom:16px;">
                 <div class="card"><div class="card-header">Beginning Balance</div>
                     <div class="card-value">${formatCurrency(data.beginning_balance)}</div></div>
                 <div class="card"><div class="card-header">Cleared</div>
                     <div class="card-value" id="recon-cleared">${formatCurrency(data.cleared_total)}</div></div>
                 <div class="card"><div class="card-header">Statement Balance</div>
-                    <div class="card-value">${formatCurrency(data.statement_balance)}</div></div>
+                    <div class="card-value">${formatCurrency(data.statement_balance)}</div>
+                    <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px;" data-write
+                        aria-label="Change the statement date or ending balance"
+                        onclick="BankingPage.changeStatement(${reconId}, '${data.statement_date}', ${data.statement_balance})">Change…</button></div>
                 <div class="card"><div class="card-header">Difference</div>
                     <div class="card-value" id="recon-diff" style="color:${diffColor}">${formatCurrency(data.difference)}</div>
                     <div style="font-size:11px; font-weight:600;" role="status">${balanced ? '✓ Balanced — ready to finish' : '⚠ Out of balance — finish when this is $0.00'}</div></div>
@@ -1130,6 +1527,51 @@ const BankingPage = {
                 <tbody>${rows || '<tr><td colspan="5" style="text-align:center;">No ledger lines up to this date</td></tr>'}</tbody>
             </table></div>
             <div id="recon-through-note" role="status" style="font-size:11px; color:var(--gray-500); margin-top:6px;">${hidden ? `${hidden} later line${hidden === 1 ? '' : 's'} hidden (dated after ${formatDate(through)}); the figures above count the whole session` : ''}</div>`;
+    },
+
+    // The statement's ending balance and date can be corrected while the
+    // reconciliation is in progress (#389): a transposed digit was a fresh
+    // start. The ticks stay; the view re-renders with the new difference.
+    changeStatement(reconId, statementDate, statementBalance) {
+        openModal('Change Statement', `
+            <form onsubmit="BankingPage.saveStatement(event, ${reconId})">
+                <p style="margin-bottom:12px; font-size:11px; color:var(--gray-500);">
+                    Correct the ending date or balance from your statement. The lines you have ticked stay ticked; the difference is refigured.
+                </p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Statement Date *</label>
+                        <input name="statement_date" type="date" required value="${escapeHtml(statementDate)}"></div>
+                    <div class="form-group"><label>Statement Ending Balance *</label>
+                        <input name="statement_balance" type="number" step="0.01" required value="${Number(statementBalance).toFixed(2)}"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>`);
+    },
+
+    async saveStatement(e, reconId) {
+        e.preventDefault();
+        const form = e.target;
+        try {
+            const res = await API.put(`/banking/reconciliations/${reconId}`, {
+                statement_date: form.statement_date.value,
+                statement_balance: form.statement_balance.value,
+            });
+            closeModal();
+            // The Through day and filter are bounded by the statement date;
+            // start them over so they cannot sit past a date moved earlier.
+            BankingPage._reconThrough[reconId] = '';
+            BankingPage._reconDay[reconId] = '';
+            // A date moved earlier can leave lines ticked past it; they are
+            // not on this session and carry to the next one (#400 review).
+            const n = res.ticked_after_date;
+            toast(n > 0
+                ? `Statement changed. ${n} ticked line${n === 1 ? '' : 's'} ${n === 1 ? 'falls' : 'fall'} after the new date; ${n === 1 ? 'it carries' : 'they carry'} to the next reconciliation, still ticked.`
+                : 'Statement changed');
+            BankingPage.showReconcileView(reconId);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // Every line at once (#258): ticked, ticked through a date, or all
@@ -1196,7 +1638,10 @@ const BankingPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    async showReconReport(reconId) {
+    // `onClose` reopens whatever list View came from (the Report Center's
+    // Reconciliation Reports card, #395): the report replaces that modal, so
+    // without it Close would land past the list. None → a plain Close.
+    async showReconReport(reconId, onClose) {
         try {
             const r = await API.get(`/banking/reconciliations/${reconId}/report`);
             const L = r.labels;
@@ -1223,13 +1668,22 @@ const BankingPage = {
                             <td>${escapeHtml(i.payee || i.description || '')}</td><td class="amount">${formatCurrency(i.amount)}</td>
                         </tr>`).join('')}</tbody>
                     </table></div>`).join('')).join('');
+            BankingPage._reconReportBack = typeof onClose === 'function' ? onClose : null;
             openModal(`Reconciliation — ${r.account_name}, statement of ${formatDate(r.statement_date)}`, `
                 ${summary}${detail}
                 <div class="form-actions">
-                    <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                    <button class="btn btn-secondary" onclick="BankingPage._closeReconReport()">Close</button>
                     <button class="btn btn-primary" onclick="window.open('/api/banking/reconciliations/${reconId}/pdf', '_blank')">Save PDF</button>
                 </div>`);
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Close the report: back to the list it was opened from (#395), or a
+    // plain close when it was opened on its own.
+    _closeReconReport() {
+        const back = BankingPage._reconReportBack;
+        BankingPage._reconReportBack = null;
+        if (back) back(); else closeModal();
     },
 
     async abandonReconcile(reconId, accountId) {

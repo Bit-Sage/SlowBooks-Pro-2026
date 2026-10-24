@@ -25,6 +25,7 @@ class ProfitLossReport(BaseModel):
     total_income: Decimal
     total_cogs: Decimal
     gross_profit: Decimal
+    operating_gross_profit: Decimal | None = None
     total_expenses: Decimal
     net_income: Decimal
 

@@ -446,11 +446,11 @@ def test_recurring_service_respects_closing_date(
     db_session, seed_accounts, seed_customer
 ):
     """The recurring-invoice generator posts JEs via create_journal_entry with
-    a date of rec.next_due. If that date is in a closed period, generation must
-    be blocked by the shared guard — this path has no route-level check."""
+    a date of rec.next_due. A template whose installment lands in a closed
+    period is skipped and reported — not posted, and not allowed to abort the
+    whole batch (it used to raise 403 and make nothing for every schedule).
+    The template keeps its date and stays active for a later catch-up."""
     from datetime import date
-
-    from fastapi import HTTPException
 
     from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
     from app.services.recurring_service import generate_due_invoices
@@ -479,9 +479,14 @@ def test_recurring_service_respects_closing_date(
 
     _set_closing_date_db(db_session, _CLOSING_DATE)
 
-    with pytest.raises(HTTPException) as exc:
-        generate_due_invoices(db_session, as_of=date(2025, 7, 1))
-    assert exc.value.status_code == 403
+    skipped: list = []
+    created = generate_due_invoices(db_session, as_of=date(2025, 7, 1), skipped=skipped)
+    assert created == []
+    assert [s["recurring_id"] for s in skipped] == [rec.id]
+    assert "closing date" in skipped[0]["message"]
+    db_session.expire_all()
+    assert db_session.get(RecurringInvoice, rec.id).next_due == date(2025, 6, 1)
+    assert db_session.get(RecurringInvoice, rec.id).is_active is True
 
 
 def test_create_batch_payment_respects_closing_date(

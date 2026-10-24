@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from app.schemas.common import StrictModel
 from sqlalchemy import or_
@@ -55,6 +55,26 @@ def ar_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_d
     a customer paid that was not applied to an invoice was left out
     entirely (unapplied_credits read 0 for everyone)."""
     return ar_aging_report(db, as_of_date or date.today())
+
+
+@router.get("/ar-aging/csv")
+def ar_aging_csv_route(
+    request: Request,
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The A/R Aging as a spreadsheet (#393): the file the Accountant's
+    Package carries, on its own. Always the whole company, as the screen
+    is (opened from a customer's page it only highlights their row)."""
+    from app.routes.csv import _csv_response
+    from app.routes.reports.financial import _company_name
+    from app.services.ledger_exports import aging_csv
+
+    data = ar_aging_report(db, as_of_date or date.today())
+    name = f"ar-aging_{data['as_of_date']}"
+    return _csv_response(
+        aging_csv(data, _company_name(db), "ar"), f"{name}.csv", request
+    )
 
 
 def ar_aging_report(db: Session, as_of_date: date) -> dict:

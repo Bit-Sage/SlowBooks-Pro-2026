@@ -91,6 +91,53 @@ def test_a_split_check_lists_each_line_on_the_stub(client, seed_accounts):
     assert "300.00" in text
 
 
+def test_a_refund_netted_against_a_check_prints_as_a_negative_line(
+    client, db_session, seed_accounts
+):
+    # A check that pays Insurance 620.00 less a 120.00 refund is a 500.00
+    # check (#387). The stub must list the refund as a negative so the lines
+    # add up to the check, not drop it and overstate the stub at 620.00.
+    from app.routes.checks import register_check_data
+
+    e = _entry(
+        client,
+        seed_accounts,
+        amount="-500.00",
+        category_account_id=None,
+        check_number="1075",
+        splits=[
+            {
+                "category_account_id": seed_accounts["6300"].id,
+                "amount": "-620.00",
+                "description": "annual premium",
+            },
+            {
+                "category_account_id": seed_accounts["6000"].id,
+                "amount": "120.00",
+                "description": "credit for the returned order",
+            },
+        ],
+    )
+    from decimal import Decimal
+
+    data = register_check_data(db_session, e["id"])
+    by_name = {d["description"]: d["amount"] for d in data["details"]}
+    insurance = next(v for k, v in by_name.items() if k.startswith("Insurance"))
+    refund = next(
+        v for k, v in by_name.items() if k.startswith("Advertising & Marketing")
+    )
+    assert Decimal(str(insurance)) == Decimal("620.00")
+    assert Decimal(str(refund)) == Decimal("-120.00")
+    # the stub's lines add up to the check amount
+    assert sum(Decimal(str(d["amount"])) for d in data["details"]) == Decimal("500.00")
+    assert Decimal(str(data["amount"])) == Decimal("500.00")
+    # and it renders: the refund prints with a minus sign
+    text = _pdf_text(client.get(f"/api/checks/print?transaction_id={e['id']}"))
+    assert "Insurance" in text and "620.00" in text
+    assert "Advertising & Marketing" in text and "-$120.00" in text
+    assert "500.00" in text
+
+
 def test_a_check_without_a_number_still_prints(client, seed_accounts):
     e = _entry(client, seed_accounts, check_number=None)
     r = client.get(f"/api/checks/print?transaction_id={e['id']}")

@@ -53,6 +53,13 @@ DEFAULT_SETTINGS = {
     "estimate_next_number": "1001",
     "invoice_notes": "Thank you for your business.",
     "invoice_footer": "",
+    # Giving statements (#415, nonprofit mode): the ministry's own footer on
+    # the year-end statement (its address, website, EIN, a verse) replaces the
+    # old product footer. Plain text with line breaks, escaped on the page;
+    # empty prints what printed before, minus the product name. The opening
+    # message is a saved giving-statement message (invoice_messages table), not
+    # a settings key. The IRS sentence is always printed and is not editable.
+    "giving_statement_footer": "",
     # Feature 10: Closing Date Enforcement
     "closing_date": "",
     "closing_date_password": "",

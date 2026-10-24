@@ -30,6 +30,7 @@ from app.database import get_db
 from app.routes._roles import require_admin
 from app.services.rate_limit import limiter
 from app.services.analytics import AnalyticsEngine
+from app.services.csv_export import _csv_safe as _shared_csv_safe
 from app.services.ai_service import (
     AIProviderError,
     CLOUDFLARE_ACCOUNT_ID_RE,
@@ -82,11 +83,9 @@ def _csv_safe(value: str) -> str:
     Spreadsheet apps (Excel, LibreOffice, Google Sheets) interpret cells that
     start with =, +, -, @, TAB, or CR as formulas. Prefixing with ' causes
     them to be treated as plain text without altering the displayed value.
+    Same rule as the shared CSV writer (a plain signed number is left alone).
     """
-    s = str(value)
-    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
-        return "'" + s
-    return s
+    return _shared_csv_safe(str(value))
 
 
 def _resolve_period(

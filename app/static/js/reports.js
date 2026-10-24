@@ -32,12 +32,14 @@ const ReportsPage = {
         'closing-date-exceptions': { label: 'Closing Date Exceptions', open: (p) => ReportsPage.closingDateExceptions(p) },
         'accountants-package':  { label: "Accountant's Package", open: (p) => ReportsPage.accountantsPackage(p) },
         'reclassify':           { label: 'Reclassify Transactions', open: (p) => ReportsPage.reclassify(p) },
+        'possible-duplicates':  { label: 'Possible Duplicates', open: (p) => ReportsPage.possibleDuplicates(p) },
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
         'budget-vs-actual':     { label: 'Budget vs Actual',   open: (p) => { if (/^\d{4}$/.test(p.year || '')) BudgetsPage._year = parseInt(p.year, 10); return BudgetsPage.showVariance(p); } },
         'financial-statements': { label: 'Financial Statements Pack', open: (p) => ReportsPage.financialStatementsPdf(p) },
         'fixed-asset-reconciliation': { label: 'Fixed Asset Reconciliation', open: () => ReportsPage.fixedAssetReconciliation() },
+        'reconciliation-reports': { label: 'Reconciliation Reports', open: () => ReportsPage.reconciliationReports() },
         'customer-statement':   { label: () => T('Customer Statement'), open: () => ReportsPage.customerStatementPicker() },
         '1099-summary':         { label: '1099 Summary',       open: (p) => ReportsPage.report1099(p) },
         'statement-of-financial-position': { label: 'Statement of Financial Position', open: (p) => ReportsPage.statementOfFinancialPosition(p), asOf: true },
@@ -336,36 +338,94 @@ const ReportsPage = {
             }
         } catch (e) { /* render anyway */ }
 
-        const card = ReportsPage._card;
+        // The pinned cards (#395): the preference report_center_pins, read
+        // beside the saved reports; none, or a failed read, is the fixed
+        // order. A name no view has (a nonprofit's, in a business) is left out.
+        ReportsPage._pins = [];
+        try {
+            const pref = await API.get('/preferences/report_center_pins');
+            const pinned = pref && pref.value && pref.value.pinned;
+            if (Array.isArray(pinned)) ReportsPage._pins = pinned.filter(v => typeof v === 'string' && ReportsPage._view(v));
+        } catch (e) { /* the fixed order */ }
+
         return `
             <div class="page-header"><h2>Reports</h2></div>
             ${savedHtml}
-            <div class="card-grid">
-                ${Terms.isNonprofit() ? ReportsPage._nonprofitCards() : card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))}
-                ${card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class'))}
-                ${card('profit-loss-unclassified', `${T('P&L')} Unclassified`, Terms.text('Income and expenses with no class yet — the end-of-month cleanup list'))}
-                ${card('job-budget-vs-actual', T('Job Budget vs Actual'), Terms.text('Budget, committed, actual, projected, variance per job'))}
-                ${card('job-profitability', T('Job Profitability'), Terms.text('Income, costs and margin per job'))}
-                ${card('profit-loss-by-job', `${T('P&L')} by ${T('Job')}`, Terms.text('Every account down the side, a column per job'))}
-                ${card('financial-statements', 'Financial Statements Pack (PDF)', Terms.text('Profit & Loss + Balance Sheet + Trial Balance, one audit-ready PDF'))}
-                ${card('fixed-asset-reconciliation', 'Fixed Asset Reconciliation', 'Register totals vs GL by asset type')}
-                ${Terms.isNonprofit() ? '' : card('balance-sheet', T('Balance Sheet'), Terms.text('Assets, liabilities, and equity'))}
-                ${card('ar-aging', T('A/R Aging'), 'Outstanding receivables by age')}
-                ${card('ap-aging', 'A/P Aging', 'Outstanding payables by age')}
-                ${card('sales-tax', 'Sales Tax', 'Tax collected by invoice')}
-                ${card('general-ledger', 'General Ledger', 'All journal entries by account')}
-                ${card('income-by-customer', T('Income by Customer'), Terms.isNonprofit() ? 'Contribution totals per donor' : 'Sales totals per customer')}
-                ${card('past-customers', Terms.text('Past customers'), Terms.text('Past customers: a mailing list by service address and last job date'))}
-                ${card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF'))}
-                ${card('trial-balance', 'Trial Balance', 'Debits and credits by account')}
-                ${card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each')}
-                ${card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after')}
-                ${card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log')}
-                ${card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change')}
-                ${card('cash-flow', 'Cash Flow', 'Operating, investing, financing')}
-                ${card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing')}
-                ${card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis')}
-            </div>`;
+            <div class="card-grid">${ReportsPage._cardGrid()}</div>`;
+    },
+
+    // The views pinned to the top of the grid, in the order they were pinned
+    // (render reads them; togglePin writes them).
+    _pins: [],
+
+    // The Report Center's cards in their fixed order, each as its view and
+    // its html (ReportsPage._pick): the nonprofit's own statements lead in
+    // place of the P&L and Balance Sheet.
+    _cards() {
+        const card = ReportsPage._pick;
+        return [
+            ...(Terms.isNonprofit() ? ReportsPage._nonprofitCards() : [card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))]),
+            card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class')),
+            card('profit-loss-unclassified', `${T('P&L')} Unclassified`, Terms.text('Income and expenses with no class yet — the end-of-month cleanup list')),
+            card('job-budget-vs-actual', T('Job Budget vs Actual'), Terms.text('Budget, committed, actual, projected, variance per job')),
+            card('job-profitability', T('Job Profitability'), Terms.text('Income, costs and margin per job')),
+            card('profit-loss-by-job', `${T('P&L')} by ${T('Job')}`, Terms.text('Every account down the side, a column per job')),
+            card('financial-statements', 'Financial Statements Pack (PDF)', Terms.text('Profit & Loss + Balance Sheet + Trial Balance, one audit-ready PDF')),
+            card('fixed-asset-reconciliation', 'Fixed Asset Reconciliation', 'Register totals vs GL by asset type'),
+            card('reconciliation-reports', 'Reconciliation Reports', 'Each completed bank reconciliation by account and statement date, on screen or as PDF'),
+            ...(Terms.isNonprofit() ? [] : [card('balance-sheet', T('Balance Sheet'), Terms.text('Assets, liabilities, and equity'))]),
+            card('ar-aging', T('A/R Aging'), 'Outstanding receivables by age'),
+            card('ap-aging', 'A/P Aging', 'Outstanding payables by age'),
+            card('sales-tax', 'Sales Tax', 'Tax collected by invoice'),
+            card('general-ledger', 'General Ledger', 'All journal entries by account'),
+            card('income-by-customer', T('Income by Customer'), Terms.isNonprofit() ? 'Contribution totals per donor' : 'Sales totals per customer'),
+            card('past-customers', Terms.text('Past customers'), Terms.text('Past customers: a mailing list by service address and last job date')),
+            card('customer-statement', T('Customer Statement'), Terms.text('Invoice/payment history PDF')),
+            card('trial-balance', 'Trial Balance', 'Debits and credits by account'),
+            card('adjusting-entries', 'Adjusting Journal Entries', 'The accountant\'s adjustments for a period, with who posted each'),
+            card('closing-date-exceptions', 'Closing Date Exceptions', 'Every change made into a closed period with the password, before and after'),
+            card('accountants-package', "Accountant's Package", 'One zip: statements, ledger, agings, reconciliations, adjustments, exceptions and the audit log'),
+            card('reclassify', 'Reclassify Transactions', 'Move many lines from one account to another, or onto a class, as one audited change'),
+            card('possible-duplicates', 'Possible Duplicates', 'Bank and card entries that look entered twice: same amount, same or similar payee, a few days apart'),
+            card('cash-flow', 'Cash Flow', 'Operating, investing, financing'),
+            card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
+            card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
+        ];
+    },
+
+    // A card and its view, for arranging; the html is ReportsPage._card's.
+    _pick(view, title, text) {
+        return { view, html: ReportsPage._card(view, title, text) };
+    },
+
+    // The grid: the pinned cards first, in the order they were pinned, then
+    // the rest in their fixed order (#395).
+    _cardGrid() {
+        const cards = ReportsPage._cards();
+        const pinned = ReportsPage._pins.map(v => cards.find(c => c.view === v)).filter(Boolean);
+        return [...pinned, ...cards.filter(c => !pinned.includes(c))].map(c => c.html).join('');
+    },
+
+    // Pin or unpin a card (#395): the list is saved as the preference
+    // report_center_pins ({ pinned: [view, …] }), the grid redrawn with
+    // focus back on the same star. A refused save (a read-only role: the
+    // star is data-write, hidden for one, and the server refuses the PUT)
+    // puts the list back and says so.
+    async togglePin(view) {
+        const was = ReportsPage._pins.slice();
+        ReportsPage._pins = was.includes(view) ? was.filter(v => v !== view) : [...was, view];
+        try {
+            await API.put('/preferences/report_center_pins', { value: { pinned: ReportsPage._pins } });
+        } catch (err) {
+            ReportsPage._pins = was;
+            toast(err.message, 'error');
+            return;
+        }
+        const grid = document.querySelector('#page-content .card-grid');
+        if (!grid) return;
+        grid.innerHTML = ReportsPage._cardGrid();
+        const star = grid.querySelector(`.card-pin[data-pin="${view}"]`);
+        if (star) star.focus();
     },
 
     // A report's card on the Report Center. The cards were a <div> with a
@@ -376,15 +436,24 @@ const ReportsPage = {
     // written (the heading's capitals are the stylesheet's, and reached the
     // name), the line under it its description; and its key, noted on its
     // click (ReportsPage._leaveFrom), puts focus back on it when Back
-    // returns here. It looks as the card did (.card-link).
+    // returns here. It looks as the card did (.card-link). Its pin (#395)
+    // is a star beside the link, not in it (a button in a link is neither):
+    // a toggle button, named for the card, pressed while pinned, reached by
+    // Tab after the card; the next Tab is the next card.
     _card(view, title, text) {
         const id = `report-card-${view}`;
-        return `<a class="card card-link" href="${ReportsPage.viewUrl(view, {})}" data-row-key="report:${view}"
+        const pinned = ReportsPage._pins.includes(view);
+        return `<div class="card-slot">
+                <a class="card card-link" href="${ReportsPage.viewUrl(view, {})}" data-row-key="report:${view}"
                     aria-label="${escapeHtml(title)}" aria-describedby="${id}-text"
                     onclick="ReportsPage._leaveFrom(this)" onkeydown="ReportsPage._cardKey(event)">
                     <div class="card-header">${title}</div>
                     <p id="${id}-text" style="font-size:13px; color:var(--gray-500);">${text}</p>
-                </a>`;
+                </a>
+                <button type="button" class="card-pin" data-write data-pin="${view}" aria-pressed="${pinned}"
+                    aria-label="Pin ${escapeHtml(title)}" title="${pinned ? 'Unpin' : 'Pin to the top'}"
+                    onclick="ReportsPage.togglePin('${view}')">${pinned ? '★' : '☆'}</button>
+            </div>`;
     },
 
     // Space on a card opens it, as Enter does (a link takes Enter alone).
@@ -1080,14 +1149,16 @@ const ReportsPage = {
             const cols = ReportsPage._cmpCols(prior, show);
             const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
                 item && prior ? drillCall(item, prior.start_date, prior.end_date) : null);
-            const section = (items) => {
-                if (!items.length) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
-                return items.map(i =>
-                    `<tr><td style="padding-left:24px;">
-                        <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                           onclick="${drillCall(i, range.start, range.end)}">${escapeHtml(i.account_label || i.account_name)}</a>
-                        </td>${figures(i.amount, i.prior_amount, i)}</tr>`
-                ).join("");
+            // Sub-accounts beneath their parents, a total per family (#416):
+            // the server's tree for the section, else its flat lines.
+            const section = (items, key) => {
+                const rows = (data.tree || {})[key];
+                if (!items.length && !(rows && rows.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+                return ReportsPage._treeRows(rows || items, {
+                    blank: '<td></td>'.repeat(cols - 1),
+                    cells: (r) => figures(r.amount, r.prior_amount, r.kind === 'total' ? null : r),
+                    call: (r) => drillCall(r, range.start, range.end),
+                });
             };
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, key, style) => `<tr style="${style}"><td>${label}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
@@ -1098,18 +1169,60 @@ const ReportsPage = {
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head(T('Income'))}
-                        ${section(data.income)}
-                        ${total(T('Total Income'), 'total_income', sub)}
+                        ${section(data.income, 'income')}
+                        ${total(T('Total Income'), 'total_operating_income', sub)}
                         ${head('Cost of Goods Sold')}
-                        ${section(data.cogs)}
-                        ${total('Gross Profit', 'gross_profit', sub)}
+                        ${section(data.cogs, 'cogs')}
+                        ${total('Gross Profit', 'operating_gross_profit', sub)}
                         ${head('Expenses')}
-                        ${section(data.expenses)}
-                        ${total('Total Expenses', 'total_expenses', sub)}
+                        ${section(data.expenses, 'expenses')}
+                        ${total('Total Expenses', 'total_operating_expenses', sub)}
+                        ${ReportsPage._plOther(data, head, section, (label, key) => total(label, key, sub))}
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+    },
+
+    // A statement section's rows, sub-accounts indented beneath their
+    // parents (#416): the server's tree rows (kind account / heading /
+    // direct / total, with a depth) or a flat list. `opts.cells(r)` writes
+    // a row's amount cells, `opts.call(r)` its drill-down onclick (escaped),
+    // `opts.blank` the empty cells of a heading. A family's total is not a
+    // link: it is several accounts.
+    _treeRows(rows, opts) {
+        return rows.map(r => {
+            const depth = r.depth || 0;
+            const pad = 24 + 18 * depth;
+            const label = escapeHtml(r.label || r.account_label || r.account_name);
+            const link = (text) => r.account_id && opts.call
+                ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${opts.call(r)}">${text}</a>`
+                : text;
+            if (r.kind === 'heading') {
+                return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${opts.blank}</tr>`;
+            }
+            if (r.kind === 'total') {
+                return `<tr class="pl-family-total" style="font-weight:600;"><td style="padding-left:${pad}px;">${label}</td>${opts.cells(r)}</tr>`;
+            }
+            const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+            return `<tr><td style="padding-left:${pad}px;">${link(text)}</td>${opts.cells(r)}</tr>`;
+        }).join('');
+    },
+
+    // Other Income / Other Expense below Net Operating Income (#390): only
+    // when either has a figure (the server's flags), so a section with just
+    // a $0 account prints no heading and a P&L without them reads as it did.
+    // `head`, `section` and `total` are the calling view's own row writers.
+    _plOther(data, head, section, total) {
+        if (!data.has_other) return '';
+        let html = total(T('Net Operating Income'), 'net_operating_income');
+        if (data.has_other_income) {
+            html += head(T('Other Income')) + section(data.other_income, 'other_income') + total(T('Total Other Income'), 'total_other_income');
+        }
+        if (data.has_other_expense) {
+            html += head('Other Expense') + section(data.other_expense, 'other_expense') + total('Total Other Expense', 'total_other_expense');
+        }
+        return html + total(T('Net Other Income'), 'net_other_income');
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -1180,23 +1293,34 @@ const ReportsPage = {
                 ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
                        onclick="${drillCall(i, asOf)}">${escapeHtml(i.account_label || i.account_name)}</a>`
                 : escapeHtml(i.account_name);
-            const section = (items) => items.map(i =>
-                `<tr><td style="padding-left:24px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
+            const section = (items, pad = 24) => items.map(i =>
+                `<tr><td style="padding-left:${pad}px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
             ).join("") || `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, cur, before, style) => `<tr style="${style}"><td>${label}</td>${figures(cur, before)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             const p = prior || {};
+            // Current / Fixed / Other Assets, Current / Long Term
+            // Liabilities (#390): the server hands the groups down ready-made.
+            const grouped = (side) => {
+                const groups = (data.groups || {})[side];
+                if (!groups) return section(data[side]);
+                if (!groups.length) return section([]);
+                return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td>${'<td></td>'.repeat(cols - 1)}</tr>`
+                    + section(g.lines, 36)
+                    + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td>${figures(data[g.total_key], p[g.total_key])}</tr>`
+                ).join('');
+            };
             return `${pdfBtn}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head('Assets')}
-                        ${section(data.assets)}
+                        ${grouped('assets')}
                         ${total('Total Assets', data.total_assets, p.total_assets, sub)}
                         ${head('Liabilities')}
-                        ${section(data.liabilities)}
+                        ${grouped('liabilities')}
                         ${total('Total Liabilities', data.total_liabilities, p.total_liabilities, sub)}
                         ${head(T('Equity'))}
                         ${section(data.equity)}
@@ -1528,6 +1652,9 @@ const ReportsPage = {
     async arAging(prefill) {
         await ReportsPage.openPeriodModal(T("Accounts Receivable Aging"), "this_year_to_date", async (_period, params) => {
             const data = await API.get(`/reports/ar-aging?as_of_date=${params.as_of_date}`);
+            // Save CSV writes the file the Accountant's Package carries (#393):
+            // the whole company, as the screen shows it.
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // The API nets a customer's credits (unapplied payments and
             // credit memos) into Current; show Current gross and the
             // credits on their own, so the row still adds up to Total and
@@ -1549,7 +1676,7 @@ const ReportsPage = {
             let rows = data.items.map(i => agingRow(i, name(i))).join("");
             const t = data.totals;
             rows += agingRow(t, 'TOTAL', 'font-weight:700; background:var(--gray-50);');
-            return `
+            return `${ReportsPage._exportButtons('ar-aging', csvQs, ['csv'])}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}</p>
                 <div style="margin-bottom:12px; display:flex; gap:8px;" data-write>
                     <button class="btn btn-sm btn-secondary" onclick="ReportsPage.applyLateFees()">Apply Late Fees</button>
@@ -1579,6 +1706,7 @@ const ReportsPage = {
     async apAging(prefill) {
         await ReportsPage.openPeriodModal("Accounts Payable Aging", "this_year_to_date", async (_period, params) => {
             const data = await API.get(`/reports/ap-aging?as_of_date=${params.as_of_date}`);
+            const csvQs = `as_of_date=${params.as_of_date}`;
             // A vendor's name opens the vendor's page (R9)
             let rows = data.items.map(i =>
                 `<tr>
@@ -1599,7 +1727,7 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(t.over_90)}</td>
                 <td class="amount">${formatCurrency(t.total)}</td>
             </tr>`;
-            return `
+            return `${ReportsPage._exportButtons('ap-aging', csvQs, ['csv'])}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}</p>
                 <div class="table-container"><table>
                     <thead><tr>
@@ -1733,29 +1861,40 @@ const ReportsPage = {
         const p = prefill || {};
         const params = {};
         if (/^\d+$/.test(p.account_id || '')) params.account_id = p.account_id;
+        // one payee's lines (#394): the vendor, and a free-text payee, ride
+        // on the address like the account
+        if (/^\d+$/.test(p.vendor_id || '')) params.vendor_id = p.vendor_id;
+        if (p.payee) params.payee = p.payee;
         ReportsPage._rc = { lists: null, lines: [], ticked: new Set(), plan: null, range: null };
         await ReportsPage.openPeriodModal('Reclassify Transactions', 'this_year_to_date', async (_period, range, prm) => {
             const rc = ReportsPage._rc;
             rc.range = range;
             rc.plan = null;
             if (!rc.lists) {
-                const [accounts, classes] = await Promise.all([
+                const [accounts, classes, vendors] = await Promise.all([
                     API.get('/accounts').catch(() => []),
                     API.get('/classes').catch(() => []),
+                    API.get('/vendors').catch(() => []),
                 ]);
-                rc.lists = { accounts, classes };
+                rc.lists = { accounts, classes, vendors };
             }
             const accountId = String(prm.account_id || '');
+            const vendorId = String(prm.vendor_id || '');
+            const payeeText = String(prm.payee || '');
             const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`;
             const picker = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
                     <label for="rc-account" style="font-size:11px;">Lines on</label>
                     <select id="rc-account" data-no-search style="max-width:300px;" onchange="ReportsPage.setParam('account_id', this.value)"><option value="">Choose an account…</option>${rc.lists.accounts.map(a => acctOpt(a, accountId)).join('')}</select>
+                    <label for="rc-vendor" style="font-size:11px;">Vendor</label>
+                    <select id="rc-vendor" data-no-search style="max-width:260px;" onchange="ReportsPage.setParam('vendor_id', this.value)"><option value="">All payees</option>${rc.lists.vendors.map(v => `<option value="${v.id}"${String(v.id) === vendorId ? ' selected' : ''}>${escapeHtml(v.name)}${v.is_active === false ? ' (inactive)' : ''}</option>`).join('')}</select>
+                    <label for="rc-payee" style="font-size:11px;">Payee</label>
+                    <input type="text" id="rc-payee" placeholder="any part of the payee" style="max-width:220px;" value="${escapeHtml(payeeText)}" onchange="ReportsPage.setParam('payee', this.value.trim())">
                 </div>`;
             if (!accountId) {
                 rc.lines = [];
                 return `${picker}<p style="color:var(--gray-500);">Pick the account the lines are parked on: a holding account, or one chosen by mistake. Tick the lines to move, choose where they belong, preview the move, then post it as one change. Every moved line is listed in the result and in the audit log.</p>`;
             }
-            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}`);
+            const data = await API.get(`/reclassify/lines?account_id=${accountId}&start_date=${range.start}&end_date=${range.end}${vendorId ? `&vendor_id=${vendorId}` : ''}${payeeText ? `&payee=${encodeURIComponent(payeeText)}` : ''}`);
             rc.lines = data.lines;
             const listed = new Set(data.lines.map(l => l.id));
             rc.ticked.forEach(id => { if (!listed.has(id)) rc.ticked.delete(id); });
@@ -1771,6 +1910,7 @@ const ReportsPage = {
                         <td style="width:28px;">${tick}</td>
                         <td>${formatDate(l.date)}</td>
                         <td>${what}</td>
+                        <td>${escapeHtml(l.payee || '')}</td>
                         <td>${escapeHtml(l.description || '')}${l.movable ? '' : ` <span style="font-size:11px;">(stays: ${escapeHtml(l.reason)})</span>`}</td>
                         <td>${escapeHtml(l.class_name || '')}</td>
                         <td class="amount">${formatCurrency(l.amount)}</td>
@@ -1778,13 +1918,13 @@ const ReportsPage = {
             }).join('');
             const targets = rc.lists.accounts.filter(a => a.is_active !== false && !a.bank_kind && !a.is_control && String(a.id) !== accountId);
             const classOpts = rc.lists.classes.filter(c => !c.is_archived).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-            const empty = `<tr><td colspan="6" style="text-align:center; color:var(--gray-400);">No lines on ${escapeHtml(data.account.label)} in this period</td></tr>`;
+            const empty = `<tr><td colspan="7" style="text-align:center; color:var(--gray-400);">No lines${data.vendor ? ` for ${escapeHtml(data.vendor.name)}` : ''} on ${escapeHtml(data.account.label)} in this period</td></tr>`;
             return `${picker}
                 <p style="margin-bottom:8px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'line' : 'lines'}, ${data.movable} can move${data.count ? ` · lines that can move total ${formatCurrency(data.movable_total)}` : ''}</p>
                 <div class="table-container"><table id="rc-table">
                     <thead><tr>
                         <th scope="col" style="width:28px;">${data.movable ? `<input type="checkbox" id="rc-all" data-write aria-label="Tick every line that can move" onchange="ReportsPage.rcTickAll(this.checked)">` : ''}</th>
-                        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
+                        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Amount</th>
                     </tr></thead>
                     <tbody>${rows || empty}</tbody>
                 </table></div>
@@ -2106,13 +2246,28 @@ ReportsPage._grid = { current: -1, count: 0, names: [] };
 // → call for an amount, head(col) → call for a heading, sum(col, key) →
 // call for a subtotal cell (or null), note (html above the table),
 // totalLabel }
+// The grid's Total column, by the column keys the rows read (#390: the
+// Other Income / Other Expense rows the P&L has).
+ReportsPage._gridTotals = function (data) {
+    return {
+        income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit,
+        operating_gross_profit: data.total_operating_gross_profit,
+        expenses: data.total_expenses, net_operating_income: data.total_net_operating_income,
+        operating_income: data.total_operating_income, operating_expenses: data.total_operating_expenses,
+        other_income: data.total_other_income, other_expense: data.total_other_expense,
+        net_other_income: data.total_net_other_income, net_income: data.total_net_income,
+    };
+};
+
 ReportsPage._pivotGrid = function (spec) {
     const cols = spec.columns;
     const n = cols.length;
     const totals = spec.totals;
     const link = (call, text) => `<a href="javascript:void(0)" class="grid-link" style="color:var(--text-link); text-decoration:none;" onclick="${escapeHtml(call)}">${text}</a>`;
     const empties = cols.map((_, i) => `<td data-col="${i}"></td>`).join('') + '<td></td>';
-    const label = a => `${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.account_name)}`;
+    // the number and full path, as the P&L flat list prints a line (#416);
+    // a row without the label (an older reply) still reads number - name
+    const label = a => escapeHtml(a.account_label || `${a.account_number ? a.account_number + ' - ' : ''}${a.account_name}`);
     const cell = (a, i) => {
         const amount = a.amounts[i];
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;
@@ -2148,11 +2303,15 @@ ReportsPage._pivotGrid = function (spec) {
                 <thead><tr><th scope="col">Account</th>${heads}<th scope="col" class="amount">${escapeHtml(spec.totalLabel || 'Total')}</th></tr></thead>
                 <tbody>
                     ${section(T('Income'), spec.accounts.income)}
-                    ${sum(T('Total Income'), 'income', subtotal)}
+                    ${sum(T('Total Income'), 'operating_income', subtotal)}
                     ${section('Cost of Goods Sold', spec.accounts.cogs)}
-                    ${sum('Gross Profit', 'gross_profit', subtotal)}
+                    ${sum('Gross Profit', 'operating_gross_profit', subtotal)}
                     ${section('Expenses', spec.accounts.expenses)}
-                    ${sum('Total Expenses', 'expenses', subtotal)}
+                    ${sum('Total Expenses', 'operating_expenses', subtotal)}
+                    ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
+                        + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income) + sum(T('Total Other Income'), 'other_income', subtotal) : '')
+                        + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense) + sum('Total Other Expense', 'other_expense', subtotal) : '')
+                        + sum(T('Net Other Income'), 'net_other_income', subtotal) : ''}
                     ${sum(T('Net Income'), 'net_income', 'font-weight:700; background:var(--primary-light);')}
                 </tbody>
             </table>
@@ -2412,10 +2571,10 @@ ReportsPage.profitLossByClass = async function (prefill) {
                 kind: 'class',
                 columns: columns.map(c => ({ ...c, id: c.class_id, name: c.archived ? `${c.class_name} (archived)` : c.class_name })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('classes')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
                 head: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
                 sum: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
             })}`;
@@ -2464,10 +2623,10 @@ ReportsPage.profitLossByJob = async function (prefill) {
                 kind: 'job',
                 columns: columns.map(c => ({ ...c, id: jobKey(c), name: `${jobKey(c) ? jobLabel(c.job_name, c.customer_name) : c.job_name}${c.inactive ? ' (inactive)' : ''}` })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('jobs')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
                 head: (c) => c.job_id ? `ReportsPage._leaveFrom(this);App.navigate(${JSON.stringify(jobUrl(c))})` : null,
             })}`;
     }, "Dates", false, { reportType: 'profit_loss_by_job', view: 'profit-loss-by-job', params, prefill, toolbar, wide: true, afterRender: () => ReportsPage._gridFit() });
@@ -2542,12 +2701,16 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
         const where = $('#class-pl-where');
         if (where) where.textContent = at >= 0 ? `${data.class_name}: ${at + 1} of ${order.length}` : `${data.class_name}: nothing in this period`;
         const args = (...xs) => xs.map(x => JSON.stringify(x)).join(',');
-        const section = items => items.length
-            ? items.map(i => {
-                const call = escapeHtml(`ReportsPage.openDrillDown(${args(i.account_id, i.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`);
-                return `<tr><td style="padding-left:24px;"><a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${call}">${escapeHtml(i.account_name)}</a></td><td class="amount">${formatCurrency(i.amount)}</td></tr>`;
-            }).join('')
-            : '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+        // sub-accounts beneath their parents, as on the P&L (#416)
+        const section = (items, key) => {
+            const rows = (data.tree || {})[key];
+            if (!items.length && !(rows && rows.length)) return '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+            return ReportsPage._treeRows(rows || items, {
+                blank: '<td></td>',
+                cells: (r) => `<td class="amount">${formatCurrency(r.amount)}</td>`,
+                call: (r) => escapeHtml(`ReportsPage.openDrillDown(${args(r.account_id, r.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`),
+            });
+        };
         const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${formatCurrency(amount)}</td></tr>`;
         return `<div id="class-pl-body">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -2559,14 +2722,15 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
                     <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
-                    ${section(data.income)}
-                    ${subtotal(T('Total Income'), data.total_income)}
+                    ${section(data.income, 'income')}
+                    ${subtotal(T('Total Income'), data.total_operating_income)}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
-                    ${section(data.cogs)}
-                    ${subtotal('Gross Profit', data.gross_profit)}
+                    ${section(data.cogs, 'cogs')}
+                    ${subtotal('Gross Profit', data.operating_gross_profit)}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
-                    ${section(data.expenses)}
-                    ${subtotal('Total Expenses', data.total_expenses)}
+                    ${section(data.expenses, 'expenses')}
+                    ${subtotal('Total Expenses', data.total_operating_expenses)}
+                    ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                 </tbody>
             </table></div></div>`;
@@ -2649,6 +2813,34 @@ ReportsPage.fixedAssetReconciliation = async function () {
             Compare against the mapped fixed-asset and accumulated-depreciation
             GL accounts — differences mean unposted acquisitions or manual GL edits.
         </div>`);
+};
+
+// Reconciliation Reports (#395): every completed bank reconciliation, by
+// account and statement date, each to its on-screen report (Banking's) or
+// its PDF. Nothing is made here: a list over GET /banking/reconciliations.
+ReportsPage.reconciliationReports = async function () {
+    ReportsPage.setAddress('reconciliation-reports', {});
+    const rows = await API.get('/banking/reconciliations?status=completed');
+    rows.sort((a, b) => (a.account_name || '').localeCompare(b.account_name || '')
+        || String(b.statement_date).localeCompare(String(a.statement_date)));
+    const body = rows.length ? `<div class="table-container"><table>
+        <thead><tr><th scope="col">Account</th><th scope="col">Statement date</th>
+            <th scope="col" class="amount">Statement balance</th><th scope="col" class="amount">Cleared</th>
+            <th scope="col">Completed</th><th scope="col">Actions</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+            <td>${escapeHtml(r.account_name || '')}</td>
+            <td>${formatDate(r.statement_date)}</td>
+            <td class="amount">${formatCurrency(r.statement_balance)}</td>
+            <td class="amount">${r.cleared_total === null ? '' : formatCurrency(r.cleared_total)}</td>
+            <td>${r.completed_at ? formatDate(r.completed_at) : ''}</td>
+            <td class="actions" style="white-space:nowrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.showReconReport(${r.id}, ReportsPage.reconciliationReports)">View</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="window.open('/api/banking/reconciliations/${r.id}/pdf', '_blank')">Save PDF</button>
+            </td>
+        </tr>`).join('')}</tbody></table></div>`
+        : '<p>No completed reconciliations yet. Finish one from Banking → Reconcile and it is listed here.</p>';
+    openModal('Reconciliation Reports', `${body}
+        <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button></div>`);
 };
 
 // Financial statements pack — one PDF with P&L, Balance Sheet, Trial Balance.
@@ -2773,14 +2965,15 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
 // P&L / balance sheet (the server computes both from the same lines).
 // ---------------------------------------------------------------------------
 ReportsPage._nonprofitCards = function () {
-    const card = ReportsPage._card;
-    return `
-        ${card('statement-of-activities', 'Statement of Activities', 'Revenue, releases and expenses, with and without donor restrictions')}
-        ${card('statement-of-financial-position', 'Statement of Financial Position', 'Assets, liabilities, and net assets by restriction')}
-        ${card('fund-balances', 'Fund Balances', 'Each restricted fund: beginning, contributions, spent, released, ending')}
-        ${card('functional-expenses', 'Statement of Functional Expenses', 'Program / management / fundraising by expense account (Form 990 Part IX)')}
-        ${card('pledges', 'Pledge Report', 'Promised, received, written off and outstanding by donor and campaign')}
-        ${card('giving-statements', 'Year-End Giving Statements', 'One statement per donor for the tax year — print the stack or email them all')}`;
+    const card = ReportsPage._pick;
+    return [
+        card('statement-of-activities', 'Statement of Activities', 'Revenue, releases and expenses, with and without donor restrictions'),
+        card('statement-of-financial-position', 'Statement of Financial Position', 'Assets, liabilities, and net assets by restriction'),
+        card('fund-balances', 'Fund Balances', 'Each restricted fund: beginning, contributions, spent, released, ending'),
+        card('functional-expenses', 'Statement of Functional Expenses', 'Program / management / fundraising by expense account (Form 990 Part IX)'),
+        card('pledges', 'Pledge Report', 'Promised, received, written off and outstanding by donor and campaign'),
+        card('giving-statements', 'Year-End Giving Statements', 'One statement per donor for the tax year — print the stack or email them all'),
+    ];
 };
 
 ReportsPage.givingStatements = function (prefill) {
@@ -2833,10 +3026,110 @@ ReportsPage.pledges = async function (prefill) {
     }, "Dates", false, { reportType: 'pledges', view: 'pledges', prefill });
 };
 
-ReportsPage._exportButtons = function (path, qs) {
+// Possible Duplicates (#414): one bank or card account's entries with the
+// same amount on the same side and the same or a similar payee a few days
+// apart, grouped. Each entry opens, or voids through its own void route
+// (the report names it: void_path), so a reconciled entry and the closing
+// date follow the usual rules; "Not a duplicate" keeps a group off the
+// report for good. Nothing is voided or hidden by the report itself.
+ReportsPage._DUP_SOURCE = { imported: 'Imported', keyed: 'Keyed', migrated: 'Migrated' };
+ReportsPage.possibleDuplicates = async function (prefill) {
+    const p = prefill || {};
+    let accounts = [];
+    try { accounts = await API.get('/accounts?bank=1'); } catch (e) { accounts = []; }
+    const params = {
+        account_id: p.account_id || (accounts.length ? String(accounts[0].id) : ''),
+        include_dismissed: ['1', 'true'].includes(String(p.include_dismissed)) ? '1' : '',
+    };
+    const label = (a) => `${a.account_number ? a.account_number + ' - ' : ''}${a.name}`;
+    const options = accounts.map(a => `<option value="${a.id}" ${String(a.id) === String(params.account_id) ? 'selected' : ''}>${escapeHtml(label(a))}</option>`).join('');
+    const box = 'font-weight:normal; text-transform:none; font-size:12px; display:inline-flex; gap:6px; align-items:center;';
+    const toolbar = `
+        <div class="form-group"><label for="dup-account">Account</label>
+            <select id="dup-account" data-no-search onchange="ReportsPage.setParam('account_id', this.value)">${options}</select></div>
+        <div class="form-group" style="justify-content:flex-end;">
+            <label style="${box}"><input type="checkbox" id="dup-show-dismissed" ${params.include_dismissed ? 'checked' : ''}
+                onchange="ReportsPage.setParam('include_dismissed', this.checked ? '1' : '')"> Show groups marked not a duplicate</label></div>`;
+    await ReportsPage.openPeriodModal("Possible Duplicates", "this_year_to_date", async (_period, range, prm) => {
+        if (!prm.account_id) return '<div class="empty-state"><p>There is no bank or credit-card account.</p></div>';
+        const qs = `account_id=${encodeURIComponent(prm.account_id)}&start_date=${range.start}&end_date=${range.end}${prm.include_dismissed ? '&include_dismissed=true' : ''}`;
+        const data = await API.get(`/reports/possible-duplicates?${qs}`);
+        const groups = data.groups.map((g, n) => {
+            const action = g.dismissed
+                ? `<button class="btn btn-sm btn-secondary" onclick="ReportsPage.restoreDuplicate(${g.dismissal_id})">Put back</button>`
+                : `<button class="btn btn-sm btn-secondary" data-dup-key="${escapeHtml(g.key)}" onclick="ReportsPage.dismissDuplicate(${data.account.id}, this.dataset.dupKey)">Not a duplicate</button>`;
+            const head = `<tr class="dup-group" data-dup-group="${escapeHtml(g.key)}" style="font-weight:600; background:var(--gray-50);">
+                <td colspan="7">Group ${n + 1} · ${escapeHtml(g.side_label)} ${formatCurrency(g.amount)} · ${g.entries.length} entries${g.any_reconciled ? ' · a reconciled entry' : ''}${g.dismissed ? ` · marked not a duplicate${g.dismissed_by ? ` by ${escapeHtml(g.dismissed_by)}` : ''}` : ''}</td>
+                <td style="text-align:right; white-space:nowrap;">${action}</td></tr>`;
+            const lines = g.entries.map(e => {
+                const voidCall = escapeHtml(`ReportsPage.voidDuplicate(${JSON.stringify(e.void_path)})`);
+                return `<tr data-dup-entry="${e.transaction_id}">
+                    <td>${formatDate(e.date)}</td>
+                    <td>${escapeHtml(e.reference || '')}</td>
+                    <td>${escapeHtml(e.payee || '')}</td>
+                    <td>${escapeHtml(e.memo || '')}</td>
+                    <td>${escapeHtml(ReportsPage._DUP_SOURCE[e.source] || e.source)} <span style="color:var(--gray-500);">· ${escapeHtml(sourceWord(e.source_type || 'journal'))}</span></td>
+                    <td>${e.reconciled ? 'Reconciled' : (e.cleared ? 'Cleared' : '')}</td>
+                    <td class="amount">${formatCurrency(g.amount)}</td>
+                    <td style="text-align:right; white-space:nowrap;">
+                        <a class="btn btn-sm btn-secondary" href="${escapeHtml(e.link)}" data-row-key="dup:${e.transaction_id}" onclick="ReportsPage._leaveFrom(this)">Open</a>
+                        ${e.voidable ? `<button data-destructive class="btn btn-sm btn-secondary" onclick="${voidCall}">Void</button>` : ''}</td>
+                </tr>`;
+            }).join('');
+            return head + lines;
+        }).join('');
+        // The count is the groups still open; the marked ones are counted
+        // apart, shown or not, so the line never reads "0 groups" above a
+        // marked group the box is showing (2.27.0 gate, W-32, #458).
+        const hidden = !data.dismissed_count ? ''
+            : data.include_dismissed
+                ? ` · ${data.dismissed_count} marked not a duplicate (shown)`
+                : ` · ${data.dismissed_count} marked not a duplicate, not shown`;
+        return `${ReportsPage._exportButtons('possible-duplicates', qs)}
+            <p style="margin-bottom:12px; color:var(--gray-500);">${escapeHtml(data.account.number || '')} ${escapeHtml(data.account.name)} · ${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'group' : 'groups'}${hidden}</p>
+            <p style="margin-bottom:12px; font-size:12px; color:var(--gray-500);">Entries with the same amount on the same side and the same or a similar payee, at most ${data.window_days} days apart. Nothing here is voided unless you void it.</p>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Date</th><th scope="col">Num</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">Source</th><th scope="col">Reconciled</th><th scope="col" class="amount">Amount</th><th scope="col"></th></tr></thead>
+                <tbody>${groups || '<tr><td colspan="8" style="text-align:center; color:var(--gray-400);">No possible duplicates on this account in this period</td></tr>'}</tbody>
+            </table></div>`;
+    }, "Dates", false, { reportType: 'possible_duplicates', view: 'possible-duplicates', params, toolbar, wide: true, spotlight: false, prefill: p });
+};
+
+ReportsPage.voidDuplicate = async function (path) {
+    if (!confirm('Void this entry? A reversing entry is posted; the original stays in the ledger.')) return;
+    try {
+        await API.post(path);
+        toast('Voided');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+ReportsPage.dismissDuplicate = async function (accountId, key) {
+    try {
+        await API.post('/reports/possible-duplicates/dismiss', {
+            account_id: accountId, transaction_ids: String(key).split(',').map(Number),
+        });
+        toast('Marked not a duplicate');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+ReportsPage.restoreDuplicate = async function (id) {
+    try {
+        await API.del(`/reports/possible-duplicates/dismissals/${id}`);
+        toast('Put back on the report');
+        ReportsPage.refresh();
+    } catch (err) { toast(err.message, 'error'); }
+};
+
+// Save PDF and Save CSV for a report with both routes; a report with only
+// a CSV (the agings, #393) passes kinds = ['csv'].
+ReportsPage._exportButtons = function (path, qs, kinds = ['pdf', 'csv']) {
+    const pdf = kinds.includes('pdf') ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/pdf?${qs}','_blank')">Save PDF</button>` : '';
+    const csv = kinds.includes('csv') ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/csv?${qs}','_blank')">Save CSV</button>` : '';
     return `<div style="text-align:right; margin-bottom:6px; margin-left:auto;">
-        <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/pdf?${qs}','_blank')">Save PDF</button>
-        <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${path}/csv?${qs}','_blank')">Save CSV</button>
+        ${pdf}
+        ${csv}
     </div>`;
 };
 
@@ -2928,7 +3221,18 @@ ReportsPage.statementOfActivities = async function (prefill) {
         const pt = cmp && d.prior ? d.prior.totals : {};
         const cols = cmp ? 6 : 4;
         const line = (label, w, r, tot, prior, style = '') => `<tr style="${style}"><td>${label}</td><td class="amount">${formatCurrency(w)}</td><td class="amount">${formatCurrency(r)}</td><td class="amount">${formatCurrency(tot)}</td>${cmp ? `<td class="amount">${formatCurrency(prior || 0)}</td><td class="amount">${formatCurrency((tot || 0) - (prior || 0))}</td>` : ''}</tr>`;
-        const rows = (items) => items.length ? items.map(i => line(`<span style="padding-left:24px">${escapeHtml(i.account_name)}</span>`, i.without, i.with, i.total, i.prior_total)).join('') : `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+        // sub-accounts beneath their parents, a total per family (#416)
+        const rows = (items, key) => {
+            const tree = (d.tree || {})[key];
+            if (!items.length && !(tree && tree.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+            return (tree || items).map(r => {
+                const pad = 24 + 18 * (r.depth || 0);
+                const label = escapeHtml(r.label || r.account_name);
+                if (r.kind === 'heading') return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${'<td></td>'.repeat(cols - 1)}</tr>`;
+                const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+                return line(`<span style="padding-left:${pad}px; display:inline-block;">${text}</span>`, r.without, key === 'expenses' ? 0 : r.with, r.total, r.prior_total, r.kind === 'total' ? 'font-weight:600;' : '');
+            }).join('');
+        };
         const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
         return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">${ReportsPage.compareToggleHtml('statement_of_activities')}${ReportsPage._exportButtons('statement-of-activities', qs)}</div>
             <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}</p>
@@ -2936,11 +3240,11 @@ ReportsPage.statementOfActivities = async function (prefill) {
                 <thead><tr><th scope="col"></th><th scope="col" class="amount">Without Donor Restrictions</th><th scope="col" class="amount">With Donor Restrictions</th><th scope="col" class="amount">Total</th>${cmp ? '<th scope="col" class="amount">Prior year</th><th scope="col" class="amount">Change</th>' : ''}</tr></thead>
                 <tbody>
                     ${head('Revenue &amp; Support')}
-                    ${rows(d.revenue)}
+                    ${rows(d.revenue, 'revenue')}
                     ${line('Total Revenue &amp; Support', t.revenue_without, t.revenue_with, t.revenue, pt.revenue, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Net assets released from restrictions', d.releases.without, d.releases.with, 0, 0)}
                     ${head('Expenses')}
-                    ${rows(d.expenses)}
+                    ${rows(d.expenses, 'expenses')}
                     ${line('Total Expenses', t.expenses, 0, t.expenses, pt.expenses, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Change in Net Assets', t.change_without, t.change_with, t.change_total, pt.change_total, 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                 </tbody>
@@ -2953,17 +3257,25 @@ ReportsPage.statementOfFinancialPosition = async function (prefill) {
         const qs = `as_of_date=${params.as_of_date}`;
         const d = await API.get(`/reports/statement-of-financial-position?${qs}`);
         const drillCall = (i) => escapeHtml(`ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'statement-of-financial-position')`);
-        const section = (items) => items.map(i => `<tr><td style="padding-left:24px;">
+        const section = (items, pad = 24) => items.map(i => `<tr><td style="padding-left:${pad}px;">
                 ${i.account_id ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${drillCall(i)}">${escapeHtml(i.account_name)}</a>` : escapeHtml(i.account_name)}
                 </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`).join('') || `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
         const sub = (label, v) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${label}</td><td class="amount">${formatCurrency(v)}</td></tr>`;
+        // Current / Fixed / Other Assets, Current / Long Term Liabilities (#390)
+        const grouped = (side) => {
+            const groups = (d.groups || {})[side];
+            if (!groups || !groups.length) return section(d[side]);
+            return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td><td></td></tr>`
+                + section(g.lines, 36)
+                + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td><td class="amount">${formatCurrency(d[g.total_key])}</td></tr>`).join('');
+        };
         return `${ReportsPage._exportButtons('statement-of-financial-position', qs)}
             <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(d.as_of_date)}</p>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
-                    <tr><td><strong>Assets</strong></td><td></td></tr>${section(d.assets)}${sub('Total Assets', d.total_assets)}
-                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${section(d.liabilities)}${sub('Total Liabilities', d.total_liabilities)}
+                    <tr><td><strong>Assets</strong></td><td></td></tr>${grouped('assets')}${sub('Total Assets', d.total_assets)}
+                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${grouped('liabilities')}${sub('Total Liabilities', d.total_liabilities)}
                     <tr><td><strong>Net Assets</strong></td><td></td></tr>${section(d.net_assets)}
                     ${sub('Net Assets Without Donor Restrictions', d.net_assets_without)}
                     ${sub('Net Assets With Donor Restrictions', d.net_assets_with)}

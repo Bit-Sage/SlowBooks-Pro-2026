@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType, detail_label
 from app.models.classes import TxnClass
 from app.models.contacts import Customer, Vendor
 from app.models.items import Item, ItemType
@@ -29,7 +29,12 @@ from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.transactions import Transaction
 from app.services.csv_export import strip_formula_guard
-from app.services.iif_common import IIF_TO_ACCOUNT_TYPE, IIF_TO_ITEM_TYPE
+from app.services.iif_common import (
+    IIF_SKIPPED_TYPES,
+    IIF_TO_ACCOUNT_TYPE,
+    IIF_TO_DETAIL_TYPE,
+    IIF_TO_ITEM_TYPE,
+)
 from app.services.jobs_service import (
     find_customer,
     find_job,
@@ -496,6 +501,8 @@ def import_accounts(db: Session, rows: list) -> dict:
     not_again = 0
     unposted: list[str] = []
     merged: list[str] = []
+    skipped_nonposting: list[str] = []
+    kept_detail: list[str] = []
 
     for i, row in enumerate(rows):
         sp = db.begin_nested()  # savepoint — isolate per-row failures
@@ -507,6 +514,15 @@ def import_accounts(db: Session, rows: list) -> dict:
                 continue
 
             iif_type = row.get("ACCNTTYPE", "").strip().upper()
+            if iif_type in IIF_SKIPPED_TYPES:
+                # Estimates and purchase orders: no ledger account here, and
+                # one made an asset would go back out as a posting account
+                skipped_nonposting.append(full_name)
+                sp.rollback()
+                continue
+            # The detail type is QuickBooks' type; the base type follows
+            # from it (#390). Unknown types stay Expense, as before.
+            detail = IIF_TO_DETAIL_TYPE.get(iif_type, DetailType.EXPENSE)
             acct_type = IIF_TO_ACCOUNT_TYPE.get(iif_type, AccountType.EXPENSE)
             acct_num = row.get("ACCNUM", "").strip() or None
 
@@ -556,6 +572,15 @@ def import_accounts(db: Session, rows: list) -> dict:
 
             if existing:
                 sp.rollback()
+                # The chart's detail type is the user's: an import never
+                # changes it, and says where the file's differs
+                if iif_type in IIF_TO_DETAIL_TYPE and existing.detail_type != (
+                    detail.value
+                ):
+                    kept_detail.append(
+                        f"'{full_name}' is {detail_label(detail)} in the file and "
+                        f"{detail_label(existing.detail_type)} in the chart"
+                    )
                 if obamount != 0:
                     if opened_before:
                         not_again += 1
@@ -595,9 +620,17 @@ def import_accounts(db: Session, rows: list) -> dict:
                 # so Banking lists them (they came in as plain assets and
                 # liabilities: 2.23.4 gate, W-4)
                 bank_kind={"BANK": "bank", "CCARD": "credit_card"}.get(iif_type),
+                detail_type=detail,
             )
             db.add(acct)
             db.flush()
+            if acct.detail_type != detail.value:
+                # AR / AP away from 1100 / 2000, or a sub-account that takes
+                # its parent's: the model settled it (Account._settle_...)
+                kept_detail.append(
+                    f"'{full_name}' is {detail_label(detail)} in the file and came "
+                    f"in as {detail_label(acct.detail_type)}"
+                )
             if obamount != 0:
                 if opened_before:
                     unposted.append(
@@ -619,6 +652,17 @@ def import_accounts(db: Session, rows: list) -> dict:
     # 2.23.4 gate, W-6)
     if merged:
         warnings.append("Matched to the chart by a name it knows: " + "; ".join(merged))
+    if skipped_nonposting:
+        warnings.append(
+            "Non-posting accounts (QuickBooks keeps estimates and purchase orders "
+            "in them) are not ledger accounts here and were skipped: "
+            + "; ".join(skipped_nonposting)
+        )
+    if kept_detail:
+        warnings.append(
+            "Detail types differ (the chart's are kept; change one on the Chart of "
+            "Accounts page): " + "; ".join(kept_detail)
+        )
     if opened_before and (not_again or unposted):
         text = (
             "This company's opening balances came with an earlier import of the "
@@ -2211,7 +2255,12 @@ def validate_iif(content: str) -> dict:
             report["errors"].append(f"Account row {i + 1}: missing NAME")
             report["valid"] = False
         atype = row.get("ACCNTTYPE", "").strip().upper()
-        if atype and atype not in IIF_TO_ACCOUNT_TYPE:
+        if atype in IIF_SKIPPED_TYPES:
+            report["warnings"].append(
+                f"Account '{name}': non-posting (estimates, purchase orders), "
+                f"will be skipped"
+            )
+        elif atype and atype not in IIF_TO_ACCOUNT_TYPE:
             report["warnings"].append(
                 f"Account '{name}': unrecognized type '{atype}' (will default to Expense)"
             )
