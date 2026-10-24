@@ -14,8 +14,8 @@
  *       change handler; true when it took the change ("+ Add item"), so the
  *       page stops there. onPicked() runs after a quick-added item is
  *       selected. side is 'purchase' on a bill, purchase order or vendor
- *       credit: the form then asks what the item costs and the expense or
- *       COGS account it is recorded in, not a price and an income account.
+ *       credit: the form then asks what the item costs and the cost of goods
+ *       account it is recorded in, not a price and an income account.
  *   itemId(selectEl)   the line's item_id for the save: a number or null
  *
  * "+ Add item" opens only when it is chosen: arrowed to and taken, or
@@ -31,10 +31,13 @@ const ItemQuickAdd = {
     // a chart without one leaves the account blank, and the posting falls
     // back to 4000 as it does for any item without one.
     INCOME_BY_TYPE: { service: '4000', product: '4100', material: '4200', labor: '4300' },
-    // On a purchase line, the seeded chart's cost account for each type:
-    // what the item's expense_account_id is, as the Items form's "Expense or
-    // COGS Account" (a stock item's purchases go to Inventory; this is the
-    // COGS its sales post).
+    // On a purchase line, the seeded chart's cost of goods account for each
+    // type: what the item's expense_account_id is (a stock item's purchases
+    // go to Inventory; this is the COGS its sales post). An item bought for a
+    // job or for resale is a cost of goods, never an operating expense, so
+    // the form offers only COGS accounts; any of them can be picked (a
+    // company's own 5020 or 5040, say). A chart without the seeded number
+    // starts on its first COGS account.
     COST_BY_TYPE: { service: '5300', product: '5000', material: '5100', labor: '5200' },
     STOCK_TYPES: ['product', 'material'],
 
@@ -98,14 +101,14 @@ const ItemQuickAdd = {
         const types = ItemQuickAdd.TYPES.map(t =>
             `<option value="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('');
         // A sale asks for a price and the income account the sale posts to;
-        // a purchase for a cost and the expense or COGS account the item is
+        // a purchase for a cost and the cost of goods account the item is
         // recorded in, and, for a product or material, whether it is stock.
         const money = purchase
             ? '<input class="iqa-cost" type="number" step="0.0001" placeholder="Cost" aria-label="Item cost" style="width:100%; margin-bottom:4px;">'
             : '<input class="iqa-rate" type="number" step="0.0001" placeholder="Rate" aria-label="Item rate" style="width:100%; margin-bottom:4px;">';
         const account = purchase
             ? `<label class="iqa-stock-row" style="display:flex; align-items:center; gap:4px; font-size:11px; margin-bottom:4px;"><input type="checkbox" class="iqa-stock"> Track quantity on hand (stock)</label>
-                <select class="iqa-account" aria-label="Expense or COGS account" data-no-search style="width:100%; margin-bottom:4px;"><option value="">-- None --</option></select>`
+                <select class="iqa-account" aria-label="Cost of goods account" data-no-search style="width:100%; margin-bottom:4px;"><option value="">-- None --</option></select>`
             : `<select class="iqa-account iqa-income" aria-label="${T('Income')} account" data-no-search style="width:100%; margin-bottom:4px;"><option value="">-- None --</option></select>`;
         cell.insertAdjacentHTML('beforeend', `
             <div class="iqa-form" data-side="${side}" style="margin-top:6px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light); min-width:200px;">
@@ -140,10 +143,10 @@ const ItemQuickAdd = {
 
     _purchase(box) { return box.dataset.side === 'purchase'; },
 
-    // The accounts the form offers: income on a sale; expense and COGS on a
-    // purchase (COGS first, as the bill's own Account cell lists them).
+    // The accounts the form offers: income on a sale; cost of goods on a
+    // purchase (operating expenses are a bill's Account cell, not an item).
     _accounts(box, accounts) {
-        const types = ItemQuickAdd._purchase(box) ? ['cogs', 'expense'] : ['income'];
+        const types = ItemQuickAdd._purchase(box) ? ['cogs'] : ['income'];
         const usable = (typeof pickerAccounts === 'function')
             ? pickerAccounts(accounts, types)
             : accounts.filter(a => types.includes(a.account_type) && a.is_active !== false);
@@ -179,7 +182,8 @@ const ItemQuickAdd = {
         if (!sel || sel.dataset.touched) return;
         const byType = ItemQuickAdd._purchase(box) ? ItemQuickAdd.COST_BY_TYPE : ItemQuickAdd.INCOME_BY_TYPE;
         const number = byType[box.querySelector('.iqa-type').value];
-        const opt = [...sel.options].find(o => o.dataset.number && o.dataset.number === number);
+        const opt = [...sel.options].find(o => o.dataset.number && o.dataset.number === number)
+            || (ItemQuickAdd._purchase(box) ? [...sel.options].find(o => o.value) : null);
         sel.value = opt ? opt.value : '';
         if (!sel.dataset.wired) {
             sel.dataset.wired = '1';
@@ -210,7 +214,7 @@ const ItemQuickAdd = {
         };
         if (ItemQuickAdd._purchase(box)) {
             // what it costs, and where buying it is recorded: the item's
-            // expense or COGS account; a stock item's purchases go to
+            // cost of goods account; a stock item's purchases go to
             // Inventory and this is the COGS its sales post
             data.cost = parseFloat(box.querySelector('.iqa-cost').value) || 0;
             data.expense_account_id = accountId;

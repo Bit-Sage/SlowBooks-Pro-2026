@@ -11,7 +11,7 @@ stores the new item on its line.
 "+ Add item" opens only when chosen: Enter or Tab on a name that matches
 nothing opens no form, and Tab goes on to the next cell. Cancel and Save
 put the focus back on the line's item picker. On a bill the form asks for
-a cost and an expense or COGS account (5100 for a material), and the bill
+a cost and a cost of goods account (5100 for a material), and the bill
 posts the line there. A read-only or accountant sign-in is not offered it.
 
 Skipped, as one module, where playwright or its Chromium is not installed.
@@ -282,10 +282,11 @@ def test_a_bill_line_asks_for_the_expense_account_and_posts_there(
     finally:
         page.close()
 
-    assert form["label"] == "Expense or COGS account"
+    assert form["label"] == "Cost of goods account"
     assert form["picked"] == "5100 - Materials Cost"
-    # cost of goods and expenses only: no income account is offered
-    assert form["kinds"] and all(n[0] in "56789" for n in form["kinds"]), form
+    # cost of goods only: no income or operating expense account is offered
+    assert form["kinds"] and all(n[0] == "5" for n in form["kinds"]), form
+    assert "6000" not in form["kinds"], form
     assert (form["income"], form["rate"], form["cost"], form["stock"]) == (
         False,
         False,
