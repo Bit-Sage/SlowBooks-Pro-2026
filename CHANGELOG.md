@@ -650,6 +650,27 @@ a void stub's PDF says so the way a void deposit slip does. A run whose pay date
 is in a closed period is refused; a run whose NACHA file was already made is
 still voided, with a warning naming the file's date and total, because the bank
 may already have it and the void does not stop the money.
+### v2.27.0 — Opening payroll YTD for a mid-year switch
+
+**A mid-year switch carries the year's payroll over** (#433). Year-to-date
+pay was summed from SlowBooks' own stubs only, so a company that switched in
+July had every W-2, 941 and wage-base cutoff (Social Security, FUTA, SUTA)
+wrong for the rest of the year. Each employee now has an opening balance per
+year: what the old payroll paid (gross, federal withholding, Social Security
+and Medicare wages and tax both sides, FUTA and SUTA, state wages and
+withholding per state, deductions by benefit code, net), dated the day
+before the first SlowBooks pay run. It is entered on the employee's page
+(Opening YTD) or imported for everyone from Payroll → Import opening
+balances, from the template there or QuickBooks Desktop's Payroll Summary
+(read best-effort: it has no taxable-wage lines, and the preview names every
+item it could not place). The employee's YTD, the wage bases the next pay
+run starts from, the stub's YTD, the 941 for the quarter it falls in, the
+940's FUTA wages, the W-2 and W-3 and the benefit caps count it. It is not a
+pay run and not a journal entry, so the tax deposit schedule, benefit
+remittances, the pay-run list, direct-deposit files and the payroll journal
+never see it; the state SUI report for the switch quarter does not count it
+yet. Once a pay run in the year is processed for the employee, a change or a
+delete is a correction with a reason, kept in the audit trail.
 
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
