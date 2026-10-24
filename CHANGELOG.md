@@ -7,6 +7,31 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+#### The first month of the fiscal year
+
+**A company whose fiscal year does not start in January can say so** (#444).
+Settings → Company Information has a "First month of fiscal year" choice. Set
+it to July or October and the reports' new This / Last Fiscal Year presets and
+their default period, the dashboard's profit card and nonprofit mode's year to
+date all run from that month instead of January 1. A January start is the
+calendar year and nothing changes. Payroll forms (W-2, 941) stay on the
+calendar year, as the law requires.
+
+Every report screen opens on the fiscal year to date: the Profit & Loss,
+Balance Sheet, Trial Balance, General Ledger, Income by Customer, the cash
+flow statement and the rest, the Classes page and the dashboard's "Full P&L"
+link with them. Custom starts on the fiscal year's first day, and a Balance
+Sheet line's drill-down on the first day of its date's fiscal year. New
+Previous / Next period buttons beside the period step by the period shown:
+a fiscal year on a fiscal preset (This Fiscal Year back one is Last Fiscal
+Year), a month or a quarter on those, and a Custom range by its own length.
+The Schedule C and the 1099 Summary stay on the calendar year. The Possible
+Duplicates report, asked with no dates, opens on the fiscal year to date too.
+
+The Balance Sheet's Net Income line is still every period's to date: the app
+has never posted a year-end close into retained earnings, and this release
+does not add one.
+
 #### Sales by Item and Purchases by Item
 
 Two reports QuickBooks users look for and did not find (#435): Sales by Item, one row per item for a period with quantity, amount, average price and — for an item whose stock is tracked — COGS, gross margin and margin % from the item's own inventory movements, built from posted invoices and sales receipts less credit memos with voids left out; and Purchases by Item, the same shape from bills less vendor credits with an average cost (expense lines carry no item, so purchases are bills and vendor credits only). A line without an item is one "No item" row so the sales total ties to the P&L's income for the same accounts. Both narrow by customer or vendor, class and job (a line's own class or job wins, else the header's), open the documents behind a row, and save as PDF, CSV and a saved report.
