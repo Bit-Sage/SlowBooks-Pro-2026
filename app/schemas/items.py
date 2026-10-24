@@ -27,7 +27,9 @@ class ItemCreate(StrictModel):
     cost: Decimal = Decimal("0")
     income_account_id: Optional[int] = None
     expense_account_id: Optional[int] = None
-    is_taxable: bool = True
+    # Left out, the company's "New lines and items are taxable" setting
+    # decides (#486; on by default).
+    is_taxable: Optional[bool] = None
     # Phase 11: inventory fields
     track_inventory: bool = False
     quantity_on_hand: Decimal = Decimal("0")

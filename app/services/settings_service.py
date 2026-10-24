@@ -343,6 +343,12 @@ def clean_setting_value(key: str, value) -> str:
     return "" if value is None else str(value)
 
 
+def new_lines_taxable(db: Session) -> bool:
+    """Whether a new sales line or item is taxable when it does not say
+    (Settings -> new_lines_taxable, #486). On unless set to "false"."""
+    return get_setting_raw(db, "new_lines_taxable") != "false"
+
+
 def is_nonprofit(db: Session) -> bool:
     """True when the company file is set to nonprofit mode (Settings ->
     company_type). Gates the nonprofit documents, reports and vocabulary."""

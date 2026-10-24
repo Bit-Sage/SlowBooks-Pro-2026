@@ -5,6 +5,18 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**A company that charges no sales tax can stop unticking the Tax box on every
+line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
+items are taxable". It stays Yes, as before, unless you change it. Set it to
+No and every new invoice, estimate, sales receipt, credit memo, recurring
+invoice and Quick Entry line starts untaxed, and so does every new item, on
+the Items form and in the line's quick add. You can still tick Tax on any
+line, an item marked taxable still taxes the line it is picked on, and a
+tax-exempt customer is still never charged. Through the API, a line or item
+sent without `is_taxable` follows the same setting.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
