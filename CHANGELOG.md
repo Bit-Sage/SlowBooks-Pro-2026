@@ -17,6 +17,17 @@ date all run from that month instead of January 1. A January start is the
 calendar year and nothing changes. Payroll forms (W-2, 941) stay on the
 calendar year, as the law requires.
 
+Every report screen opens on the fiscal year to date: the Profit & Loss,
+Balance Sheet, Trial Balance, General Ledger, Income by Customer, the cash
+flow statement and the rest, the Classes page and the dashboard's "Full P&L"
+link with them. Custom starts on the fiscal year's first day, and a Balance
+Sheet line's drill-down on the first day of its date's fiscal year. New
+Previous / Next period buttons beside the period step by the period shown:
+a fiscal year on a fiscal preset (This Fiscal Year back one is Last Fiscal
+Year), a month or a quarter on those, and a Custom range by its own length.
+The Schedule C and the 1099 Summary stay on the calendar year. The Possible
+Duplicates report, asked with no dates, opens on the fiscal year to date too.
+
 The Balance Sheet's Net Income line is still every period's to date: the app
 has never posted a year-end close into retained earnings, and this release
 does not add one.

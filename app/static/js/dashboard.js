@@ -262,7 +262,7 @@ const DashboardPage = {
                     <tr><td>Expenses</td><td class="amount">${formatCurrency(d.expenses)}</td></tr>
                 </tbody></table>
                 <div style="display:flex;align-items:flex-end;gap:4px;height:70px;margin-top:8px">${bars}</div>
-                <div style="font-size:10px;color:var(--gray-500);margin-top:2px">cumulative net by month · <a href="${DashboardPage._reportLink('pnl', 'this_year_to_date')}">Full ${T('P&L')}</a></div>`;
+                <div style="font-size:10px;color:var(--gray-500);margin-top:2px">cumulative net by month · <a href="${DashboardPage._reportLink('pnl', ReportsPage.defaultPeriod())}">Full ${T('P&L')}</a></div>`;
         },
         cash_position(d) {
             return `<div class="card-value">${formatCurrency(d.cash)}</div>
