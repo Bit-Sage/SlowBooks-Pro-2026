@@ -8,16 +8,56 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routes._helpers import reject_null_updates
+from app.models.accounts import Account
 from app.models.bank_rules import BankRule
+from app.models.contacts import Vendor
 from app.models.banking import BankTransaction
 from app.schemas.bank_rules import BankRuleCreate, BankRuleUpdate, BankRuleResponse
 
 router = APIRouter(prefix="/api/bank-rules", tags=["bank-rules"])
 
 
+def _out(db: Session, rules: list[BankRule]) -> list[BankRuleResponse]:
+    """The rules with their account's and vendor's names (#493)."""
+    acct_ids = {r.account_id for r in rules if r.account_id}
+    vendor_ids = {r.vendor_id for r in rules if r.vendor_id}
+    accounts = (
+        {a.id: a for a in db.query(Account).filter(Account.id.in_(acct_ids))}
+        if acct_ids
+        else {}
+    )
+    vendors = (
+        {v.id: v.name for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids))}
+        if vendor_ids
+        else {}
+    )
+    out = []
+    for r in rules:
+        resp = BankRuleResponse.model_validate(r)
+        a = accounts.get(r.account_id)
+        if a is not None:
+            resp.account_name = (
+                f"{a.account_number} - {a.name}" if a.account_number else a.name
+            )
+        resp.vendor_name = vendors.get(r.vendor_id)
+        out.append(resp)
+    return out
+
+
+def _check_refs(db: Session, fields: dict) -> None:
+    if fields.get("vendor_id") is not None and not db.get(Vendor, fields["vendor_id"]):
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    if fields.get("account_id") is not None and not db.get(
+        Account, fields["account_id"]
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+
+
 @router.get("", response_model=list[BankRuleResponse])
 def list_rules(db: Session = Depends(get_db)):
-    return db.query(BankRule).order_by(BankRule.priority.desc(), BankRule.name).all()
+    return _out(
+        db, db.query(BankRule).order_by(BankRule.priority.desc(), BankRule.name).all()
+    )
 
 
 @router.get("/{rule_id}", response_model=BankRuleResponse)
@@ -25,16 +65,18 @@ def get_rule(rule_id: int, db: Session = Depends(get_db)):
     rule = db.query(BankRule).filter(BankRule.id == rule_id).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
-    return rule
+    return _out(db, [rule])[0]
 
 
 @router.post("", response_model=BankRuleResponse, status_code=201)
 def create_rule(data: BankRuleCreate, db: Session = Depends(get_db)):
-    rule = BankRule(**data.model_dump())
+    fields = data.model_dump()
+    _check_refs(db, fields)
+    rule = BankRule(**fields)
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    return rule
+    return _out(db, [rule])[0]
 
 
 @router.put("/{rule_id}", response_model=BankRuleResponse)
@@ -42,13 +84,13 @@ def update_rule(rule_id: int, data: BankRuleUpdate, db: Session = Depends(get_db
     rule = db.query(BankRule).filter(BankRule.id == rule_id).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
-    for key, val in reject_null_updates(
-        BankRule, data.model_dump(exclude_unset=True)
-    ).items():
+    fields = reject_null_updates(BankRule, data.model_dump(exclude_unset=True))
+    _check_refs(db, fields)
+    for key, val in fields.items():
         setattr(rule, key, val)
     db.commit()
     db.refresh(rule)
-    return rule
+    return _out(db, [rule])[0]
 
 
 @router.delete("/{rule_id}")
