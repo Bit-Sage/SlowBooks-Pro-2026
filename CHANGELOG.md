@@ -588,6 +588,14 @@ quietly throws away the statement date and ending balance you just typed
 but the screen now says which statement is open and offers to move it onto the
 date and balance you just entered; confirm and it does, cancel and the open
 session is reopened unchanged.
+### Unreleased
+
+Re-running a migration import no longer posts a journal twice when its source
+reference runs past 100 characters (#498). The dedupe key was cut to the
+reference column's width while the journal was stored with the full reference,
+so the two never matched and a second import booked the entry again. The
+import now stores the same cut value the key uses, so a re-import recognises
+what it already posted.
 
 ### v2.28.0 — Account types and sub-accounts
 
