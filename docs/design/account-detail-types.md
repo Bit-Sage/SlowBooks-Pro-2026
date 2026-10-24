@@ -550,6 +550,13 @@ because both change how the statements present accounts.
   heading the new `group` style. The CSV's new Type column is the last one,
   so a sheet reading Account name and Amount by position still lines up.
   SoFP: assets and liabilities grouped, Net Assets untouched, as proposed.
+  **Default-typed sub-accounts (2.28.0, owner's call):** a sub-account whose
+  detail type is still a default — the type's for its number, the number
+  and name rule's for a new account, or the backfill's — prints in its
+  parent's group on both statements (`statement_layout.bs_print_details`,
+  the line's `group_detail_type`), unless the parent is Bank, Credit Card,
+  AR or AP or of another base type. Display only: `detail_type`, the cash
+  flow and the figures stay; a group total moves by that line's amount.
 - **P&L**: `other_income`, `other_expense` and the four totals as
   proposed; one flag, `has_other`, decides the block and Net Operating
   Income for every writer (decision 4). Inside the block, Other Income and

@@ -60,7 +60,12 @@ Current / Long Term Liabilities, each with its subtotal, on the screen, in
 the PDF (and the accountant's package) and in the CSV, whose Section column
 is now the group, with the side in a new last column, Type. A group with no
 account is left out; accumulated depreciation is a Fixed Asset and nets
-inside its group; the prior-year columns carry the subtotals. The nonprofit
+inside its group; the prior-year columns carry the subtotals. A
+sub-account still at its default detail type prints in its parent's group,
+with its family (1520 Trucks under 1500 Equipment among the Fixed Assets,
+Accrued Interest under a loan among the Long Term Liabilities); its detail
+type, its cash flow line and every figure stay its own, and one given
+another detail type keeps its group. The nonprofit
 Statement of Financial Position groups the same way. The Profit & Loss
 prints Other Income and Other Expense below Net Operating Income, with Net
 Other Income; Net Income is the same figure, and a company with nothing in

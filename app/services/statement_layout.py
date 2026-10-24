@@ -6,7 +6,9 @@ statement print the same layout from one place.
 
 Balance Sheet groups (#390): Current / Fixed / Other Assets and Current /
 Long Term Liabilities, by the account's detail type. A group with no line
-is left out; Total Assets and Total Liabilities always print.
+is left out; Total Assets and Total Liabilities always print. A sub-account
+still at its default detail type prints in its parent's group
+(bs_print_details, 2.28.0).
 """
 
 from __future__ import annotations
@@ -40,6 +42,132 @@ BS_GROUPS = {
 BS_GROUP_TOTALS = tuple(key for groups in BS_GROUPS.values() for _h, key, _d in groups)
 
 
+def bs_print_details(db=None, index: dict | None = None) -> dict:
+    """{account id: the detail type it groups under on the Balance Sheet},
+    for the sub-accounts that print with their parent rather than by their
+    own detail type (2.28.0, the owner's call). Display only: the account's
+    stored detail type, its cash flow placement and every figure stay; a
+    group's total changes only by the moved line's amount.
+
+    A sub-account moves to its parent's group when its detail type is still
+    its default — what the code gives an account nobody typed: the type's
+    default for its number (`default_detail_type`), the number and name
+    rule a new account takes (2.28.0), or the one the upgrade's backfill
+    gave it (`legacy_placement.backfill_detail_type`, e.g. an Other Asset
+    for a "1520 Trucks") — and its parent is of the same base type and not a
+    bank, card, Accounts Receivable or Payable account (under those a
+    sub-account is set on its own, QuickBooks' rule). The parent's own group
+    is where it prints, itself moved or not, walking up; a parent loop or a
+    chain past MAX_DEPTH stops the walk. A sub-account whose detail type was
+    set to something else keeps its own group.
+
+    `index` is the chart a report has read ({id: (number, name, parent_id,
+    account_type, detail_type)}, financial._chart_index), else one query."""
+    from app.models.accounts import (
+        BASE_TYPE_OF,
+        PINNED_DETAIL_TYPES,
+        Account,
+        AccountType,
+        DetailType,
+        _enum,
+        default_detail_type,
+    )
+    from app.services import legacy_placement
+
+    if index is None:
+        index = {
+            a.id: (
+                a.account_number or "",
+                a.name or "",
+                a.parent_id,
+                a.account_type,
+                a.detail_type,
+            )
+            for a in db.query(
+                Account.id,
+                Account.account_number,
+                Account.name,
+                Account.parent_id,
+                Account.account_type,
+                Account.detail_type,
+            )
+        }
+
+    def base(detail):
+        try:
+            return BASE_TYPE_OF[DetailType(detail)]
+        except ValueError:
+            return None
+
+    def still_default(row) -> bool:
+        number, name, _parent, atype, detail = row
+        if not detail or detail in PINNED_DETAIL_TYPES:
+            return False
+        try:
+            atype = _enum(AccountType, atype)
+            defaults = {
+                default_detail_type(atype, None, number).value,
+                default_detail_type(atype, None, number, name=name).value,
+                legacy_placement.backfill_detail_type(atype, name, number),
+            }
+        except (KeyError, ValueError):
+            return False
+        return detail in defaults
+
+    memo: dict = {}
+
+    def printed(aid, depth=0):
+        """The detail type `aid` groups under; None for an unknown id."""
+        if aid in memo:
+            return memo[aid]
+        row = index.get(aid)
+        if row is None:
+            return None
+        own = row[4]
+        memo[aid] = own  # a loop back to here reads the account's own
+        parent = row[2]
+        if (
+            parent is not None
+            and parent != aid
+            and parent in index
+            and depth < MAX_DEPTH
+            and still_default(row)
+        ):
+            up = printed(parent, depth + 1)
+            if (
+                up
+                and up != own
+                and up not in PINNED_DETAIL_TYPES
+                and index[parent][4] not in PINNED_DETAIL_TYPES
+                and base(up) is not None
+                and base(up) == base(own)
+            ):
+                memo[aid] = up
+        return memo[aid]
+
+    out = {}
+    for aid, row in index.items():
+        detail = printed(aid)
+        if detail and detail != row[4]:
+            out[aid] = detail
+    return out
+
+
+def mark_bs_lines(lines: list[dict], placed: dict) -> list[dict]:
+    """Note on each Balance Sheet line the detail type it groups under when
+    that is not its own (`group_detail_type`, from bs_print_details); the
+    line's `detail_type` stays the account's."""
+    for line in lines:
+        detail = placed.get(line.get("account_id"))
+        if detail:
+            line["group_detail_type"] = detail
+    return lines
+
+
+def _group_detail(line: dict):
+    return line.get("group_detail_type") or line.get("detail_type")
+
+
 def _bs_rank(side: str, detail) -> tuple[int, int]:
     """(group, place inside the group) of a detail type on one side; one
     the side does not know (bad data) counts as the first group's last."""
@@ -57,14 +185,12 @@ def bs_groups(lines: list[dict], side: str) -> list[tuple[str, str, list[dict]]]
     lines of one detail type keep the order they came in (the `sort`
     choice). A group with no line is left out."""
     ranked = sorted(
-        enumerate(lines), key=lambda p: (_bs_rank(side, p[1].get("detail_type")), p[0])
+        enumerate(lines), key=lambda p: (_bs_rank(side, _group_detail(p[1])), p[0])
     )
     out = []
     for g, (heading, key, _details) in enumerate(BS_GROUPS[side]):
         members = [
-            line
-            for _i, line in ranked
-            if _bs_rank(side, line.get("detail_type"))[0] == g
+            line for _i, line in ranked if _bs_rank(side, _group_detail(line))[0] == g
         ]
         if members:
             out.append((heading, key, members))
@@ -75,7 +201,7 @@ def bs_group_totals(lines: list[dict], side: str) -> dict:
     """Every subtotal of one side, zero for a group with no line."""
     totals = {key: Decimal("0") for _h, key, _d in BS_GROUPS[side]}
     for line in lines:
-        g, _ = _bs_rank(side, line.get("detail_type"))
+        g, _ = _bs_rank(side, _group_detail(line))
         key = BS_GROUPS[side][g][1]
         totals[key] += Decimal(str(line.get("amount") or 0))
     return {k: float(v) for k, v in totals.items()}

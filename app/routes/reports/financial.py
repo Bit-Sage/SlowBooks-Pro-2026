@@ -17,6 +17,8 @@ from app.services.statement_layout import (
     account_chart,
     bs_group_totals,
     bs_groups,
+    bs_print_details,
+    mark_bs_lines,
     family_rows,
 )
 from app.services.terminology import Terms, terms_from_db
@@ -558,8 +560,11 @@ def _bs_period(db, as_of_date, sort, t, chart) -> dict:
             db, acct_type, date_end=as_of_date, sort=order, chart=chart
         )
 
-    assets = totals(AccountType.ASSET, sort)
-    liabilities = totals(AccountType.LIABILITY, sort)
+    # a default-typed sub-account prints in its parent's group (2.28.0):
+    # display only, its detail type and figures stay its own
+    placed = bs_print_details(index=chart)
+    assets = mark_bs_lines(totals(AccountType.ASSET, sort), placed)
+    liabilities = mark_bs_lines(totals(AccountType.LIABILITY, sort), placed)
     equity = totals(AccountType.EQUITY, sort)
 
     # Round the totals to the cent as the P&L does (profit_loss above), so a
