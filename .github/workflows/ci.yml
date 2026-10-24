@@ -175,15 +175,12 @@ jobs:
           # (CI 40031366864): each PR raised it from 126 on its own base.
           # 146 for 2.28.0, the count on the integrated tree's own Windows run:
           # the account detail types add Postgres-only migration tests.
-          # 147 with opening YTD by quarter (#433): its migration's
-          # PostgreSQL test needs SLOWBOOKS_TEST_POSTGRES_URL, like the others.
-          # 147 with past customers (#436): the API sweep's case for the new
-          # labels PDF endpoint skips without WeasyPrint's native stack.
-          # 147 with item quick-add (#445): tests/test_browser_items_quick_add.py
-          # joins the Playwright modules that skip here.
-          # 147 for #457: tests/test_browser_hidden_menu.py skips as a module
-          # where playwright is not installed.
-          MAX_SKIPS: "147"
+          # 150 for 2.29.0, PROVISIONAL: each PR raised it from 146 on its own
+          # base (opening YTD by quarter's Postgres-only migration test, the
+          # past-customers labels PDF without WeasyPrint, item quick-add's and
+          # #457's Playwright modules); the integrated tree's own Windows run
+          # gives the exact count, set in the release branch's final commit.
+          MAX_SKIPS: "150"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
