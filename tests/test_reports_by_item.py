@@ -286,15 +286,17 @@ def test_no_item_row_is_present_and_last(client, data):
 
 
 def test_cogs_and_margin_from_movements_for_tracked_only(client, data):
-    items = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()["items"]
-    gadget = _row(items, data["tracked"])
-    # Sold 2 @ cost 10 = 20 COGS; the credit memo returns 1 @ 10, backing out
-    # 10; net COGS 10. Margin = 50 amount − 10 = 40, 80%.
-    assert gadget["cogs"] == 10.0
-    assert gadget["gross_margin"] == 40.0
-    assert round(gadget["margin_pct"], 1) == 80.0
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    gadget = _row(d["items"], data["tracked"])
+    # Sold 2 @ cost 10 = 20 COGS. The credit memo puts one back on the shelf
+    # with no COGS entry (post_return_for_credit_memo), so the P&L's COGS
+    # stays 20 and so does the report's. Margin = 50 amount − 20 = 30, 60%.
+    assert gadget["cogs"] == 20.0
+    assert gadget["gross_margin"] == 30.0
+    assert round(gadget["margin_pct"], 1) == 60.0
+    assert d["total_cogs"] == 20.0
 
-    service = _row(items, data["service"])
+    service = _row(d["items"], data["service"])
     assert service["cogs"] is None
     assert service["gross_margin"] is None
     assert service["margin_pct"] is None
@@ -469,3 +471,250 @@ def test_js_cards_views_and_saved_types_present():
         assert f"'{view}':" in js, f"missing view for {view}"
     for rt in ("sales_by_item", "purchases_by_item"):
         assert rt in _ALLOWED_TYPES
+
+
+# ── #435 review: an edited sale, income-only lines, fiscal default ────────
+
+
+@pytest.fixture
+def stocked(client, db_session, seed_accounts):
+    """A tracked Widget with 10 in stock at $4 and a customer."""
+    customer = Customer(name="Gamma", is_active=True)
+    vendor = Vendor(name="Widget Works", is_active=True)
+    db_session.add_all([customer, vendor])
+    db_session.commit()
+    widget = _item(db_session, seed_accounts, "Widget", ItemType.PRODUCT, tracked=True)
+    _bill(
+        client,
+        vendor.id,
+        "W-1",
+        "2026-07-01",
+        [{"item_id": widget.id, "description": "Stock", "quantity": "10", "rate": "4"}],
+    )
+    return {"customer": customer.id, "widget": widget.id}
+
+
+def _sold(client, stocked, qty):
+    return _invoice(
+        client,
+        stocked["customer"],
+        "2026-07-06",
+        [
+            {
+                "item_id": stocked["widget"],
+                "description": "Widgets",
+                "quantity": qty,
+                "rate": "10",
+            }
+        ],
+    )
+
+
+def _edit_quantity(client, inv, item_id, qty):
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "description": "Widgets",
+                    "quantity": qty,
+                    "rate": "10",
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_an_edit_that_lowers_the_quantity_lowers_cogs(client, stocked):
+    """Sell 5, edit to 3: the edit's reversal ("invoice_edit") is counted,
+    so COGS is the cost of 3 and equals the P&L's COGS."""
+    inv = _sold(client, stocked, "5")
+    _edit_quantity(client, inv, stocked["widget"], "3")
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    widget = _row(d["items"], stocked["widget"])
+    assert widget["quantity"] == 3.0
+    assert widget["amount"] == 30.0
+    assert widget["cogs"] == 12.0  # 3 @ $4, not 5
+    assert widget["gross_margin"] == 18.0
+    pl = client.get(f"/api/reports/profit-loss?{PERIOD}").json()
+    assert d["total_cogs"] == pl["total_cogs"] == 12.0
+    assert d["total_amount"] == pl["total_income"]
+
+
+def test_an_edit_that_raises_the_quantity_raises_cogs(client, stocked):
+    inv = _sold(client, stocked, "2")
+    _edit_quantity(client, inv, stocked["widget"], "6")
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    widget = _row(d["items"], stocked["widget"])
+    assert widget["quantity"] == 6.0
+    assert widget["cogs"] == 24.0
+    pl = client.get(f"/api/reports/profit-loss?{PERIOD}").json()
+    assert d["total_cogs"] == pl["total_cogs"]
+
+
+def test_cogs_reads_the_movements_once_for_every_item(
+    client, db_session, seed_accounts, stocked
+):
+    """Two tracked items: one read of inventory_movements, not one per item
+    (each item's whole history)."""
+    from sqlalchemy import event
+
+    other = _item(db_session, seed_accounts, "Sprocket", ItemType.PRODUCT, tracked=True)
+    vendor = db_session.query(Vendor).filter(Vendor.name == "Widget Works").one()
+    _bill(
+        client,
+        vendor.id,
+        "S-1",
+        "2026-07-01",
+        [{"item_id": other.id, "description": "Stock", "quantity": "5", "rate": "2"}],
+    )
+    _invoice(
+        client,
+        stocked["customer"],
+        "2026-07-07",
+        [
+            {
+                "item_id": stocked["widget"],
+                "description": "W",
+                "quantity": "1",
+                "rate": "10",
+            },
+            {"item_id": other.id, "description": "S", "quantity": "2", "rate": "5"},
+        ],
+    )
+    engine = db_session.get_bind()
+    seen = []
+
+    def count(conn, cursor, statement, *args):
+        if "FROM inventory_movements" in statement:
+            seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert len(seen) == 1, seen
+    assert _row(d["items"], stocked["widget"])["cogs"] == 4.0
+    assert _row(d["items"], other.id)["cogs"] == 4.0
+
+
+def test_only_lines_posting_to_income_count(client, db_session, seed_accounts, stocked):
+    """An item pointed at a liability (a deposit held) posts there, not to
+    income: it is not a sale, and the report still ties to the P&L income."""
+    deposit = Item(
+        name="Deposit held",
+        item_type=ItemType.SERVICE,
+        rate=Decimal("0"),
+        track_inventory=False,
+        income_account_id=seed_accounts["2500"].id,
+        is_taxable=False,
+    )
+    db_session.add(deposit)
+    db_session.commit()
+    _invoice(
+        client,
+        stocked["customer"],
+        "2026-07-09",
+        [
+            {
+                "item_id": deposit.id,
+                "description": "Deposit",
+                "quantity": "1",
+                "rate": "500",
+            },
+            {
+                "item_id": stocked["widget"],
+                "description": "W",
+                "quantity": "1",
+                "rate": "10",
+            },
+            {"description": "Freight", "quantity": "1", "rate": "15"},
+        ],
+    )
+    client.post(
+        "/api/credit-memos",
+        json={
+            "customer_id": stocked["customer"],
+            "date": "2026-07-11",
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": deposit.id,
+                    "description": "Deposit back",
+                    "quantity": "1",
+                    "rate": "200",
+                }
+            ],
+        },
+    ).raise_for_status()
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    assert deposit.id not in [r["item_id"] for r in d["items"]]
+    assert d["total_amount"] == 25.0  # the widget and the no-item freight
+    pl = client.get(f"/api/reports/profit-loss?{PERIOD}").json()
+    assert d["total_amount"] == pl["total_income"]
+    lines = client.get(
+        f"/api/reports/sales-by-item/lines?item_id={deposit.id}&{PERIOD}"
+    ).json()["lines"]
+    assert lines == []
+
+
+def test_a_write_off_is_not_a_sales_return(client, stocked):
+    """A write-off credit memo posts to bad debt, not income: the sale it
+    forgives stays in Sales by Item, as it stays in the P&L's income."""
+    inv = _invoice(
+        client,
+        stocked["customer"],
+        "2026-07-09",
+        [{"description": "Consulting", "quantity": "1", "rate": "100"}],
+    )
+    r = client.post(
+        f"/api/invoices/{inv['id']}/write-off",
+        json={"date": "2026-07-20", "amount": "40"},
+    )
+    assert r.status_code == 201, r.text
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    assert _row(d["items"], None)["amount"] == 100.0
+    pl = client.get(f"/api/reports/profit-loss?{PERIOD}").json()
+    assert d["total_amount"] == pl["total_income"] == 100.0
+    lines = client.get(f"/api/reports/sales-by-item/lines?item_id=none&{PERIOD}").json()
+    assert [line["doc_type"] for line in lines["lines"]] == ["Invoice"]
+
+
+def test_a_foreign_invoice_counts_at_its_booked_rate(client, stocked):
+    """Each line at the invoice's rate, rounded per line as the journal
+    converts it; the sales total is the P&L's income."""
+    _invoice(
+        client,
+        stocked["customer"],
+        "2026-07-09",
+        [
+            {"description": "A", "quantity": "1", "rate": "10.01"},
+            {"description": "B", "quantity": "1", "rate": "10.01"},
+            {"description": "C", "quantity": "1", "rate": "10.01"},
+        ],
+        currency="CAD",
+        exchange_rate="0.7333",
+    )
+    d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
+    pl = client.get(f"/api/reports/profit-loss?{PERIOD}").json()
+    assert d["total_amount"] == pl["total_income"] == 22.02  # 3 × 7.34
+
+
+@pytest.mark.parametrize("path", ["sales-by-item", "purchases-by-item"])
+def test_no_dates_is_the_fiscal_year_to_date(client, seed_accounts, monkeypatch, path):
+    from datetime import date
+
+    from app.routes.reports import items as items_route
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 23)
+
+    monkeypatch.setattr(items_route, "date", _Frozen)
+    client.put("/api/settings", json={"fiscal_year_start_month": "7"})
+    d = client.get(f"/api/reports/{path}").json()
+    assert (d["start_date"], d["end_date"]) == ("2026-07-01", "2026-10-23")

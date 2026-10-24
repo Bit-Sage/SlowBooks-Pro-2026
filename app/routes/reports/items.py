@@ -12,10 +12,31 @@ BillLines of non-void bills less VendorCreditLines of non-void vendor
 credits. Expense lines (Transaction/TransactionLine) carry no item, so
 Purchases by Item is bills and vendor credits only.
 
-"Ties to the P&L" (a test asserts it): total_amount of Sales by Item equals
-the P&L's total_income for the same period in the case where every invoice
-line posts to an income account and there are no other income postings — a
-manual journal entry to an income account is income this report cannot show.
+Only lines that post to an income account count (#435 review): a line
+posts to its item's income account, else the default income account (4000),
+as the invoice and credit memo journals do; an item pointed at a liability,
+an asset or any other non-income account is left out, so the sales total is
+the P&L's income from invoices, sales receipts and credit memos. A write-off
+credit memo posts to bad debt, not income, and is left out too; so is a
+credit memo line of zero or less, which its journal skips. The account is
+the item's as it is now: an item re-pointed after a sale reads at its new
+account. Income the report cannot show (a journal entry to an income
+account, a deposit's income line) is the rest of the P&L's figure.
+
+Amounts are in home currency, each line at its document's booked rate,
+rounded per line (contact_balances.home_amount), the conversion the
+invoice journal makes (currency.convert_lines). That journal puts any
+cent of rounding drift on its largest line, the A/R debit, so the income
+lines and these rows agree; only an invoice whose discount makes one
+income line larger than its total can land the cent on income instead.
+
+COGS for a tracked item is read from its inventory movements for the
+invoices in the report: the sale ("invoice", including an edit that raised
+the quantity) less an edit that lowered it ("invoice_edit"), each at the
+cost its journal entry posted, so the column is the COGS the P&L shows for
+those sales. A credit memo's return puts stock back without a COGS entry
+(inventory_hooks.post_return_for_credit_memo), so it leaves COGS alone here
+as it does on the P&L.
 """
 
 from datetime import date
@@ -33,12 +54,15 @@ from app.models.credit_memos import CreditMemo, CreditMemoStatus
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.items import InventoryMovement, Item
 from app.models.jobs import Job
+from app.models.accounts import Account, AccountType
 from app.models.vendor_credits import (
     VendorCredit,
     VendorCreditStatus,
 )
 from app.routes.reports._router import router
+from app.services.accounting import _q
 from app.services.contact_balances import home_amount
+from app.services.fiscal_year import fiscal_year_start
 
 # The document a line's link opens, by its source type (matches
 # bank_register._LINKS; the SPA builds the address from {type, id}).
@@ -52,9 +76,10 @@ _LINK_TYPE = {
 _NO_ITEM = "No item"
 
 
-def _default_dates(start_date, end_date):
+def _default_dates(db, start_date, end_date):
+    """No dates: the fiscal year to date (#444), as the statements default."""
     if not start_date:
-        start_date = date(date.today().year, 1, 1)
+        start_date = fiscal_year_start(db, date.today())
     if not end_date:
         end_date = date.today()
     return start_date, end_date
@@ -93,6 +118,28 @@ def _item_meta(db: Session) -> dict:
     return out
 
 
+def _posts_to_income(db: Session):
+    """A test of whether a sales line posts to an income account: the
+    item's income account, else the default income account (4000), the
+    account the invoice and credit memo journals credit. Looked up once."""
+    from app.services.accounting import get_default_income_account_id
+    from app.services.control_accounts import MissingControlAccount
+
+    income = {
+        a.id
+        for a in db.query(Account.id).filter(Account.account_type == AccountType.INCOME)
+    }
+    try:
+        default_ok = get_default_income_account_id(db) in income
+    except MissingControlAccount:
+        default_ok = False
+    item_ok = {
+        it.id: (it.income_account_id in income if it.income_account_id else default_ok)
+        for it in db.query(Item.id, Item.income_account_id)
+    }
+    return lambda item_id: item_ok.get(item_id, default_ok) if item_id else default_ok
+
+
 # ── Sales by Item ─────────────────────────────────────────────────────────
 
 
@@ -104,11 +151,12 @@ def _sales_by_item(
     class_id: Optional[int] = None,
     job_id: Optional[int] = None,
 ) -> dict:
-    start_date, end_date = _default_dates(start_date, end_date)
+    start_date, end_date = _default_dates(db, start_date, end_date)
     _require(db, Customer, customer_id, "customer")
     _require(db, TxnClass, class_id, "class")
     _require(db, Job, job_id, "job")
     meta = _item_meta(db)
+    to_income = _posts_to_income(db)
 
     invoices = (
         db.query(Invoice)
@@ -131,12 +179,13 @@ def _sales_by_item(
                 "amount": Decimal("0"),
                 "line_count": 0,
                 "inv_ids": set(),
-                "cm_ids": set(),
             },
         )
 
     for inv in invoices.all():
         for line in inv.lines:
+            if not to_income(line.item_id):
+                continue
             if not _dim_ok(
                 (line.class_id, line.job_id),
                 (inv.class_id, inv.job_id),
@@ -156,6 +205,7 @@ def _sales_by_item(
         .options(joinedload(CreditMemo.lines))
         .filter(CreditMemo.date >= start_date, CreditMemo.date <= end_date)
         .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(CreditMemo.is_write_off.isnot(True))
     )
     if customer_id is not None:
         memos = memos.filter(CreditMemo.customer_id == customer_id)
@@ -166,12 +216,21 @@ def _sales_by_item(
         if not _dim_ok((None, None), (cm.class_id, cm.job_id), class_id, job_id):
             continue
         for line in cm.lines:
+            if not _cm_line_counts(line, to_income):
+                continue
             b = bucket(line.item_id)
             b["quantity"] -= Decimal(str(line.quantity or 0))
             b["amount"] -= home_amount(line.amount, None)
             b["line_count"] += 1
-            if line.item_id:
-                b["cm_ids"].add(cm.id)
+
+    cogs_by_item = _items_cogs(
+        db,
+        {
+            item_id: b["inv_ids"]
+            for item_id, b in rows.items()
+            if item_id and meta.get(item_id, (None, None, False))[2]
+        },
+    )
 
     items = []
     for item_id, b in rows.items():
@@ -187,7 +246,7 @@ def _sales_by_item(
         gross_margin = None
         margin_pct = None
         if item_id and tracked:
-            cogs = _item_cogs(db, item_id, b["inv_ids"], b["cm_ids"])
+            cogs = cogs_by_item.get(item_id, Decimal("0"))
             gross_margin = amount - cogs
             margin_pct = float(gross_margin / amount * 100) if amount != 0 else None
         items.append(
@@ -242,29 +301,58 @@ def _sales_by_item(
     }
 
 
-def _item_cogs(db: Session, item_id: int, inv_ids: set, cm_ids: set) -> Decimal:
-    """COGS for a tracked item from its own inventory movements, not
-    avg_cost × qty: a sale posts COGS at the avg cost AT THE TIME of the
-    sale, which the movement row recorded (inventory_service.record_sale).
+# The movements that carry a sale's COGS: the sale itself (an edit that
+# raises the quantity records another "invoice" sale) and an edit that lowers
+# it ("invoice_edit", inventory_hooks.reconcile_invoice_inventory_delta). A
+# void ("invoice_void") reverses the whole sale, and a voided invoice is not
+# in the report. A credit memo's RETURN_IN posts no COGS entry, so it is not
+# here either: the P&L's COGS keeps the cost of a returned item.
+_COGS_SOURCES = ("invoice", "invoice_edit")
 
-    Sales (source_type "invoice") store a NEGATIVE quantity, so
-    −Σ(quantity × unit_cost) is the positive cost of what shipped. Credit
-    memos that return stock post a RETURN_IN with a positive quantity
-    (inventory_hooks.post_return_for_credit_memo), so the same formula backs
-    the returned cost out. A return with no such movement (an untracked
-    moment, a legacy row) simply isn't counted here, and its COGS is left
-    out.
-    """
-    if not inv_ids and not cm_ids:
-        return Decimal("0")
-    q = db.query(InventoryMovement).filter(InventoryMovement.item_id == item_id)
-    total = Decimal("0")
-    for mv in q.all():
-        if mv.source_type == "invoice" and mv.source_id in inv_ids:
-            total += Decimal(str(mv.quantity)) * Decimal(str(mv.unit_cost))
-        elif mv.source_type == "credit_memo" and mv.source_id in cm_ids:
-            total += Decimal(str(mv.quantity)) * Decimal(str(mv.unit_cost))
-    return -total
+# Ids per IN (...) query, under SQLite's bound-parameter limit.
+_CHUNK = 500
+
+
+def _cm_line_counts(line, to_income) -> bool:
+    """A credit memo line is income only when its journal took it: an amount
+    above zero (create_credit_memo skips the rest) posted to an income
+    account."""
+    return Decimal(str(line.amount or 0)) > 0 and to_income(line.item_id)
+
+
+def _items_cogs(db: Session, inv_ids_by_item: dict) -> dict:
+    """item_id -> COGS, for every tracked item at once: one read of the
+    movements of the report's invoices (in chunks), not each item's whole
+    history. A sale stores a negative quantity at the cost it posted
+    (inventory_service.record_sale) and an edit's reversal a positive one at
+    the sale's cost (reverse_sale), so −Σ(quantity × unit_cost) is the cost
+    of what the invoices, as they stand, shipped, each movement rounded to
+    the cent its entry posted: sell 5 and edit to 3 and
+    it is the cost of 3, the P&L's COGS for the sale."""
+    out = {item_id: Decimal("0") for item_id in inv_ids_by_item}
+    all_inv_ids = sorted(set().union(*inv_ids_by_item.values())) if out else []
+    item_ids = list(out)
+    for i in range(0, len(all_inv_ids), _CHUNK):
+        chunk = all_inv_ids[i : i + _CHUNK]
+        movements = db.query(
+            InventoryMovement.item_id,
+            InventoryMovement.source_id,
+            InventoryMovement.quantity,
+            InventoryMovement.unit_cost,
+        ).filter(
+            InventoryMovement.source_type.in_(_COGS_SOURCES),
+            InventoryMovement.source_id.in_(chunk),
+        )
+        if len(item_ids) <= _CHUNK:
+            movements = movements.filter(InventoryMovement.item_id.in_(item_ids))
+        for item_id, source_id, qty, unit_cost in movements:
+            if item_id in out and source_id in inv_ids_by_item[item_id]:
+                # rounded to the cent as its journal entry is (record_sale,
+                # reverse_sale: _q(quantity × unit_cost)), the sign kept
+                qty = Decimal(str(qty or 0))
+                cost = _q(abs(qty) * Decimal(str(unit_cost or 0)))
+                out[item_id] += cost if qty < 0 else -cost
+    return out
 
 
 def _sales_lines(
@@ -278,10 +366,11 @@ def _sales_lines(
 ) -> dict:
     """The document lines behind one Sales by Item row, for the drill-down.
     `item_key` is an item id, or None for the "No item" row."""
-    start_date, end_date = _default_dates(start_date, end_date)
+    start_date, end_date = _default_dates(db, start_date, end_date)
     _require(db, Customer, customer_id, "customer")
     _require(db, TxnClass, class_id, "class")
     _require(db, Job, job_id, "job")
+    to_income = _posts_to_income(db)
 
     invoices = (
         db.query(Invoice)
@@ -295,7 +384,7 @@ def _sales_lines(
     lines = []
     for inv in invoices.all():
         for line in inv.lines:
-            if line.item_id != item_key:
+            if line.item_id != item_key or not to_income(line.item_id):
                 continue
             if not _dim_ok(
                 (line.class_id, line.job_id),
@@ -323,6 +412,7 @@ def _sales_lines(
         .options(joinedload(CreditMemo.lines), joinedload(CreditMemo.customer))
         .filter(CreditMemo.date >= start_date, CreditMemo.date <= end_date)
         .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(CreditMemo.is_write_off.isnot(True))
     )
     if customer_id is not None:
         memos = memos.filter(CreditMemo.customer_id == customer_id)
@@ -331,7 +421,7 @@ def _sales_lines(
         if not _dim_ok((None, None), (cm.class_id, cm.job_id), class_id, job_id):
             continue
         for line in cm.lines:
-            if line.item_id != item_key:
+            if line.item_id != item_key or not _cm_line_counts(line, to_income):
                 continue
             lines.append(
                 {
@@ -367,7 +457,7 @@ def _purchases_by_item(
     class_id: Optional[int] = None,
     job_id: Optional[int] = None,
 ) -> dict:
-    start_date, end_date = _default_dates(start_date, end_date)
+    start_date, end_date = _default_dates(db, start_date, end_date)
     _require(db, Vendor, vendor_id, "vendor")
     _require(db, TxnClass, class_id, "class")
     _require(db, Job, job_id, "job")
@@ -477,7 +567,7 @@ def _purchases_lines(
     class_id: Optional[int] = None,
     job_id: Optional[int] = None,
 ) -> dict:
-    start_date, end_date = _default_dates(start_date, end_date)
+    start_date, end_date = _default_dates(db, start_date, end_date)
     _require(db, Vendor, vendor_id, "vendor")
     _require(db, TxnClass, class_id, "class")
     _require(db, Job, job_id, "job")

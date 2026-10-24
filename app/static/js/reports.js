@@ -1804,7 +1804,8 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(l.amount)}</td>
             </tr>`;
         }).join('');
-        openModal(escapeHtml(name), `
+        // openModal sets the title as text: the name as it is ("Nuts & Bolts")
+        openModal(name, `
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Date</th><th scope="col">Document</th><th scope="col">${partyHead}</th><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${rows || '<tr><td colspan="7" style="text-align:center; color:var(--gray-400);">No lines</td></tr>'}</tbody>
@@ -1823,7 +1824,7 @@ const ReportsPage = {
             ReportsPage._itemPicker('sbi-customer', T('Customer'), customers, params.customer_id, 'customer_id')
             + ReportsPage._itemPicker('sbi-class', T('Class'), classes, params.class_id, 'class_id')
             + ReportsPage._itemPicker('sbi-job', T('Job'), jobs, params.job_id, 'job_id');
-        await ReportsPage.openPeriodModal('Sales by Item', 'this_year_to_date', async (_period, range, p) => {
+        await ReportsPage.openPeriodModal('Sales by Item', ReportsPage.defaultPeriod(), async (_period, range, p) => {
             const qs = ReportsPage._itemQs(range, p, 'customer_id');
             const data = await API.get(`/reports/sales-by-item?${qs}`);
             const money = (v) => v === null || v === undefined ? '—' : formatCurrency(v);
@@ -1871,7 +1872,7 @@ const ReportsPage = {
             ReportsPage._itemPicker('pbi-vendor', 'Vendor', vendors, params.vendor_id, 'vendor_id')
             + ReportsPage._itemPicker('pbi-class', T('Class'), classes, params.class_id, 'class_id')
             + ReportsPage._itemPicker('pbi-job', T('Job'), jobs, params.job_id, 'job_id');
-        await ReportsPage.openPeriodModal('Purchases by Item', 'this_year_to_date', async (_period, range, p) => {
+        await ReportsPage.openPeriodModal('Purchases by Item', ReportsPage.defaultPeriod(), async (_period, range, p) => {
             const qs = ReportsPage._itemQs(range, p, 'vendor_id');
             const data = await API.get(`/reports/purchases-by-item?${qs}`);
             const money = (v) => v === null || v === undefined ? '—' : formatCurrency(v);

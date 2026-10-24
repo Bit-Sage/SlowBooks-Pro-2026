@@ -1434,6 +1434,54 @@ def test_a_january_company_still_opens_on_this_year_to_date_and_steps_by_month(
         page.close()
 
 
+# ── #435 finish: Sales by Item ───────────────────────────────────────────
+
+
+def test_sales_by_item_opens_on_the_fiscal_year_and_names_an_item_as_it_is(
+    browser, company, books
+):
+    """A July company's Sales by Item opens on This Fiscal Year to Date, and
+    an item's lines open under its own name: "Nuts & Bolts", not
+    "Nuts &amp; Bolts" (openModal sets the title as text)."""
+    company.put("/api/settings", json={"fiscal_year_start_month": "7"})
+    today = dt.date.today()
+    item = company.post(
+        "/api/items",
+        json={"name": "Nuts & Bolts", "item_type": "product", "rate": "3"},
+    )
+    assert item.status_code == 201, item.text
+    customer = company.get("/api/customers").json()[0]
+    r = company.post(
+        "/api/invoices",
+        json={
+            "customer_id": customer["id"],
+            "date": today.isoformat(),
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.json()["id"],
+                    "description": "Hardware",
+                    "quantity": "4",
+                    "rate": "3",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    page, handled = _open_at(browser, company, "#/reports/sales-by-item")
+    try:
+        page.wait_for_function(f"() => ({TITLE})() === 'Sales by Item'")
+        page.wait_for_selector("#report-content table")
+        state = page.evaluate(PERIOD)
+        assert state["period"] == "this_fiscal_year_to_date"
+        assert _query(_hash(page))["start_date"] == _july_fy_start(today).isoformat()
+        page.click("#report-content a:text-is('Nuts & Bolts')")
+        page.wait_for_function(f"() => ({TITLE})() === 'Nuts & Bolts'")
+        assert page.locator("#modal-overlay td:has-text('Hardware')").count() == 1
+    finally:
+        page.close()
+
+
 # ── #395: a pinned card is first, and stays so after a reload ──────────────
 
 PIN = '#page-content .card-pin[data-pin="ap-aging"]'
