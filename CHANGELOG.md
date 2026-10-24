@@ -251,6 +251,26 @@ click or key press so the macOS app's WebView does not leave it muted. A
 read-only or accountant sign-in, which cannot save preferences, does not see
 the toggle.
 
+A failed test email now says why itself instead of pointing at a log — the
+server rejection ("535 Username and Password not accepted") in the response,
+plus a short hint for the mistakes new users actually hit: Gmail and Google
+Workspace need an app password, and a server that cannot be reached means the
+host, port, or Use TLS setting is wrong. The three "see the email log"
+messages (the test email, an emailed invoice, a collection letter) now point
+at Recent sends, and the collection-letter one names the customer whose send
+failed. Recent sends is an administrator's section, so anyone else is told
+"An administrator can see why under Settings → Recent sends." with no link to a
+page they cannot open, and a failed invoice email's toast is an error toast
+(an action toast can now be one, kept at least the six seconds an error stays).
+The failure sentences live in one place on the server; the list shows the
+sentence the API returns with each failed row (`failure`).
+
+Every saved secret field on Settings — the SMTP and closing-date passwords,
+the payment-provider keys and the ACH account — now says under it "Saved.
+Shown as a placeholder; type a new value only to change it." The placeholder
+stays eight characters so no password length leaks; the same new user had read
+it as a truncated password.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

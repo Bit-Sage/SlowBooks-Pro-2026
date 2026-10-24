@@ -237,7 +237,10 @@ def test_email(db: Session = Depends(get_db)):
             # back so the failure can say the reason itself (#447) instead of
             # sending the user off to find a log that had no UI.
             from app.models.email_log import EmailLog
-            from app.services.email_errors import explain_send_failure
+            from app.services.email_errors import (
+                explain_send_failure,
+                failure_sentence,
+            )
 
             row = (
                 db.query(EmailLog)
@@ -245,14 +248,12 @@ def test_email(db: Session = Depends(get_db)):
                 .order_by(EmailLog.id.desc())
                 .first()
             )
-            reason, hint = explain_send_failure(
-                row.error_message if row else "", settings.get("smtp_host", "")
-            )
+            error_text = row.error_message if row else ""
+            reason, _ = explain_send_failure(error_text, settings.get("smtp_host", ""))
             detail = "Test email failed to send."
             if reason:
                 detail += f" {reason}"
-            if hint:
-                detail += f" {hint}"
+            detail += " " + failure_sentence(error_text, settings.get("smtp_host", ""))
             detail += " The full list is under Settings → Email (SMTP) → Recent sends."
             raise HTTPException(status_code=502, detail=detail)
         return {"status": "sent"}

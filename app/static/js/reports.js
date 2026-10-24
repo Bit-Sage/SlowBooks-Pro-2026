@@ -2794,12 +2794,17 @@ const ReportsPage = {
     _sendResult(title, headline, errors) {
         if (!errors.length) { toast(headline); return; }
         // Each failed send is in the email_log; the Recent sends section under
-        // Settings → Email (SMTP) shows the reason (#447).
+        // Settings → Email (SMTP) shows the reason (#447). It is an
+        // administrator's section, so only an administrator gets the link;
+        // anyone else's error lines already say an administrator can see why.
+        const recentSends = App.isAdmin()
+            ? `<a href="#/settings" class="btn btn-secondary" onclick="closeModal(); try { sessionStorage.setItem('settings_focus', 'settings-h-email-recent-sends'); } catch (e) {}">Recent sends</a>`
+            : '';
         openModal(title, `
             <p>${escapeHtml(headline)} ${errors.length} could not be sent:</p>
             <ul style="margin:8px 0 12px 20px;">${errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul>
             <div class="form-actions">
-                <a href="#/settings" class="btn btn-secondary" onclick="closeModal(); try { sessionStorage.setItem('settings_focus', 'settings-h-email-recent-sends'); } catch (e) {}">Recent sends</a>
+                ${recentSends}
                 <button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button></div>`);
     },
 

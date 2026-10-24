@@ -36,29 +36,32 @@ test('each source gets a plain-language label', () => {
     assert.equal(SettingsPage._emailSourceLabel(''), '—');
 });
 
-test('a failed row gives an actionable sentence with the raw error under it', () => {
-    // A real Gmail rejection carries a support.google.com URL, which is how
-    // the list (which has no host) knows to name the app password.
-    const gmailErr = "(535, b'5.7.8 Username and Password not accepted. https://support.google.com/mail/?p=BadCredentials')";
-    const gmail = SettingsPage._emailLogFailure({ error_message: gmailErr });
-    assert.match(gmail.sentence.toLowerCase(), /app password/);
+test('a failed row shows the sentence the API sends, with the raw error under it', () => {
+    // The mapping lives once, in app/services/email_errors.py; the list reads
+    // the `failure` sentence GET /api/email-log returns for a failed row.
+    const gmailErr = "(535, b'5.7.8 Username and Password not accepted.')";
+    const gmail = SettingsPage._emailLogFailure({
+        error_message: gmailErr, failure: 'Google will not accept a normal password here.',
+    });
+    assert.equal(gmail.sentence, 'Google will not accept a normal password here.');
     assert.equal(gmail.raw, gmailErr);
 
-    const otherAuth = SettingsPage._emailLogFailure({ error_message: "(535, b'bad creds')" });
-    assert.match(otherAuth.sentence.toLowerCase(), /username or password/);
-
-    const conn = SettingsPage._emailLogFailure({ error_message: '[Errno 61] Connection refused' });
-    assert.match(conn.sentence.toLowerCase(), /host, port/);
-
+    // no sentence from the server (an older row shape): the plain fallback
     const unknown = SettingsPage._emailLogFailure({ error_message: 'weird thing' });
     assert.equal(unknown.sentence, 'The email could not be sent.');
     assert.equal(unknown.raw, 'weird thing');
 });
 
+test('settings.js keeps no second copy of the failure mapping', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../../app/static/js/settings.js'), 'utf8');
+    assert.doesNotMatch(src, /rejected the username or password/);
+    assert.doesNotMatch(src, /could not be reached/);
+});
+
 test('the rows table shows the failure reason and escapes user text', () => {
     const html = SettingsPage._emailLogRowsHtml([
         { sent_at: '2026-10-01T12:00:00+00:00', recipient: 'a@x.com', subject: 'Invoice #1', entity_type: 'invoice', status: 'sent', error_message: null },
-        { sent_at: '2026-10-01T12:10:00+00:00', recipient: '<b>@x.com', subject: 'Test', entity_type: 'settings_test', status: 'failed', error_message: "(535, b'nope')" },
+        { sent_at: '2026-10-01T12:10:00+00:00', recipient: '<b>@x.com', subject: 'Test', entity_type: 'settings_test', status: 'failed', error_message: "(535, b'nope')", failure: 'The server rejected the username or password — check both.' },
     ]);
     assert.match(html, /Invoice #1/);
     assert.match(html, /Failed/);

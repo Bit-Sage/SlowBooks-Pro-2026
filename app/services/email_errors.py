@@ -76,3 +76,33 @@ def explain_send_failure(error_text: str, host: str = "") -> tuple[str, str]:
         )
 
     return reason, hint
+
+
+# The sentence a failed send is shown with, wherever it is shown. The Recent
+# sends list reads it from the API (GET /api/email-log's `failure`) rather than
+# keeping a second copy of the mapping in settings.js, so the list and the
+# test-email failure can never word the same error two ways.
+_FALLBACK_SENTENCE = "The email could not be sent."
+_NOT_CONFIGURED_SENTENCE = (
+    "SMTP is not configured — fill in the fields under Settings → Email (SMTP)."
+)
+
+
+def failure_sentence(error_text: str, host: str = "") -> str:
+    """One sentence a person can act on for a stored send error: the hint
+    for a common mistake, else "not configured", else a plain fallback."""
+    _, hint = explain_send_failure(error_text, host)
+    if hint:
+        return hint
+    if "not configured" in (error_text or "").lower():
+        return _NOT_CONFIGURED_SENTENCE
+    return _FALLBACK_SENTENCE
+
+
+def where_to_see_why(admin: bool) -> str:
+    """Where a failed send's reason can be read. Recent sends is an
+    administrator's section (recipients and raw SMTP errors), so anyone else
+    is told who can read it rather than sent to a page they cannot open."""
+    if admin:
+        return "The reason is under Settings → Email (SMTP) → Recent sends."
+    return "An administrator can see why under Settings → Recent sends."

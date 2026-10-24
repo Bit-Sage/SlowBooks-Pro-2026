@@ -22,6 +22,8 @@ from app.services.pdf_service import (
 from app.services.settings_service import get_all_settings as get_settings
 from app.services.request_utils import content_disposition
 from app.routes.reports._router import router
+from app.routes._roles import is_admin
+from app.services.email_errors import where_to_see_why
 
 logger = logging.getLogger(__name__)
 
@@ -528,7 +530,11 @@ def batch_email_statements(db: Session = Depends(get_db)):
 
 
 @router.post("/collection-letters")
-def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_db)):
+def collection_letters(
+    data: CollectionLetterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """Generate and optionally email collection letters."""
     from app.services.email_service import send_email
 
@@ -602,8 +608,8 @@ def collection_letters(data: CollectionLetterRequest, db: Session = Depends(get_
                     emailed += 1
                 else:
                     errors.append(
-                        f"{customer.name}: the letter could not be emailed (the "
-                        "reason is under Settings → Email (SMTP) → Recent sends)"
+                        f"{customer.name}: the letter could not be emailed. "
+                        + where_to_see_why(is_admin(request))
                     )
         except Exception:
             logger.exception(

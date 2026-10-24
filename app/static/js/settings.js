@@ -22,18 +22,6 @@ const SettingsPage = {
         return Number.isFinite(n) ? String(+n.toFixed(4)) : '0.0';
     },
 
-    // The fiscal-year start-month options, value "1".."12" (#444). Built with
-    // string concatenation, not a template literal, so this helper adds no
-    // backtick-returning statement ahead of the page's render function (the
-    // unsaved-changes guard test slices the file at the first one).
-    _monthOptions(selected) {
-        const names = ['January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'];
-        const opt = (name, i) => '<option value="' + (i + 1) + '"' +
-            (String(i + 1) === String(selected) ? ' selected' : '') + '>' + name + '</option>';
-        return names.map(opt).join('');
-    },
-
     // The server echoes a saved secret back as this fixed 8-character string
     // (settings_service.SECRET_PLACEHOLDER), never the real length, so the
     // field shows a value is set without leaking how long it is. A new user
@@ -46,6 +34,18 @@ const SettingsPage = {
         return value === SettingsPage._SECRET_PLACEHOLDER
             ? `<div class="form-hint" style="font-size:10px; color:var(--text-muted); margin-top:4px;">Saved. Shown as a placeholder; type a new value only to change it.</div>`
             : '';
+    },
+
+    // The fiscal-year start-month options, value "1".."12" (#444). Built with
+    // string concatenation, not a template literal, so this helper adds no
+    // backtick-returning statement ahead of the page's render function (the
+    // unsaved-changes guard test slices the file at the first one).
+    _monthOptions(selected) {
+        const names = ['January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'];
+        const opt = (name, i) => '<option value="' + (i + 1) + '"' +
+            (String(i + 1) === String(selected) ? ' selected' : '') + '>' + name + '</option>';
+        return names.map(opt).join('');
     },
 
     // Where each encrypted setting is entered again, for the notice below.
@@ -794,24 +794,13 @@ const SettingsPage = {
     },
 
     // A failed row's two lines: a sentence a person can act on, and the raw
-    // SMTP error under it. The sentence prefers the hint the server mapped
-    // (Gmail app password, host/port/TLS), then the cleaned reason, then a
-    // plain fallback. The raw error is always shown so nothing is hidden.
+    // SMTP error under it. The sentence is the one the API returns
+    // (`failure`, from app/services/email_errors.py — the single mapping, so
+    // the list and the test-email message never word an error two ways). The
+    // raw error is always shown so nothing is hidden.
     _emailLogFailure(row) {
         const raw = (row.error_message || '').trim();
-        const low = raw.toLowerCase();
-        let sentence;
-        if (/\b53[45]\b/.test(raw)) {
-            sentence = (low.includes('gmail') || low.includes('google'))
-                ? 'Google rejected the sign-in — use a 16-character app password as the SMTP password.'
-                : 'The server rejected the username or password — check both.';
-        } else if (/(refused|timed out|timeout|getaddrinfo|no route to host|network is unreachable|name or service not known)/.test(low)) {
-            sentence = 'The server could not be reached — check the host, port, and the Use TLS setting.';
-        } else if (low.includes('not configured')) {
-            sentence = 'SMTP is not configured — fill in the fields above.';
-        } else {
-            sentence = 'The email could not be sent.';
-        }
+        const sentence = (row.failure || '').trim() || 'The email could not be sent.';
         return { sentence, raw };
     },
 
