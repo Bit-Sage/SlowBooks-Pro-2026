@@ -13,7 +13,7 @@ stops on one, and the bills stay as they were otherwise. Books without a
 duplicate change nothing but the index.
 
 Revision ID: f2e3d4c5b6a7
-Revises: c4e5d6f7a8b9
+Revises: d7e8f9a0b1c2
 Create Date: 2026-10-24
 """
 
@@ -23,7 +23,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "f2e3d4c5b6a7"
-down_revision: Union[str, None] = "c4e5d6f7a8b9"
+down_revision: Union[str, None] = "d7e8f9a0b1c2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

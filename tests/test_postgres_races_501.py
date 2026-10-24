@@ -350,8 +350,8 @@ def _walk_migration(url):
     cfg = _cfg(url)
     script = ScriptDirectory.from_config(cfg)
     assert len(script.get_heads()) == 1
-    assert script.get_revision(REVISION).down_revision == "c4e5d6f7a8b9"
-    command.upgrade(cfg, "c4e5d6f7a8b9")
+    assert script.get_revision(REVISION).down_revision == "d7e8f9a0b1c2"
+    command.upgrade(cfg, "d7e8f9a0b1c2")
     engine = sa.create_engine(url)
     with engine.begin() as conn:
         conn.execute(
@@ -399,7 +399,7 @@ def _walk_migration(url):
             )
         )
     engine.dispose()
-    command.downgrade(cfg, "c4e5d6f7a8b9")
+    command.downgrade(cfg, "d7e8f9a0b1c2")
     engine = sa.create_engine(url)
     assert "uq_bills_vendor_bill_number" not in {
         i["name"] for i in sa.inspect(engine).get_indexes("bills")
