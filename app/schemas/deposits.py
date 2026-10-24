@@ -49,6 +49,10 @@ class DepositDetailResponse(DepositResponse):
     so it names none."""
 
     payments: list[PendingDepositResponse] = []
+    # After an edit (#388): the lines that lost their cleared mark and the
+    # sentence that says so — the same note the journal entry's edit gives.
+    uncleared: list[dict] = []
+    note: Optional[str] = None
 
 
 class DepositCreate(StrictModel):

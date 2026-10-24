@@ -30,6 +30,8 @@ from app.services.accounting import _q, create_journal_entry, get_undeposited_fu
 from app.services.bank_posting import (
     reconciled_on,
     replace_journal_lines,
+    uncleared_note,
+    uncleared_rows,
     void_document,
 )
 from app.services.bank_register import date_text
@@ -391,12 +393,43 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
         .filter(TransactionLine.deposit_transaction_id == txn.id)
         .all()
     )
+    # A deposit Make Deposits posted is exactly DR bank / CR Undeposited
+    # Funds, and only that shape is reposted from the payments it takes. An
+    # IIF or QuickBooks-report import posts deposits with their own splits —
+    # straight to income or other accounts, with classes and memos — and
+    # rewriting one as bank / Undeposited Funds would take its income off
+    # the books (#388 review: DR Checking 500 / CR Sales 500 came back as
+    # Sales 0, Undeposited Funds -500 after a reference fix). Such a deposit
+    # keeps every line; only its date, reference, class and job change.
+    others = [ln for ln in txn.lines if ln is not bank_line]
+    standard = (
+        len(others) == 1
+        and others[0].account_id == uf_id
+        and _q(others[0].credit) == old_total
+        and _q(others[0].debit) == 0
+    )
+    if not standard and data.line_ids and set(data.line_ids) != {
+        ln.id for ln in held
+    }:
+        accts = [db.get(Account, ln.account_id) for ln in others]
+        names = ", ".join(
+            dict.fromkeys(a.name for a in accts if a is not None and a.id != uf_id)
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This deposit posts to {names or 'its own accounts'}, not only "
+                "Undeposited Funds (it was imported that way), so the payments "
+                "it takes and its amount cannot be changed here. Its date and "
+                "reference can; to change the amount, void it and deposit again."
+            ),
+        )
     # An empty or omitted `line_ids` leaves the payments alone — a legacy
     # deposit that named none (imported, or an amount posted by hand) can
     # still have its date or reference fixed, and the form omits `line_ids`
     # when nothing was re-ticked (#388 review). A non-empty list sets which
     # payments it takes: the ones it holds now plus any still waiting.
-    if data.line_ids:
+    if data.line_ids and standard:
         pool = {ln.id: ln for ln in held}
         for ln, _ in waiting_items(db, uf_id):
             pool.setdefault(ln.id, ln)
@@ -441,24 +474,45 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
     check_closing_date(db, txn.date)
     check_closing_date(db, new_date)
 
-    label = (
-        f"Deposit to {bank_account.name}" if bank_account else (txn.description or "")
-    )
-    lines = [
-        {
-            "account_id": bank_line.account_id,
-            "debit": new_total,
-            "credit": Decimal("0"),
-            "description": label,
-        },
-        {
-            "account_id": uf_id,
-            "debit": Decimal("0"),
-            "credit": new_total,
-            "description": label,
-        },
-    ]
-    replace_journal_lines(
+    if standard:
+        label = (
+            f"Deposit to {bank_account.name}"
+            if bank_account
+            else (txn.description or "")
+        )
+        lines = [
+            {
+                "account_id": bank_line.account_id,
+                "debit": new_total,
+                "credit": Decimal("0"),
+                "description": label,
+            },
+            {
+                "account_id": uf_id,
+                "debit": Decimal("0"),
+                "credit": new_total,
+                "description": label,
+            },
+        ]
+    else:
+        # every line as it stands, each dimension named so nothing is
+        # re-derived: the amounts, memos, classes, jobs and cost codes stay
+        label = txn.description or ""
+        lines = [
+            {
+                "account_id": ln.account_id,
+                "debit": ln.debit,
+                "credit": ln.credit,
+                "description": ln.description or "",
+                "class_id": ln.class_id,
+                "job_id": ln.job_id,
+                "cost_code_id": ln.cost_code_id,
+                "is_billable": bool(ln.is_billable),
+                "function": ln.function,
+            }
+            for ln in txn.lines
+        ]
+    uncleared = replace_journal_lines(
         db,
         txn,
         new_date,
@@ -476,7 +530,12 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
     for ln in chosen:
         ln.deposit_transaction_id = txn.id
     db.commit()
-    return get_deposit(txn.id, db)
+    out = get_deposit(txn.id, db)
+    # a new total takes the cleared mark off the bank line: say so, as the
+    # journal entry's edit does
+    out.uncleared = uncleared_rows(uncleared)
+    out.note = uncleared_note(uncleared)
+    return out
 
 
 @router.post("/{deposit_id}/void", response_model=DepositResponse)

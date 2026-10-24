@@ -713,3 +713,29 @@ def void_document(db: Session, txn: Transaction, void_source_type: str) -> Trans
     )
     release_statement_links(db, txn)
     return reversal
+
+
+def uncleared_note(uncleared: list[dict]) -> str | None:
+    """The sentence an edit returns when lines lost their cleared mark
+    (#388): the journal entry's PUT and the deposit's say it the same way."""
+    if not uncleared:
+        return None
+    names = ", ".join(o["account_name"] or "line" for o in uncleared)
+    one = len(uncleared) == 1
+    return (
+        f"The {names} {'line' if one else 'lines'} changed, so "
+        f"{'it is' if one else 'they are'} no longer marked cleared; tick "
+        f"{'it' if one else 'them'} again on the next reconciliation."
+    )
+
+
+def uncleared_rows(uncleared: list[dict]) -> list[dict]:
+    """The lines that lost a cleared mark, as an edit's response lists them."""
+    return [
+        {
+            "account_id": o["account_id"],
+            "account_name": o["account_name"],
+            "amount": str(o["debit"] - o["credit"]),
+        }
+        for o in uncleared
+    ]

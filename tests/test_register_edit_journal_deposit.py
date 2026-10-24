@@ -55,8 +55,12 @@ def _je(client, seed_accounts, **over):
     return r.json()
 
 
-def _je_form(entry, **over):
-    """The PUT body as the journal form sends it: the GET's fields back."""
+def _je_form(entry, classes=False, cost_codes=False, **over):
+    """The PUT body as the journal form (journal.js save()) sends it: the
+    GET's fields back, numbers for the amounts, and a line's class and cost
+    code only when the form shows a picker for them — `classes` where the
+    company is nonprofit or has a class of its own, `cost_codes` where it
+    has a cost code. Each picker opens on the line's own value."""
     body = {
         "date": entry["date"],
         "description": entry["description"],
@@ -67,9 +71,11 @@ def _je_form(entry, **over):
         "lines": [
             {
                 "account_id": ln["account_id"],
-                "debit": str(ln["debit"]),
-                "credit": str(ln["credit"]),
+                "debit": ln["debit"],
+                "credit": ln["credit"],
                 "description": ln["description"],
+                **({"class_id": ln["class_id"]} if classes else {}),
+                **({"cost_code_id": ln["cost_code_id"]} if cost_codes else {}),
             }
             for ln in entry["lines"]
         ],
@@ -601,14 +607,75 @@ def test_a_billable_reclassified_line_survives_a_memo_edit(
     ).json()
     exp_line = _bank_line(db_session, posted["id"], seed_accounts["6900"])
     assert exp_line.is_billable is True and exp_line.class_id == cls.id
-    # the form reads the entry and PUTs bare lines (no class/billable keys)
+    # the form reads the entry and PUTs what it sends: the company has a
+    # class, so each line's class picker goes back with the line's own
+    # value; there is no billable key on the journal form
     e = client.get(f"/api/journal/{posted['id']}").json()
     r = client.put(
-        f"/api/journal/{posted['id']}", json=_je_form(e, description="Owner draw (fix)")
+        f"/api/journal/{posted['id']}",
+        json=_je_form(e, classes=True, description="Owner draw (fix)"),
     )
     assert r.status_code == 200, r.text
     exp_line = _bank_line(db_session, posted["id"], seed_accounts["6900"])
     assert exp_line.is_billable is True and exp_line.class_id == cls.id
+
+
+def test_a_null_class_or_cost_code_the_form_does_not_manage_keeps_the_line(
+    client, db_session, seed_accounts
+):
+    """A business company with no class or cost code of its own shows no
+    picker for them, so its form sends neither; an older client sent null
+    for both. Either way an imported line keeps its class and cost code on
+    a memo fix (#388 review)."""
+    from app.models.classes import TxnClass
+    from app.models.cost_codes import CostCode
+
+    cls = TxnClass(name="Imported class", is_archived=True)
+    code = CostCode(code="OLD", name="Old code", cost_type="labor", is_active=False)
+    db_session.add_all([cls, code])
+    db_session.commit()
+    posted = client.post(
+        "/api/journal",
+        json={
+            "date": "2026-09-02",
+            "description": "Imported",
+            "lines": [
+                {"account_id": seed_accounts["1000"].id, "debit": 0, "credit": 100},
+                {
+                    "account_id": seed_accounts["6900"].id,
+                    "debit": 100,
+                    "credit": 0,
+                    "class_id": cls.id,
+                    "cost_code_id": code.id,
+                },
+            ],
+        },
+    ).json()
+    e = client.get(f"/api/journal/{posted['id']}").json()
+    # the form's real payload: no class or cost code key at all
+    r = client.put(f"/api/journal/{posted['id']}", json=_je_form(e, description="A"))
+    assert r.status_code == 200, r.text
+    line = _bank_line(db_session, posted["id"], seed_accounts["6900"])
+    assert (line.class_id, line.cost_code_id) == (cls.id, code.id)
+    # an older client's nulls for the same lines
+    body = _je_form(e, description="B")
+    for ln in body["lines"]:
+        ln["class_id"] = None
+        ln["cost_code_id"] = None
+    r = client.put(f"/api/journal/{posted['id']}", json=body)
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    line = _bank_line(db_session, posted["id"], seed_accounts["6900"])
+    assert (line.class_id, line.cost_code_id) == (cls.id, code.id)
+
+
+def test_the_journal_form_sends_a_class_only_with_its_picker():
+    src = (ROOT / "app/static/js/journal.js").read_text(encoding="utf-8")
+    save = src[src.index("    async save(e) {") :]
+    save = save[: save.index("\n    },\n")]
+    assert "if (row.querySelector('.je-function-fund')) line.class_id" in save
+    assert "if (row.querySelector('.je-cost-code')) line.cost_code_id" in save
+    assert "class_id: Nonprofit.fundFromRow" not in save
 
 
 def test_a_memo_only_edit_updates_in_place_without_deleting_lines(
@@ -748,3 +815,110 @@ def test_a_legacy_deposit_naming_no_payments_still_takes_a_date_fix(
     assert r.status_code == 200, r.text
     assert r.json()["date"] == "2026-09-14" and r.json()["reference"] == "L2"
     assert r.json()["amount"] == "250.00"
+
+
+# ------------------------------------- an imported deposit keeps its splits
+
+
+def _imported_deposit(db_session, seed_accounts):
+    """A deposit as an IIF / QuickBooks-report import posts one: straight to
+    income, with a class and a memo on the line — not via Undeposited
+    Funds."""
+    from app.models.classes import TxnClass
+    from app.services.accounting import create_journal_entry
+
+    cls = TxnClass(name="Retail")
+    db_session.add(cls)
+    db_session.flush()
+    txn = create_journal_entry(
+        db_session,
+        date(2026, 9, 12),
+        "Imported deposit",
+        [
+            {
+                "account_id": seed_accounts["1000"].id,
+                "debit": Decimal("500"),
+                "credit": Decimal("0"),
+                "description": "Deposit",
+            },
+            {
+                "account_id": seed_accounts["4000"].id,
+                "debit": Decimal("0"),
+                "credit": Decimal("500"),
+                "description": "Counter sales",
+                "class_id": cls.id,
+            },
+        ],
+        source_type="deposit",
+        reference="D-1",
+    )
+    db_session.commit()
+    return txn.id, cls.id
+
+
+def test_an_imported_deposit_keeps_its_income_line_on_a_reference_fix(
+    client, db_session, seed_accounts
+):
+    dep, cls_id = _imported_deposit(db_session, seed_accounts)
+    sales, uf = seed_accounts["4000"], seed_accounts["1200"]
+    r = client.put(f"/api/deposits/{dep}", json={"reference": "D-1a"})
+    assert r.status_code == 200, r.text
+    assert r.json()["reference"] == "D-1a" and r.json()["amount"] == "500.00"
+    # the income stays on the books; nothing moved to Undeposited Funds
+    assert _gl(db_session, sales) == Decimal("-500.00")
+    assert _gl(db_session, uf) == Decimal("0")
+    line = _bank_line(db_session, dep, sales)
+    assert line.class_id == cls_id and line.description == "Counter sales"
+    assert db_session.get(Transaction, dep).description == "Imported deposit"
+    # a date fix too, with the form's own body (no payments ticked)
+    r = client.put(
+        f"/api/deposits/{dep}",
+        json={"reference": "D-1a", "line_ids": [], "date": "2026-09-14"},
+    )
+    assert r.status_code == 200, r.text
+    assert _gl(db_session, sales) == Decimal("-500.00")
+
+
+def test_an_imported_deposit_refuses_new_payments_with_a_reason(
+    client, db_session, seed_accounts
+):
+    dep, _ = _imported_deposit(db_session, seed_accounts)
+    cid = _customer(db_session)
+    pay = _receive(client, cid, 120, check="77")
+    r = client.put(
+        f"/api/deposits/{dep}",
+        json={"line_ids": [_line_of(client, db_session, pay["id"])["transaction_line_id"]]},
+    )
+    assert r.status_code == 400, r.text
+    assert "posts to Service Income" in r.json()["detail"]
+    assert "void it and deposit again" in r.json()["detail"]
+    assert _gl(db_session, seed_accounts["4000"]) == Decimal("-500.00")
+
+
+def test_a_deposit_total_change_that_drops_a_cleared_mark_says_so(
+    client, db_session, seed_accounts
+):
+    bank = seed_accounts["1000"]
+    cid = _customer(db_session)
+    first = _receive(client, cid, 300, check="4420")
+    second = _receive(client, cid, 200, check="4421")
+    l1 = _line_of(client, db_session, first["id"])
+    l2 = _line_of(client, db_session, second["id"])
+    dep = _make_deposit(client, seed_accounts, [l1, l2])
+    line = _bank_line(db_session, dep, bank)
+    line.cleared = True  # ticked on a reconciliation not yet completed
+    db_session.commit()
+    r = client.put(
+        f"/api/deposits/{dep}", json={"line_ids": [l1["transaction_line_id"]]}
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["amount"] == "300.00"
+    assert out["note"] == (
+        "The Checking line changed, so it is no longer marked cleared; tick it "
+        "again on the next reconciliation."
+    )
+    assert [u["account_name"] for u in out["uncleared"]] == ["Checking"]
+    # an edit that moves nothing says nothing
+    r = client.put(f"/api/deposits/{dep}", json={"reference": "DEP-2"})
+    assert r.status_code == 200 and r.json()["note"] is None, r.text

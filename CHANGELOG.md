@@ -33,6 +33,16 @@ and amount did not change keeps its cleared mark; one that changed loses
 it. A void entry is not edited, and only a hand-entered journal entry opens
 this way (an imported one keeps to its own correction path).
 
+A deposit imported from IIF or a QuickBooks report, posted with its own
+splits to income or other accounts (with their classes and memos), keeps
+every line when its date or reference is fixed; changing the payments it
+takes is refused with a reason, since reposting it as bank / Undeposited
+Funds would take its income off the books. A journal entry edited from a
+company with no line classes or cost codes keeps each line's own class and
+cost code (the form sends them only where it shows a picker for them). A
+deposit whose new total takes the cleared mark off its bank line returns the
+same note a journal entry's edit does.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
