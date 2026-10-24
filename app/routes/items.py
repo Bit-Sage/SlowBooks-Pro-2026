@@ -15,7 +15,11 @@ from app.schemas.items import (
     LowStockResponse,
 )
 from app.routes._helpers import get_or_404, reject_null_updates
-from app.services.inventory_service import record_adjustment, current_valuation
+from app.services.inventory_service import (
+    current_valuation,
+    record_adjustment,
+    record_opening_quantity,
+)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -198,9 +202,29 @@ def adjust_inventory(
 
 @router.post("", response_model=ItemResponse, status_code=201)
 def create_item(data: ItemCreate, db: Session = Depends(get_db)):
+    """Create an item. A tracked item's starting quantity is not written to
+    the item directly: it posts as its opening movement at the item's cost,
+    with DR Inventory / CR Opening Balance Equity dated `as_of` (today when
+    the form omits it; no entry when the cost is zero). An untracked item
+    keeps the figure as given. Later changes to on-hand go through /adjust;
+    PUT never sets it."""
     _refuse_duplicate_name(db, data.name)
-    item = Item(**data.model_dump())
+    fields = data.model_dump()
+    # as_of dates the opening entry only; it is not an Item column.
+    as_of = fields.pop("as_of", None)
+    opening_qty = Decimal("0")
+    if data.track_inventory:
+        opening_qty = fields.pop("quantity_on_hand") or Decimal("0")
+        if opening_qty < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="A starting quantity on hand cannot be negative",
+            )
+    item = Item(**fields)
     db.add(item)
+    db.flush()
+    if opening_qty > 0:
+        record_opening_quantity(db, item, opening_qty, data.cost, as_of=as_of)
     db.commit()
     db.refresh(item)
     return item

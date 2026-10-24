@@ -400,16 +400,25 @@ def generate_acknowledgment_letter_pdf(
 
 
 def generate_giving_statement_pdf(
-    statements: list, company_settings: dict, year: int
+    statements: list, company_settings: dict, year: int, opening_message: str = ""
 ) -> bytes:
     """Year-end giving statements, one per donor, a page break between
-    them — one PDF prints as the January mailing."""
+    them — one PDF prints as the January mailing.
+
+    The ministry's own opening message and footer (#415) ride here for every
+    output — the single PDF, the all-donors stack and the emailed copy all
+    call this one function — so the three never drift. The opening message is
+    the default giving-statement saved message (passed in, since this layer
+    has no db); the footer is a company setting. Empty prints what printed
+    before, minus the product-name footer."""
     return render_pdf(
         _render(
             "giving_statement_pdf.html",
             company_settings,
             statements=statements,
             year=year,
+            opening_message=(opening_message or "").strip(),
+            footer_text=(company_settings.get("giving_statement_footer") or "").strip(),
         )
     )
 

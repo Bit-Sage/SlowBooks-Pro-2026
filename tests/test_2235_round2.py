@@ -136,9 +136,13 @@ def test_a_split_line_half_filled_is_refused_not_dropped():
     )
     assert "has an account but no amount. Enter its share, or remove the line." in body
     assert "if (!account && amount === '') return;" in body
+    # the save builds its body through _entryData (#388), which reads the
+    # split lines; a refusal there stops the save with its sentence
+    data = js[js.index("_entryData(form, accountId) {") :][:300]
+    assert "const splits = BankingPage._splitLines(form);" in data
     save = js[js.index("async saveEntry(e, accountId) {") :][:400]
     assert (
-        "try { splits = BankingPage._splitLines(form); } catch (err) { toast(err.message, 'error'); return; }"
+        "try { data = BankingPage._entryData(form, accountId); } catch (err) { toast(err.message, 'error'); return; }"
         in save
     )
 

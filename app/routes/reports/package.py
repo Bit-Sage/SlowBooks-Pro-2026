@@ -27,66 +27,13 @@ from app.database import get_db
 from app.models.audit import AuditLog
 from app.models.banking import Reconciliation, ReconciliationStatus
 from app.routes.reports._router import router
-from app.services.csv_export import _SafeWriter
+from app.services.csv_export import _Identifier, _SafeWriter
+from app.services.ledger_exports import _preamble, aging_csv
 from app.services.terminology import terms_from_db
 
 
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "-", text or "").strip("-") or "company"
-
-
-def _money(v):
-    from app.services.ledger_exports import _money as m
-
-    return m(v)
-
-
-def _preamble(w, company: str, report: str, period: str) -> None:
-    w.writerow(["Company", company])
-    w.writerow(["Report", report])
-    w.writerow(["Period", period])
-    w.writerow([])
-
-
-def aging_csv(data: dict, company: str, side: str) -> str:
-    """The A/R or A/P aging as the screen shows it: a row per customer or
-    vendor with the buckets and the total, then the totals row."""
-    out = io.StringIO()
-    w = _SafeWriter(out)
-    name_key = "customer_name" if side == "ar" else "vendor_name"
-    title = "Accounts Receivable Aging" if side == "ar" else "Accounts Payable Aging"
-    _preamble(w, company, title, f"as of {data['as_of_date']}")
-    head = [
-        "Customer" if side == "ar" else "Vendor",
-        "Current",
-        "1-30",
-        "31-60",
-        "61-90+",
-        "Total",
-    ]
-    if side == "ar":
-        head.append("Unapplied credits")
-    w.writerow(head)
-    for i in data.get("items", []):
-        row = [
-            i.get(name_key) or "",
-            _money(i.get("current")),
-            _money(i.get("over_30")),
-            _money(i.get("over_60")),
-            _money(i.get("over_90")),
-            _money(i.get("total")),
-        ]
-        if side == "ar":
-            row.append(_money(i.get("unapplied_credits")))
-        w.writerow(row)
-    t = data.get("totals") or {}
-    row = ["Total"] + [
-        _money(t.get(k)) for k in ("current", "over_30", "over_60", "over_90", "total")
-    ]
-    if side == "ar":
-        row.append(_money(t.get("unapplied_credits")))
-    w.writerow(row)
-    return out.getvalue()
 
 
 def sections_csv(sections: list[dict], company: str) -> str:
@@ -150,8 +97,11 @@ def audit_csv(
                     record,
                     row.action.lower(),
                     f["field"],
-                    f["before"],
-                    f["after"],
+                    # a before/after snapshot is a record to read, not a
+                    # column to sum: keep it text so "-0001" or a phone stays
+                    # verbatim (reviewer, #410)
+                    _Identifier(f["before"]),
+                    _Identifier(f["after"]),
                 ]
             )
     return out.getvalue()

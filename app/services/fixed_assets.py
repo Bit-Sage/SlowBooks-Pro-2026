@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType
 from app.models.bills import Bill, BillStatus
 from app.models.transactions import Transaction
 from app.models.fixed_assets import (
@@ -216,6 +216,8 @@ def _disposal_account_id(db: Session) -> int:
             name=DISPOSAL_ACCOUNT_NAME,
             account_number=DISPOSAL_ACCOUNT_NUMBER,
             account_type=AccountType.EXPENSE,
+            # below the operating line, as QuickBooks files it (#390)
+            detail_type=DetailType.OTHER_EXPENSE,
             is_system=True,
         )
         db.add(acct)

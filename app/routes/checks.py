@@ -74,16 +74,24 @@ def register_check_data(db: Session, txn_id: int) -> dict:
         )
     payee = payees_for(db, [txn]).get(txn.id, "") or ""
     # the stub lists what the check paid: the category of each line, with
-    # its memo when the line carries one of its own
+    # its memo when the line carries one of its own. A credit line is a
+    # refund netted against the check (#387), shown as a negative amount so
+    # the lines add up to the check (e.g. 620.00 expense less a 120.00
+    # refund = a 500.00 check).
     details = []
     for ln in txn.lines:
-        if ln is bank_line or (ln.debit or Decimal("0")) <= 0:
+        if ln is bank_line:
+            continue
+        debit = ln.debit or Decimal("0")
+        credit = ln.credit or Decimal("0")
+        if debit <= 0 and credit <= 0:
             continue
         name = ln.account.name if ln.account else ""
         memo = (ln.description or "").strip()
         if memo and memo != payee and memo != name:
             name = f"{name} — {memo}" if name else memo
-        details.append({"description": name or "Payment", "amount": ln.debit})
+        amount = debit if debit > 0 else -credit
+        details.append({"description": name or "Payment", "amount": amount})
     memo = (bank_line.description or "").strip()
     return {
         "payee": payee,

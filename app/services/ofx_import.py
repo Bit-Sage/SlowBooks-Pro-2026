@@ -3,31 +3,108 @@
 # Feature 18: Import, dedup by FITID, preview → confirm → auto-match
 # ============================================================================
 
+import logging
+import re
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from io import BytesIO
 
 from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
 from app.services.bank_rules_engine import apply_bank_rules
+from app.services.safe_errors import DataProblem
+
+logger = logging.getLogger(__name__)
+
+UNREADABLE_TEXT = (
+    "That file isn't a bank statement this can read: "
+    "an OFX, QFX or CSV export from the bank."
+)
+EMPTY_TEXT = "The file is empty — there is nothing to import."
+
+# What ofxparse raises on a file that isn't OFX, found by feeding it junk,
+# truncations and corrupted statements (SlowBooks-Pro-Testing#101): its own
+# OfxParserException, ValueError (a header line without a colon; also
+# UnicodeDecodeError), IndexError / LookupError (a cut-off header, an
+# unknown CHARSET), TypeError and AttributeError (missing aggregates), and
+# UnboundLocalError (no ENCODING). The net is cast only around the library
+# call, so a bug in our own code still surfaces as one.
+_OFX_FAILURES = (
+    ValueError,
+    LookupError,
+    TypeError,
+    AttributeError,
+    UnboundLocalError,
+    ArithmeticError,  # decimal.InvalidOperation on a mangled amount
+)
+
+# A statement amount has to be an ordinary finite number we can store and
+# turn into JSON for the preview. NaN, Infinity and an absurd magnitude like
+# <TRNAMT>1e999999999 parse into a Decimal ofxparse hands back without
+# complaint, but float() of them is inf/nan and the preview's json.dumps
+# then 500s (Testing#101). A real bank line is well under this bound.
+_MAX_AMOUNT = Decimal("1e12")
+
+
+class UnreadableStatement(DataProblem):
+    """The uploaded bank file can't be read as a statement."""
+
+    def __init__(self, user_text: str = UNREADABLE_TEXT):
+        super().__init__(user_text)
+
+
+def _unreadable(exc: BaseException | None, reason: str = "") -> UnreadableStatement:
+    # The exception's class only: its text can quote the file.
+    logger.info(
+        "bank file unreadable as OFX: %s",
+        type(exc).__name__ if exc is not None else reason,
+    )
+    return UnreadableStatement()
+
+
+def _clean_amount(raw) -> Decimal:
+    """A statement amount as a Decimal, or UnreadableStatement for one that
+    can't be stored or turned into JSON: a non-number, NaN, Infinity, or an
+    absurd magnitude like <TRNAMT>1e999999999 (Testing#101)."""
+    try:
+        amount = Decimal(str(raw))
+    except InvalidOperation as exc:
+        raise _unreadable(exc, "amount is not a number") from None
+    if not amount.is_finite() or abs(amount) > _MAX_AMOUNT:
+        raise _unreadable(None, "amount is not an ordinary finite number")
+    return amount
 
 
 def parse_ofx(content: str) -> list[dict]:
     """Parse OFX/QFX file content into a list of transaction dicts.
-    Uses ofxparse if available, falls back to simple regex parsing."""
-    transactions = []
+    Uses ofxparse if available, falls back to simple regex parsing.
 
+    Raises UnreadableStatement for a file that isn't a whole OFX statement:
+    junk, a PDF, a CSV, or one cut off before any transaction and its
+    closing </OFX>."""
     try:
         from ofxparse import OfxParser
-        from io import BytesIO
+        from ofxparse.ofxparse import OfxParserException
+    except ImportError:
+        return _parse_ofx_fallback(content)
 
-        if isinstance(content, str):
-            content_bytes = content.encode("utf-8")
-        else:
-            content_bytes = content
+    # bs4 (ofxparse's parser) raises ParserRejectedMarkup on markup it won't
+    # touch, e.g. a bogus CDATA section <![bogus[x]]>; it is a bare Exception
+    # subclass, so name it rather than widen the net to Exception.
+    net = (OfxParserException, *_OFX_FAILURES)
+    try:
+        from bs4 import ParserRejectedMarkup
 
-        ofx = OfxParser.parse(BytesIO(content_bytes))
+        net = (*net, ParserRejectedMarkup)
+    except ImportError:
+        pass
 
+    transactions = []
+    try:
+        ofx = OfxParser.parse(BytesIO(content.encode("utf-8")))
+        if not ofx.accounts:
+            raise _unreadable(None, "no account in the file")
         for account in ofx.accounts:
             for txn in account.statement.transactions:
                 transactions.append(
@@ -36,44 +113,59 @@ def parse_ofx(content: str) -> list[dict]:
                         "date": (
                             txn.date.date() if hasattr(txn.date, "date") else txn.date
                         ),
-                        "amount": Decimal(str(txn.amount)),
+                        "amount": _clean_amount(txn.amount),
                         "payee": txn.payee or txn.memo or "",
                         "memo": txn.memo or "",
                         "type": txn.type or "",
                     }
                 )
-    except ImportError:
-        # Fallback: simple OFX text parser
-        import re
+    except UnreadableStatement:
+        raise
+    except net as exc:
+        raise _unreadable(exc) from None
 
-        txn_blocks = re.findall(r"<STMTTRN>(.*?)</STMTTRN>", content, re.DOTALL)
-        for block in txn_blocks:
-            fitid = _extract_tag(block, "FITID")
-            dt = _extract_tag(block, "DTPOSTED")
-            amt = _extract_tag(block, "TRNAMT")
-            name = _extract_tag(block, "NAME")
-            memo = _extract_tag(block, "MEMO")
+    if not transactions and not re.search(r"</OFX>", content, re.IGNORECASE):
+        # ofxparse reads a truncated SGML file without complaint and returns
+        # nothing; every OFX file closes its root, so a file that parsed to
+        # no transactions and never closed </OFX> was cut off. A complete
+        # statement that happens to carry no transactions still closes, so
+        # this only fires when nothing was read.
+        raise _unreadable(None, "no transactions and no closing </OFX>")
+    return transactions
 
-            if dt and amt:
+
+def _parse_ofx_fallback(content: str) -> list[dict]:
+    """Simple OFX text parser, for a build without ofxparse."""
+    transactions = []
+    txn_blocks = re.findall(r"<STMTTRN>(.*?)</STMTTRN>", content, re.DOTALL)
+    for block in txn_blocks:
+        fitid = _extract_tag(block, "FITID")
+        dt = _extract_tag(block, "DTPOSTED")
+        amt = _extract_tag(block, "TRNAMT")
+        name = _extract_tag(block, "NAME")
+        memo = _extract_tag(block, "MEMO")
+
+        if dt and amt:
+            try:
                 txn_date = date(int(dt[:4]), int(dt[4:6]), int(dt[6:8]))
-                transactions.append(
-                    {
-                        "fitid": fitid or "",
-                        "date": txn_date,
-                        "amount": Decimal(amt),
-                        "payee": name or "",
-                        "memo": memo or "",
-                        "type": "",
-                    }
-                )
-
+            except (ValueError, InvalidOperation) as exc:
+                raise _unreadable(exc) from None
+            amount = _clean_amount(amt)
+            transactions.append(
+                {
+                    "fitid": fitid or "",
+                    "date": txn_date,
+                    "amount": amount,
+                    "payee": name or "",
+                    "memo": memo or "",
+                    "type": "",
+                }
+            )
     return transactions
 
 
 def _extract_tag(block: str, tag: str) -> str:
     """Extract value from OFX tag."""
-    import re
-
     match = re.search(rf"<{tag}>([^<\n]+)", block)
     return match.group(1).strip() if match else ""
 

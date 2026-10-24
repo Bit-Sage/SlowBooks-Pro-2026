@@ -15,10 +15,18 @@ from app.services.recurring_service import generate_due_invoices
 if __name__ == "__main__":
     db = SessionLocal()
     try:
-        ids = generate_due_invoices(db)
+        # Collect the skipped templates too: a schedule skipped for a closed
+        # period or a $0.00 total keeps its due date and is skipped again on
+        # every later run, so the operator's log has to name it and say why.
+        skipped: list = []
+        ids = generate_due_invoices(db, skipped=skipped)
         if ids:
             print(f"Generated {len(ids)} invoice(s): {ids}")
         else:
             print("No recurring invoices due.")
+        if skipped:
+            print(f"Skipped {len(skipped)} schedule(s):")
+            for item in skipped:
+                print(f"  - {item['message']}")
     finally:
         db.close()
