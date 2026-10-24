@@ -10,18 +10,24 @@
     body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 10pt; color: #000; }
     .sheet { font-size: 0; }               /* kill inline-block whitespace */
     .sheet.page-break { page-break-after: always; }
+    /* A full label is five lines: company, name, two street lines, and the
+       city/state/zip the mail needs. 0.1in top and bottom leaves 57.6pt;
+       five lines at 9.5pt x 1.15 take 54.6pt, so the last line always
+       prints. Each line stays on one line (an over-long one is cut with an
+       ellipsis) so a wrap cannot push the city line off the label. */
     .label {
         display: inline-block;
         width: 2.625in;
         height: 1in;
         margin-right: 0.125in;
-        padding: 0.12in 0.18in;
+        padding: 0.1in 0.18in;
         vertical-align: top;
         overflow: hidden;
-        font-size: 10pt;
-        line-height: 1.2;
+        font-size: 9.5pt;
+        line-height: 1.15;
     }
     .label:nth-child(3n) { margin-right: 0; }
+    .label div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .label .name { font-weight: 700; }
 </style>
 </head>

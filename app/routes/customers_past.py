@@ -8,7 +8,8 @@
 # mail-merge CSV, and an Avery 5160 labels PDF.
 #
 # "Past customer" is what is already in the books — no new column, no
-# migration. Do Not Contact is read from the customer's notes (#436 §4).
+# migration. Do Not Contact is read from the customer's notes (#436 §4):
+# the customer record has no opt-out field of its own.
 # ============================================================================
 
 import re
@@ -17,50 +18,70 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.contacts import Customer
+from app.models.credit_memos import CreditMemo, CreditMemoStatus
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.jobs import Job
 from app.routes.csv import _csv_response
+from app.services.accounting import _q
 from app.services.addresses import city_line
 from app.services.contact_balances import ZERO, home_amount
 from app.services.csv_export import _SafeWriter
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
-# A "City, ST 12345" (or "City ST 12345") last line — the only shape we
-# parse out of a free-text site address into its own columns. Anything else
-# stays in the street lines and the city/state/zip come back blank.
-_CITY_STATE_ZIP = re.compile(
-    r"^(?P<city>.+?),?\s+(?P<state>[A-Za-z]{2})\s+(?P<zip>\d{5})(?:-\d{4})?$"
+# The state and ZIP that end a free-text address: "TX 78701", "TX, 78701",
+# "tx 78701-1234". What comes before them is the city, after the last comma
+# when the street is on the same line ("123 Main St, Austin, TX 78701").
+_STATE_ZIP = re.compile(
+    r"(?:^|[\s,])(?P<state>[A-Za-z]{2})\.?,?\s+(?P<zip>\d{5}(?:-\d{4})?)\s*$"
 )
 
-# Whole-phrase, case-insensitive: a note that opts the customer out of mail.
-_DO_NOT_CONTACT = re.compile(r"\b(do not contact|no contact)\b", re.IGNORECASE)
+# A note that opts the customer out of mail: "do not contact", "don't
+# contact", "do-not-contact", "do not mail", or DNC as a word. "No contact"
+# is not one: "No contact person on site" is a note about the job.
+_DO_NOT_CONTACT = re.compile(
+    r"\bdo(?:[\s-]+not|n['\u2019]?t)[\s-]+(?:contact|mail)\b|\bDNC\b",
+    re.IGNORECASE,
+)
 
 
 def _parse_site_address(text: str) -> dict:
-    """A job's free-text site_address split for a mailing label. address1 is
-    the first line, address2 the second (when the last line is not itself the
-    parsed city line); city/state/zip come from the last line only when it
-    reads "City, ST 12345". service_address is the whole text on one line."""
+    """A job's free-text site_address split for a mailing label.
+
+    The state and ZIP are read off the end of the last line; the city is
+    what precedes them on that line, after its last comma, so a one-line
+    "123 Main St, Austin, TX 78701" gives Address 1 "123 Main St" and city
+    Austin as the three-line form does. The street lines are every line
+    and comma part before the city: Address 1 is the first, Address 2 the
+    rest joined with commas, so a third line is kept rather than dropped.
+    A ZIP+4 is kept whole. A last line with no state and ZIP is a street
+    line, and the city, state and ZIP come back blank."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     service = ", ".join(lines)
     city = state = zip_code = ""
     street = lines[:]
     if lines:
-        m = _CITY_STATE_ZIP.match(lines[-1])
+        m = _STATE_ZIP.search(lines[-1])
         if m:
-            city = m.group("city").strip()
+            head = lines[-1][: m.start()].strip().rstrip(",").strip()
+            parts = [p.strip() for p in head.split(",") if p.strip()]
+            if len(parts) == 1 and len(lines) == 1 and parts[0][:1].isdigit():
+                # "123 Main St Austin TX 78701": no comma says where the
+                # street ends, so the city is not guessed at
+                parts = [parts[0], ""]
+            city = parts.pop() if parts else ""
             state = m.group("state").upper()
             zip_code = m.group("zip")
-            street = lines[:-1]  # the city line is consumed, not a street line
+            street = lines[:-1] + [p for p in parts if p]
     return {
         "service_address": service,
-        "address1": street[0] if len(street) >= 1 else "",
-        "address2": street[1] if len(street) >= 2 else "",
+        "address1": street[0] if street else "",
+        "address2": ", ".join(street[1:]),
         "city": city,
         "state": state,
         "zip": zip_code,
@@ -123,51 +144,92 @@ def _split_multi(values: list[str] | None) -> list[str]:
     return out
 
 
+def _for_customers(query, active: str):
+    """``query`` (already joined to Customer) cut to the customers asked
+    for: all, active or inactive."""
+    if active == "active":
+        return query.filter(Customer.is_active)
+    if active == "inactive":
+        return query.filter(Customer.is_active.is_(False))
+    return query
+
+
 def _build_rows(db: Session, *, active: str) -> list[dict]:
     """Every customer with a non-void invoice or a job, with the figures the
     view, CSV and labels all share. Filters are applied by the caller so the
-    three endpoints agree on the set."""
-    customers = db.query(Customer)
-    if active == "active":
-        customers = customers.filter(Customer.is_active)
-    elif active == "inactive":
-        customers = customers.filter(Customer.is_active.is_(False))
+    three endpoints agree on the set.
+
+    The invoices and credit memos are summed in SQL, one row per customer
+    (and booked rate), and every query is joined to the customers rather
+    than given a list of their ids: an IN list with one parameter per
+    customer runs past SQLite's limit on a large customer list."""
+    customers = _for_customers(db.query(Customer), active)
     customers = customers.order_by(Customer.name).all()
-    by_id = {c.id: c for c in customers}
 
     jobs_by_customer: dict[int, list[Job]] = {}
-    for j in db.query(Job).filter(Job.customer_id.in_(by_id)).all() if by_id else []:
+    jobs = _for_customers(
+        db.query(Job).join(Customer, Job.customer_id == Customer.id), active
+    )
+    for j in jobs.all():
         jobs_by_customer.setdefault(j.customer_id, []).append(j)
 
-    invoices_by_customer: dict[int, list[Invoice]] = {}
-    if by_id:
-        q = (
-            db.query(Invoice)
-            .filter(Invoice.customer_id.in_(by_id))
-            .filter(Invoice.status != InvoiceStatus.VOID)
+    # count, first and last date, and sales in home currency per customer;
+    # grouped by booked rate too, so each foreign total converts at its own
+    invoice_figures: dict[int, dict] = {}
+    inv = _for_customers(
+        db.query(
+            Invoice.customer_id,
+            Invoice.exchange_rate,
+            func.count(Invoice.id),
+            func.min(Invoice.date),
+            func.max(Invoice.date),
+            func.sum(Invoice.subtotal),
         )
-        for inv in q.all():
-            invoices_by_customer.setdefault(inv.customer_id, []).append(inv)
+        .join(Customer, Invoice.customer_id == Customer.id)
+        .filter(Invoice.status != InvoiceStatus.VOID),
+        active,
+    ).group_by(Invoice.customer_id, Invoice.exchange_rate)
+    for cid, rate, count, first, last, subtotal in inv.all():
+        f = invoice_figures.setdefault(
+            cid, {"count": 0, "first": None, "last": None, "sales": ZERO}
+        )
+        f["count"] += count
+        f["first"] = min(d for d in (f["first"], first) if d)
+        f["last"] = max(d for d in (f["last"], last) if d)
+        f["sales"] += home_amount(subtotal, rate)
+
+    # Lifetime sales are net of the credit memos given back (a return or an
+    # allowance); a write-off forgives a balance to Bad Debt and is not a
+    # sale reversed, as the Sales Tax report has it. Credit memos are in
+    # the company's currency.
+    credits: dict[int, Decimal] = {}
+    cm = _for_customers(
+        db.query(CreditMemo.customer_id, func.sum(CreditMemo.subtotal))
+        .join(Customer, CreditMemo.customer_id == Customer.id)
+        .filter(CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(CreditMemo.is_write_off.isnot(True)),
+        active,
+    ).group_by(CreditMemo.customer_id)
+    for cid, subtotal in cm.all():
+        credits[cid] = _q(Decimal(str(subtotal or 0)))
 
     rows = []
     for c in customers:
         jobs = jobs_by_customer.get(c.id, [])
-        invoices = invoices_by_customer.get(c.id, [])
-        if not jobs and not invoices:
+        figures = invoice_figures.get(c.id)
+        if not jobs and not figures:
             continue  # not a past customer: nothing is in the books for them
 
-        dates = [inv.date for inv in invoices]
+        dates = [figures["first"], figures["last"]] if figures else []
         dates += [j.end_date for j in jobs if j.end_date]
         first_job = min(dates) if dates else None
         last_job = max(dates) if dates else None
 
         # distinct jobs; with no job records, each invoice counts as one job
         # so a service company that only invoices still shows its work (§3)
-        job_count = len(jobs) if jobs else len(invoices)
+        job_count = len(jobs) if jobs else figures["count"]
 
-        lifetime = sum(
-            (home_amount(inv.subtotal, inv.exchange_rate) for inv in invoices), ZERO
-        )
+        lifetime = (figures["sales"] if figures else ZERO) - credits.get(c.id, ZERO)
 
         last_type = last_name = ""
         if jobs:
