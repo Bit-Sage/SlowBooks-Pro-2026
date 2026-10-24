@@ -225,8 +225,25 @@ def profit_loss(
         Optional[str],
         Query(description="prior_year adds the same period one year earlier"),
     ] = None,
+    columns: Annotated[
+        Optional[str],
+        Query(
+            description="month or quarter: one column per month or quarter of "
+            "the period, and a Total column (#478)"
+        ),
+    ] = None,
 ):
     _check_compare(compare)
+    columns = columns if isinstance(columns, str) and columns else None
+    if columns not in (None, "month", "quarter"):
+        raise HTTPException(
+            status_code=422, detail="columns must be month, quarter or left out"
+        )
+    if columns and compare:
+        raise HTTPException(
+            status_code=400,
+            detail="A P&L by month or quarter has no prior-year comparison",
+        )
     exclude_adjusting = _flag(exclude_adjusting)
     sort = sort if isinstance(sort, str) else "number"
     if not start_date:
@@ -239,11 +256,213 @@ def profit_loss(
     def period(start, end):
         return _pl_period(db, start, end, cls, in_class, sort, exclude_adjusting, chart)
 
+    if columns:
+        return _pl_columns(db, start_date, end_date, columns, period, sort, chart)
     if compare == "prior_year":
         current = period(start_date, end_date)
         prior = period(_year_earlier(start_date), _year_earlier(end_date))
         return _pl_layout(db, _pl_with_prior(db, current, prior, sort, chart), chart)
     return _pl_layout(db, period(start_date, end_date), chart)
+
+
+# A P&L by month or quarter (#478) has at most this many columns: five
+# years of months. Past it the request is refused, not a grid nobody reads.
+MAX_PERIOD_COLUMNS = 60
+# the grid's column keys (P&L by Class's, _pl_pivot) and the P&L's own
+_COLUMN_KEYS = {
+    "income": "total_income",
+    "operating_income": "total_operating_income",
+    "cogs": "total_cogs",
+    "gross_profit": "gross_profit",
+    "operating_gross_profit": "operating_gross_profit",
+    "expenses": "total_expenses",
+    "operating_expenses": "total_operating_expenses",
+    "net_operating_income": "net_operating_income",
+    "other_income": "total_other_income",
+    "other_expense": "total_other_expense",
+    "net_other_income": "net_other_income",
+    "net_income": "net_income",
+}
+
+
+def _period_columns(db, start: date, end: date, columns: str) -> list[dict]:
+    """The period cut into months, or quarters of the fiscal year (#444),
+    the first and last clipped to the dates asked: [{key, name, start_date,
+    end_date}]. A whole month reads "Jan 2026", a whole quarter "Jan–Mar
+    2026", a clipped one by its own dates."""
+    import calendar
+
+    from app.services.fiscal_year import start_month
+
+    step = 1 if columns == "month" else 3
+    first_month = start_month(db) if columns == "quarter" else 1
+    # the column the start date falls in: its month, or the fiscal quarter
+    m = start.month
+    if step == 3:
+        m = start.month - ((start.month - first_month) % 3)
+    y = start.year if m <= start.month else start.year - 1
+    if m < 1:
+        m += 12
+        y -= 1
+    out = []
+    while True:
+        col_start = date(y, m, 1)
+        em, ey = m + step - 1, y
+        while em > 12:
+            em -= 12
+            ey += 1
+        col_end = date(ey, em, calendar.monthrange(ey, em)[1])
+        if col_start > end:
+            break
+        lo, hi = max(col_start, start), min(col_end, end)
+        whole = (lo, hi) == (col_start, col_end)
+        if not whole:
+            name = (
+                f"{lo:%b} {lo.day}–{hi.day}, {hi.year}"
+                if (lo.year, lo.month) == (hi.year, hi.month)
+                else f"{lo:%b} {lo.day}–{hi:%b} {hi.day}, {hi.year}"
+            )
+        elif step == 1:
+            name = f"{lo:%b} {lo.year}"
+        else:
+            name = f"{lo:%b}–{hi:%b} {hi.year}"
+        out.append(
+            {
+                "key": f"{lo.isoformat()}_{hi.isoformat()}",
+                "name": name,
+                "start_date": lo.isoformat(),
+                "end_date": hi.isoformat(),
+            }
+        )
+        if len(out) > MAX_PERIOD_COLUMNS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {MAX_PERIOD_COLUMNS} columns: choose a shorter period"
+                " or quarters",
+            )
+        m += step
+        while m > 12:
+            m -= 12
+            y += 1
+    return out
+
+
+def _pl_columns(db, start_date, end_date, columns, period, sort, chart) -> dict:
+    """The P&L with one column per month or quarter and a Total (#478),
+    in P&L by Class's grid shape (_pl_pivot), so its screen, PDF and CSV are
+    the grid's: `columns` with each period's totals, `accounts` by section
+    with amounts[] across them and the account's total. The P&L runs once
+    per column and once for the whole period, which is the Total column:
+    it is the plain P&L's figures to the cent. `tree` is each section as
+    the P&L prints it, sub-accounts beneath their parents with a total per
+    family in every column (#416)."""
+    cols = _period_columns(db, start_date, end_date, columns)
+    whole = period(start_date, end_date)
+    runs = [
+        period(date.fromisoformat(c["start_date"]), date.fromisoformat(c["end_date"]))
+        for c in cols
+    ]
+    out_cols = []
+    for c, run in zip(cols, runs):
+        out_cols.append(
+            {
+                **c,
+                "inactive": False,
+                "empty": not any(run[k] for k in _PL_SECTIONS),
+                **{k: run[v] for k, v in _COLUMN_KEYS.items()},
+            }
+        )
+    # every account with a figure in some column, in the P&L's order
+    by_column = [
+        {i["account_id"]: i["amount"] for key in _PL_SECTIONS for i in run[key]}
+        for run in runs
+    ]
+    total_of = {i["account_id"]: i for key in _PL_SECTIONS for i in whole[key]}
+    section_of = {aid: _pl_section_of(row[3], row[4]) for aid, row in chart.items()}
+    order = _account_order(db, sort, chart)
+    accounts = {key: [] for key in _PL_SECTIONS}
+    seen = set(total_of)
+    for amounts in by_column:
+        seen |= set(amounts)
+    for aid in sorted(seen, key=lambda a: order({"account_id": a})):
+        amounts = [round(m.get(aid, 0.0), 2) for m in by_column]
+        if not any(amounts) and not (total_of.get(aid) or {}).get("amount"):
+            continue
+        path, label = _account_words(chart, aid)
+        number, name = chart[aid][0], chart[aid][1]
+        accounts[section_of[aid]].append(
+            {
+                "account_id": aid,
+                "account_number": number,
+                "account_name": name,
+                "account_path": path or name,
+                "account_label": label or name,
+                "amounts": amounts,
+                "total": (total_of.get(aid) or {}).get("amount", 0.0),
+            }
+        )
+    tree = {
+        key: _grid_tree(accounts[key], len(cols), chart, section_of, order, key)
+        for key in _PL_SECTIONS
+    }
+    data = {
+        "start_date": whole["start_date"],
+        "end_date": whole["end_date"],
+        "class_id": whole["class_id"],
+        "class_name": whole["class_name"],
+        "sort": sort,
+        "exclude_adjusting": whole["exclude_adjusting"],
+        "columns_by": columns,
+        "columns": out_cols,
+        "accounts": accounts,
+        "tree": tree,
+        **{f"total_{k}": whole[v] for k, v in _COLUMN_KEYS.items()},
+        "has_other": bool(accounts["other_income"] or accounts["other_expense"]),
+        "filtered": False,
+        "columns_total": len(out_cols),
+        "chosen_empty": [],
+    }
+    # the P&L's own keys too, for a reader that knows the plain P&L
+    for v in _COLUMN_KEYS.values():
+        data.setdefault(v, whole[v])
+    return data
+
+
+def _grid_tree(lines, n, chart, section_of, order, key) -> list[dict]:
+    """A grid section's accounts as the P&L prints them (#416, #478):
+    sub-accounts beneath their parents, a parent's own postings as "Direct
+    postings to …" and a "Total …" per family, in every column and the
+    Total; each row's amounts[] across the columns and its total."""
+    keys = tuple(f"c{i}" for i in range(n)) + ("total",)
+    flat = [{**a, **{f"c{i}": x for i, x in enumerate(a["amounts"])}} for a in lines]
+    rows = family_rows(
+        flat,
+        account_chart(index=chart),
+        lambda aid: section_of.get(aid) == key,
+        keys,
+        lambda aid: order({"account_id": aid}),
+    )
+    out = []
+    for r in rows:
+        row = {
+            k: r.get(k)
+            for k in (
+                "kind",
+                "depth",
+                "label",
+                "account_id",
+                "account_number",
+                "account_name",
+                "account_path",
+                "account_label",
+            )
+            if k in r
+        }
+        if r["kind"] != "heading":
+            row["amounts"] = [round(r.get(f"c{i}") or 0.0, 2) for i in range(n)]
+            row["total"] = round(r.get("total") or 0.0, 2)
+        out.append(row)
+    return out
 
 
 def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting, chart):
@@ -1806,11 +2025,31 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
         def sum_row(label, key, total, style):
             return row(label, [_money(c[key]) for c in cols] + [_money(total)], style)
 
+        def tree_row(r):
+            """A family's rows (#416, #478): a parent's heading, its
+            accounts indented, its direct postings, its total."""
+            indent = r["depth"] + 1
+            if r["kind"] == "heading":
+                out = row(f"  {r['label']}", [""] * (len(cols) + 1), "group")
+            else:
+                out = row(
+                    f"  {r['label']}",
+                    [_money(r["amounts"][i]) if r["amounts"][i] else "" for i in idx]
+                    + [_money(r["total"])],
+                    "subtotal" if r["kind"] == "total" else None,
+                )
+            out["indent"] = indent
+            return out
+
+        tree = data.get("tree")
         rows = []
         for label, key, sub_label, sub_key, total_key in _grid_layout(data, t):
             if key:
                 rows.append(row(label, [""] * (len(cols) + 1), "subtotal"))
-                rows.extend(account_row(a) for a in data["accounts"][key])
+                if tree is not None:
+                    rows.extend(tree_row(r) for r in tree.get(key, []))
+                else:
+                    rows.extend(account_row(a) for a in data["accounts"][key])
             rows.append(sum_row(sub_label, sub_key, data[total_key], "subtotal"))
         rows.append(
             sum_row(
@@ -1836,6 +2075,13 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             }
         )
     return sections
+
+
+def _pl_columns_title(data: dict, t) -> str:
+    """ "Profit & Loss by Month", one class's with its name (#478)."""
+    by = "Month" if data.get("columns_by") == "month" else "Quarter"
+    cls = data.get("class_name")
+    return f"{t('Profit & Loss')} by {by}" + (f" — {cls}" if cls else "")
 
 
 def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
@@ -2022,10 +2268,13 @@ def _pdf_response(sections, db, filename: str, landscape: bool = False):
     )
 
 
-def _pl_filename(data: dict, t, ext: str) -> str:
+def _pl_filename(data: dict, t, ext: str, by: str | None = None) -> str:
     """profit-loss_2026-07-01_2026-07-31.pdf, with the class's slug after
-    the report's when the P&L is one class's (#232)."""
+    the report's when the P&L is one class's (#232), and -by-month or
+    -by-quarter for the column layouts (#478)."""
     name = t.slug("Profit & Loss")
+    if by:
+        name += f"-by-{by}"
     if data.get("class_name"):
         name += "_" + (t.slug(data["class_name"]) or "class")
     return f"{name}_{data['start_date']}_{data['end_date']}.{ext}"
@@ -2041,6 +2290,7 @@ def profit_loss_pdf(
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
+    columns: Optional[str] = Query(default=None),
 ):
     # class_id is a keyword: profit_loss takes db before it
     data = profit_loss(
@@ -2051,8 +2301,17 @@ def profit_loss_pdf(
         sort=sort,
         exclude_adjusting=exclude_adjusting,
         compare=compare,
+        columns=columns,
     )
     t = terms_from_db(db)
+    if data.get("columns_by"):
+        # by month or quarter (#478): the by-class grid's landscape pages
+        return _pdf_response(
+            _grid_sections(data, _pl_columns_title(data, t), data["columns"], t),
+            db,
+            _pl_filename(data, t, "pdf", data["columns_by"]),
+            landscape=True,
+        )
     return _pdf_response(
         [_pl_section(data, t, show_changes=not hide_changes)],
         db,
@@ -2411,8 +2670,13 @@ def profit_loss_csv_route(
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
+    columns: Optional[str] = Query(default=None),
+    layout: str = Query(
+        default="wide",
+        description="with columns: wide, the grid; long, one row per account and column",
+    ),
 ):
-    from app.services.ledger_exports import profit_loss_csv
+    from app.services.ledger_exports import profit_loss_by_class_csv, profit_loss_csv
 
     data = profit_loss(
         start_date,
@@ -2422,8 +2686,20 @@ def profit_loss_csv_route(
         sort=sort,
         exclude_adjusting=exclude_adjusting,
         compare=compare,
+        columns=columns,
     )
     t = terms_from_db(db)
+    if data.get("columns_by"):
+        # by month or quarter (#478): the by-class grid's spreadsheet
+        data["report_name"] = _pl_columns_title(data, t)
+        data["dimension"] = "Month" if data["columns_by"] == "month" else "Quarter"
+        return _csv_download(
+            profit_loss_by_class_csv(
+                data, data["columns"], _company_name(db), t, layout=layout
+            ),
+            _pl_filename(data, t, "csv", data["columns_by"]),
+            request,
+        )
     return _csv_download(
         profit_loss_csv(data, _company_name(db), t, show_changes=not hide_changes),
         _pl_filename(data, t, "csv"),

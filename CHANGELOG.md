@@ -73,6 +73,19 @@ before the invoice's job changed never credits the job's A/R.
   drill-down's address takes `section=` or `family=` in place of
   `account_id`, and saves, prints and exports the same way.
 
+- **The Profit & Loss by month or quarter** (#478). A Columns choice on the
+  Profit & Loss (Total only, Month, Quarter) puts one column per month, or per
+  quarter of the fiscal year, across the period with a Total column, on the
+  P&L by Class grid: the Account column stays put while the months scroll,
+  Go to / ‹ Prev / Next › and the arrow keys move through them. Each column is
+  the Profit & Loss for its own dates and the Total column the P&L for the
+  whole period; sub-account families and their totals show in every column.
+  An amount opens that account's lines for that month, a subtotal or family
+  total the lines behind it. The choice rides on the address and a saved
+  report; the PDF prints the grid landscape and the CSV is the grid (a
+  sub-account indented beneath its parent) or one row per account and month. The
+  prior-year comparison is off while the columns are on.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

@@ -1416,7 +1416,22 @@ const ReportsPage = {
         // the address, saved reports and the PDF / CSV links.
         const opts = { ...ReportsPage._statementOpts(prefill) };
         const plParams = { ...opts.params, ...ReportsPage._compareParams(prefill) };
+        // One column per month or quarter (#478): a param like the others,
+        // and the grid of P&L by Class in place of the statement's table.
+        const by = prefill && ['month', 'quarter'].includes(prefill.columns) ? prefill.columns : '';
+        if (by) { plParams.columns = by; delete plParams.compare; delete plParams.hide_changes; }
+        const columnsBox = `<div class="form-group">
+                    <label for="report-columns-select">Columns</label>
+                    <select id="report-columns-select" data-no-search onchange="ReportsPage.setParam('columns', this.value)">
+                        <option value="" ${by ? '' : 'selected'}>Total only</option>
+                        <option value="month" ${by === 'month' ? 'selected' : ''}>Month</option>
+                        <option value="quarter" ${by === 'quarter' ? 'selected' : ''}>Quarter</option>
+                    </select>
+                </div>`;
         await ReportsPage.openPeriodModal(T("Profit & Loss"), ReportsPage.defaultPeriod(), async (_period, range, params) => {
+            if (params.columns) return ReportsPage._plByPeriod(range, params);
+            const cmpBox = $('#cmp-prior');
+            if (cmpBox) { cmpBox.disabled = false; cmpBox.title = ''; }
             const cmp = params.compare === 'prior_year';
             const show = !params.hide_changes;
             ReportsPage._cmpSync(params);
@@ -1472,7 +1487,49 @@ const ReportsPage = {
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
-        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+        }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + columnsBox + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' || !!plParams.columns, afterRender: () => { if (plParams.columns) ReportsPage._gridFit(); } });
+    },
+
+    // The P&L by month or quarter (#478): the period run once per column
+    // and once for the Total, on P&L by Class's grid (frozen Account column,
+    // Go to, ‹ Prev / Next ›, ←/→). An amount opens that account's lines
+    // for that column's dates; a subtotal the lines behind it for those
+    // dates (#479); a family's total its family's. The prior-year
+    // comparison is off while the columns are on: one or the other.
+    async _plByPeriod(range, params) {
+        const by = params.columns;
+        delete params.compare;
+        delete params.hide_changes;
+        ReportsPage._cmpSync(params);
+        const box = $('#cmp-prior');
+        if (box) { box.checked = false; box.disabled = true; box.title = 'Off while the P&L has a column per month or quarter'; }
+        const modal = $('#modal');
+        if (modal) modal.classList.add('modal--wide');
+        const qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}&columns=${by}`;
+        const data = await API.get(`/reports/profit-loss?${qs}`);
+        ReportsPage._viewReturn['profit-loss'] = { ...ReportsPage._cmpKeep(params), start_date: range.start, end_date: range.end };
+        const args = (...xs) => xs.map(x => JSON.stringify(x)).join(',');
+        const scope = params.exclude_adjusting ? { exclude_adjusting: 'true' } : {};
+        const noun = by === 'month' ? 'month' : 'quarter';
+        const set = (section, c) => `ReportsPage.openSetDrillDown(${args({ section }, null, c.start_date, c.end_date, null, null, 'profit-loss', scope)})`;
+        return `${ReportsPage._exportButtons('profit-loss', qs)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
+            </div>
+            ${ReportsPage._pivotGrid({
+                title: `${T('Profit & Loss')} by ${by === 'month' ? 'Month' : 'Quarter'}`,
+                noun,
+                kind: 'period',
+                columns: data.columns.map(c => ({ ...c, id: c.key })),
+                accounts: data.accounts,
+                tree: data.tree,
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
+                totalLabel: 'Total',
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_label || a.account_path || a.account_name, c.start_date, c.end_date, null, null, 'profit-loss')})`,
+                family: (r, c) => `ReportsPage.openSetDrillDown(${args({ family: r.account_id }, r.label, c ? c.start_date : range.start, c ? c.end_date : range.end, null, null, 'profit-loss', scope)})`,
+                sum: (c, key) => ReportsPage._GRID_TOTAL_SETS[key] ? set(ReportsPage._GRID_TOTAL_SETS[key], c) : null,
+                total: (key) => ReportsPage._GRID_TOTAL_SETS[key] ? set(ReportsPage._GRID_TOTAL_SETS[key], { start_date: range.start, end_date: range.end }) : null,
+            })}`;
     },
 
     // Profit & Loss Detail (#477): every posted line under each P&L
@@ -2805,10 +2862,30 @@ ReportsPage._pivotGrid = function (spec) {
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;
         return `<td class="amount" data-col="${i}">${link(spec.drill(a, cols[i]), formatCurrency(amount))}</td>`;
     };
-    const section = (title, rows) => `<tr class="grid-section"><th scope="row">${title}</th>${empties}</tr>`
-        + (rows.length
-            ? rows.map(a => `<tr><th scope="row" style="padding-left:24px;">${label(a)}</th>${cols.map((_, i) => cell(a, i)).join('')}<td class="amount">${formatCurrency(a.total)}</td></tr>`).join('')
-            : `<tr><td style="padding-left:24px; color:var(--gray-400);">None</td>${empties}</tr>`);
+    // spec.tree (the P&L by month or quarter, #478): a section's rows as
+    // the P&L prints them, sub-accounts beneath their parents, a parent's
+    // own postings and a total per family in every column; a family's
+    // cells open its lines for that column (spec.family(row, col)).
+    const treeRow = (r) => {
+        const pad = 24 + 18 * (r.depth || 0);
+        const words = escapeHtml(r.label);
+        if (r.kind === 'heading') return `<tr class="pl-family"><th scope="row" style="padding-left:${pad}px; font-weight:600;">${words}</th>${empties}</tr>`;
+        if (r.kind === 'total') {
+            const fam = (c) => spec.family ? spec.family(r, c) : null;
+            return `<tr class="pl-family-total" style="font-weight:600;"><th scope="row" style="padding-left:${pad}px;">${words}</th>${cols.map((c, i) => {
+                const amount = r.amounts[i];
+                return `<td class="amount" data-col="${i}">${amount ? (fam(c) ? link(fam(c), formatCurrency(amount)) : formatCurrency(amount)) : ''}</td>`;
+            }).join('')}<td class="amount">${fam(null) ? link(fam(null), formatCurrency(r.total)) : formatCurrency(r.total)}</td></tr>`;
+        }
+        const name = r.kind === 'direct' ? `<em>${words}</em>` : words;
+        return `<tr><th scope="row" style="padding-left:${pad}px;">${name}</th>${cols.map((_, i) => cell(r, i)).join('')}<td class="amount">${formatCurrency(r.total)}</td></tr>`;
+    };
+    const section = (title, rows, key) => {
+        const tree = spec.tree && key ? spec.tree[key] : null;
+        const body = tree ? tree.map(treeRow).join('') : rows.map(a => `<tr><th scope="row" style="padding-left:24px;">${label(a)}</th>${cols.map((_, i) => cell(a, i)).join('')}<td class="amount">${formatCurrency(a.total)}</td></tr>`).join('');
+        return `<tr class="grid-section"><th scope="row">${title}</th>${empties}</tr>`
+            + (body || `<tr><td style="padding-left:24px; color:var(--gray-400);">None</td>${empties}</tr>`);
+    };
     // the Total column's subtotals open the transactions behind them when
     // the view gives spec.total(key) (#479)
     const sum = (title, key, style) => `<tr style="${style}"><th scope="row">${title}</th>${cols.map((c, i) => {
@@ -2836,15 +2913,15 @@ ReportsPage._pivotGrid = function (spec) {
             <table class="pivot-grid">
                 <thead><tr><th scope="col">Account</th>${heads}<th scope="col" class="amount">${escapeHtml(spec.totalLabel || 'Total')}</th></tr></thead>
                 <tbody>
-                    ${section(T('Income'), spec.accounts.income)}
+                    ${section(T('Income'), spec.accounts.income, 'income')}
                     ${sum(T('Total Income'), 'operating_income', subtotal)}
-                    ${section('Cost of Goods Sold', spec.accounts.cogs)}
+                    ${section('Cost of Goods Sold', spec.accounts.cogs, 'cogs')}
                     ${sum('Gross Profit', 'operating_gross_profit', subtotal)}
-                    ${section('Expenses', spec.accounts.expenses)}
+                    ${section('Expenses', spec.accounts.expenses, 'expenses')}
                     ${sum('Total Expenses', 'operating_expenses', subtotal)}
                     ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
-                        + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income) + sum(T('Total Other Income'), 'other_income', subtotal) : '')
-                        + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense) + sum('Total Other Expense', 'other_expense', subtotal) : '')
+                        + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income, 'other_income') + sum(T('Total Other Income'), 'other_income', subtotal) : '')
+                        + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense, 'other_expense') + sum('Total Other Expense', 'other_expense', subtotal) : '')
                         + sum(T('Net Other Income'), 'net_other_income', subtotal) : ''}
                     ${sum(T('Net Income'), 'net_income', 'font-weight:700; background:var(--primary-light);')}
                 </tbody>
@@ -3700,7 +3777,7 @@ ReportsPage._compareParams = function (prefill) {
 // (sort, adjusting entries, comparison), not the drill-down's dates.
 ReportsPage._cmpKeep = function (params) {
     const keep = {};
-    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes']) {
+    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes', 'columns']) {
         if (params && params[k]) keep[k] = params[k];
     }
     return keep;
