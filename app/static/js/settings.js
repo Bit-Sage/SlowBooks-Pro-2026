@@ -746,24 +746,13 @@ const SettingsPage = {
     },
 
     // A failed row's two lines: a sentence a person can act on, and the raw
-    // SMTP error under it. The sentence prefers the hint the server mapped
-    // (Gmail app password, host/port/TLS), then the cleaned reason, then a
-    // plain fallback. The raw error is always shown so nothing is hidden.
+    // SMTP error under it. The sentence is the one the API returns
+    // (`failure`, from app/services/email_errors.py — the single mapping, so
+    // the list and the test-email message never word an error two ways). The
+    // raw error is always shown so nothing is hidden.
     _emailLogFailure(row) {
         const raw = (row.error_message || '').trim();
-        const low = raw.toLowerCase();
-        let sentence;
-        if (/\b53[45]\b/.test(raw)) {
-            sentence = (low.includes('gmail') || low.includes('google'))
-                ? 'Google rejected the sign-in — use a 16-character app password as the SMTP password.'
-                : 'The server rejected the username or password — check both.';
-        } else if (/(refused|timed out|timeout|getaddrinfo|no route to host|network is unreachable|name or service not known)/.test(low)) {
-            sentence = 'The server could not be reached — check the host, port, and the Use TLS setting.';
-        } else if (low.includes('not configured')) {
-            sentence = 'SMTP is not configured — fill in the fields above.';
-        } else {
-            sentence = 'The email could not be sent.';
-        }
+        const sentence = (row.failure || '').trim() || 'The email could not be sent.';
         return { sentence, raw };
     },
 

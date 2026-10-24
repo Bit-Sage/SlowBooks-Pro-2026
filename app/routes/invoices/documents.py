@@ -153,13 +153,17 @@ def email_invoice(
         # It returns False rather than raising when SMTP is unconfigured or
         # the send fails; reporting "sent" regardless would be a lie.
         if not sent:
+            from app.routes._roles import is_admin
+            from app.services.email_errors import where_to_see_why
+
+            admin = is_admin(request)
+            detail = "Email could not be sent. " + (
+                "Check the SMTP settings under Settings → Email (SMTP). "
+                if admin
+                else ""
+            )
             raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Email could not be sent. Check the SMTP settings under "
-                    "Settings → Email (SMTP); the reason is under Recent sends "
-                    "there."
-                ),
+                status_code=502, detail=detail + where_to_see_why(admin)
             )
         return {"status": "sent"}
     except HTTPException:

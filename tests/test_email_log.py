@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 import smtplib
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -187,3 +189,190 @@ def test_test_email_failure_states_reason_and_hint(client, monkeypatch):
     # and the failure is in the list the message points at
     rows = client.get("/api/email-log?status=failed").json()["rows"]
     assert rows and rows[0]["entity_type"] == "settings_test"
+
+
+# ---------------------------------------------------------------------------
+# One wording of a failure, and a pointer each role can follow
+# ---------------------------------------------------------------------------
+
+
+def test_failure_sentence_is_the_one_mapping():
+    from app.services.email_errors import failure_sentence
+
+    assert "app password" in failure_sentence(
+        "(535, b'x https://support.google.com/mail')"
+    )
+    assert "username or password" in failure_sentence("(535, b'bad creds')")
+    assert "host, port" in failure_sentence("[Errno 61] Connection refused")
+    assert "not configured" in failure_sentence("SMTP not configured")
+    assert failure_sentence("weird thing") == "The email could not be sent."
+
+
+def test_the_list_carries_the_failure_sentence(client, db_session):
+    _seed(
+        db_session,
+        [
+            ("invoice", "a@x.com", "Inv", "sent", None, 0),
+            ("invoice", "b@x.com", "Inv", "failed", "(535, b'bad creds')", 1),
+        ],
+    )
+    rows = client.get("/api/email-log").json()["rows"]
+    failed, sent = rows
+    assert "username or password" in failed["failure"]
+    assert sent["failure"] is None
+
+
+def _bookkeeper_login(client, db_session):
+    from app.models.users import ROLE_BOOKKEEPER, User
+    from app.services import auth as auth_service
+
+    db_session.add(
+        User(
+            username="keeper2",
+            display_name="keeper2",
+            password_hash=auth_service.hash_password("a-password-123"),
+            role=ROLE_BOOKKEEPER,
+            is_active=True,
+        )
+    )
+    db_session.commit()
+    client.post("/api/auth/logout")
+    r = client.post(
+        "/api/auth/login", json={"username": "keeper2", "password": "a-password-123"}
+    )
+    assert r.status_code == 200, r.text
+
+
+def _invoice(client):
+    cust = client.post(
+        "/api/customers", json={"name": "Probe Co", "email": "a@b.com"}
+    ).json()
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cust["id"],
+            "date": "2026-06-01",
+            "due_date": "2026-06-30",
+            "lines": [
+                {"description": "work", "quantity": 1, "rate": 100, "line_order": 0}
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _failed_invoice_email(client, monkeypatch, inv):
+    import app.routes.invoices.documents as documents
+
+    # no PDF stack needed: the claim is the failure message, not the PDF
+    monkeypatch.setattr(documents, "generate_invoice_pdf", lambda *a, **k: b"%PDF-")
+    r = client.post(
+        f"/api/invoices/{inv['id']}/email",
+        json={"recipient": "a@b.com", "subject": "Invoice", "message": ""},
+    )
+    assert r.status_code == 502, r.text
+    return r.json()["detail"]
+
+
+def test_an_admin_is_pointed_at_recent_sends(client, seed_accounts, monkeypatch):
+    detail = _failed_invoice_email(client, monkeypatch, _invoice(client))
+    assert "Settings → Email (SMTP) → Recent sends" in detail
+    assert "administrator" not in detail
+
+
+def test_a_bookkeeper_is_told_an_administrator_can_see_why(
+    client, db_session, seed_accounts, monkeypatch
+):
+    # Recent sends is admin only, so a bookkeeper is not sent there.
+    inv = _invoice(client)
+    _bookkeeper_login(client, db_session)
+    detail = _failed_invoice_email(client, monkeypatch, inv)
+    assert "An administrator can see why under Settings → Recent sends." in detail
+    assert "Check the SMTP settings" not in detail
+    assert client.get("/api/email-log").status_code == 403
+
+
+def _failed_letters(client, monkeypatch):
+    import app.routes.reports.receivables as receivables
+
+    monkeypatch.setattr(
+        receivables, "generate_collection_letter_pdf", lambda *a, **k: b"%PDF-"
+    )
+    r = client.post(
+        "/api/reports/collection-letters",
+        json={"letter_type": "30", "send_email": True},
+    )
+    assert r.status_code == 200, r.text
+    (error,) = r.json()["errors"]
+    return error
+
+
+@pytest.mark.parametrize("role", ["admin", "bookkeeper"])
+def test_a_failed_collection_letter_says_who_can_see_why(
+    client, db_session, seed_accounts, monkeypatch, role
+):
+    from app.models.invoices import Invoice, InvoiceStatus
+
+    inv = _invoice(client)
+    row = db_session.get(Invoice, inv["id"])
+    row.status = InvoiceStatus.SENT
+    db_session.commit()
+    if role == "bookkeeper":
+        _bookkeeper_login(client, db_session)
+    error = _failed_letters(client, monkeypatch)
+    assert error.startswith("Probe Co: the letter could not be emailed.")
+    if role == "admin":
+        assert "Settings → Email (SMTP) → Recent sends" in error
+    else:
+        assert "An administrator can see why under Settings → Recent sends." in error
+
+
+_TOAST_PROBE = r"""
+const fs = require('fs'), vm = require('vm');
+const timers = [];
+function node() {
+  return { className: '', textContent: '', style: {}, children: [],
+    appendChild(c) { this.children.push(c); }, remove() {},
+    addEventListener() {}, matches: () => false, contains: () => false };
+}
+const shown = [];
+const container = { appendChild: (el) => shown.push(el) };
+const ctx = { console, window: {},
+  document: { addEventListener: () => {}, createElement: () => node(), activeElement: null,
+              contains: () => false,
+              querySelector: (s) => (s === '#toast-container' ? container : null) },
+  setTimeout: (fn, ms) => { timers.push(ms); return timers.length; },
+  clearTimeout: () => {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync('app/static/js/utils.js', 'utf8')
+  + '\nthis.toastAction = toastAction;', ctx);
+ctx.toastAction('Email could not be sent.', 'Recent sends', () => {}, 2000, null, { type: 'error' });
+ctx.toastAction('Saved', 'Show', () => {});
+console.log(JSON.stringify({ classes: shown.map(e => e.className), ms: timers }));
+"""
+
+
+def test_a_failure_toast_with_an_action_is_an_error_toast():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    out = subprocess.run(
+        ["node", "-e", _TOAST_PROBE],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    assert got["classes"] == ["toast toast-error", "toast toast-success"]
+    # an error stays at least toastMs's 6 s even when asked for less
+    assert got["ms"][0] >= 6000 and got["ms"][1] == 8000

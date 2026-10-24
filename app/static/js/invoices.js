@@ -591,12 +591,18 @@ const InvoicesPage = {
             toast(`${T('Invoice')} emailed`);
             closeModal();
         } catch (err) {
-            // Offer the Recent sends section, where the failure and its reason
-            // are listed (#447).
-            toastAction(err.message, 'Recent sends', () => {
-                try { sessionStorage.setItem('settings_focus', 'settings-h-email-recent-sends'); } catch (e) {}
-                App.navigate('#/settings');
-            });
+            // An administrator is offered the Recent sends section, where the
+            // failure and its reason are listed (#447). Anyone else cannot
+            // open it; the server's message says an administrator can see
+            // why, so the toast offers no link.
+            if (App.isAdmin()) {
+                toastAction(err.message, 'Recent sends', () => {
+                    try { sessionStorage.setItem('settings_focus', 'settings-h-email-recent-sends'); } catch (e) {}
+                    App.navigate('#/settings');
+                }, 8000, null, { type: 'error' });
+            } else {
+                toast(err.message, 'error');
+            }
         }
     },
 

@@ -16,6 +16,7 @@ from app.database import get_db
 from app.models.email_log import EmailLog
 from app.routes._roles import require_admin
 from app.routes.api_tokens import _utc_iso
+from app.services.email_errors import failure_sentence
 
 router = APIRouter(prefix="/api/email-log", tags=["email_log"])
 
@@ -53,6 +54,13 @@ def list_email_log(
                 "entity_type": r.entity_type,
                 "status": r.status,
                 "error_message": r.error_message,
+                # the one wording of a failure (email_errors), so the list
+                # and the test-email message agree
+                "failure": (
+                    failure_sentence(r.error_message or "")
+                    if r.status == "failed"
+                    else None
+                ),
             }
             for r in rows
         ],

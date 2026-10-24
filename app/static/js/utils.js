@@ -400,12 +400,17 @@ function chartFigures(opts = {}) {
 //   focusOnShow  move focus to the action button when the toast appears
 //   returnFocus  an element, or a function returning one, to focus when the
 //                toast goes (the row the question is about)
+//   type         'success' (the default) or 'error': an error is styled as
+//                one and stays at least as long as a plain error toast
+//                (toastMs's 6 s minimum)
 // The auto-dismiss never fires while the toast has focus or the pointer is
 // over it, so a keyboard user is not raced; it re-arms when both leave.
 function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null, opts = {}) {
     const container = $('#toast-container');
     const el = document.createElement('div');
-    el.className = 'toast toast-success';
+    const type = opts.type === 'error' ? 'error' : 'success';
+    if (type === 'error') ms = Math.max(ms, toastMs(message, 'error'));
+    el.className = `toast toast-${type}`;
     el.style.display = 'flex';
     el.style.alignItems = 'center';
     el.style.gap = '10px';
