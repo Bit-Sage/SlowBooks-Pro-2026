@@ -212,19 +212,24 @@ and named in the result. CSV or Excel.
 ### Payroll year to date
 
 Each employee's year-to-date payroll comes across as an **opening balance**
-(#433): what the old payroll paid this year, dated the day before the first
-SlowBooks pay run. The year's W-2s, the 941 for that quarter, the 940 and
-the Social Security, FUTA and SUTA wage bases all count it. Enter it on the
-employee's page (Opening YTD), or for everyone at once from Payroll →
-**Import opening balances**: fill in the template linked there, or save
-QuickBooks Desktop's *Payroll Summary* report (by employee, January 1
-through the last pay date) as CSV. The Payroll Summary is read best-effort:
-it has no taxable-wage lines, so Social Security, Medicare, FUTA, SUTA and
-state wages come in as 0 and the preview says so, and every item it could
-not place is named beside the employee. Fill those in on the employee's
-page before filing anything. No journal entry is made; the opening balance
-sheet carries what was still owed. Once a pay run in the year is processed,
-a change is a correction with a reason.
+(#433): what the old payroll paid this year, quarter by quarter, through the
+day before the first SlowBooks pay run. Enter it the way QuickBooks takes a
+YTD adjustment: for each quarter, gross, federal withholding, the Social
+Security, Medicare and FUTA wages and tax, deductions and net, and for each
+state the wages, withholding, SUTA wages and SUTA tax. The 941s and state
+returns the old system filed, and its payroll reports run for each quarter,
+have these figures. Each quarter's 941 then carries only that quarter, and the Social
+Security, FUTA and SUTA wage bases start from the taxable wages. Enter it on
+the employee's page (Opening YTD), or for everyone at once from Payroll →
+**Import opening balances** with the template linked there (one row per
+employee per quarter). No journal entry is made; the opening balance sheet
+carries what was still owed. Once a pay run in the year is processed, a
+change is a correction with a reason.
+
+SlowBooks does not read the Payroll Summary report itself yet: every
+importer here was built around a real export, and that one is waiting for
+one. If you can share a Payroll Summary export (change the names), open an
+issue with it.
 
 ### What does not come across yet
 

@@ -11,23 +11,47 @@ on what the software does, not on what sprint shipped what.
 
 **A mid-year switch carries the year's payroll over** (#433). Year-to-date
 pay was summed from SlowBooks' own stubs only, so a company that switched in
-July had every W-2, 941 and wage-base cutoff (Social Security, FUTA, SUTA)
+May had every W-2, 941 and wage-base cutoff (Social Security, FUTA, SUTA)
 wrong for the rest of the year. Each employee now has an opening balance per
-year: what the old payroll paid (gross, federal withholding, Social Security
-and Medicare wages and tax both sides, FUTA and SUTA, state wages and
-withholding per state, deductions by benefit code, net), dated the day
-before the first SlowBooks pay run. It is entered on the employee's page
-(Opening YTD) or imported for everyone from Payroll → Import opening
-balances, from the template there or QuickBooks Desktop's Payroll Summary
-(read best-effort: it has no taxable-wage lines, and the preview names every
-item it could not place). The employee's YTD, the wage bases the next pay
-run starts from, the stub's YTD, the 941 for the quarter it falls in, the
-940's FUTA wages, the W-2 and W-3 and the benefit caps count it. It is not a
-pay run and not a journal entry, so the tax deposit schedule, benefit
+year, entered quarter by quarter the way QuickBooks takes year-to-date
+adjustments, through the day before the first SlowBooks pay run: gross,
+federal withholding, Social Security, Medicare and FUTA wages and tax (both
+sides), deductions, garnishments and net for each quarter; per state and
+quarter the state wages, withholding, SUTA wages and tax and other state
+taxes; benefit amounts by code for the year. Enter it on the employee's page
+(Opening YTD) or import it for everyone from Payroll → Import opening
+balances, using the template there (a Quarter column, one row per employee
+per quarter, a further state on a row with only the state columns).
+
+- **Each quarter's 941 carries only that quarter.** The old system filed the
+  941 for every quarter it finished, so a May switch's Q1 941 is exactly the
+  Q1 figures, and the Q2 941 is April and May plus SlowBooks' June runs. The
+  tax liability schedule carries the same figures, so its 941 line agrees
+  with line 12, and names the old payroll's share (`prior_system`) apart
+  from what is left to deposit (`due`).
+- **The wage bases come from the wage fields.** The paycheck's Social
+  Security cap, the Additional Medicare threshold, the FUTA $7,000 and each
+  state's SUTA base start from the old system's own taxable wages, not its
+  gross, and the 941, 940 and W-2 measure the same way, so the runs and the
+  forms agree. The SUTA base is a state's own: wages paid in another state
+  do not fill it, and the state SUI report counts a stub in the state it was
+  worked in.
+- **Every form reads it.** The 941 by quarter, the 940 (the FUTA base is not
+  handed out again), the W-2 and W-3 (every box, 3 and 5 from the taxable
+  wages, 16 and 17 from the state rows), the state SUI report for each
+  quarter, the employee's YTD and the stub's YTD.
+- **Locked once a pay run in the year is processed:** a change or a delete
+  is then a correction with a reason, kept in the audit trail, and the as-of
+  date stays before that run.
+- **A draft run figured from the old figures says so.** Changing or deleting
+  an opening marks the employee's draft runs for the year; processing one
+  asks first.
+
+It is not a pay run and not a journal entry: the old system booked that
+payroll and the opening balance sheet carries what it still owed, so benefit
 remittances, the pay-run list, direct-deposit files and the payroll journal
-never see it; the state SUI report for the switch quarter does not count it
-yet. Once a pay run in the year is processed for the employee, a change or a
-delete is a correction with a reason, kept in the audit trail.
+never see it. A reader for QuickBooks Desktop's Payroll Summary report waits
+for a real export to build against.
 
 ### v2.28.0 — Account types and sub-accounts
 

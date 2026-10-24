@@ -238,37 +238,61 @@ rest of payroll.
 ## Opening YTD balances (#433)
 
 A company that switches to SlowBooks mid-year enters what the old payroll
-paid that year, once per employee, dated the day before the first SlowBooks
-pay run (`app/models/payroll_opening.py`, `app/services/payroll_opening.py`).
-No pay run and no journal entry: the old system booked that payroll, and the
-opening balance sheet carries what it still owes.
+paid that year, once per employee, quarter by quarter through `as_of`, the
+day before the first SlowBooks pay run (`app/models/payroll_opening.py`,
+`app/services/payroll_opening.py`). No pay run and no journal entry: the old
+system booked that payroll, and the opening balance sheet carries what it
+still owes.
 
-Counted, each on purpose: `employee_ytd` (so the Social Security, FUTA and
-SUTA wage bases and the benefits engine's wage-base ceiling start from it),
-the pay stub's YTD, the 941 for the quarter `as_of` falls in (later quarters
-start the wage base from it), the 940's FUTA wages, the W-2/W-3 (box 16 from
-its state rows) and the benefit accumulators' annual caps. Not counted: the
-tax liability / deposit schedule, the state SUI report, benefit remittances,
-the pay-run list, NACHA and the payroll journal.
+| Table | Holds |
+|-------|-------|
+| `payroll_opening_balances` | employee, year, `as_of`, note |
+| `payroll_opening_quarters` | per quarter (1 to the quarter of `as_of`): gross, federal withholding, SS / Medicare / FUTA wages and tax both sides, pre- and post-tax deductions, garnishments, net |
+| `payroll_opening_state_balances` | per quarter and state: wages, withholding, SUTA wages and tax, other employee / employer state taxes |
+| `payroll_opening_benefits` | per benefit code, for the year: employee and employer amounts (the annual caps count them) |
+
+Who reads it, each on purpose:
+
+- **The paycheck's caps** (`ytd.wage_base_ytd`): Social Security from the
+  opening's SS wages, the Additional Medicare threshold from its Medicare
+  wages, FUTA from its FUTA wages, SUTA and the state's capped taxes from
+  the work state's SUTA and state wages (no state rows: its gross stands in
+  for the work state). A stub counts its gross toward each, SUTA in the
+  state it was worked in. `employee_ytd` and the stub's YTD count every
+  quarter.
+- **941**: the quarter's own opening figures (the old system filed its
+  finished quarters); earlier quarters fill the wage base and the Additional
+  Medicare threshold.
+- **Tax liability schedule**: the quarter's opening amounts, as
+  `prior_system` on each line beside `due` (what is left to deposit), so the
+  941 line equals line 12.
+- **940**: payments and FUTA tax for the year; FUTA wages fill the $7,000
+  first.
+- **W-2 / W-3**: every quarter; boxes 3 and 5 from the taxable wages, 16 and
+  17 from the state rows.
+- **State SUI report**: the quarter's state rows, by their own state (stubs
+  by the state they were worked in).
+- Not counted: benefit remittances, the pay-run list, NACHA and the payroll
+  journal.
 
 Locked once a pay run in the year is processed for the employee: a change or
 a delete then needs a reason, written to the audit trail as `CORRECT` with
-the before and after.
+the before and after, and `as_of` stays before that run. A change or a
+delete sets `stale_reason` on the employee's draft runs for the year;
+processing one is refused (409) until `acknowledge_stale=1` is sent.
 
 | Method + Path | Purpose |
 |---------------|---------|
 | `GET /api/payroll/opening-ytd?year=` | Every employee's opening balance for the year |
-| `GET /api/employees/{id}/opening-ytd?year=` | One employee's, with `locked` and `first_pay_date` |
-| `PUT /api/employees/{id}/opening-ytd` | Create or replace (`reason` once locked) |
+| `GET /api/employees/{id}/opening-ytd?year=` | One employee's (year totals, `states` summed, `quarters` as entered), with `locked` and `first_pay_date` |
+| `PUT /api/employees/{id}/opening-ytd` | Create or replace: `year`, `as_of`, `quarters[]` (each with `states[]`), `benefits[]`, `reason` once locked |
 | `DELETE /api/employees/{id}/opening-ytd?year=&reason=` | Remove (`reason` once locked) |
 | `GET /api/payroll/opening-ytd/template` | The CSV template |
-| `POST /api/payroll/opening-ytd/import?dry_run=1\|0&as_of=&reason=` | Import the template or a QuickBooks Desktop Payroll Summary: the plan, then the same plan applied |
+| `POST /api/payroll/opening-ytd/import?dry_run=1\|0&reason=` | Import the template: the plan, then the same plan applied |
+| `POST /api/payroll/{id}/process?acknowledge_stale=1` | Process a draft flagged by an opening change, as figured |
 
-The Payroll Summary is read best-effort. It has no taxable-wage lines, so
-Social Security, Medicare, FUTA, SUTA and state wages come in as 0 and the
-row's note says so; items it cannot place (an employer 401(k) match, a local
-tax) are named in the note; a report whose first column it cannot read is
-refused with a sentence pointing at the template.
+A reader for QuickBooks Desktop's Payroll Summary waits for a real export to
+build against.
 
 ---
 
