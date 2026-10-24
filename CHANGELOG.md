@@ -5,6 +5,20 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Chart import preview: the detail type and parent each row will get**
+(#461). The dry run of a chart CSV showed each row's base type only
+(`4960 Rebates Earned · income`) though the import creates it as Other
+Income, and the same for Fixed Asset and Long Term Liability; the parent a
+row would be linked under was not shown, and the change notes sat under a
+column titled "Detail". Each preview row now shows the detail type it will
+be written with (the file's, the parent's for a sub-account, the number and
+name rule for an account given none, the chart's own for a control account)
+and the parent's number and name, in their own "Detail type" and "Parent"
+columns; the notes column is titled "Notes". The preview and the import read
+the same plan, so what the preview shows is what the import writes.
+
 ### v2.28.0 — Account types and sub-accounts
 
 **Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every

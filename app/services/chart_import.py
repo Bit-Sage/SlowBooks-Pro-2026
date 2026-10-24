@@ -679,6 +679,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
     _flag_parent_loops(db, plan)
     _flag_moves(db, plan)
     _flag_inherited_detail(db, plan)
+    _describe_rows(db, plan)
 
     if replace:
         for a in existing:
@@ -695,6 +696,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                         "note": "control account not named in the file — kept, "
                         "the software posts to it by number",
                         "existing_id": a.id,
+                        **_as_it_stands(a),
                     }
                 )
                 continue
@@ -709,6 +711,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                         "action": "keep",
                         "note": f"not in the file but carries {n} posted line(s) — kept",
                         "existing_id": a.id,
+                        **_as_it_stands(a),
                     }
                 )
                 continue
@@ -722,9 +725,57 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                     "note": "not in the file, never used — hidden from new entries "
                     "(Reactivate on the chart page brings it back)",
                     "existing_id": a.id,
+                    **_as_it_stands(a),
                 }
             )
     return plan
+
+
+def _as_it_stands(a: Account) -> dict:
+    """A kept or deactivated account the file does not name: the detail type
+    and parent it already has, which the import leaves alone (#461)."""
+    p = a.parent
+    return {
+        "detail_type": a.detail_type,
+        "parent_number": p.account_number if p else None,
+        "parent_name": p.name if p else None,
+    }
+
+
+def _describe_rows(db: Session, plan: Plan) -> None:
+    """Put on each row the parent it will sit under (#461), by number and
+    name as the import leaves them: the link the plan sets, else, for an
+    account already in the chart, the parent it has now (the apply never
+    unlinks one). A parent the plan renames shows the file's name. Runs
+    after every link check, so a link left off shows no parent."""
+    by_existing = {
+        e["existing_id"]: e for e in plan.rows if "existing_id" in e and "_row" in e
+    }
+
+    def label(kind, ref):
+        if kind == "new":
+            pe = plan.rows[ref]
+            return pe.get("number"), pe["name"]
+        pe = by_existing.get(ref)
+        acct = db.get(Account, ref)
+        if acct is None:
+            return None, None
+        if pe is not None and pe["action"] in ("update", "skip"):
+            return pe.get("number"), pe["name"]
+        return acct.account_number, acct.name
+
+    for entry in plan.rows:
+        number = name = None
+        if entry["action"] != "error":
+            hit = entry.get("_parent")
+            if hit is None and "existing_id" in entry:
+                acct = db.get(Account, entry["existing_id"])
+                if acct is not None and acct.parent_id:
+                    hit = ("existing", acct.parent_id)
+            if hit is not None:
+                number, name = label(*hit)
+        entry["parent_number"] = number
+        entry["parent_name"] = name
 
 
 def _note_detail_fallback(entry: dict, declared: str, actual: str) -> None:
@@ -1163,7 +1214,11 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
 def _public(plan: Plan, applied: bool) -> dict:
     rows = []
     for e in plan.rows:
-        rows.append({k: v for k, v in e.items() if not k.startswith("_")})
+        row = {k: v for k, v in e.items() if not k.startswith("_")}
+        # the label the chart shows for the detail type the row is written
+        # with (#461) — read after an apply, which may settle it again
+        row["detail_type_label"] = detail_label(e.get("detail_type"))
+        rows.append(row)
     return {
         "format": plan.format,
         "dry_run": not applied,

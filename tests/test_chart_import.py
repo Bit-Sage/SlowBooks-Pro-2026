@@ -550,3 +550,82 @@ def test_csv_import_restores_the_control_account_itself(
     assert "5900" in created
     assert created["5900"].name == "Inventory Adjustments"
     assert created["5900"].account_type.value == "expense"
+
+
+# --- the preview names the detail type and parent each row gets (#461) ------
+
+PREVIEW_CSV = (
+    "Number,Name,Type,Detail type,Parent\n"
+    "4960,Rebates Earned,income,Other Income,\n"
+    "7010,Late Penalties,expense,Other Expense,\n"
+    "1610,Shop Tools,asset,,\n"
+    "2650,Truck Loan,liability,,\n"
+    "7110,Fuel,expense,,7100\n"
+    "7111,Diesel,expense,,7110\n"
+    "7100,Vehicle Costs,expense,Other Expense,\n"
+    "1611,Saws,asset,,Shop Tools\n"
+)
+
+
+def test_preview_detail_type_and_parent_equal_what_the_import_writes(
+    client, db_session, seed_accounts
+):
+    from app.models.accounts import detail_label
+
+    dry = _upload(client, PREVIEW_CSV, dry_run=1)
+    assert dry.status_code == 200, dry.text
+    plan = dry.json()
+    assert plan["errors"] == [] and plan["row_errors"] == 0
+    preview = {r["name"]: r for r in plan["rows"] if r["row"] is not None}
+    # what the screen will show, read straight off the plan
+    shown = {
+        n: (r["detail_type_label"], r["parent_number"], r["parent_name"])
+        for n, r in preview.items()
+    }
+    assert shown["Rebates Earned"] == ("Other Income", None, None)
+    assert shown["Late Penalties"] == ("Other Expense", None, None)
+    # 2.27.0's number/name rule: a 16xx asset, a loan by its name
+    assert shown["Shop Tools"] == ("Fixed Asset", None, None)
+    assert shown["Truck Loan"] == ("Long Term Liability", None, None)
+    # listed before its parent, and a grandchild: both take Other Expense
+    assert shown["Fuel"] == ("Other Expense", "7100", "Vehicle Costs")
+    assert shown["Diesel"] == ("Other Expense", "7110", "Fuel")
+    assert shown["Vehicle Costs"] == ("Other Expense", None, None)
+    assert shown["Saws"] == ("Fixed Asset", "1610", "Shop Tools")
+
+    done = _upload(client, PREVIEW_CSV, dry_run=0)
+    assert done.status_code == 200, done.text
+    applied = {r["name"]: r for r in done.json()["rows"] if r["row"] is not None}
+    accts = _by_number(db_session)
+    for name, r in preview.items():
+        a = accts[r["number"]]
+        assert a.name == name
+        written = (
+            detail_label(a.detail_type),
+            a.parent.account_number if a.parent else None,
+            a.parent.name if a.parent else None,
+        )
+        assert shown[name] == written, name
+        # the apply's own answer says the same
+        assert (
+            applied[name]["detail_type_label"],
+            applied[name]["parent_number"],
+            applied[name]["parent_name"],
+        ) == written, name
+
+
+def test_preview_keeps_an_existing_parent_and_shows_a_renamed_one(
+    client, db_session, seed_accounts
+):
+    first = (
+        "Number,Name,Type,Parent\n7300,Shop Costs,expense,\n7310,Rags,expense,7300\n"
+    )
+    assert _upload(client, first, dry_run=0).status_code == 200
+    # the second file renames the parent and lists the child with no parent
+    again = "Number,Name,Type\n7300,Workshop Costs,expense\n7310,Rags,expense\n"
+    rows = {r["name"]: r for r in _upload(client, again, dry_run=1).json()["rows"]}
+    assert (rows["Rags"]["parent_number"], rows["Rags"]["parent_name"]) == (
+        "7300",
+        "Workshop Costs",
+    )
+    assert rows["Rags"]["detail_type_label"] == "Expense"
