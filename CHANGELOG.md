@@ -10,6 +10,15 @@ on what the software does, not on what sprint shipped what.
 **What a bank import needs first, written down.** `docs/banking.md` says a
 CSV or OFX import needs only the bank account you import into, linked to its
 ledger account: no vendors, no expense accounts (#446).
+**The IIF export guards the contact fields too.** The CUST and VEND rows'
+phone, mobile or fax, email, terms and tax id went out as typed, so a
+vendor whose email was `=HYPERLINK(...)` would run in Excel, the documented
+way to fix an IIF file before import (noted on #410). A value starting with
+`=` or `@` now takes a leading apostrophe; one starting with `+` or `-` does
+not, because QuickBooks Desktop keeps the apostrophe, so an E.164 phone like
+`+15551234567` or `-0001` terms reach it as typed. The terms on an invoice or
+bill row follow the same rule. Names keep the full guard from #410, and the
+importer takes the apostrophe off again (#449).
 
 ### v2.28.0 — Account types and sub-accounts
 
