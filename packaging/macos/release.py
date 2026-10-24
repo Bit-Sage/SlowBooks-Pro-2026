@@ -464,19 +464,31 @@ def _is_ticket_missing(output: str) -> bool:
     return any(marker in output for marker in STAPLE_TICKET_MISSING)
 
 
-def _staple_and_validate(target: Path, staple_evidence: Path) -> bool:
-    """One staple + validate pass. False means the ticket is not there yet."""
+def _staple_and_validate(target: Path, staple_evidence: Path) -> tuple[bool, str]:
+    """One staple + validate pass: (done, what the stapler said when not).
+
+    Any failure is retried, not only the "no ticket" messages: this runs
+    only after notarytool has seen the submission Accepted, and the v2.27.0
+    tag's sign job failed with a stapler error that matched neither known
+    message, then passed on a rerun (#459). A bundle that is really broken
+    still fails, after the bounded retries, with the stapler's last words.
+    """
     result = _record_run(
         staple_evidence, "xcrun", "stapler", "staple", "-v", str(target), check=False
     )
     if result.returncode:
-        if not _is_ticket_missing(f"{result.stdout or ''}{result.stderr or ''}"):
-            result.check_returncode()
-        return False
+        said = f"{result.stdout or ''}{result.stderr or ''}".strip()
+        kind = (
+            "ticket not available yet" if _is_ticket_missing(said) else "staple failed"
+        )
+        return False, f"{kind} (exit {result.returncode}): {said[-400:]}"
     validated = _record_run(
         staple_evidence, "xcrun", "stapler", "validate", "-v", str(target), check=False
     )
-    return validated.returncode == 0
+    if validated.returncode:
+        said = f"{validated.stdout or ''}{validated.stderr or ''}".strip()
+        return False, f"validate failed (exit {validated.returncode}): {said[-400:]}"
+    return True, ""
 
 
 def _staple(target: Path, report_dir: Path) -> None:
@@ -493,17 +505,18 @@ def _staple(target: Path, report_dir: Path) -> None:
     """
     staple_evidence = report_dir / "stapler.txt"
     for attempt in range(1, STAPLE_ATTEMPTS + 1):
-        if _staple_and_validate(target, staple_evidence):
+        done, said = _staple_and_validate(target, staple_evidence)
+        if done:
             return
         if attempt == STAPLE_ATTEMPTS:
             raise RuntimeError(
                 f"no notarization ticket on {target.name} after {STAPLE_ATTEMPTS} "
-                f"stapling attempts; see {staple_evidence}"
+                f"stapling attempts; the last: {said}; see {staple_evidence}"
             )
         delay = STAPLE_BACKOFF_SECONDS[min(attempt, len(STAPLE_BACKOFF_SECONDS)) - 1]
         print(
-            f"! ticket not available yet (attempt {attempt} of "
-            f"{STAPLE_ATTEMPTS}); retrying in {delay}s",
+            f"! {said.splitlines()[0] if said else 'staple failed'} (attempt "
+            f"{attempt} of {STAPLE_ATTEMPTS}); retrying in {delay}s",
             flush=True,
         )
         _sleep(delay)

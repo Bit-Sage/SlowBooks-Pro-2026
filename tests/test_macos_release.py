@@ -419,12 +419,29 @@ def test_staple_gives_up_naming_attempts(monkeypatch, tmp_path):
     assert sum(slept) == 300
 
 
-def test_other_staple_errors_fail_immediately(monkeypatch, tmp_path):
-    fake_run, calls = _staple_runner([(73, "bundle is damaged\n")])
+def test_other_staple_errors_are_retried_too(monkeypatch, tmp_path):
+    """#459: the v2.27.0 tag's staple failed with a message neither marker
+    matched and passed on a rerun. After an Accepted notarization any
+    stapler failure is retried within the same bound."""
+    fake_run, calls = _staple_runner([(65, "CloudKit query failed\n"), (0, "")])
+    slept = []
     monkeypatch.setattr(release, "_run", fake_run)
-    monkeypatch.setattr(
-        release, "_sleep", lambda s: (_ for _ in ()).throw(AssertionError("no sleep"))
+    monkeypatch.setattr(release, "_sleep", slept.append)
+    release._staple(tmp_path / "x.dmg", tmp_path)
+    assert sum(c[1:3] == ("stapler", "staple") for c in calls) == 2
+    assert slept == [20]
+
+
+def test_a_broken_bundle_still_fails_with_the_staplers_words(monkeypatch, tmp_path):
+    fake_run, calls = _staple_runner(
+        [(73, "bundle is damaged\n")] * release.STAPLE_ATTEMPTS
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    monkeypatch.setattr(release, "_run", fake_run)
+    monkeypatch.setattr(release, "_sleep", lambda s: None)
+    with pytest.raises(
+        RuntimeError, match="staple failed \\(exit 73\\): bundle is damaged"
+    ):
         release._staple(tmp_path / "x.dmg", tmp_path)
-    assert len(calls) == 1
+    assert (
+        sum(c[1:3] == ("stapler", "staple") for c in calls) == release.STAPLE_ATTEMPTS
+    )

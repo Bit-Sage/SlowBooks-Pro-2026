@@ -73,6 +73,10 @@ def test_the_card_opens_the_report_and_its_buttons_work(
         settle(page, handled)
         assert "include_dismissed=1" in _hash(page)
         assert page.locator("button:has-text('Put back')").count() == 1
+        # the line counts the shown marked group apart, never "0 groups"
+        # above it (2.27.0 gate, W-32, #458)
+        line = page.inner_text("#report-content")
+        assert "1 group · 1 marked not a duplicate (shown)" in line, line
         page.uncheck("#dup-show-dismissed")
         page.wait_for_function(f"{GROUPS} === 1")
 
