@@ -96,6 +96,54 @@ const SettingsPage = {
         return text ? `<div id="company-logo-note" style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(text)}</div>` : '';
     },
 
+    // My Preferences (#480): what each person sets for themselves, kept per
+    // sign-in (the preferences store, /api/preferences/data_entry), so it
+    // follows them to another computer and a second user keeps their own.
+    // Outside the company-settings form: no administrator's Save, and every
+    // role can set its own. Each checkbox saves itself.
+    _myPreferencesHtml() {
+        const box = (id, key, label, hint) =>
+            '<div class="form-group full-width" style="margin-bottom:6px;">'
+            + '<label for="' + id + '" style="font-weight:normal;">'
+            + '<input type="checkbox" id="' + id + '" data-pref="' + key + '" data-readonly-ok aria-describedby="' + id + '-hint"'
+            + ' style="width:auto; vertical-align:middle; margin-right:6px;" onchange="SettingsPage.saveDataEntryPref(this)">'
+            + label + '</label>'
+            + '<div id="' + id + '-hint" style="font-size:11px; color:var(--text-muted); margin:2px 0 0 22px;">' + hint + '</div></div>';
+        return '<div class="settings-section" id="settings-my-preferences" data-own-preference role="group" aria-labelledby="settings-h-my-preferences">'
+            + '<h3 id="settings-h-my-preferences">My Preferences</h3>'
+            + '<p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Yours alone: kept with your sign-in, saved as soon as you change one.</p>'
+            + box('pref-enter-moves', 'enter_moves', 'Enter key moves between fields',
+                'Enter goes to the next field; Enter in the last field (or Save) saves. Off: Enter saves the form, and posts the register&rsquo;s new entry.')
+            + box('pref-auto-decimal', 'auto_decimal', 'Automatically place the decimal point',
+                'Type 12345 in an amount for $123.45. A decimal point you type yourself is kept.')
+            + '</div>';
+    },
+
+    loadMyPreferences() {
+        // (the probes that draw this page without utils.js have no copy)
+        if (typeof DataEntryPrefs === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+        const sync = () => document.querySelectorAll('#settings-my-preferences input[data-pref]')
+            .forEach(el => { el.checked = DataEntryPrefs[el.dataset.pref] === true; });
+        sync();
+        // the latest saved, in case it was changed on another computer
+        API.get('/preferences/data_entry')
+            .then(pref => { DataEntryPrefs.set(pref && pref.value); sync(); })
+            .catch(() => { /* the copy App.init read stands */ });
+    },
+
+    async saveDataEntryPref(el) {
+        const before = DataEntryPrefs.value();
+        DataEntryPrefs[el.dataset.pref] = !!el.checked;
+        try {
+            await API.put('/preferences/data_entry', { value: DataEntryPrefs.value() });
+            toast('Preference saved');
+        } catch (err) {
+            DataEntryPrefs.set(before);
+            el.checked = before[el.dataset.pref];
+            toast(err.message, 'error');
+        }
+    },
+
     async render() {
         const s = await API.get('/settings');
         const logo = s.company_logo_path ? await API.get('/uploads/logo').catch(() => null) : null;
@@ -119,6 +167,7 @@ const SettingsPage = {
             SettingsPage.loadOcrStatus();
             SettingsPage.loadOcrEnginePref();
             SettingsPage.loadPostSoundPref();
+            SettingsPage.loadMyPreferences();
             SettingsPage.loadUnreadableSecrets();
             SettingsPage.loadEmailLog(true);
             SettingsPage.scrollToFocus();
@@ -130,6 +179,7 @@ const SettingsPage = {
                 <h2>Company Settings</h2>
             </div>
             <div id="settings-unreadable" class="hint hint--locked" role="status" style="margin-bottom:12px;" data-admin hidden></div>
+            ${SettingsPage._myPreferencesHtml()}
             <!-- data-admin-fields: the fields this form saves (PUT /api/settings)
                  are the administrator's. Any other sign-in sees them locked, with
                  the sentence below (App.adminPass). AI Insights and the lists

@@ -18,7 +18,7 @@ function attr(tag, name) {
 }
 function inputs() {
   if (!modal) return [];
-  return [...modal.html.matchAll(/<input class="credit-take"[^>]*>/g)].map((m) => ({
+  return [...modal.html.matchAll(/<input class="credit-take[ "][^>]*>/g)].map((m) => ({
     value: attr(m[0], 'value'),
     dataset: { kind: attr(m[0], 'data-kind'), id: attr(m[0], 'data-id'), max: attr(m[0], 'data-max') },
   }));

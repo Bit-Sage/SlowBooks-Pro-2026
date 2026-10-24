@@ -90,7 +90,7 @@ def test_the_purchase_forms_take_four_places():
     js = ROOT / "app" / "static" / "js"
     for name in ("bills.js", "purchase_orders.js", "vendor_credits.js"):
         text = (js / name).read_text(encoding="utf-8")
-        assert 'class="line-rate" type="number" step="0.0001"' in text, name
+        assert 'class="line-rate money" type="number" step="0.0001"' in text, name
     items = (js / "items.js").read_text(encoding="utf-8")
     assert '<input name="rate" type="number" step="0.0001"' in items
     assert '<input name="cost" type="number" step="0.0001"' in items

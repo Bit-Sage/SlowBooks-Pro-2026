@@ -332,6 +332,26 @@ Two schema changes, run in every company file one after the other:
 `transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice
 number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
 "111 (2)"; the head is `f2e3d4c5b6a7`. 641 API operations.
+### Unreleased
+
+**Enter can move between fields, and the decimal point can place itself** (#480).
+Two QuickBooks Desktop data-entry preferences, under Settings → My Preferences,
+each person's own and both off unless they are turned on:
+
+- *Enter key moves between fields*: Enter goes to the next field, and only
+  Enter in the last field, or on Save, saves. The register's new-entry row
+  works the same way: Enter walks Date, Payee, Memo, Ref, Category and the two
+  amounts, and posts from the last amount. A type-ahead picker keeps its own
+  Enter (open the list, take the name) and a memo box its new line. Off, Enter
+  saves a form and posts the register row from any of its fields, as before.
+- *Automatically place the decimal point*: 12345 typed in an amount is
+  $123.45, and 5 is $0.05. A decimal point you type yourself is kept, and an
+  amount already on a saved document is never divided. It covers the amounts
+  on every transaction form and the register row.
+
+My Preferences sits above the company settings and saves each box as it
+changes. Every sign-in sets its own, read-only and accountant sign-ins
+included; an API token sets none.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

@@ -173,6 +173,9 @@ SWEEP = r"""(root) => {
   };
   const HANDLERS = ['onclick', 'onchange', 'oninput', 'onblur'];
   const why = (el) => {
+    // a person's own preference (Settings → My Preferences) changes nothing
+    // in the books, and the server takes it from every sign-in
+    if (el.closest('[data-own-preference]')) return null;
     if (el.matches('input[type="file"]')) return 'chooses a file to upload';
     if (el.closest('[data-write]')) return 'marked data-write';
     // "+ New Invoice", "+ Add Garnishment": the app's own mark of a create

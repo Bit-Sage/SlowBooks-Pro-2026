@@ -664,6 +664,158 @@ function _tabTo(el) {
     }
 }
 
+// ---- Data-entry preferences (#480) ---------------------------------------
+// Two QuickBooks Desktop preferences, per user (the preference data_entry,
+// set under Settings → My Preferences), both off by default so nothing
+// changes for anyone who leaves them alone:
+//   enter_moves   Enter in a form field moves to the next field; Enter on
+//                 the last field (or on Save) saves. A type-ahead box and
+//                 a text area keep their own Enter.
+//   auto_decimal  a money field (class "money") typed without a decimal
+//                 point takes the last two digits as cents: 12345 is
+//                 $123.45, 5 is $0.05.
+// App.init reads the preference once (DataEntryPrefs.load); the Settings
+// checkboxes keep this copy current, so the key handlers stay synchronous.
+const DataEntryPrefs = {
+    enter_moves: false,
+    auto_decimal: false,
+    set(value) {
+        const v = value || {};
+        DataEntryPrefs.enter_moves = v.enter_moves === true;
+        DataEntryPrefs.auto_decimal = v.auto_decimal === true;
+    },
+    value() {
+        return { enter_moves: DataEntryPrefs.enter_moves, auto_decimal: DataEntryPrefs.auto_decimal };
+    },
+    // A raw fetch, as the theme's: the API wrapper's 401 handler would put
+    // the sign-in up before auth.js has decided which one to show. Before
+    // sign-in both stay off; auth.js reloads the page once signed in.
+    load() {
+        if (typeof fetch !== 'function') return Promise.resolve();
+        const headers = {};
+        try {
+            const company = localStorage.getItem('slowbooks_company');
+            if (company) headers['X-Company-Id'] = company;
+        } catch (e) { /* no storage */ }
+        return fetch('/api/preferences/data_entry', { credentials: 'same-origin', headers })
+            .then(res => (res.ok ? res.json() : null))
+            .then(data => DataEntryPrefs.set(data && data.value))
+            .catch(() => { /* off */ });
+    },
+};
+
+// The amount "12345" as "123.45" when the decimal point places itself; null
+// when the text is left as typed (it has a point, or is not whole digits).
+function autoDecimalValue(raw) {
+    const s = String(raw == null ? '' : raw).trim();
+    if (!/^-?\d+$/.test(s)) return null;
+    const negative = s.startsWith('-');
+    const cents = parseInt(s.replace('-', ''), 10);
+    return (negative && cents ? '-' : '') + (cents / 100).toFixed(2);
+}
+
+function _isMoneyField(el) {
+    return !!el && el.tagName === 'INPUT' && el.classList && el.classList.contains('money');
+}
+
+// A money field remembers, from the moment it takes focus, whether anything
+// was typed and whether a decimal point was: a value already there (a saved
+// bill's 500) is never divided, and "100." stays $100.00 even where the
+// browser reports a number field's "100." as "100".
+document.addEventListener('focusin', (e) => {
+    if (!_isMoneyField(e.target)) return;
+    e.target.dataset.typed = '';
+    e.target.dataset.point = '';
+}, true);
+document.addEventListener('keydown', (e) => {
+    if (!_isMoneyField(e.target)) return;
+    if (e.key === '.' || e.key === ',' || e.key === 'Decimal') e.target.dataset.point = '1';
+}, true);
+document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!_isMoneyField(el) || el.dataset.placing) return;
+    el.dataset.typed = '1';
+    if (/[.,]/.test(el.value)) el.dataset.point = '1';
+}, true);
+
+// Places the point in one money field when the preference is on and the
+// field was typed into without one. The page's own input listeners hear
+// the new value (a line total, a running balance). True when it changed.
+function placeDecimal(el) {
+    if (!DataEntryPrefs.auto_decimal || !_isMoneyField(el)) return false;
+    if (el.dataset.typed !== '1' || el.dataset.point === '1') return false;
+    const placed = autoDecimalValue(el.value);
+    el.dataset.typed = '';
+    if (placed === null) return false;
+    el.value = placed;
+    el.dataset.point = '1';
+    el.dataset.placing = '1';
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } finally { delete el.dataset.placing; }
+    return true;
+}
+
+// Leaving the field (change comes before the field's own onchange, in the
+// capture phase), Enter in it (before the quick row's post or the form's
+// submit read it) and a form being sent (Save clicked with the caret
+// still in an amount) all place the point first.
+document.addEventListener('change', (e) => { placeDecimal(e.target); }, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter') placeDecimal(e.target); }, true);
+document.addEventListener('submit', (e) => {
+    if (!DataEntryPrefs.auto_decimal || !e.target || !e.target.querySelectorAll) return;
+    e.target.querySelectorAll('input.money').forEach(placeDecimal);
+}, true);
+
+// The fields Enter moves between: what Tab reaches, less the buttons and
+// links (Enter on one of those does what it says).
+function _enterFields(root) {
+    return _tabStops(root, null).filter(el =>
+        /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)
+        && !/^(button|submit|reset|image|file)$/.test(el.type));
+}
+
+// Whether Enter in this control is the control's own: a text area's new
+// line, a type-ahead box's pick, a button's press. Those never move.
+function _ownsEnter(el) {
+    if (!el || !el.tagName) return true;
+    if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
+    if (el.getAttribute && el.getAttribute('role') === 'combobox') return true;
+    if (el.tagName !== 'INPUT' && el.tagName !== 'SELECT') return true;
+    return el.tagName === 'INPUT' && /^(button|submit|reset|image|file)$/.test(el.type);
+}
+
+// Enter moves to the next field when the preference is on. Returns true
+// when the key was taken (moved); false leaves Enter to do what it did
+// before: save from the last field, or the control's own. `root` holds the
+// fields in order (a form, the register's quick row).
+function enterMovesOn(e, root) {
+    if (!DataEntryPrefs.enter_moves || e.key !== 'Enter') return false;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return false;
+    const el = e.target;
+    if (_ownsEnter(el) || !root || !root.contains(el)) return false;
+    const fields = _enterFields(root);
+    const i = fields.indexOf(el);
+    if (i < 0 || i === fields.length - 1) return false;  // the last one saves
+    e.preventDefault();
+    _tabTo(fields[i + 1]);
+    return true;
+}
+
+// The one handler for every form (a dialog's, Settings, Quick Entry). The
+// last field saves: a form with a Save button is sent, as Enter sent it
+// before; a select, whose Enter never sent a form, sends it too.
+document.addEventListener('keydown', (e) => {
+    if (!DataEntryPrefs.enter_moves || e.key !== 'Enter' || e.defaultPrevented) return;
+    const el = e.target;
+    const form = el && el.form;
+    if (!form || el.closest('#reg-quick-entry')) return;
+    if (enterMovesOn(e, form)) return;
+    if (el.tagName === 'SELECT' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && form.querySelector('button[type="submit"], input[type="submit"], button:not([type])')) {
+        e.preventDefault();
+        form.requestSubmit();
+    }
+});
+
 // opts.wide: a form whose rows are wider than a dialog — the line-item
 // tables with ten or eleven columns (job cost entry). The default 700px
 // dialog clipped the last columns of that table with no scrollbar (#174).

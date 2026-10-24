@@ -129,6 +129,14 @@ SETTINGS_KEPT = {
     "Sounds › #post-sound-pref": [
         ("PUT", "/api/preferences/post_sound", {"value": {"enabled": True}}, 200)
     ],
+    # My Preferences (#480) are each person's own, not company settings:
+    # a bookkeeper keeps them and sets their own.
+    "My Preferences › #pref-enter-moves": [
+        ("PUT", "/api/preferences/data_entry", {"value": {"enter_moves": True}}, 200)
+    ],
+    "My Preferences › #pref-auto-decimal": [
+        ("PUT", "/api/preferences/data_entry", {"value": {"auto_decimal": True}}, 200)
+    ],
 }
 # The page's own reads: what it shows loads for a bookkeeper
 SETTINGS_READS = [

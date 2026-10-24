@@ -85,7 +85,7 @@ const ExpensesPage = {
                     <div class="form-group"><label>Paid From *</label>
                         <select name="paid_from_account_id" required>${paidFrom.map(acctOpt).join('')}</select></div>
                     <div class="form-group"><label>Amount *</label>
-                        <input name="amount" type="number" step="0.01" min="0.01" required></div>
+                        <input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
                     <div class="form-group"><label>Reference</label>
                         <input name="reference" placeholder="Receipt / check #"></div>
                     ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}${costCodeGroup}${billableGroup}

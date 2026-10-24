@@ -76,7 +76,7 @@ const InKindPage = {
         return `<tr data-ikline="${idx}">
             <td><input class="ik-desc" placeholder="Yamaha U1 upright piano" required style="min-width:180px"></td>
             <td><input class="ik-qty" type="number" step="0.01" min="0.01" value="1" oninput="InKindPage.recalc()"></td>
-            <td><input class="ik-fv" type="number" step="0.01" min="0" value="0" oninput="InKindPage.recalc()"></td>
+            <td><input class="ik-fv money" type="number" step="0.01" min="0" value="0" oninput="InKindPage.recalc()"></td>
             <td class="col-amount ik-amount">$0.00</td>
             <td><select class="ik-debit" required>${opts}</select></td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();InKindPage.recalc()">X</button></td>

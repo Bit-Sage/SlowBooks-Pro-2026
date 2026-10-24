@@ -74,8 +74,16 @@ def test_an_answer_that_is_not_json_names_the_failure_and_the_status():
 
 # Files whose fetch() calls show nothing when they fail (the version
 # footer, What's New), or are covered by their own tests (auth.js and the
-# logo upload: test_validation_messages.py).
-_NOT_IN_PROBE = {"api.js", "auth.js", "bootstrap.js", "settings.js", "chart.umd.js"}
+# logo upload: test_validation_messages.py). utils.js reads the data-entry
+# preference at start (#480), which says nothing when it fails: both off.
+_NOT_IN_PROBE = {
+    "api.js",
+    "auth.js",
+    "bootstrap.js",
+    "settings.js",
+    "chart.umd.js",
+    "utils.js",
+}
 
 
 def test_every_page_that_fetches_for_itself_is_in_the_probe():

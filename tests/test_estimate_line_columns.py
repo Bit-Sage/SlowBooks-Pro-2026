@@ -39,7 +39,7 @@ def test_estimate_line_cells_follow_the_header():
     row = JS[JS.index("lineRowHtml(idx, line, items) {") :]
     row = row[: row.index("</tr>`;")]
     cells = re.findall(
-        r'class="(line-item|line-desc|line-unit-cost|line-qty|line-rate)"|(CostCodes\.cellHtml)',
+        r'class="(line-item|line-desc|line-unit-cost|line-qty|line-rate)(?: money)?"|(CostCodes\.cellHtml)',
         row,
     )
     cell_names = [a or b for a, b in cells]

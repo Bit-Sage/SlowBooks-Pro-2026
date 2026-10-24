@@ -167,7 +167,7 @@ def test_the_form_takes_an_amount_alone():
     row = row[: row.index("\n    },")]
     # Qty and Rate start blank; Amount is a box; a stored 1 x amount line is drawn as an amount
     assert 'class="line-qty" type="number" step="0.0001" value="${qty}"' in row
-    assert 'class="line-amt" type="number" step="0.01" value="${amount}"' in row
+    assert 'class="line-amt money" type="number" step="0.01" value="${amount}"' in row
     assert "Number(l.quantity) === 1 && Number(l.rate) === Number(l.amount)" in row
     save = js[js.index("    async save(e, id = null) {") :]
     save = save[: save.index("\n    },")]

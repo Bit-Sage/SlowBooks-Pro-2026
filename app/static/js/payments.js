@@ -138,7 +138,7 @@ const PaymentsPage = {
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Amount *</label>
-                        <input name="amount" type="number" step="0.01" min="0.01" required oninput="PaymentsPage._autoApply()"></div>
+                        <input name="amount" class="money" type="number" step="0.01" min="0.01" required oninput="PaymentsPage._autoApply()"></div>
                     <div class="form-group"><label>Method</label>
                         <select name="method">
                             <option value="">--</option>
@@ -219,7 +219,7 @@ const PaymentsPage = {
                 <td>${formatDate(inv.date)}</td>
                 <td>${formatDate(inv.due_date)}</td>
                 <td class="amount">${PaymentsPage._fmt(inv.balance_due)}</td>
-                <td><input class="alloc-amount" data-invoice="${inv.id}" data-max="${inv.balance_due}"
+                <td><input class="alloc-amount money" data-invoice="${inv.id}" data-max="${inv.balance_due}"
                     type="number" step="0.01" min="0" max="${inv.balance_due}"
                     aria-label="Apply to ${escapeHtml(inv.invoice_number)}"
                     oninput="PaymentsPage._updateAllocStatus()"
@@ -431,7 +431,7 @@ const PaymentsPage = {
                 <td>#${escapeHtml(i.invoice_number)}</td>
                 <td>${formatDate(i.date)}</td>
                 <td class="amount">${formatCurrency(i.balance_due)}</td>
-                <td><input class="credit-alloc" data-invoice="${i.id}" data-number="${escapeHtml(i.invoice_number)}" data-max="${i.balance_due}" type="number" step="0.01" min="0" max="${i.balance_due}"
+                <td><input class="credit-alloc money" data-invoice="${i.id}" data-number="${escapeHtml(i.invoice_number)}" data-max="${i.balance_due}" type="number" step="0.01" min="0" max="${i.balance_due}"
                     value="${take > 0 ? (take / 100).toFixed(2) : ''}" aria-label="Apply to ${escapeHtml(i.invoice_number)}"
                     oninput="PaymentsPage._creditStatus(${PaymentsPage._cents(credit.available)})" style="width:100px;"></td>
             </tr>`;

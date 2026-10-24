@@ -56,7 +56,7 @@ const ReleasesPage = {
                     <div class="form-group"><label>Period end</label>
                         <input name="period_end" type="date" value="${todayISO()}" onchange="ReleasesPage.suggest()"></div>
                     <div class="form-group"><label>Amount *</label>
-                        <input name="amount" type="number" step="0.01" min="0.01" required></div>
+                        <input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
                     <div class="form-group" style="display:flex;align-items:flex-end;">
                         <button type="button" class="btn btn-secondary" onclick="ReleasesPage.suggest()">Suggest</button></div>
                     <div class="form-group full-width" id="release-hint" style="font-size:11px; color:var(--gray-500);"></div>

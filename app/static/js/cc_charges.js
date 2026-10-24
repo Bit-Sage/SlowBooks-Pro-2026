@@ -60,7 +60,7 @@ const CCChargesPage = {
                     <div class="form-group"><label>Card *</label>
                         <select name="card_account_id" required>${cardOpts}</select></div>
                     <div class="form-group"><label>Amount *</label>
-                        <input name="amount" type="number" step="0.01" required></div>
+                        <input name="amount" class="money" type="number" step="0.01" required></div>
                     <div class="form-group"><label>Reference</label>
                         <input name="reference"></div>
                     ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}

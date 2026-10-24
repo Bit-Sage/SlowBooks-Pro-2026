@@ -124,7 +124,7 @@ const VendorCreditsPage = {
                 <td>${AccountQuickAdd.picker(`<select class="line-account" title="Blank: the item's expense account, else the vendor's default"><option value="">Item / vendor default</option>${acctOpts}</select>`, 'vendor-credit')}</td>
                 <td><input class="line-desc"></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="1" oninput="VendorCreditsPage.recalc()"></td>
-                <td><input class="line-rate" type="number" step="0.0001" value="0" oninput="VendorCreditsPage.recalc()"></td>
+                <td><input class="line-rate money" type="number" step="0.0001" value="0" oninput="VendorCreditsPage.recalc()"></td>
                 <td class="col-amount line-amount">$0.00</td>
             </tr>`;
     },
@@ -217,7 +217,7 @@ const VendorCreditsPage = {
                 <td>${escapeHtml(b.bill_number)}</td>
                 <td>${formatDate(b.date)}</td>
                 <td class="amount">${formatCurrency(b.balance_due)}</td>
-                <td><input type="number" step="0.01" class="vc-apply-amt" data-bill="${b.id}" value="0" style="width:90px;"></td>
+                <td><input type="number" step="0.01" class="vc-apply-amt money" data-bill="${b.id}" value="0" style="width:90px;"></td>
             </tr>`).join('');
         if (!rows) rows = '<tr><td colspan="4">No open bills for this vendor. The credit stays on their account until there is one.</td></tr>';
 
