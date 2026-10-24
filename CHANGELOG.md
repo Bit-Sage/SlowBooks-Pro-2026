@@ -174,6 +174,13 @@ batch's log under the form with a running count and total, and starts the
 next bill with the vendor, date and terms kept and the focus back on the
 vendor. A line's Account can add a new account and its Item a new item, as on
 Enter Bill. A read-only or accountant sign-in is not offered the page.
+**A new account from the bank-feed review and the Bank Rule form** (#492). The
+"Pick a category" picker on a To review line and the Bank Rule form's Category
+Account have the same Add button. On a review line the new account is picked
+and kept on the line, as a category you choose is, and every other line can
+choose it too; on the rule form it becomes the rule's category. Reviewing a
+feed with a new kind of expense no longer means leaving the review for the
+Chart of Accounts.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

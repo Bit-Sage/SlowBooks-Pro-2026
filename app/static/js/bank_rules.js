@@ -50,6 +50,10 @@ const BankRulesPage = {
     // rules list is the default.
     _afterSave: null,
 
+    // The kinds of account a rule can file a line under.
+    CATEGORY_TYPES: ['expense', 'income', 'asset', 'liability', 'cogs'],
+    _accounts: [],
+
     // prefill: a rule's fields filled in from another screen (#259).
     async showForm(id = null, prefill = null) {
         let rule = { name: '', pattern: '', account_id: '', vendor_id: '', rule_type: 'contains', priority: 0, is_active: true };
@@ -66,13 +70,14 @@ const BankRulesPage = {
             API.get('/accounts'),
             API.get('/vendors').catch(() => []),
         ]);
+        BankRulesPage._accounts = accounts;
         // the vendor a matched line is posted for (#493): active vendors,
         // and the rule's own even when it has been made inactive
         const vendorOpts = vendors
             .filter(v => v.is_active !== false || v.id == rule.vendor_id)
             .map(v => `<option value="${v.id}" ${rule.vendor_id==v.id?'selected':''}>${escapeHtml(v.name)}</option>`).join('');
         const acctOpts = accounts
-            .filter(a => ['expense','income','asset','liability','cogs'].includes(a.account_type))
+            .filter(a => BankRulesPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}" ${rule.account_id==a.id?'selected':''}>${accountLabel(a)}</option>`).join('');
 
         openModal(id ? 'Edit Bank Rule' : 'New Bank Rule', `
@@ -90,7 +95,7 @@ const BankRulesPage = {
                             <option value="exact" ${rule.rule_type==='exact'?'selected':''}>Exact Match</option>
                         </select></div>
                     <div class="form-group"><label>Category Account</label>
-                        <select name="account_id"><option value="">-- None --</option>${acctOpts}</select></div>
+                        ${AccountQuickAdd.picker(`<select name="account_id" id="rule-account"><option value="">-- None --</option>${acctOpts}</select>`, 'bank-rule')}</div>
                     <div class="form-group"><label for="bank-rule-vendor">Vendor</label>
                         <select id="bank-rule-vendor" name="vendor_id" aria-describedby="bank-rule-vendor-hint"><option value="">-- None --</option>${vendorOpts}</select>
                         <div id="bank-rule-vendor-hint" class="form-hint" style="font-size:11px; color:var(--gray-500);">A line this rule matches is added for this vendor. The vendor's own name matches too.</div></div>
@@ -143,3 +148,14 @@ const BankRulesPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 };
+
+// The rule's Category Account adds a new account (#492, the shared quick
+// add of #485): of the kinds a rule files under, picked on save, and the
+// keyboard goes back to the picker.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('bank-rule', {
+        types: BankRulesPage.CATEGORY_TYPES,
+        compact: true,
+        chart: () => BankRulesPage._accounts,
+    });
+}
