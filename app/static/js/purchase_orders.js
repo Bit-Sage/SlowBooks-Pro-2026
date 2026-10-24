@@ -153,7 +153,7 @@ const PurchaseOrdersPage = {
 
     itemSel(idx) {
         const row = $(`[data-poline="${idx}"]`);
-        if (row && ItemQuickAdd.selected(row.querySelector('.line-item'), PurchaseOrdersPage._items, () => PurchaseOrdersPage.itemSel(idx))) return;
+        if (row && ItemQuickAdd.selected(row.querySelector('.line-item'), PurchaseOrdersPage._items, () => PurchaseOrdersPage.itemSel(idx), 'purchase')) return;
         const item = PurchaseOrdersPage._items.find(i => i.id == row.querySelector('.line-item').value);
         if (item) {
             row.querySelector('.line-desc').value = item.description || item.name;

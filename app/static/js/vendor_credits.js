@@ -135,7 +135,7 @@ const VendorCreditsPage = {
 
     // Picking an item fills what it cost (the rate stayed 0 — W-M1).
     itemSelected(select) {
-        if (ItemQuickAdd.selected(select, VendorCreditsPage._items, () => VendorCreditsPage.itemSelected(select))) return;
+        if (ItemQuickAdd.selected(select, VendorCreditsPage._items, () => VendorCreditsPage.itemSelected(select), 'purchase')) return;
         const row = select.closest('tr');
         const item = VendorCreditsPage._items.find(i => i.id == select.value);
         if (item) {

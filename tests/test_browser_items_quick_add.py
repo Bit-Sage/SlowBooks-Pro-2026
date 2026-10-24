@@ -8,6 +8,12 @@ income account), and the line shows it picked with its rate filled, as a
 normal pick would. The first line is left as it was. Saving the invoice
 stores the new item on its line.
 
+"+ Add item" opens only when chosen: Enter or Tab on a name that matches
+nothing opens no form, and Tab goes on to the next cell. Cancel and Save
+put the focus back on the line's item picker. On a bill the form asks for
+a cost and an expense or COGS account (5100 for a material), and the bill
+posts the line there. A read-only or accountant sign-in is not offered it.
+
 Skipped, as one module, where playwright or its Chromium is not installed.
 """
 
@@ -55,6 +61,35 @@ def _pick(page, box, typed, name):
     page.keyboard.press("Enter")
 
 
+def _choose_add(page, box, typed):
+    """Type a name the books don't have, then choose "+ Add item" on purpose:
+    nothing is highlighted for an unmatched name, so ArrowDown goes to it
+    and Enter takes it."""
+    box.click()
+    page.keyboard.type(typed)
+    page.wait_for_function(
+        "() => { const l = document.querySelectorAll('#cbx-listbox [role=option]');"
+        " return l.length === 1 && l[0].textContent.trim() === '+ Add item'"
+        " && l[0].getAttribute('aria-selected') === 'false'; }"
+    )
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+
+
+FOCUS = """() => { const a = document.activeElement;
+    const r = a && a.closest('tr');
+    return { cls: a ? a.className : '', row: r ? [...r.parentElement.children].indexOf(r) + 1 : 0,
+        value: a ? a.value : '' }; }"""
+
+
+def _invoice_form(browser, company):
+    page, handled = _open_at(browser, company, "#/invoices")
+    page.evaluate("async () => { await InvoicesPage.showForm(); }")
+    page.wait_for_function(MODAL_SHOWN, timeout=5000)
+    settle(page, handled)
+    return page, handled
+
+
 def test_an_item_added_from_an_invoice_line_is_picked_on_that_line(
     browser, company, books
 ):
@@ -69,9 +104,9 @@ def test_an_item_added_from_an_invoice_line_is_picked_on_that_line(
         page.fill("#inv-lines tr:nth-child(1) .line-rate", "250")
         page.click("#invoice-form button:has-text('+ Add Line')")
         page.wait_for_selector(f"{ROW2} .cbx-input")
-        # a name the books don't have: "+ Add item" is what Enter takes,
-        # and the quick add opens with the name in it
-        _pick(page, page.locator(f"{ROW2} .cbx-input"), NAME, "+ Add item")
+        # a name the books don't have, and "+ Add item" chosen: the quick
+        # add opens with the name in it
+        _choose_add(page, page.locator(f"{ROW2} .cbx-input"), NAME)
         page.wait_for_selector(f"{ROW2} .iqa-form .iqa-name")
         handed_on = page.input_value(f"{ROW2} .iqa-name")
         page.fill(f"{ROW2} .iqa-code", CODE)
@@ -92,6 +127,7 @@ def test_an_item_added_from_an_invoice_line_is_picked_on_that_line(
             timeout=5000,
         )
         settle(page, handled)
+        focus_after_save = page.evaluate(FOCUS)
         first = page.evaluate(LINE, 1)
         second = page.evaluate(LINE, 2)
         page.click("#invoice-form button[type=submit]")
@@ -102,6 +138,12 @@ def test_an_item_added_from_an_invoice_line_is_picked_on_that_line(
 
     assert handed_on == NAME
     assert income == "4200 - Material Income"
+    # back on the line's item picker, showing the new item
+    assert focus_after_save == {
+        "cls": "cbx-input",
+        "row": 2,
+        "value": f"{CODE} — {NAME}",
+    }
     made = [i for i in _ok(company.get("/api/items", params={"q": CODE}))]
     assert len(made) == 1, made
     item = made[0]
@@ -125,3 +167,232 @@ def test_an_item_added_from_an_invoice_line_is_picked_on_that_line(
     lines = sorted(newest["lines"], key=lambda ln: ln["line_order"])
     assert [ln["item_id"] for ln in lines] == [None, item["id"]]
     assert lines[0]["description"] == "Tent and tables"
+
+
+def test_enter_and_tab_on_an_unmatched_name_open_no_quick_add(browser, company, books):
+    page, handled = _invoice_form(browser, company)
+    try:
+        box = page.locator("#inv-lines tr:nth-child(1) .cbx-input")
+        box.click()
+        page.keyboard.type("Nothing the bakery sells")
+        page.wait_for_function(
+            "() => { const l = document.querySelectorAll('#cbx-listbox [role=option]');"
+            " return l.length === 1 && l[0].textContent.trim() === '+ Add item'; }"
+        )
+        page.keyboard.press("Enter")
+        settle(page, handled)
+        after_enter = page.evaluate(LINE, 1)
+        enter_focus = page.evaluate(FOCUS)
+        page.keyboard.press("Tab")
+        settle(page, handled)
+        after_tab = page.evaluate(LINE, 1)
+        tab_focus = page.evaluate(FOCUS)
+    finally:
+        page.close()
+
+    assert after_enter["form"] is False and after_enter["value"] == ""
+    assert enter_focus["cls"] == "cbx-input" and enter_focus["row"] == 1
+    # Tab went on to the description, with no item and no form
+    assert after_tab["form"] is False and after_tab["value"] == ""
+    assert after_tab["box"] == ""
+    assert (tab_focus["cls"], tab_focus["row"]) == ("line-desc", 1)
+
+
+def test_cancel_puts_the_focus_back_on_the_item_picker(browser, company, books):
+    page, handled = _invoice_form(browser, company)
+    row = "#inv-lines tr:nth-child(1)"
+    try:
+        _choose_add(page, page.locator(f"{row} .cbx-input"), "Lemon curd tart")
+        page.wait_for_selector(f"{row} .iqa-form .iqa-name")
+        opened_on = page.evaluate(FOCUS)
+        page.click(f"{row} .iqa-cancel")
+        settle(page, handled)
+        by_click = page.evaluate(FOCUS)
+        line_after_click = page.evaluate(LINE, 1)
+        # and by Escape, from inside the form; the dialog stays open
+        _choose_add(page, page.locator(f"{row} .cbx-input"), "Lemon curd tart")
+        page.wait_for_selector(f"{row} .iqa-form .iqa-name")
+        page.keyboard.press("Escape")
+        settle(page, handled)
+        by_escape = page.evaluate(FOCUS)
+        still_open = page.evaluate(MODAL_SHOWN)
+        line_after_escape = page.evaluate(LINE, 1)
+    finally:
+        page.close()
+
+    assert opened_on["cls"] == "iqa-name"
+    for focus in (by_click, by_escape):
+        assert focus == {"cls": "cbx-input", "row": 1, "value": ""}
+    for line in (line_after_click, line_after_escape):
+        assert line["form"] is False and line["value"] == ""
+    assert still_open is True
+
+
+BILL_ROW = "#bill-lines tr:nth-child(1)"
+BILL_LINE = """() => { const r = document.querySelector('#bill-lines tr:nth-child(1)');
+    const a = r.querySelector('select.line-account');
+    return { item: r.querySelector('select.line-item').value,
+        account: a.value, accountText: a.selectedIndex >= 0 ? a.options[a.selectedIndex].textContent : '',
+        rate: r.querySelector('.line-rate').value, form: !!r.querySelector('.iqa-form') }; }"""
+
+
+def test_a_bill_line_asks_for_the_expense_account_and_posts_there(
+    browser, company, books
+):
+    page, handled = _open_at(browser, company, "#/bills")
+    page.evaluate("async () => { await BillsPage.showForm(); }")
+    page.wait_for_function(MODAL_SHOWN, timeout=5000)
+    settle(page, handled)
+    try:
+        vendor = page.get_by_role("combobox", name="Vendor", exact=True)
+        _pick(page, vendor, "cascade", "Cascade Flour Mill")
+        settle(page, handled)
+        _choose_add(
+            page, page.locator(f"{BILL_ROW} .cbx--line-item .cbx-input"), "Rye chaff"
+        )
+        page.wait_for_selector(f"{BILL_ROW} .iqa-form .iqa-name")
+        page.select_option(f"{BILL_ROW} .iqa-type", "material")
+        page.wait_for_function(
+            f"() => document.querySelector('{BILL_ROW} .iqa-account').options.length > 1",
+            timeout=5000,
+        )
+        form = page.evaluate(
+            f"""() => {{ const b = document.querySelector('{BILL_ROW} .iqa-form');
+                const s = b.querySelector('.iqa-account');
+                return {{ label: s.getAttribute('aria-label'),
+                    picked: s.options[s.selectedIndex].textContent,
+                    kinds: [...s.options].map(o => o.dataset.number || '').filter(Boolean),
+                    income: !!b.querySelector('.iqa-income'), rate: !!b.querySelector('.iqa-rate'),
+                    cost: !!b.querySelector('.iqa-cost'),
+                    stock: !b.querySelector('.iqa-stock-row').hidden }}; }}"""
+        )
+        page.fill(f"{BILL_ROW} .iqa-cost", "6.25")
+        page.click(f"{BILL_ROW} .iqa-save")
+        page.wait_for_function(
+            f"() => /^\\d+$/.test(document.querySelector('{BILL_ROW} select.line-item').value)",
+            timeout=5000,
+        )
+        settle(page, handled)
+        focus = page.evaluate(FOCUS)
+        line = page.evaluate(BILL_LINE)
+        page.fill(f"{BILL_ROW} .line-qty", "4")
+        page.click("#bill-form button[type=submit]")
+        page.wait_for_function(f"!({MODAL_SHOWN})()", timeout=5000)
+        settle(page, handled)
+    finally:
+        page.close()
+
+    assert form["label"] == "Expense or COGS account"
+    assert form["picked"] == "5100 - Materials Cost"
+    # cost of goods and expenses only: no income account is offered
+    assert form["kinds"] and all(n[0] in "56789" for n in form["kinds"]), form
+    assert (form["income"], form["rate"], form["cost"], form["stock"]) == (
+        False,
+        False,
+        True,
+        True,
+    )
+    made = _ok(company.get("/api/items", params={"q": "Rye chaff"}))
+    assert len(made) == 1, made
+    item = made[0]
+    accounts = {a["id"]: a["account_number"] for a in _ok(company.get("/api/accounts"))}
+    assert accounts[item["expense_account_id"]] == "5100"
+    assert item["income_account_id"] is None
+    assert float(item["cost"]) == 6.25 and item["track_inventory"] is False
+    # the line took the item's account and cost, and the focus is back on it
+    assert (
+        line["item"] == str(item["id"])
+        and line["accountText"] == "5100 - Materials Cost"
+    )
+    assert float(line["rate"]) == 6.25 and line["form"] is False
+    assert focus == {"cls": "cbx-input", "row": 1, "value": "Rye chaff"}
+    bills = _ok(company.get("/api/bills"))
+    newest = _ok(company.get(f"/api/bills/{max(b['id'] for b in bills)}"))
+    assert [(ln["item_id"], accounts[ln["account_id"]]) for ln in newest["lines"]] == [
+        (item["id"], "5100")
+    ]
+    assert float(newest["total"]) == 25.0
+
+
+def test_a_read_only_or_accountant_sign_in_is_not_offered_add_item(
+    browser, company, books
+):
+    page, handled = _open_at(browser, company, "#/invoices")
+    got = {}
+    try:
+        for role in ("readonly", "accountant", "admin"):
+            page.evaluate(
+                "async (role) => { App.role = role; closeModal();"
+                " await InvoicesPage.showForm(); }",
+                role,
+            )
+            page.wait_for_function(MODAL_SHOWN, timeout=5000)
+            settle(page, handled)
+            got[role] = page.evaluate(LINE, 1)["options"]
+        page.evaluate("() => { App.role = 'admin'; }")
+    finally:
+        page.close()
+
+    assert "+ Add item" not in got["readonly"]
+    assert "+ Add item" not in got["accountant"]
+    assert "+ Add item" in got["admin"]
+
+
+PO_ROW = "#po-lines tr:nth-child(1)"
+
+
+def test_a_purchase_order_line_can_add_a_stock_item_at_its_cost(
+    browser, company, books
+):
+    page, handled = _open_at(browser, company, "#/purchase-orders")
+    page.evaluate("async () => { await PurchaseOrdersPage.showForm(); }")
+    page.wait_for_function(MODAL_SHOWN, timeout=5000)
+    settle(page, handled)
+    try:
+        _choose_add(
+            page,
+            page.locator(f"{PO_ROW} .cbx--line-item .cbx-input"),
+            "Proofing basket",
+        )
+        page.wait_for_selector(f"{PO_ROW} .iqa-form .iqa-name")
+        page.wait_for_function(
+            f"() => document.querySelector('{PO_ROW} .iqa-account').options.length > 1",
+            timeout=5000,
+        )
+        # a service is never stock; a product can be
+        page.select_option(f"{PO_ROW} .iqa-type", "service")
+        service = page.evaluate(
+            f"""() => {{ const b = document.querySelector('{PO_ROW} .iqa-form');
+                const s = b.querySelector('.iqa-account');
+                return [b.querySelector('.iqa-stock-row').hidden,
+                    s.options[s.selectedIndex].textContent]; }}"""
+        )
+        page.select_option(f"{PO_ROW} .iqa-type", "product")
+        page.check(f"{PO_ROW} .iqa-stock")
+        product = page.evaluate(
+            f"""() => {{ const s = document.querySelector('{PO_ROW} .iqa-account');
+                return s.options[s.selectedIndex].textContent; }}"""
+        )
+        page.fill(f"{PO_ROW} .iqa-cost", "14")
+        page.click(f"{PO_ROW} .iqa-save")
+        page.wait_for_function(
+            f"() => /^\\d+$/.test(document.querySelector('{PO_ROW} select.line-item').value)",
+            timeout=5000,
+        )
+        settle(page, handled)
+        rate = page.input_value(f"{PO_ROW} .line-rate")
+        focus = page.evaluate(FOCUS)
+    finally:
+        page.close()
+
+    assert service == [True, "5300 - Subcontractor Costs"]
+    assert product == "5000 - Cost of Goods Sold"
+    made = _ok(company.get("/api/items", params={"q": "Proofing basket"}))
+    assert len(made) == 1, made
+    item = made[0]
+    accounts = {a["id"]: a["account_number"] for a in _ok(company.get("/api/accounts"))}
+    assert (item["item_type"], item["track_inventory"]) == ("product", True)
+    assert accounts[item["expense_account_id"]] == "5000"
+    assert item["income_account_id"] is None and float(item["cost"]) == 14
+    assert float(rate) == 14
+    assert focus == {"cls": "cbx-input", "row": 1, "value": "Proofing basket"}
