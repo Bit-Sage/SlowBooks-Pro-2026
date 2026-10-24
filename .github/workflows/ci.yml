@@ -181,6 +181,8 @@ jobs:
           # labels PDF endpoint skips without WeasyPrint's native stack.
           # 147 with item quick-add (#445): tests/test_browser_items_quick_add.py
           # joins the Playwright modules that skip here.
+          # 147 for #457: tests/test_browser_hidden_menu.py skips as a module
+          # where playwright is not installed.
           MAX_SKIPS: "147"
         shell: pwsh
         run: |

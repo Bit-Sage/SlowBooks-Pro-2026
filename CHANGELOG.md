@@ -251,6 +251,30 @@ answer reads every row back from the chart, and a replace shows a kept
 account's parent under the name the file gives it. A sub-account the file
 lists unchanged keeps its own detail type; when the Balance Sheet prints it
 in its parent's group (2.28.0, display only) its row says so.
+**A Recent dropdown instead of the Open list** (#462). Since 2.24.0 every
+screen opened added a line with an × at the top of the sidebar, up to
+twelve, pushing the menu down. It is one line now, "Recent: <the screen
+showing> ▾", a button that opens the last seven screens, most recent first,
+the one showing marked, each a link back with its report period, register
+account or document title as before; a screen opened again moves to the
+top rather than listing twice, and Clear at the foot empties the list. The
+button says whether it is open to a screen reader, the arrow keys, Home and
+End move through the list, Esc closes it and returns to the button, and Tab
+moves on. The list is still kept for the session, per sign-in and company,
+and survives a reload; it fits a 320 px window in both themes.
+
+**Hidden menu items stay hidden** (#457, reported by tithetaker). Settings →
+Sidebar dropped every item already hidden from its list, so it could not be
+shown again, and the next Save wrote only the items on the page, which
+brought the first batch back. The list now always has every item the
+company can hide, and a box now means "show": everything is ticked to start
+with, untick an item to hide it, tick it again to bring it back, one at a
+time or in batches. An item hidden for another reason (a nonprofit page on a
+business company, an administrator's page for another role) keeps the choice
+made for it, and a nonprofit page unticked on a nonprofit company no longer
+comes back on the next reload. The stored setting is
+unchanged (`hidden_menu` lists the hidden items), so a list saved by an
+earlier version keeps working.
 
 ### v2.28.0 — Account types and sub-accounts
 
