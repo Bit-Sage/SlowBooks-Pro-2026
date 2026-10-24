@@ -30,7 +30,8 @@ const PayrollPage = {
                 html += `<tr>
                     <td>${formatDate(r.period_start)} - ${formatDate(r.period_end)}</td>
                     <td>${formatDate(r.pay_date)}</td>
-                    <td>${statusBadge(r.status)}</td>
+                    <td>${statusBadge(r.status)}${r.status === 'draft' && r.stale_reason
+                        ? ` <span style="color:var(--text-warning);font-size:11px" title="${escapeHtml(r.stale_reason)}">figured before an opening YTD changed</span>` : ''}</td>
                     <td class="amount">${formatCurrency(r.total_gross)}</td>
                     <td class="amount">${formatCurrency(r.total_taxes)}</td>
                     <td class="amount">${formatCurrency(r.total_net)}</td>
@@ -354,12 +355,21 @@ const PayrollPage = {
         // Net pay leaves the bank account (1000) when the run is processed;
         // ask first if that would overdraw it, as expenses and Pay Bills do
         // (macbase1: payroll took Checking to -$2,986.90 without a word).
+        let stale = null;
         try {
             const run = await API.get(`/payroll/${id}`);
+            stale = run.stale_reason;
             if (!(await Overdraft.confirm(null, Number(run.total_net) || 0, '1000', 'Process'))) return;
         } catch (e) { /* a failed lookup never blocks processing */ }
+        // A draft figured before an employee's opening YTD changed (#433):
+        // say so, and process it as figured only when asked to.
+        let q = '';
+        if (stale) {
+            if (!confirm(`${stale}\n\nProcess it as figured anyway?`)) return;
+            q = '?acknowledge_stale=1';
+        }
         try {
-            await API.post(`/payroll/${id}/process`);
+            await API.post(`/payroll/${id}/process${q}`);
             toast('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }

@@ -314,8 +314,15 @@ def calculate_withholdings(
     state_extra_withholding=Decimal("0"),
     state_rate_override=None,
     local_tax_rate=None,
+    ytd_bases: dict | None = None,
 ) -> dict:
     """Compute a full set of payroll taxes for one employee for one pay period.
+
+    ``ytd_bases`` is what already counts toward each annual wage base
+    (routes.payroll.ytd.wage_base_ytd): "ss", "medicare" (the Additional
+    Medicare threshold), "futa", "suta" (the work state's own) and "state"
+    (the work state's capped taxes). Any key left out is measured by
+    ``ytd_gross``, as before.
 
     ``pretax_deductions`` is the total of pre-tax deductions that reduce
     federal income-tax wages; ``pretax_fica`` is the subset of those that
@@ -392,12 +399,17 @@ def calculate_withholdings(
             extra_withholding,
         )
 
+    bases = {k: ytd for k in ("ss", "medicare", "futa", "suta", "state")}
+    for k, v in (ytd_bases or {}).items():
+        if k in bases and v is not None:
+            bases[k] = Decimal(str(v))
+
     # --- FICA (on FICA wages — Section 125 / HSA reduce these) ---
-    ss_emp, ss_empr = social_security(fica_wages, ytd)
-    med_emp, med_empr = medicare(fica_wages, ytd)
+    ss_emp, ss_empr = social_security(fica_wages, bases["ss"])
+    med_emp, med_empr = medicare(fica_wages, bases["medicare"])
 
     # --- Employer unemployment taxes ---
-    futa_tax = futa(fica_wages, ytd)
+    futa_tax = futa(fica_wages, bases["futa"])
 
     # --- State engine ---
     # The work-state engine drives SUTA situs and state disability/leave
@@ -413,7 +425,7 @@ def calculate_withholdings(
     state = engine.calculate(
         gross=gross,
         taxable=state_taxable,
-        ytd_gross=ytd,
+        ytd_gross=bases["state"],
         pay_periods=pay_periods,
         hours=Decimal(str(hours)),
         filing_status=filing_status,
@@ -429,7 +441,7 @@ def calculate_withholdings(
         wh = get_engine(withholding_state).calculate(
             gross=gross,
             taxable=state_taxable,
-            ytd_gross=ytd,
+            ytd_gross=bases["state"],
             pay_periods=pay_periods,
             hours=Decimal(str(hours)),
             filing_status=filing_status,
@@ -447,7 +459,7 @@ def calculate_withholdings(
                 state.detail[k] = v
 
     rate = Decimal(str(suta_rate)) if suta_rate is not None else Decimal(str(SUTA_RATE))
-    suta_tax = suta(fica_wages, ytd, rate, engine.suta_wage_base)
+    suta_tax = suta(fica_wages, bases["suta"], rate, engine.suta_wage_base)
 
     total_employee = federal + state_income + state.employee_other + ss_emp + med_emp
     total_employer = ss_empr + med_empr + futa_tax + suta_tax + state.employer_other

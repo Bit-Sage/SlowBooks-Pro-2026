@@ -2,14 +2,14 @@ import json
 from datetime import date
 from decimal import Decimal
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
 from app.routes.payroll._router import router
 from app.services.direct_deposit import pays_by_direct_deposit
-from app.routes.payroll.ytd import _ytd_supplemental, employee_ytd
+from app.routes.payroll.ytd import _ytd_supplemental, employee_ytd, wage_base_ytd
 from app.models.payroll import (
     PayRun,
     PayStub,
@@ -345,6 +345,8 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             regular_wages = _last_regular_gross(db, emp.id, data.pay_date)
 
         ytd = employee_ytd(db, emp.id, year, before=data.pay_date)
+        # the caps measure the opening's taxable wages, SUTA per state (#433)
+        bases = wage_base_ytd(db, emp.id, year, work_state, before=data.pay_date)
         ytd_suppl = (
             _ytd_supplemental(db, emp.id, year, before=data.pay_date)
             if stub_input.supplemental
@@ -395,6 +397,7 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
             supplemental_method=stub_input.supplemental_method or "flat",
             regular_wages=regular_wages,
             ytd_supplemental=ytd_suppl,
+            ytd_bases=bases,
         )
 
         # Garnishments are applied to disposable earnings (gross less the
@@ -537,7 +540,11 @@ def create_pay_run(data: PayRunCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/{run_id}/process")
-def process_pay_run(run_id: int, db: Session = Depends(get_db)):
+def process_pay_run(
+    run_id: int,
+    acknowledge_stale: bool = Query(False),
+    db: Session = Depends(get_db),
+):
     """Process a pay run — posts the payroll journal entry."""
     from app.services.closing_date import check_closing_date
 
@@ -553,6 +560,13 @@ def process_pay_run(run_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Pay run already processed")
     if run.status == PayRunStatus.VOID:
         raise HTTPException(status_code=400, detail="Pay run is void")
+    if run.stale_reason and not acknowledge_stale:
+        # an opening YTD changed after the draft was figured (#433)
+        raise HTTPException(
+            status_code=409,
+            detail=run.stale_reason
+            + " To process it as figured, send acknowledge_stale=1.",
+        )
     # Pay-run processing posts a dated JE; subject to closing-date enforcement
     # like every other JE-posting route. Without this, an operator can process
     # a backdated pay run into a closed period.
@@ -777,6 +791,7 @@ def gross_up_paycheck(data: GrossUpRequest, db: Session = Depends(get_db)):
     )
     work_state = (emp.work_state or "WA").upper()
     wh_state = withholding_state(work_state, emp.residence_state)
+    bases = wage_base_ytd(db, emp.id, year, work_state)
 
     def net_of(g: Decimal) -> Decimal:
         return calculate_withholdings(
@@ -798,6 +813,7 @@ def gross_up_paycheck(data: GrossUpRequest, db: Session = Depends(get_db)):
             local_tax_rate=emp.local_tax_rate,
             supplemental=bool(data.supplemental),
             ytd_supplemental=ytd_suppl,
+            ytd_bases=bases,
         )["net"]
 
     target = Decimal(str(data.target_net))
