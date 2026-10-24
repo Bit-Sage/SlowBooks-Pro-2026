@@ -22,6 +22,7 @@ from pathlib import Path
 JS_DIR = Path(__file__).resolve().parents[1] / "app/static/js"
 BANKING_JS = (JS_DIR / "banking.js").read_text(encoding="utf-8")
 UTILS_JS = (JS_DIR / "utils.js").read_text(encoding="utf-8")
+AQA_JS = (JS_DIR / "account_quick_add.js").read_text(encoding="utf-8")
 
 
 def _select(html_id):
@@ -36,25 +37,28 @@ def test_the_category_pickers_are_plain_selects_with_an_add_button():
     assert "__new__" not in _select("qe-category")
     assert "__new__" not in _select("entry-category")
     assert "BankingPage.categoryChanged" not in BANKING_JS
+    # a button beside each picker opens the shared panel (#485)
     for sel_id in ("qe-category", "entry-category"):
-        # a button beside the picker opens the panel
         assert (
-            f"BankingPage.openNewAccount('{sel_id}', ${{accountId}})" in BANKING_JS
+            f"'register', {{ ctx: accountId, id: '{sel_id}-add'" in BANKING_JS
         ), sel_id
-        assert f"BankingPage._newAccountPanel('{sel_id}', accountId)" in BANKING_JS
+    assert "AccountQuickAdd.register('register', {" in BANKING_JS
+    assert 'onclick="AccountQuickAdd.open(this, ' in AQA_JS
+    # the panel is made when the button is pressed, never by the select
+    assert "open(btn, profile, ctx = null) {" in AQA_JS
 
 
 def test_the_panel_asks_for_name_type_parent_and_number():
-    panel = BANKING_JS[BANKING_JS.index("_newAccountPanel(selectId, accountId) {") :]
-    panel = panel[: panel.index("openNewAccount(selectId, accountId) {")]
-    for part in ("-name", "-type", "-parent", "-number"):
-        assert f'id="${{id}}{part}"' in panel, part
-    # the name is required by the script, not the attribute: a hidden
-    # `required` box would block the entry form's own submit
+    panel = AQA_JS[AQA_JS.index("open(btn, profile, ctx = null) {") :]
+    panel = panel[: panel.index("_excluded(panel) {")]
+    for part in ("name", "type", "parent", "number"):
+        assert f'id="${{key}}-{part}"' in panel, part
+    # the name is required by the script, not the attribute: a `required`
+    # box would block the entry form's own submit
     assert 'aria-required="true"' in panel and "required " not in panel.replace(
         "aria-required", ""
     )
-    assert "BankingPage.CATEGORY_TYPES" in panel
+    assert "types: BankingPage.CATEGORY_TYPES," in BANKING_JS
     assert (
         "CATEGORY_TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity']"
         in BANKING_JS
@@ -65,20 +69,22 @@ def test_the_parent_list_leaves_out_control_accounts():
     # a control account (1100, 1200, 2000, 2200, 3200 …) is found by number
     # when a document posts, so it is never offered as a new account's parent
     assert (
-        "a.account_type === type && a.id !== accountId && !a.bank_kind && !a.is_control"
-        in BANKING_JS
+        "a.account_type === type && a.id !== skip && !a.bank_kind && !a.is_control"
+        in AQA_JS
     )
+    assert "excludeId: (accountId) => accountId," in BANKING_JS
 
 
 def test_the_new_account_goes_into_every_picker_and_is_chosen():
-    save = BANKING_JS[BANKING_JS.index("async saveNewAccount(selectId, accountId) {") :]
+    save = AQA_JS[AQA_JS.index("async save(panel) {") :]
     assert "await API.post('/accounts', {" in save
     assert "account_number: f('number').value.trim() || null" in save
-    assert "for (const id of ['qe-category', 'entry-category'])" in save
-    assert "if (BankingPage._splitCats) BankingPage._splitCats += opt;" in save
-    assert "document.getElementById(selectId).value = String(made.id);" in save
-    assert "document.getElementById('qe-out')" in save
-    assert 'input[name="description"]' in save
+    assert "select.value = String(made.id);" in save
+    reg = BANKING_JS[BANKING_JS.index("AccountQuickAdd.register('register', {") :]
+    assert "for (const id of ['qe-category', 'entry-category'])" in reg
+    assert "if (BankingPage._splitCats) BankingPage._splitCats += opt;" in reg
+    assert "document.getElementById('qe-out')" in reg
+    assert 'input[name="description"]' in reg
 
 
 def test_the_payee_is_offered_by_the_money_side_and_checks_both_lists():
