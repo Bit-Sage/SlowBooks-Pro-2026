@@ -1,10 +1,9 @@
 # Account detail types — design (#390)
 
 Status: DESIGN 2026-10-22; decisions settled by the owner on PR #403
-(2026-10-22, see "Decisions" at the end). PR 1 (the field) is built for
-2.27.0 — "PR 1 as built" below records where it departs from the text
-here. PR 2 (the statements) is not started; nothing in the Balance Sheet,
-Profit & Loss and cash flow sections is product behavior yet. Issue #390, from Kim Morden Bookkeeping's notes:
+(2026-10-22, see "Decisions" at the end). Both PRs are built for 2.27.0:
+PR 1 (the field) and PR 2 (the statements) — "PR 1 as built" and "PR 2 as
+built" below record where each departs from the text here. Issue #390, from Kim Morden Bookkeeping's notes:
 a CPA reading the Balance Sheet expects current and long-term liabilities
 grouped apart, and the chart cannot say which is which.
 
@@ -535,11 +534,71 @@ Where the build departs from the proposal above, and why:
   Type word that names a detail type ("fixed asset") sets it; a detail type
   contradicting the Type column is a row error.
 
-## Open items (not settled; conservative choice taken)
+## PR 2 as built (2.27.0)
 
-- **QBO report import, "Cost of Goods Sold" → `expense`.** Left as it is:
-  making it `cogs` moves an imported company's costs above Gross Profit, a
-  statement change, which PR 1 must not make. Decide with PR 2.
+Built with issue #416's report half (sub-accounts under their parents),
+because both change how the statements present accounts.
+
+- **One layout module**, `app/services/statement_layout.py`: `bs_groups` /
+  `bs_group_totals` (the proposal's `_bs_groups`) and `family_rows` (#416).
+  The routes and the nonprofit service call it; the writers only print.
+- **Balance Sheet** as proposed: `groups` beside the flat lists, the five
+  subtotals in `_BS_TOTALS`, every line with `detail_type`. A detail type
+  a side does not know (bad data) prints in its first group. The PDF rows
+  carry an `indent` (the shared report template pads by it) and the group
+  heading the new `group` style. The CSV's new Type column is the last one,
+  so a sheet reading Account name and Amount by position still lines up.
+  SoFP: assets and liabilities grouped, Net Assets untouched, as proposed.
+- **P&L**: `other_income`, `other_expense` and the four totals as
+  proposed; one flag, `has_other`, decides the block and Net Operating
+  Income for every writer (decision 4). Inside the block, Other Income and
+  Other Expense each print only when they have a line. Nonprofit words are
+  dictionary keys (`Other Income` → Other Revenue & Support, `Net Operating
+  Income` → Change in Net Assets from Operations), not the word-swap.
+- **Grids** (decision 3): `_pl_pivot` buckets by `_pl_section_of` (type,
+  then detail type for Other Income / Other Expense); every column and the
+  Total carry the new totals; `_grid_layout` lists the rows once for the
+  PDF and the CSV. `/api/classes/activity` carries the grid's figures
+  (operating income and expenses, `other_income`, `other_expense`); the
+  Classes list and a class page's stat cards add the other two back for
+  display, so their four figures still add to net. `has_other` needs an
+  Other line with a figure on the P&L and the grids alike.
+- **One chart read per statement**: `_chart_index` (number, name, parent,
+  type, detail type) is built once in `profit_loss` / `balance_sheet` and
+  handed to every helper; `_chain` and `family_rows` share `MAX_DEPTH`.
+- **Statement of Activities** stays on base type (no Other block), as
+  proposed; it gets #416's families.
+- **Cash flow**: `_place` reads the detail type; the register (asset and
+  accumulated-depreciation accounts) and `_ACCUMULATED` stay, so a
+  register account created after the upgrade is still investing.
+  `_FIXED_ASSET` and `_LONG_TERM_DEBT` are gone from `cash_flow.py`; the
+  migration keeps its own copies. `tests/cash_flow_2_26.py` freezes the
+  2.26.0 placement and `tests/test_detail_types_cash_flow.py` proves a
+  whole statement equal under both for an upgraded chart (register-linked
+  asset, imported equipment, mortgage, 2400, and default-typed
+  sub-accounts of 1500 and 2400). No account moves: the backfill no longer
+  hands a non-current parent's type to a default-typed child.
+  An account created after the upgrade without a detail type is current
+  whatever its name: the detail type, not the name, decides now.
+- **QBO report import**: "Cost of Goods Sold" → `cogs` (the open item
+  below, settled with PR 2).
+- **Sub-accounts (#416)**: `family_rows(lines, chart, belongs, keys,
+  order)` turns a section's flat lines into rows of kind account /
+  heading / direct ("Direct postings to Travel") / total ("Total 7000 -
+  Travel") with a depth. A parent gathers only lines of its own section (an
+  expense under an income account prints at the top with its path); a
+  parent with no line still heads its family; a node on a parent loop or
+  past `MAX_DEPTH` (64) prints at the top level. Each line prints once; the
+  family totals add `amount` / `prior_amount` (P&L) or `without` / `with` /
+  `total` / `prior_total` / `change` (SoA). The flat lists stay for the CSV
+  (full paths; the SoA's CSV now prints them too) and the prior-year
+  pairing. `account_tree.py` (#412) is not on main yet; the walk here has
+  its own loop and depth guards.
+- **Rollout**: both PRs ship in 2.27.0, not a release apart as "Rollout"
+  below planned; the CHANGELOG's check-your-chart line now says the
+  statements print by the detail type.
+
+## Open items (not settled; conservative choice taken)
 - **Creating or editing a fixed-asset type** does not set its accounts'
   detail type. The register's accounts are Fixed Asset after the backfill;
   one chosen later keeps whatever it has.

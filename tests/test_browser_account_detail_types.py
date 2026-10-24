@@ -93,3 +93,163 @@ def test_the_chart_groups_by_detail_type_and_the_form_picks_one(
         )
     finally:
         page.close()
+
+
+TABLE_ROWS = """() => [...document.querySelectorAll('#report-content tbody tr')]
+    .map(r => r.textContent.replace(/\\s+/g, ' ').trim())"""
+
+
+def _account(company, **body):
+    r = company.post("/api/accounts", json=body)
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _journal(company, day, debit, credit, amount):
+    r = company.post(
+        "/api/journal",
+        json={
+            "date": day,
+            "description": "statements",
+            "lines": [
+                {"account_id": debit, "debit": amount, "credit": "0"},
+                {"account_id": credit, "debit": "0", "credit": amount},
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_the_statements_print_the_groups_and_the_families(browser, company, books):
+    """PR 2 (#390) and #416 on the screen: the Balance Sheet's Fixed Assets
+    and Long Term Liabilities groups with their subtotals; the P&L's Other
+    Income below Net Operating Income, and a sub-account beneath its parent
+    with the family's total."""
+    accounts = {a["account_number"]: a for a in company.get("/api/accounts").json()}
+    cash = accounts["1000"]["id"]
+    oven = _account(
+        company,
+        name="Deck oven",
+        account_number="1560",
+        account_type="asset",
+        detail_type="fixed_asset",
+    )
+    note = _account(
+        company,
+        name="Oven note",
+        account_number="2710",
+        account_type="liability",
+        detail_type="long_term_liability",
+    )
+    travel = _account(
+        company, name="Travel", account_number="7300", account_type="expense"
+    )
+    hotel = _account(
+        company,
+        name="Hotel",
+        account_number="7310",
+        account_type="expense",
+        parent_id=travel["id"],
+    )
+    _journal(company, "2026-09-10", oven["id"], note["id"], "8000.00")
+    _journal(company, "2026-09-11", cash, accounts["4900"]["id"], "45.00")
+    _journal(company, "2026-09-12", hotel["id"], cash, "120.00")
+
+    page, _handled = _open_at(
+        browser, company, "#/reports/balance-sheet?as_of_date=2026-09-30"
+    )
+    try:
+        page.wait_for_selector("#report-content table")
+        rows = page.evaluate(TABLE_ROWS)
+        fixed = rows.index("Fixed Assets")
+        total_fixed = next(
+            i for i, r in enumerate(rows) if r.startswith("Total Fixed Assets")
+        )
+        oven_row = next(
+            i for i, r in enumerate(rows) if r.startswith("1560 - Deck oven")
+        )
+        assert (
+            fixed
+            < oven_row
+            < total_fixed
+            < rows.index(next(r for r in rows if r.startswith("Total Assets")))
+        )
+        long_term = rows.index("Long Term Liabilities")
+        assert long_term < next(
+            i for i, r in enumerate(rows) if r.startswith("2710 - Oven note")
+        )
+        assert any(r.startswith("Total Long Term Liabilities") for r in rows)
+    finally:
+        page.close()
+
+    page, _handled = _open_at(
+        browser,
+        company,
+        "#/reports/profit-loss?start_date=2026-09-01&end_date=2026-09-30",
+    )
+    try:
+        page.wait_for_selector("#report-content table")
+        rows = page.evaluate(TABLE_ROWS)
+        travel_at = rows.index("7300 - Travel")
+        assert rows[travel_at + 1].startswith("7310 - Hotel")
+        assert rows[travel_at + 2].startswith("Total 7300 - Travel")
+        noi = next(
+            i for i, r in enumerate(rows) if r.startswith("Net Operating Income")
+        )
+        other = rows.index("Other Income")
+        assert (
+            rows.index(next(r for r in rows if r.startswith("Total Expenses")))
+            < noi
+            < other
+        )
+        assert any(r.startswith("4900 - Other Income") for r in rows[other:])
+        assert rows[-1].startswith("Net Income")
+    finally:
+        page.close()
+
+
+STATS = """() => [...document.querySelectorAll('#class-stats > *')]
+    .map(e => e.textContent.replace(/\\s+/g, ' ').trim())"""
+
+
+def test_the_classes_pages_count_other_income_with_income(browser, company, books):
+    """The Classes list keeps four figures that add to net, Other Income
+    (#390) counted with income for display. The class page's cards are
+    operating (Income, Cost of goods, Gross profit, Expenses) with a Net
+    other income card beside them, so Income - Cost of goods = Gross profit
+    (the #429 round)."""
+    accounts = {a["account_number"]: a for a in company.get("/api/accounts").json()}
+    _journal(
+        company,
+        "2026-09-15",
+        accounts["1000"]["id"],
+        accounts["4900"]["id"],
+        "1234.00",
+    )
+    span = "start_date=2026-09-01&end_date=2026-09-30&period=custom"
+    act = company.get(
+        "/api/classes/activity?start_date=2026-09-01&end_date=2026-09-30"
+    ).json()
+    row = next(c for c in act["classes"] if c["other_income"])
+    shown = row["income"] + row["other_income"]
+    page, _handled = _open_at(browser, company, f"#/classes?{span}&show=all")
+    try:
+        page.wait_for_selector("#page-content tbody tr")
+        rows = page.evaluate(
+            """() => [...document.querySelectorAll('#page-content tbody tr')]
+                .map(r => [...r.cells].map(c => c.textContent.trim()))"""
+        )
+        mine = next(r for r in rows if r[0].startswith(row["name"]))
+        assert mine[2] == f"${shown:,.2f}"
+    finally:
+        page.close()
+    page, _handled = _open_at(browser, company, f"#/classes/{row['id']}?{span}")
+    try:
+        page.wait_for_selector("#class-stats")
+        stats = " | ".join(page.evaluate(STATS))
+        assert f"Income ${row['income']:,.2f}" in stats
+        other = row["other_income"] - row.get("other_expense", 0)
+        assert f"Net other income ${other:,.2f}" in stats
+        assert f"${shown:,.2f}" not in stats
+    finally:
+        page.close()

@@ -7,7 +7,6 @@ always, and on PostgreSQL when SLOWBOOKS_TEST_POSTGRES_URL names a server
 the test may create a scratch database on.
 """
 
-import importlib.util
 import os
 import shutil
 import uuid
@@ -281,30 +280,32 @@ def test_a_raw_insert_without_detail_type_gets_the_server_default_on_postgresql(
 
 
 def _migration():
-    path = ROOT / "migrations" / "versions" / f"{REVISION}_account_detail_types.py"
-    spec = importlib.util.spec_from_file_location("detail_types_migration", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    from tests.cash_flow_2_26 import migration
+
+    return migration()
 
 
-def test_the_backfill_uses_the_cash_flow_rules_of_this_release():
+def test_the_backfill_and_the_cash_flow_share_the_accumulated_rule():
     """The migration keeps its own copy of the name rules so it never
-    changes; while cash_flow.py still places accounts by them, the two must
-    be the same rules, or the statements would move a figure."""
+    changes. The cash flow statement reads the detail type now (#390), and
+    keeps one of them: accumulated depreciation, which is a Fixed Asset like
+    the asset it wears down, is found by the register and by name."""
     from app.services import cash_flow
 
     mod = _migration()
-    for rule in ("_ACCUMULATED", "_FIXED_ASSET", "_LONG_TERM_DEBT"):
-        assert getattr(mod, rule).pattern == getattr(cash_flow, rule).pattern, rule
+    assert mod._ACCUMULATED.pattern == cash_flow._ACCUMULATED.pattern
+    assert not hasattr(cash_flow, "_FIXED_ASSET")
+    assert not hasattr(cash_flow, "_LONG_TERM_DEBT")
 
 
-def test_the_backfill_places_every_account_where_the_cash_flow_does():
-    """Current (working capital) vs non-current (investing / financing):
-    the detail type the backfill gives agrees with cash_flow._place for
-    every account in the 2.26 chart above."""
+def test_the_backfill_places_every_account_where_the_cash_flow_did():
+    """Working capital, investing, financing or an adjustment: for every
+    account in the 2.26 chart above, the cash flow statement reading the
+    backfilled detail type places it where 2.26.0's number and name rules
+    did: no account moves, sub-accounts of non-current parents included."""
     from app.models.accounts import Account, AccountType
     from app.services.cash_flow import _place
+    from tests.cash_flow_2_26 import place_2_26
 
     mod = _migration()
     rows, by_key = [], {}
@@ -322,11 +323,6 @@ def test_the_backfill_places_every_account_where_the_cash_flow_does():
         )
     fixed, accumulated = {by_key["register"]}, {by_key["accum"]}
     result, _ = mod.backfill(rows, fixed, accumulated)
-    non_current = {
-        "fixed_asset",
-        "other_asset",
-        "long_term_liability",
-    }
     for r in rows:
         if r["bank_kind"] == "bank" or r["account_type"] not in (
             "ASSET",
@@ -340,12 +336,7 @@ def test_the_backfill_places_every_account_where_the_cash_flow_does():
             account_type=AccountType[r["account_type"]],
             bank_kind=r["bank_kind"],
         )
-        placed = _place(acct, fixed, accumulated)
-        if placed == "adjustments":  # accumulated depreciation
-            assert result[r["id"]] == "fixed_asset", r["name"]
-            continue
-        assert (result[r["id"]] in non_current) == (placed != "working_capital"), (
-            r["name"],
-            result[r["id"]],
-            placed,
-        )
+        before = place_2_26(acct, fixed, accumulated)
+        acct.detail_type = result[r["id"]]
+        now = _place(acct, fixed, accumulated)
+        assert now == before, (r["name"], result[r["id"]], before, now)

@@ -354,6 +354,25 @@ def test_the_qbo_reports_keep_the_innermost_heading():
     assert got["Accounts Receivable (A/R)"] is None
 
 
+def test_the_qbo_report_imports_cost_of_goods_sold_as_cogs():
+    """A QuickBooks Online P&L's Cost of Goods Sold section is the COGS
+    type, above Gross Profit, not an expense (2.26 imported it as one)."""
+    from app.models.accounts import AccountType
+    from app.services import qbo_export_import as qbo
+
+    text = (FIXTURES / "qbo_export" / "Profit_and_loss.csv").read_text(encoding="utf-8")
+    text = text.replace(
+        "Gross Profit,=4550.00\n",
+        "Cost of Goods Sold,\n   Materials,=500.00\n"
+        "Total Cost of Goods Sold,=500.00\nGross Profit,=4050.00\n",
+    )
+    accounts, errors = qbo.parse_coa(text)
+    assert errors == []
+    got = {a["name"]: a["type"] for a in accounts}
+    assert got["Materials"] == AccountType.COGS
+    assert got["Advertising"] == AccountType.EXPENSE
+
+
 def test_a_dialects_detail_type_lands_on_the_account(client, db_session, seed_accounts):
     """Through the shared engine: the detail type reaches the row, and an AR
     the posting code does not use takes the default."""

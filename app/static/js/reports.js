@@ -1147,14 +1147,16 @@ const ReportsPage = {
             const cols = ReportsPage._cmpCols(prior, show);
             const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
                 item && prior ? drillCall(item, prior.start_date, prior.end_date) : null);
-            const section = (items) => {
-                if (!items.length) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
-                return items.map(i =>
-                    `<tr><td style="padding-left:24px;">
-                        <a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                           onclick="${drillCall(i, range.start, range.end)}">${escapeHtml(i.account_label || i.account_name)}</a>
-                        </td>${figures(i.amount, i.prior_amount, i)}</tr>`
-                ).join("");
+            // Sub-accounts beneath their parents, a total per family (#416):
+            // the server's tree for the section, else its flat lines.
+            const section = (items, key) => {
+                const rows = (data.tree || {})[key];
+                if (!items.length && !(rows && rows.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+                return ReportsPage._treeRows(rows || items, {
+                    blank: '<td></td>'.repeat(cols - 1),
+                    cells: (r) => figures(r.amount, r.prior_amount, r.kind === 'total' ? null : r),
+                    call: (r) => drillCall(r, range.start, range.end),
+                });
             };
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, key, style) => `<tr style="${style}"><td>${label}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
@@ -1165,18 +1167,60 @@ const ReportsPage = {
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head(T('Income'))}
-                        ${section(data.income)}
+                        ${section(data.income, 'income')}
                         ${total(T('Total Income'), 'total_income', sub)}
                         ${head('Cost of Goods Sold')}
-                        ${section(data.cogs)}
+                        ${section(data.cogs, 'cogs')}
                         ${total('Gross Profit', 'gross_profit', sub)}
                         ${head('Expenses')}
-                        ${section(data.expenses)}
+                        ${section(data.expenses, 'expenses')}
                         ${total('Total Expenses', 'total_expenses', sub)}
+                        ${ReportsPage._plOther(data, head, section, (label, key) => total(label, key, sub))}
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
                 </table></div>`;
         }, "Dates", false, { reportType: 'profit_loss', view: 'profit-loss', prefill, params: plParams, toolbar: opts.toolbar + ReportsPage._compareToolbar(plParams, 'Compare to same period last year'), wide: plParams.compare === 'prior_year' });
+    },
+
+    // A statement section's rows, sub-accounts indented beneath their
+    // parents (#416): the server's tree rows (kind account / heading /
+    // direct / total, with a depth) or a flat list. `opts.cells(r)` writes
+    // a row's amount cells, `opts.call(r)` its drill-down onclick (escaped),
+    // `opts.blank` the empty cells of a heading. A family's total is not a
+    // link: it is several accounts.
+    _treeRows(rows, opts) {
+        return rows.map(r => {
+            const depth = r.depth || 0;
+            const pad = 24 + 18 * depth;
+            const label = escapeHtml(r.label || r.account_label || r.account_name);
+            const link = (text) => r.account_id && opts.call
+                ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${opts.call(r)}">${text}</a>`
+                : text;
+            if (r.kind === 'heading') {
+                return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${opts.blank}</tr>`;
+            }
+            if (r.kind === 'total') {
+                return `<tr class="pl-family-total" style="font-weight:600;"><td style="padding-left:${pad}px;">${label}</td>${opts.cells(r)}</tr>`;
+            }
+            const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+            return `<tr><td style="padding-left:${pad}px;">${link(text)}</td>${opts.cells(r)}</tr>`;
+        }).join('');
+    },
+
+    // Other Income / Other Expense below Net Operating Income (#390): only
+    // when either has a figure (the server's flags), so a section with just
+    // a $0 account prints no heading and a P&L without them reads as it did.
+    // `head`, `section` and `total` are the calling view's own row writers.
+    _plOther(data, head, section, total) {
+        if (!data.has_other) return '';
+        let html = total(T('Net Operating Income'), 'net_operating_income');
+        if (data.has_other_income) {
+            html += head(T('Other Income')) + section(data.other_income, 'other_income') + total(T('Total Other Income'), 'total_other_income');
+        }
+        if (data.has_other_expense) {
+            html += head('Other Expense') + section(data.other_expense, 'other_expense') + total('Total Other Expense', 'total_other_expense');
+        }
+        return html + total(T('Net Other Income'), 'net_other_income');
     },
 
     // The accounts' order on the two statements (#326): by number, then
@@ -1247,23 +1291,34 @@ const ReportsPage = {
                 ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
                        onclick="${drillCall(i, asOf)}">${escapeHtml(i.account_label || i.account_name)}</a>`
                 : escapeHtml(i.account_name);
-            const section = (items) => items.map(i =>
-                `<tr><td style="padding-left:24px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
+            const section = (items, pad = 24) => items.map(i =>
+                `<tr><td style="padding-left:${pad}px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
             ).join("") || `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, cur, before, style) => `<tr style="${style}"><td>${label}</td>${figures(cur, before)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             const p = prior || {};
+            // Current / Fixed / Other Assets, Current / Long Term
+            // Liabilities (#390): the server hands the groups down ready-made.
+            const grouped = (side) => {
+                const groups = (data.groups || {})[side];
+                if (!groups) return section(data[side]);
+                if (!groups.length) return section([]);
+                return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td>${'<td></td>'.repeat(cols - 1)}</tr>`
+                    + section(g.lines, 36)
+                    + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td>${figures(data[g.total_key], p[g.total_key])}</tr>`
+                ).join('');
+            };
             return `${pdfBtn}
                 <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
                         ${head('Assets')}
-                        ${section(data.assets)}
+                        ${grouped('assets')}
                         ${total('Total Assets', data.total_assets, p.total_assets, sub)}
                         ${head('Liabilities')}
-                        ${section(data.liabilities)}
+                        ${grouped('liabilities')}
                         ${total('Total Liabilities', data.total_liabilities, p.total_liabilities, sub)}
                         ${head(T('Equity'))}
                         ${section(data.equity)}
@@ -2078,13 +2133,26 @@ ReportsPage._grid = { current: -1, count: 0, names: [] };
 // → call for an amount, head(col) → call for a heading, sum(col, key) →
 // call for a subtotal cell (or null), note (html above the table),
 // totalLabel }
+// The grid's Total column, by the column keys the rows read (#390: the
+// Other Income / Other Expense rows the P&L has).
+ReportsPage._gridTotals = function (data) {
+    return {
+        income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit,
+        expenses: data.total_expenses, net_operating_income: data.total_net_operating_income,
+        other_income: data.total_other_income, other_expense: data.total_other_expense,
+        net_other_income: data.total_net_other_income, net_income: data.total_net_income,
+    };
+};
+
 ReportsPage._pivotGrid = function (spec) {
     const cols = spec.columns;
     const n = cols.length;
     const totals = spec.totals;
     const link = (call, text) => `<a href="javascript:void(0)" class="grid-link" style="color:var(--text-link); text-decoration:none;" onclick="${escapeHtml(call)}">${text}</a>`;
     const empties = cols.map((_, i) => `<td data-col="${i}"></td>`).join('') + '<td></td>';
-    const label = a => `${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.account_name)}`;
+    // the number and full path, as the P&L flat list prints a line (#416);
+    // a row without the label (an older reply) still reads number - name
+    const label = a => escapeHtml(a.account_label || `${a.account_number ? a.account_number + ' - ' : ''}${a.account_name}`);
     const cell = (a, i) => {
         const amount = a.amounts[i];
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;
@@ -2125,6 +2193,10 @@ ReportsPage._pivotGrid = function (spec) {
                     ${sum('Gross Profit', 'gross_profit', subtotal)}
                     ${section('Expenses', spec.accounts.expenses)}
                     ${sum('Total Expenses', 'expenses', subtotal)}
+                    ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
+                        + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income) + sum(T('Total Other Income'), 'other_income', subtotal) : '')
+                        + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense) + sum('Total Other Expense', 'other_expense', subtotal) : '')
+                        + sum(T('Net Other Income'), 'net_other_income', subtotal) : ''}
                     ${sum(T('Net Income'), 'net_income', 'font-weight:700; background:var(--primary-light);')}
                 </tbody>
             </table>
@@ -2384,10 +2456,10 @@ ReportsPage.profitLossByClass = async function (prefill) {
                 kind: 'class',
                 columns: columns.map(c => ({ ...c, id: c.class_id, name: c.archived ? `${c.class_name} (archived)` : c.class_name })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('classes')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
                 head: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
                 sum: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
             })}`;
@@ -2436,10 +2508,10 @@ ReportsPage.profitLossByJob = async function (prefill) {
                 kind: 'job',
                 columns: columns.map(c => ({ ...c, id: jobKey(c), name: `${jobKey(c) ? jobLabel(c.job_name, c.customer_name) : c.job_name}${c.inactive ? ' (inactive)' : ''}` })),
                 accounts: data.accounts,
-                totals: { income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit, expenses: data.total_expenses, net_income: data.total_net_income },
+                totals: ReportsPage._gridTotals(data), hasOther: !!data.has_other,
                 note: ReportsPage._filteredNote(data, columns, T('jobs')),
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
-                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
+                drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
                 head: (c) => c.job_id ? `ReportsPage._leaveFrom(this);App.navigate(${JSON.stringify(jobUrl(c))})` : null,
             })}`;
     }, "Dates", false, { reportType: 'profit_loss_by_job', view: 'profit-loss-by-job', params, prefill, toolbar, wide: true, afterRender: () => ReportsPage._gridFit() });
@@ -2514,12 +2586,16 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
         const where = $('#class-pl-where');
         if (where) where.textContent = at >= 0 ? `${data.class_name}: ${at + 1} of ${order.length}` : `${data.class_name}: nothing in this period`;
         const args = (...xs) => xs.map(x => JSON.stringify(x)).join(',');
-        const section = items => items.length
-            ? items.map(i => {
-                const call = escapeHtml(`ReportsPage.openDrillDown(${args(i.account_id, i.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`);
-                return `<tr><td style="padding-left:24px;"><a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${call}">${escapeHtml(i.account_name)}</a></td><td class="amount">${formatCurrency(i.amount)}</td></tr>`;
-            }).join('')
-            : '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+        // sub-accounts beneath their parents, as on the P&L (#416)
+        const section = (items, key) => {
+            const rows = (data.tree || {})[key];
+            if (!items.length && !(rows && rows.length)) return '<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>';
+            return ReportsPage._treeRows(rows || items, {
+                blank: '<td></td>',
+                cells: (r) => `<td class="amount">${formatCurrency(r.amount)}</td>`,
+                call: (r) => escapeHtml(`ReportsPage.openDrillDown(${args(r.account_id, r.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`),
+            });
+        };
         const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${formatCurrency(amount)}</td></tr>`;
         return `<div id="class-pl-body">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -2531,14 +2607,15 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
                     <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
-                    ${section(data.income)}
+                    ${section(data.income, 'income')}
                     ${subtotal(T('Total Income'), data.total_income)}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
-                    ${section(data.cogs)}
+                    ${section(data.cogs, 'cogs')}
                     ${subtotal('Gross Profit', data.gross_profit)}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
-                    ${section(data.expenses)}
+                    ${section(data.expenses, 'expenses')}
                     ${subtotal('Total Expenses', data.total_expenses)}
+                    ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                 </tbody>
             </table></div></div>`;
@@ -3024,7 +3101,18 @@ ReportsPage.statementOfActivities = async function (prefill) {
         const pt = cmp && d.prior ? d.prior.totals : {};
         const cols = cmp ? 6 : 4;
         const line = (label, w, r, tot, prior, style = '') => `<tr style="${style}"><td>${label}</td><td class="amount">${formatCurrency(w)}</td><td class="amount">${formatCurrency(r)}</td><td class="amount">${formatCurrency(tot)}</td>${cmp ? `<td class="amount">${formatCurrency(prior || 0)}</td><td class="amount">${formatCurrency((tot || 0) - (prior || 0))}</td>` : ''}</tr>`;
-        const rows = (items) => items.length ? items.map(i => line(`<span style="padding-left:24px">${escapeHtml(i.account_name)}</span>`, i.without, i.with, i.total, i.prior_total)).join('') : `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+        // sub-accounts beneath their parents, a total per family (#416)
+        const rows = (items, key) => {
+            const tree = (d.tree || {})[key];
+            if (!items.length && !(tree && tree.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+            return (tree || items).map(r => {
+                const pad = 24 + 18 * (r.depth || 0);
+                const label = escapeHtml(r.label || r.account_name);
+                if (r.kind === 'heading') return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${'<td></td>'.repeat(cols - 1)}</tr>`;
+                const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
+                return line(`<span style="padding-left:${pad}px; display:inline-block;">${text}</span>`, r.without, key === 'expenses' ? 0 : r.with, r.total, r.prior_total, r.kind === 'total' ? 'font-weight:600;' : '');
+            }).join('');
+        };
         const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
         return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">${ReportsPage.compareToggleHtml('statement_of_activities')}${ReportsPage._exportButtons('statement-of-activities', qs)}</div>
             <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}</p>
@@ -3032,11 +3120,11 @@ ReportsPage.statementOfActivities = async function (prefill) {
                 <thead><tr><th scope="col"></th><th scope="col" class="amount">Without Donor Restrictions</th><th scope="col" class="amount">With Donor Restrictions</th><th scope="col" class="amount">Total</th>${cmp ? '<th scope="col" class="amount">Prior year</th><th scope="col" class="amount">Change</th>' : ''}</tr></thead>
                 <tbody>
                     ${head('Revenue &amp; Support')}
-                    ${rows(d.revenue)}
+                    ${rows(d.revenue, 'revenue')}
                     ${line('Total Revenue &amp; Support', t.revenue_without, t.revenue_with, t.revenue, pt.revenue, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Net assets released from restrictions', d.releases.without, d.releases.with, 0, 0)}
                     ${head('Expenses')}
-                    ${rows(d.expenses)}
+                    ${rows(d.expenses, 'expenses')}
                     ${line('Total Expenses', t.expenses, 0, t.expenses, pt.expenses, 'font-weight:600; background:var(--gray-50);')}
                     ${line('Change in Net Assets', t.change_without, t.change_with, t.change_total, pt.change_total, 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                 </tbody>
@@ -3049,17 +3137,25 @@ ReportsPage.statementOfFinancialPosition = async function (prefill) {
         const qs = `as_of_date=${params.as_of_date}`;
         const d = await API.get(`/reports/statement-of-financial-position?${qs}`);
         const drillCall = (i) => escapeHtml(`ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'statement-of-financial-position')`);
-        const section = (items) => items.map(i => `<tr><td style="padding-left:24px;">
+        const section = (items, pad = 24) => items.map(i => `<tr><td style="padding-left:${pad}px;">
                 ${i.account_id ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${drillCall(i)}">${escapeHtml(i.account_name)}</a>` : escapeHtml(i.account_name)}
                 </td><td class="amount">${formatCurrency(i.amount)}</td></tr>`).join('') || `<tr><td colspan="2" style="color:var(--gray-400);">None</td></tr>`;
         const sub = (label, v) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${label}</td><td class="amount">${formatCurrency(v)}</td></tr>`;
+        // Current / Fixed / Other Assets, Current / Long Term Liabilities (#390)
+        const grouped = (side) => {
+            const groups = (d.groups || {})[side];
+            if (!groups || !groups.length) return section(d[side]);
+            return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td><td></td></tr>`
+                + section(g.lines, 36)
+                + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td><td class="amount">${formatCurrency(d[g.total_key])}</td></tr>`).join('');
+        };
         return `${ReportsPage._exportButtons('statement-of-financial-position', qs)}
             <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(d.as_of_date)}</p>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
-                    <tr><td><strong>Assets</strong></td><td></td></tr>${section(d.assets)}${sub('Total Assets', d.total_assets)}
-                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${section(d.liabilities)}${sub('Total Liabilities', d.total_liabilities)}
+                    <tr><td><strong>Assets</strong></td><td></td></tr>${grouped('assets')}${sub('Total Assets', d.total_assets)}
+                    <tr><td><strong>Liabilities</strong></td><td></td></tr>${grouped('liabilities')}${sub('Total Liabilities', d.total_liabilities)}
                     <tr><td><strong>Net Assets</strong></td><td></td></tr>${section(d.net_assets)}
                     ${sub('Net Assets Without Donor Restrictions', d.net_assets_without)}
                     ${sub('Net Assets With Donor Restrictions', d.net_assets_with)}

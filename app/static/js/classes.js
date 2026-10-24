@@ -179,10 +179,13 @@ const ClassesPage = {
             return `<div class="empty-state"><p>${escapeHtml(err.message)}</p></div>`;
         }
         const all = data.classes;
-        const rows = all.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
-        if (!rows.length) {
+        if (!all.some(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived)) {
             return `<div class="empty-state"><p>${s.show === 'archived' ? `No archived ${T('classes').toLowerCase()}.` : Terms.text('No classes yet. Add them under Settings → Classes; every entry form then offers them.')}</p></div>`;
         }
+        // Other Income / Other Expense (#390) count with income and
+        // expenses here, so each row's four figures add up to net
+        const shown = all.map(c => ({ ...c, income: (c.income || 0) + (c.other_income || 0), expenses: (c.expenses || 0) + (c.other_expense || 0) }));
+        const rows = shown.filter(c => s.show === 'all' || (s.show === 'archived') === !!c.is_archived);
         const keys = ['income', 'cogs', 'expenses', 'net_income'];
         const sum = {};
         for (const k of keys) sum[k] = rows.reduce((t, c) => t + (c[k] || 0), 0);
@@ -323,7 +326,7 @@ const ClassesPage = {
             account_id: i.account_id, class_id: c.id, start_date: s.start, end_date: s.end, from: 'classes',
         }));
         const section = (items) => items.length
-            ? items.map(i => `<tr><td style="padding-left:24px;"><a href="${drill(i)}" onclick="event.preventDefault(); App.navigate(this.getAttribute('href'))" style="color:var(--text-link); text-decoration:none;">${i.account_number ? escapeHtml(i.account_number) + ' - ' : ''}${escapeHtml(i.account_name)}</a></td><td class="amount">${ClassesPage.money(i.amount)}</td></tr>`).join('')
+            ? items.map(i => `<tr><td style="padding-left:24px;"><a href="${drill(i)}" onclick="event.preventDefault(); App.navigate(this.getAttribute('href'))" style="color:var(--text-link); text-decoration:none;">${escapeHtml(i.account_label || `${i.account_number ? i.account_number + ' - ' : ''}${i.account_name}`)}</a></td><td class="amount">${ClassesPage.money(i.amount)}</td></tr>`).join('')
             : '<tr><td colspan="2" style="padding-left:24px; color:var(--gray-400);">None</td></tr>';
         const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${ClassesPage.money(amount)}</td></tr>`;
         // The class's share of the company's net: a percentage only where
@@ -345,6 +348,9 @@ const ClassesPage = {
                 ${stat('Cost of goods', ClassesPage.money(d.total_cogs))}
                 ${stat('Gross profit', ClassesPage.money(d.gross_profit))}
                 ${stat('Expenses', ClassesPage.money(d.total_expenses))}
+                ${(d.total_other_income || d.total_other_expense)
+                    ? stat('Net other income', ClassesPage.money(d.net_other_income), d.net_other_income < 0 ? 'var(--text-danger)' : null)
+                    : ''}
                 ${stat(T('Net Income'), ClassesPage.money(d.net_income), d.net_income < 0 ? 'var(--text-danger)' : null, Terms.text(`Net income by class: ${share}`))}
             </div>
             <p id="class-net-note" style="font-size:11px; color:var(--gray-500); margin:0 0 10px;">
@@ -366,6 +372,7 @@ const ClassesPage = {
                             <tr><td><strong>Expenses</strong></td><td></td></tr>
                             ${section(d.expenses)}
                             ${subtotal('Total Expenses', d.total_expenses)}
+                            ${ReportsPage._plOther(d, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, d[key]))}
                             <tr style="font-weight:700; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${ClassesPage.money(d.net_income)}</td></tr>
                         </tbody>
                     </table></div>

@@ -298,12 +298,9 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     w.writerow(
         ["Section", "Account number", "Account name"] + _cmp_header(prior, show_changes)
     )
-    for label, key, total_key in (
-        (words("Income"), "income", "total_income"),
-        ("Cost of Goods Sold", "cogs", "total_cogs"),
-        ("Expenses", "expenses", "total_expenses"),
-    ):
-        for i in data[key]:
+
+    def section(label, key, total_key):
+        for i in data.get(key, []):
             w.writerow(
                 [
                     label,
@@ -316,10 +313,22 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
             [label, "", f"Total {label}"]
             + figures(data[total_key], p_tot.get(total_key, 0))
         )
-    w.writerow(
-        ["", "", "Gross Profit"]
-        + figures(data["gross_profit"], p_tot.get("gross_profit", 0))
-    )
+
+    def summary(label, key):
+        w.writerow(["", "", label] + figures(data[key], p_tot.get(key, 0)))
+
+    section(words("Income"), "income", "total_income")
+    section("Cost of Goods Sold", "cogs", "total_cogs")
+    section("Expenses", "expenses", "total_expenses")
+    summary("Gross Profit", "gross_profit")
+    if data.get("has_other"):
+        # Other Income / Other Expense below Net Operating Income (#390)
+        summary(words("Net Operating Income"), "net_operating_income")
+        if data.get("has_other_income"):
+            section(words("Other Income"), "other_income", "total_other_income")
+        if data.get("has_other_expense"):
+            section("Other Expense", "other_expense", "total_other_expense")
+        summary(words("Net Other Income"), "net_other_income")
     w.writerow(
         ["", "", words("Net Income")]
         + figures(data["net_income"], p_tot.get("net_income", 0))
@@ -358,15 +367,16 @@ def profit_loss_by_class_csv(
     if data.get("filtered"):
         period += f" ({filtered_phrase(data, columns)})"
     _preamble(w, company, data.get("report_name") or words("P&L by Class"), period)
+    from app.routes.reports.financial import _grid_layout
+
     dimension = data.get("dimension") or words("Class")
-    sections = (
-        (words("Income"), "income", words("Total Income"), "total_income"),
-        ("Cost of Goods Sold", "cogs", "Gross Profit", "total_gross_profit"),
-        ("Expenses", "expenses", "Total Expenses", "total_expenses"),
-    )
+    # the grid's rows (#390: Other Income / Other Expense when it has them)
+    sections = _grid_layout(data, words)
     if layout == "long":
         w.writerow(["Section", "Account number", "Account name", dimension, "Amount"])
-        for label, key, _sub, _sub_key in sections:
+        for label, key, _sub, _col, _total in sections:
+            if not key:
+                continue
             for a in data["accounts"][key]:
                 for c, amount in zip(columns, a["amounts"]):
                     if not amount:
@@ -375,7 +385,7 @@ def profit_loss_by_class_csv(
                         [
                             label,
                             a.get("account_number") or "",
-                            a["account_name"],
+                            a.get("account_path") or a["account_name"],  # W-8
                             c["name"],
                             _money(amount),
                         ]
@@ -395,16 +405,19 @@ def profit_loss_by_class_csv(
         + [c["name"] for c in columns]
         + [total_label]
     )
-    for label, key, sub, sub_key in sections:
-        for a in data["accounts"][key]:
+    for label, key, sub, sub_col, sub_key in sections:
+        for a in data["accounts"][key] if key else ():
             w.writerow(
-                [label, a.get("account_number") or "", a["account_name"]]
+                [
+                    label,
+                    a.get("account_number") or "",
+                    a.get("account_path") or a["account_name"],  # W-8
+                ]
                 + [_money(x) if x else "" for x in a["amounts"]]
                 + [_money(a["total"])]
             )
-        sub_col = "gross_profit" if key == "cogs" else key
         w.writerow(
-            [label, "", sub]
+            [label or "", "", sub]
             + [_money(c[sub_col]) for c in columns]
             + [_money(data[sub_key])]
         )
@@ -443,9 +456,12 @@ def filtered_phrase(data: dict, columns: list) -> str:
 def balance_sheet_csv(
     data: dict, company: str, words, show_changes: bool = True
 ) -> str:
-    """The Balance Sheet as a spreadsheet. With a prior-year comparison
-    (`prior` on the data) each row also carries Prior year, and $ Change
-    and % Change unless show_changes is off."""
+    """The Balance Sheet as a spreadsheet. Section is the group a line
+    prints under (Current Assets, Long Term Liabilities, #390) with its
+    subtotal row, and the last column, Type, the side (Assets, Liabilities,
+    Equity), so a sheet filtering on either keeps its rows. With a
+    prior-year comparison (`prior` on the data) each row also carries Prior
+    year, and $ Change and % Change unless show_changes is off."""
     prior = data.get("prior")
     p_tot = prior or {}
     out = io.StringIO()
@@ -454,30 +470,48 @@ def balance_sheet_csv(
     if prior:
         period += f" compared with {prior['as_of_date']}"
     _preamble(w, company, words("Balance Sheet"), period)
+    groups = data.get("groups") or {}
 
     def figures(cur, before):
         return _cmp_cells(cur, before, prior, show_changes)
 
+    def line(section, i, side):
+        return (
+            [
+                section,
+                i.get("account_number") or "",
+                i.get("account_path") or i["account_name"],  # W-8
+            ]
+            + figures(i["amount"], i.get("prior_amount", 0))
+            + [side]
+        )
+
     w.writerow(
-        ["Section", "Account number", "Account name"] + _cmp_header(prior, show_changes)
+        ["Section", "Account number", "Account name"]
+        + _cmp_header(prior, show_changes)
+        + ["Type"]
     )
     for label, key, total_key in (
         ("Assets", "assets", "total_assets"),
         ("Liabilities", "liabilities", "total_liabilities"),
         (words("Equity"), "equity", "total_equity"),
     ):
-        for i in data[key]:
-            w.writerow(
-                [
-                    label,
-                    i.get("account_number") or "",
-                    i.get("account_path") or i["account_name"],  # W-8
-                ]
-                + figures(i["amount"], i.get("prior_amount", 0))
-            )
+        if key in groups:
+            for g in groups[key]:
+                for i in g["lines"]:
+                    w.writerow(line(g["heading"], i, label))
+                w.writerow(
+                    [g["heading"], "", f"Total {g['heading']}"]
+                    + figures(data[g["total_key"]], p_tot.get(g["total_key"], 0))
+                    + [label]
+                )
+        else:
+            for i in data[key]:
+                w.writerow(line(label, i, label))
         w.writerow(
             [label, "", f"Total {label}"]
             + figures(data[total_key], p_tot.get(total_key, 0))
+            + [label]
         )
     w.writerow(
         ["", "", words("Liabilities + Equity")]
@@ -485,6 +519,7 @@ def balance_sheet_csv(
             data["total_liabilities"] + data["total_equity"],
             p_tot.get("total_liabilities", 0) + p_tot.get("total_equity", 0),
         )
+        + [""]
     )
     return out.getvalue()
 

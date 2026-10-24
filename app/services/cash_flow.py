@@ -6,7 +6,8 @@ gain or loss on selling a fixed asset), plus the change in working capital
 payables, credit cards, sales tax, payroll liabilities and other current
 liabilities) is cash from operations; fixed and other non-current assets
 are investing; loans and other long-term debt, and the owners' money in
-and out, are financing.
+and out, are financing. Which is which is the account's detail type
+(#390): Fixed Asset and Other Asset, Long Term Liability.
 
 It replaced a statement that classed each cash movement by the type of the
 account on its other side: customer receipts routed through Undeposited
@@ -36,7 +37,7 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import Account, AccountType, DetailType
 from app.models.fixed_assets import FixedAssetType
 from app.models.transactions import Transaction, TransactionLine
 from app.services.accounting import _q
@@ -45,44 +46,38 @@ CARRIED_IN = ("opening_balance", "item_opening")
 DISPOSAL = "asset_disposal"
 
 _PL_TYPES = (AccountType.INCOME, AccountType.EXPENSE, AccountType.COGS)
-# The chart's numbers are one signal (1000-1499 current, 1500-1999 fixed
-# and other assets — the seeded contractor chart), names another, for an
-# imported chart numbered some other way.
+# Accumulated depreciation is a Fixed Asset in QuickBooks too (#390), so the
+# detail type cannot tell it from the asset it wears down; the register and
+# this name rule find it, and it is an adjustment, not investing.
 _ACCUMULATED = re.compile(r"\baccum(ulated|\.)?\s*(depr|amort)", re.I)
-_FIXED_ASSET = re.compile(
-    r"\b(equipment|vehicles?|furniture|fixtures?|buildings?|land|machinery|"
-    r"leasehold|property|computers?|fixed assets?|intangible|goodwill)\b",
-    re.I,
-)
-_LONG_TERM_DEBT = re.compile(
-    r"\b(loans?|notes? payable|mortgages?|long[- ]term|line of credit|"
-    r"lease liabilit(y|ies)|bonds? payable)\b",
-    re.I,
-)
+# Where the detail type puts a balance-sheet account's change (#390). The
+# account detail types migration (4ac01efbd72a) gave every account the
+# detail type that reproduces where the number ranges and name rules of
+# 2.26.0 placed it, so an upgraded company's statement moves no figure.
+_NON_CURRENT_ASSETS = {DetailType.FIXED_ASSET.value, DetailType.OTHER_ASSET.value}
+_LONG_TERM = {DetailType.LONG_TERM_LIABILITY.value}
 
 
 def _place(acct: Account, fixed_ids: set, accumulated_ids: set) -> str:
     """Where a non-cash account's change belongs: "net_income",
-    "adjustments", "working_capital", "investing" or "financing"."""
+    "adjustments", "working_capital", "investing" or "financing". By the
+    account's detail type: Fixed Asset and Other Asset are investing, Long
+    Term Liability financing, every other asset and liability working
+    capital. An asset the fixed-asset register depreciates is investing
+    whatever its detail type (a type created after the upgrade does not
+    retype its account), and accumulated depreciation is an adjustment."""
     kind = acct.account_type
     if kind in _PL_TYPES:
         return "net_income"
-    name = acct.name or ""
-    number = (acct.account_number or "").strip()
+    detail = acct.detail_type
     if kind == AccountType.ASSET:
-        if acct.id in accumulated_ids or _ACCUMULATED.search(name):
+        if acct.id in accumulated_ids or _ACCUMULATED.search(acct.name or ""):
             return "adjustments"
-        if acct.id in fixed_ids:
-            return "investing"
-        if number.isdigit() and len(number) == 4 and number.startswith("1"):
-            return "working_capital" if number < "1500" else "investing"
-        if _FIXED_ASSET.search(name):
+        if acct.id in fixed_ids or detail in _NON_CURRENT_ASSETS:
             return "investing"
         return "working_capital"
     if kind == AccountType.LIABILITY:
-        if acct.bank_kind != "credit_card" and _LONG_TERM_DEBT.search(name):
-            return "financing"
-        return "working_capital"
+        return "financing" if detail in _LONG_TERM else "working_capital"
     return "financing"  # equity: owners' contributions and draws
 
 

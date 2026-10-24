@@ -86,7 +86,18 @@ def classes_activity(
     db.commit()
     report = profit_loss_by_class(start_date, end_date, db)
     by_id = {c["class_id"]: c for c in report["classes"]}
-    keys = ("income", "cogs", "gross_profit", "expenses", "net_income")
+    # the grid's figures (#390): income and expenses are operating, other
+    # income and other expense apart, so income - cogs - expenses + other
+    # income - other expense = net (the list page adds them for display)
+    keys = (
+        "income",
+        "cogs",
+        "gross_profit",
+        "expenses",
+        "other_income",
+        "other_expense",
+        "net_income",
+    )
     rows = []
     known = set()
     for c in db.query(TxnClass).order_by(
@@ -116,6 +127,8 @@ def classes_activity(
         "cogs": float(report["total_cogs"]),
         "gross_profit": float(report["total_gross_profit"]),
         "expenses": float(report["total_expenses"]),
+        "other_income": float(report["total_other_income"]),
+        "other_expense": float(report["total_other_expense"]),
         "net_income": float(report["total_net_income"]),
     }
     return {
