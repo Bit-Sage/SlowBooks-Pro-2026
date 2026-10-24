@@ -715,3 +715,22 @@ def test_a_numberless_import_row_never_gets_a_control_number():
     for acct_type in NUMBER_RANGES:
         for _ in range(12):
             assert not control_accounts.is_control_number(numbers.next_free(acct_type))
+
+
+def test_an_expense_3900_can_take_a_parent(client, seed_accounts, db_session):
+    """An ordinary account on a control number of another type (an imported
+    expense 3900) is not found by its number, so it may sit under a parent
+    like any expense; an equity 3900 still stands alone (#413, #416)."""
+    parent = Account(
+        name="Overhead", account_number="6995", account_type=AccountType.EXPENSE
+    )
+    acct = Account(
+        name="Miscellaneous Expense",
+        account_number="3900",
+        account_type=AccountType.EXPENSE,
+    )
+    db_session.add_all([parent, acct])
+    db_session.commit()
+    r = client.put(f"/api/accounts/{acct.id}", json={"parent_id": parent.id})
+    assert r.status_code == 200, r.text
+    assert r.json()["parent_id"] == parent.id

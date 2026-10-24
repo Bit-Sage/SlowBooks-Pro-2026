@@ -829,7 +829,7 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
             problem is None
             and acct is not None
             and moved
-            and takes_no_new_parent(child[2], child[4])
+            and takes_no_new_parent(child[2], child[4], child[1])
         ):
             problem = f"{child[0]} is found by its number and takes no parent"
         if problem is None:

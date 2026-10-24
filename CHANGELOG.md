@@ -5,6 +5,124 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
+account now carries one of QuickBooks' fifteen account types beside its
+type: Bank, Accounts Receivable, Other Current Asset, Fixed Asset, Other
+Asset; Accounts Payable, Credit Card, Other Current Liability, Long Term
+Liability; Equity; Income, Other Income; Cost of Goods Sold; Expense, Other
+Expense. The account form has one picker, grouped by type, and the Chart of
+Accounts lists each type's accounts under a heading per detail type, so a
+loan sitting among the current liabilities shows in the first scroll. The
+detail type cannot contradict the type, a bank or card account is Bank or
+Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
+sixteen control accounts keep theirs. A sub-account shares its parent's
+detail type, except under a bank, card, Accounts Receivable or Accounts
+Payable parent, where it is set on its own — QuickBooks' rule. So a Savings
+account (bank kind bank) under an Other Current Asset folder is a 400 here
+where it was allowed before; an existing one is kept and logged
+(`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
+`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`). A bank
+or card account with reconciliations, feed rows or register entries keeps
+its bank kind: changing it would take the register away.
+
+The upgrade fills the detail type in from where the cash flow statement
+already puts each account: the fixed-asset register's accounts, accumulated
+depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
+1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
+(the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
+Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
+accounts Other Expense. A sub-account left at the default shares its
+parent's only where that keeps it current or non-current as the cash flow
+had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
+stays current), so no figure moves between working capital, investing and
+financing; the one exception is 2000 or 2200 renamed like a loan, a control
+account whose detail type stays Other Current Liability. The statements below print by it, so after
+upgrading, open Chart of Accounts and check the detail type of any loan,
+vehicle, equipment or long-term note; a line of credit kept in a loan
+account, for one, is current.
+
+The QuickBooks lists import keeps the type each account has in the file
+(FIXASSET, LTLIAB, EXINC…) and the IIF export writes it back, CCARD included:
+2400 Loan Payable went out as OCLIAB and 2500 Other Current Liabilities as
+LTLIAB, guessed from their numbers. Non-posting accounts (estimates,
+purchase orders) are skipped with a note rather than made assets, and an
+account already in the chart keeps its own detail type, the import naming
+any the file disagrees with. The Xero, Wave, Sage 50, Zoho Books, MYOB and
+QuickBooks Online imports keep their files' fixed-asset, long-term and
+other-income / other-expense types the same way; the chart CSV export has a
+Detail type column, and the chart import reads it.
+
+**The statements print by detail type** (#390). The Balance Sheet groups
+its assets under Current / Fixed / Other Assets and its liabilities under
+Current / Long Term Liabilities, each with its subtotal, on the screen, in
+the PDF (and the accountant's package) and in the CSV, whose Section column
+is now the group, with the side in a new last column, Type. A group with no
+account is left out; accumulated depreciation is a Fixed Asset and nets
+inside its group; the prior-year columns carry the subtotals. The nonprofit
+Statement of Financial Position groups the same way. The Profit & Loss
+prints Other Income and Other Expense below Net Operating Income, with Net
+Other Income; Net Income is the same figure, and a company with nothing in
+them sees the P&L it saw, Net Operating Income included only when there is
+something below it. Total Income and Total Expenses no longer include the
+Other Income / Other Expense accounts (4900 Other Income, 6999 and 7999
+among them): the two together are the old figures. P&L by Class and by Job
+get the same rows, so the three reports tie line for line; the Classes list
+counts other income and expense with income and expenses, as before. The
+cash flow statement reads the detail type instead of guessing from numbers
+and names: Fixed Asset and Other Asset are investing, Long Term Liability
+financing; the fixed-asset register's accounts stay investing and
+accumulated depreciation an adjustment. The upgrade's detail types put
+every account where the old rules did, so an upgraded company's statement
+is unchanged.
+An account made without a detail type is current, however it is named.
+The QuickBooks Online report import brings Cost of Goods Sold in as cost of
+goods sold, above Gross Profit; it came in as an expense.
+
+**Sub-accounts print under their parents** (#416, from Chris Cree). The
+Profit & Loss (and one class's P&L) and the nonprofit Statement of
+Activities print a parent's family together on the screen and in the PDF:
+the sub-accounts indented beneath it, the parent's own postings as "Direct
+postings to Travel", and "Total Travel" for the family, a parent heading
+its family even with no postings of its own. Each account prints once and
+every total is the one the flat list gives; the prior-year columns add up
+by family too. The CSV stays flat, each account named by its full path
+("Travel: Hotel"), now on the Statement of Activities as well, which
+printed the bare "Hotel". An account under a parent of another section, or
+in a parent loop, prints at the top level with its path.
+
+**Sub-accounts show and move on the Chart of Accounts** (#416, from Chris
+Cree; the chart half — the statements' family subtotals are a separate
+change). An imported Travel › Hotel was kept in the books but listed flat,
+and the account form had no way to see or change a parent. The chart now
+lists each sub-account indented under its parent within its detail type,
+says "sub-account of Travel" to a screen reader, gives the full path
+("Travel: Hotel") on hover, and writes it beside the name where two accounts
+share a leaf name, the parent is listed elsewhere, or the filter has hidden
+the parent; the filter matches the path. The form has a **Sub-account of**
+picker, opened on the current parent, offering active accounts of the same
+type and never the account itself or one under it; a parent other than 1100,
+2000, a bank or a card sets the Type to its own. Choosing a type the parent
+cannot take lets the parent go in the same save, and choosing one it can
+brings it back, so the base-type change the detail types refuse under a
+parent is now done from the form, and that 400 says "(Parent account: none,
+on its form)". The server's refusals show in the form, where a passing toast
+had them. New rules, refused on a move or a type change (a pair saved before
+stays editable, and resending the parent it has is no move): under 1100,
+2000, a bank or a card a sub-account keeps its own detail type but not
+another base type — an expense under a bank account is refused, either side
+of the pair; a Bank or Credit Card parent turned plain is refused while a
+sub-account does not share its new type; and a control account takes no new
+parent. The chart import leaves off a link the API would refuse, the row's
+note saying why in the dry run and when applied, and the Xero, Wave, Sage
+50, Zoho Books, MYOB, GnuCash and QuickBooks Online imports bring such an
+account in unlinked, with a warning. Where the link stands but the file
+gives a sub-account a detail type its parent cannot share, the child takes
+the parent's instead — the link is right, so the family stays together on
+the Profit & Loss — with a note naming the type the file asked for; under a
+bank, card, 1100 or 2000 parent it keeps its own.
+
 ### v2.27.0 — A register you can edit, and a bookkeeper's wish list
 
 **The register adds a payee or a category as it is typed** (#386, from a
@@ -420,137 +538,6 @@ names the attempts. Any other staple error stops the run on the first try.
 Four schema changes, each run in every company file: `reconciliations.max_statement_date`
 (a1f2e3d4c5b6), `invoice_messages` (e4f5a6b7c8d9) and its `kind` (f9a0b1c2d3e4), and
 `duplicate_dismissals` (b7d2e9a41c63). 602 API operations.
-### v2.27.0
-
-**Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
-account now carries one of QuickBooks' fifteen account types beside its
-type: Bank, Accounts Receivable, Other Current Asset, Fixed Asset, Other
-Asset; Accounts Payable, Credit Card, Other Current Liability, Long Term
-Liability; Equity; Income, Other Income; Cost of Goods Sold; Expense, Other
-Expense. The account form has one picker, grouped by type, and the Chart of
-Accounts lists each type's accounts under a heading per detail type, so a
-loan sitting among the current liabilities shows in the first scroll. The
-detail type cannot contradict the type, a bank or card account is Bank or
-Credit Card, Accounts Receivable and Payable stay on 1100 and 2000, the
-sixteen control accounts keep theirs. A sub-account shares its parent's
-detail type, except under a bank, card, Accounts Receivable or Accounts
-Payable parent, where it is set on its own — QuickBooks' rule. So a Savings
-account (bank kind bank) under an Other Current Asset folder is a 400 here
-where it was allowed before; an existing one is kept and logged
-(`detail_type` on `POST` / `PUT /api/accounts`, a 400 naming the reason;
-`GET /api/accounts?detail_type=`; `GET /api/accounts/detail-types`). A bank
-or card account with reconciliations, feed rows or register entries keeps
-its bank kind: changing it would take the register away.
-
-The upgrade fills the detail type in from where the cash flow statement
-already puts each account: the fixed-asset register's accounts, accumulated
-depreciation and equipment-like 1500–1999 assets are Fixed Assets, other
-1500–1999 assets Other Assets, loans, notes, mortgages and lines of credit
-(the seeded 2400 Loan Payable among them) Long Term Liabilities, 4900 Other
-Income Other Income, and the 6999 exchange and 7999 disposal gain/loss
-accounts Other Expense. A sub-account left at the default shares its
-parent's only where that keeps it current or non-current as the cash flow
-had it (a default-typed sub-account of 1500 Equipment or 2400 Loan Payable
-stays current), so no figure moves between working capital, investing and
-financing; the one exception is 2000 or 2200 renamed like a loan, a control
-account whose detail type stays Other Current Liability. The statements below print by it, so after
-upgrading, open Chart of Accounts and check the detail type of any loan,
-vehicle, equipment or long-term note; a line of credit kept in a loan
-account, for one, is current.
-
-**The statements print by detail type** (#390). The Balance Sheet groups
-its assets under Current / Fixed / Other Assets and its liabilities under
-Current / Long Term Liabilities, each with its subtotal, on the screen, in
-the PDF (and the accountant's package) and in the CSV, whose Section column
-is now the group, with the side in a new last column, Type. A group with no
-account is left out; accumulated depreciation is a Fixed Asset and nets
-inside its group; the prior-year columns carry the subtotals. The nonprofit
-Statement of Financial Position groups the same way. The Profit & Loss
-prints Other Income and Other Expense below Net Operating Income, with Net
-Other Income; Net Income is the same figure, and a company with nothing in
-them sees the P&L it saw, Net Operating Income included only when there is
-something below it. Total Income and Total Expenses no longer include the
-Other Income / Other Expense accounts (4900 Other Income, 6999 and 7999
-among them): the two together are the old figures. P&L by Class and by Job
-get the same rows, so the three reports tie line for line; the Classes list
-counts other income and expense with income and expenses, as before. The
-cash flow statement reads the detail type instead of guessing from numbers
-and names: Fixed Asset and Other Asset are investing, Long Term Liability
-financing; the fixed-asset register's accounts stay investing and
-accumulated depreciation an adjustment. The upgrade's detail types put
-every account where the old rules did, so an upgraded company's statement
-is unchanged.
-An account made without a detail type is current, however it is named.
-The QuickBooks Online report import brings Cost of Goods Sold in as cost of
-goods sold, above Gross Profit; it came in as an expense.
-
-**Sub-accounts print under their parents** (#416, from Chris Cree). The
-Profit & Loss (and one class's P&L) and the nonprofit Statement of
-Activities print a parent's family together on the screen and in the PDF:
-the sub-accounts indented beneath it, the parent's own postings as "Direct
-postings to Travel", and "Total Travel" for the family, a parent heading
-its family even with no postings of its own. Each account prints once and
-every total is the one the flat list gives; the prior-year columns add up
-by family too. The CSV stays flat, each account named by its full path
-("Travel: Hotel"), now on the Statement of Activities as well, which
-printed the bare "Hotel". An account under a parent of another section, or
-in a parent loop, prints at the top level with its path.
-
-The QuickBooks lists import keeps the type each account has in the file
-(FIXASSET, LTLIAB, EXINC…) and the IIF export writes it back, CCARD included:
-2400 Loan Payable went out as OCLIAB and 2500 Other Current Liabilities as
-LTLIAB, guessed from their numbers. Non-posting accounts (estimates,
-purchase orders) are skipped with a note rather than made assets, and an
-account already in the chart keeps its own detail type, the import naming
-any the file disagrees with. The Xero, Wave, Sage 50, Zoho Books, MYOB and
-QuickBooks Online imports keep their files' fixed-asset, long-term and
-other-income / other-expense types the same way; the chart CSV export has a
-Detail type column, and the chart import reads it.
-
-**An account can't become a sub-account of its own sub-account** (found in
-PNWImport's fork, SlowBooks-Pro-Testing#101). Only an account named as its
-own parent was refused: Vehicles under Truck with Truck already under
-Vehicles was saved, and the IIF export's full names recursed until they
-failed. The API that sets a parent refuses it now ("That would make Vehicles
-a sub-account of itself (through Truck).") at any depth — including a loop
-longer than the walk's safety cap, which used to slip through — a parent id
-that names no account is refused on create and edit, and a chart file whose
-rows name each other as parents leaves the closing link off with that
-sentence as the row's note, shown in the dry-run preview and when applied
-alike. The report paths and IIF names stop at a loop saved before this
-release. The same one walk now guards the cost-code tree too.
-
-**Sub-accounts show and move on the Chart of Accounts** (#416, from Chris
-Cree; the chart half — the statements' family subtotals are a separate
-change). An imported Travel › Hotel was kept in the books but listed flat,
-and the account form had no way to see or change a parent. The chart now
-lists each sub-account indented under its parent within its detail type,
-says "sub-account of Travel" to a screen reader, gives the full path
-("Travel: Hotel") on hover, and writes it beside the name where two accounts
-share a leaf name, the parent is listed elsewhere, or the filter has hidden
-the parent; the filter matches the path. The form has a **Sub-account of**
-picker, opened on the current parent, offering active accounts of the same
-type and never the account itself or one under it; a parent other than 1100,
-2000, a bank or a card sets the Type to its own. Choosing a type the parent
-cannot take lets the parent go in the same save, and choosing one it can
-brings it back, so the base-type change the detail types refuse under a
-parent is now done from the form, and that 400 says "(Parent account: none,
-on its form)". The server's refusals show in the form, where a passing toast
-had them. New rules, refused on a move or a type change (a pair saved before
-stays editable, and resending the parent it has is no move): under 1100,
-2000, a bank or a card a sub-account keeps its own detail type but not
-another base type — an expense under a bank account is refused, either side
-of the pair; a Bank or Credit Card parent turned plain is refused while a
-sub-account does not share its new type; and a control account takes no new
-parent. The chart import leaves off a link the API would refuse, the row's
-note saying why in the dry run and when applied, and the Xero, Wave, Sage
-50, Zoho Books, MYOB, GnuCash and QuickBooks Online imports bring such an
-account in unlinked, with a warning. Where the link stands but the file
-gives a sub-account a detail type its parent cannot share, the child takes
-the parent's instead — the link is right, so the family stays together on
-the Profit & Loss — with a note naming the type the file asked for; under a
-bank, card, 1100 or 2000 parent it keeps its own.
-
 ### v2.26.0 — Direct deposit from the page, and last year beside this one
 
 The sentence a Server Edition server answers for a company it cannot open

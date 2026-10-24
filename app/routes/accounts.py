@@ -718,7 +718,7 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
     # have is still allowed. After the detail-type checks, whose sentence
     # says more under a plain parent.
     if fields.get("parent_id") is not None and takes_no_new_parent(
-        account.detail_type, account.account_number
+        account.detail_type, account.account_number, account.account_type
     ):
         raise HTTPException(
             status_code=400,

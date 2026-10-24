@@ -142,12 +142,15 @@ def inherited_detail_type(parent_detail, child_detail) -> str | None:
     return parent
 
 
-def takes_no_new_parent(detail, number) -> bool:
+def takes_no_new_parent(detail, number, account_type=None) -> bool:
     """A control account, or an Accounts Receivable / Payable one, is found
-    by its number and stands alone: it takes no new parent (#416)."""
+    by its number and stands alone: it takes no new parent (#416). With the
+    account's type, a control number of another type (an expense 3900) is an
+    ordinary account and may take one, as the registry rules (#413)."""
     from app.services import control_accounts
 
-    return _value(detail) in (
-        "accounts_receivable",
-        "accounts_payable",
-    ) or control_accounts.is_control_number(number)
+    if _value(detail) in ("accounts_receivable", "accounts_payable"):
+        return True
+    if account_type is not None:
+        return control_accounts.is_control(number, account_type)
+    return control_accounts.is_control_number(number)
