@@ -13,6 +13,8 @@ reference column's width while the journal was stored with the full reference,
 so the two never matched and a second import booked the entry again. The
 import now stores the same cut value the key uses, so a re-import recognises
 what it already posted.
+Books imported before this fix, which hold the full reference, are recognised
+too: the already-imported set is cut to the same width.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
