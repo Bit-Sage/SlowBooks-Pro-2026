@@ -317,6 +317,19 @@ now owns which of a void's two conventions applies (`app/services/voids.py`),
 the register and reclassify route through it, and a test keeps every void
 type classified.
 
+**Reclassify updates the stored account balances** (#490). Reclassify
+moved a line to its new account and left the running total the Chart of
+Accounts shows on the old one, so the Balance column, the accounts CSV
+export and the AI tools' totals kept the amount on the account the line
+had left while the P&L and General Ledger, which read the lines, showed
+it where it went. The move now carries each line's amount off the account
+it leaves and onto the one it lands on, in each account's own direction,
+and moving the lines back restores both. Books already touched are
+repaired on upgrade: the stored balances are recomputed from the ledger
+once at start, and an administrator can run the same repair any time
+(`POST /api/accounts/rebuild-balances` answers with the accounts it
+corrected, none when the books agree).
+
 **The IIF export guards the contact fields too.** The CUST and VEND rows'
 phone, mobile or fax, email, terms and tax id went out as typed, so a
 vendor whose email was `=HYPERLINK(...)` would run in Excel, the documented
