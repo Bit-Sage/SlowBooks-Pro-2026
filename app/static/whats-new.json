@@ -1,4 +1,14 @@
 {
+  "2.29.1": {
+    "title": "Profit & Loss Detail, Bill Quick Entry, and feed payees as vendors",
+    "items": [
+      "A Profit & Loss Detail report, a Profit & Loss with one column per month or quarter, totals that open the transactions behind them, and a CSV that keeps the sub-account families.",
+      "Bill Quick Entry keys a stack of vendor bills one after another, and a bill, expense, bank-feed review or bank-rule line can add a new account on the spot.",
+      "A payee added from the bank feed becomes (or matches) a vendor, and the vendor form can set the vendor's bank-feed rule.",
+      "Settings can make new lines and items untaxed by default, for a company that charges no sales tax.",
+      "Fixes: the Payables card nets vendor credits, a typed deposit is capped at Undeposited Funds, a late fee follows its invoice's job and void, and two sign-ins on PostgreSQL can no longer deposit one receipt twice or save one bill number twice."
+    ]
+  },
   "2.29.0": {
     "title": "A mid-year payroll switch, the fiscal year, and reports by item",
     "items": [

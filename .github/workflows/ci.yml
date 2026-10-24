@@ -184,7 +184,13 @@ jobs:
           # skipped): tests/test_past_customers.py's five-line label test
           # renders the labels PDF, which skips here with the other PDF tests
           # (no WeasyPrint stack on the runner).
-          MAX_SKIPS: "154"
+          # 163 for 2.29.1, PROVISIONAL: 154 plus one for each of the nine
+          # new Playwright modules (P&L detail, total drill, month columns,
+          # feed vendor, vendor bank rule, new lines taxable, account quick
+          # add, bill quick entry, review account quick add). #501's
+          # Postgres-only tests may add more; the integrated tree's own
+          # Windows run sets the real figure.
+          MAX_SKIPS: "163"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

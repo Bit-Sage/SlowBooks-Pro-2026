@@ -5,96 +5,87 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and feed payees as vendors
 
-**A typed deposit can't exceed Undeposited Funds** (#494). Make Deposits with
-no payments ticked took the typed total as given and posted it, so a $5,000
-figure went into the bank against a single $100 payment waiting to be
-deposited. The ticked-payments path already refused a total that disagreed
-with what was waiting; the no-ticket path now caps the typed total at the
-Undeposited Funds balance the same way and answers 400 with what is actually
-waiting when it is asked for more. The cap is the live Undeposited Funds
-balance: after a partial typed deposit ($60 of a $100 payment) only the $40
-left can be deposited, where the payment used to count in full and a second
-$100 deposit drove Undeposited Funds to -$60.
-**Emailing an invoice with no recipient is a clean 400** (#496). The Email
-Invoice request let the recipient default to nothing, but EmailLog.recipient
-is NOT NULL, so a send with no address crashed on its own log row — and the
-route's own error handler crashed a second time logging the same empty
-address — leaving the operator an unhandled 500. The route now settles the
-recipient first (the typed address, else the customer's email on file) and,
-with neither, answers 400 asking for one before anything is logged. The
-statement and collection-letter sends already skipped a customer with no
-email, so they were left as they were. The email preview now shows the same
-address the send will use (it showed the typed one, empty, while the send
-went to the customer's email on file).
-A no-charge invoice no longer leaves an empty journal entry behind (#499). A
-$0.00 invoice saved with the no-charge say-so used to post a journal whose
-A/R debit and every line were zero, so the invoice pointed at a transaction
-header that held no splits — an entry that balanced only because it was
-empty. A $0.00 invoice now posts no journal at all and keeps no transaction;
-voiding it still works, and an edit that gives it a real total posts the
-journal then. An invoice edited down to $0.00 drops its old header the same
-way instead of leaving the husk. Editing the amounts of an invoice the
-QuickBooks Online import created still posts it exactly once, and the QBO
-import paths that post invoices handle a $0.00 one too.
-A late fee now carries the invoice's job, and voiding the invoice takes the
-fee with it (#500). A late fee posts its own A/R debit on top of the
-invoice; it used to carry no job even on a job-costed invoice, so the job's
-A/R came up short, and a void reversed only the invoice and left the fee's
-A/R debit stranded with nothing to apply it to. The fee's lines and its
-journal entry now take the invoice's job the same way the invoice's own
-posting and void reversal do, and the invoice void reverses every late-fee
-posting for the invoice in the same transaction, so the customer balance,
-A/R and the job's A/R all return to zero. A fee already voided in the
-journal is not reversed a second time, and each fee line comes off with its
-own job and class, so a fee posted before this release (with no job) or
-before the invoice's job changed never credits the job's A/R.
-- **Profit & Loss Detail** (#477): a new report on the Report Center with every
-  transaction under each income, cost of goods and expense account for the
-  period, in the P&L's order and QuickBooks Desktop's columns (Type, Date, Num,
-  Name, Memo, Split, Amount, Balance). Each account has a running balance and a
-  total, sub-accounts sit beneath their parents with a total per family, and
-  Total Income, Total Cost of Goods Sold, Gross Profit, Total Expenses, Other
-  Income / Other Expense (when there are any) and Net Income are the Profit &
-  Loss's for the same dates. It narrows to one class or one job, sorts by
-  number or name and can leave the adjusting entries out; a line's Type opens
-  its document. Saves as PDF (landscape) and CSV, and as a saved report.
+**Profit & Loss Detail** (#477). A new report on the Report Center with every
+transaction under each income, cost of goods and expense account for the
+period, in the P&L's order and QuickBooks Desktop's columns (Type, Date, Num,
+Name, Memo, Split, Amount, Balance). Each account has a running balance and a
+total, sub-accounts sit beneath their parents with a total per family, and
+Total Income, Total Cost of Goods Sold, Gross Profit, Total Expenses, Other
+Income / Other Expense (when there are any) and Net Income are the Profit &
+Loss's for the same dates. It narrows to one class or one job, sorts by
+number or name and can leave the adjusting entries out; a line's Type opens
+its document. Saves as PDF (landscape) and CSV, and as a saved report.
 
-- **The Profit & Loss's totals open the transactions behind them** (#479).
-  Total Income, Total Expenses, Gross Profit, Other Income / Other Expense, Net
-  Income and each sub-account family's "Total …" are links on the Profit &
-  Loss and on one class's P&L, and so are the Total column's subtotals on P&L
-  by Class and P&L by Job (when no columns are left out) and each job's
-  subtotals on P&L by Job. They open the drill-down for every account behind
-  the total, on the statement's dates, class, job and adjusting-entries
-  choice: each line with its account, costs counting against Gross Profit and
-  Net Income, and a running total that ends on the statement's figure. The
-  drill-down's address takes `section=` or `family=` in place of
-  `account_id`, and saves, prints and exports the same way.
+**The Profit & Loss's totals open the transactions behind them** (#479).
+Total Income, Total Expenses, Gross Profit, Other Income / Other Expense, Net
+Income and each sub-account family's "Total …" are links on the Profit &
+Loss and on one class's P&L, and so are the Total column's subtotals on P&L
+by Class and P&L by Job (when no columns are left out) and each job's
+subtotals on P&L by Job. They open the drill-down for every account behind
+the total, on the statement's dates, class, job and adjusting-entries
+choice: each line with its account, costs counting against Gross Profit and
+Net Income, and a running total that ends on the statement's figure. The
+drill-down's address takes `section=` or `family=` in place of
+`account_id`, and saves, prints and exports the same way.
 
-- **The Profit & Loss by month or quarter** (#478). A Columns choice on the
-  Profit & Loss (Total only, Month, Quarter) puts one column per month, or per
-  quarter of the fiscal year, across the period with a Total column, on the
-  P&L by Class grid: the Account column stays put while the months scroll,
-  Go to / ‹ Prev / Next › and the arrow keys move through them. Each column is
-  the Profit & Loss for its own dates and the Total column the P&L for the
-  whole period; sub-account families and their totals show in every column.
-  An amount opens that account's lines for that month, a subtotal or family
-  total the lines behind it. The choice rides on the address and a saved
-  report; the PDF prints the grid landscape and the CSV is the grid (a
-  sub-account indented beneath its parent) or one row per account and month. The
-  prior-year comparison is off while the columns are on.
+**The Profit & Loss by month or quarter** (#478). A Columns choice on the
+Profit & Loss (Total only, Month, Quarter) puts one column per month, or per
+quarter of the fiscal year, across the period with a Total column, on the
+P&L by Class grid: the Account column stays put while the months scroll,
+Go to / ‹ Prev / Next › and the arrow keys move through them. Each column is
+the Profit & Loss for its own dates and the Total column the P&L for the
+whole period; sub-account families and their totals show in every column.
+An amount opens that account's lines for that month, a subtotal or family
+total the lines behind it. The choice rides on the address and a saved
+report; the PDF prints the grid landscape and the CSV is the grid (a
+sub-account indented beneath its parent) or one row per account and month. The
+prior-year comparison is off while the columns are on.
 
-- **The Profit & Loss CSV carries the sub-account families** (#489). The
-  export was flat, one row per account by its full path, so a spreadsheet lost
-  the grouping the screen shows. It now prints the screen's tree: the parent's
-  row, its sub-accounts beneath it (the name indented two spaces a level, still
-  the full path), "Direct postings to …" and the family's "Total …", with the
-  prior-year columns when the comparison is on, so the file adds up the way
-  the screen does. The columns are where they were (Section, Account number,
-  Account name, then the figures). One class's P&L exports the same way; P&L by
-  Class and P&L by Job have no families on the screen and stay as they were.
+**The Profit & Loss CSV carries the sub-account families** (#489). The
+export was flat, one row per account by its full path, so a spreadsheet lost
+the grouping the screen shows. It now prints the screen's tree: the parent's
+row, its sub-accounts beneath it (the name indented two spaces a level, still
+the full path), "Direct postings to …" and the family's "Total …", with the
+prior-year columns when the comparison is on, so the file adds up the way
+the screen does. The columns are where they were (Section, Account number,
+Account name, then the figures). One class's P&L exports the same way; P&L by
+Class and P&L by Job have no families on the screen and stay as they were.
+
+**Bill Quick Entry** (#487). A stack of vendor bills can be keyed one after
+another, as paper invoices can on Quick Entry: Vendors & Payables → Bill Quick
+Entry, the top bar's Bill Entry, or Quick Entry on the Bills page. Pick the
+vendor (or add one; its terms and default account follow), the date and the
+vendor's bill number, then each line's account, words and amount, with no
+quantity or rate. Save & Next (or Ctrl+Enter) saves the bill, lists it in this
+batch's log under the form with a running count and total, and starts the
+next bill with the vendor, date and terms kept and the focus back on the
+vendor. A line's Account can add a new account and its Item a new item, as on
+Enter Bill. A read-only or accountant sign-in is not offered the page.
+
+**A new account from the bill line that needs it** (#485). The Account cell on
+an Enter Bill line has an Add button beside the picker, as the bank register's
+category picker has had since 2.27.0. It opens a small panel for the account's
+name, its type (Expense or Cost of Goods Sold), an optional parent account and
+an optional number; Save adds it to the chart, picks it on that line and
+offers it on the others, and the bill stays as it was. The same Add is on
+vendor credit lines, on each line when a purchase order is turned into a bill,
+and beside the expense's account. Control accounts (Cost of Goods Sold 5000,
+Payroll Tax Expense and the others the software posts to by number) are never
+offered as a parent. Cancel or Escape closes the panel, and the keyboard goes
+back to the picker either way. A read-only or accountant sign-in is not
+offered it. Items keep their own quick add, which records an item in a cost
+of goods account.
+
+**A new account from the bank-feed review and the Bank Rule form** (#492). The
+"Pick a category" picker on a To review line and the Bank Rule form's Category
+Account have the same Add button. On a review line the new account is picked
+and kept on the line, as a category you choose is, and every other line can
+choose it too; on the rule form it becomes the rule's category. Reviewing a
+feed with a new kind of expense no longer means leaving the review for the
+Chart of Accounts.
+
 **A payee from the bank feed reaches the vendor list** (#491). Adding a line
 from To review (Add, or Add all categorised) posted a bank entry that carried
 the payee as text only: no vendor was made or found, and the "Add X as a
@@ -119,6 +110,17 @@ A rule that names a vendor also matches the vendor's own name, and a line it
 categorises is added for that vendor. The Bank Rule form has a Vendor field,
 and the Bank Rules list names each rule's account and vendor (it showed the
 account's id).
+
+**A company that charges no sales tax can stop unticking the Tax box on every
+line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
+items are taxable". It stays Yes, as before, unless you change it. Set it to
+No and every new invoice, estimate, sales receipt, credit memo, recurring
+invoice and Quick Entry line starts untaxed, and so does every new item, on
+the Items form and in the line's quick add. You can still tick Tax on any
+line, an item marked taxable still taxes the line it is picked on, and a
+tax-exempt customer is still never charged. Through the API, a line or item
+sent without `is_taxable` follows the same setting.
+
 **Three races between two sign-ins on PostgreSQL** (#501). Each was a
 read-then-write two people could both pass at once; SQLite, with one writer
 at a time, never saw them, and behaves as before.
@@ -141,46 +143,70 @@ at a time, never saw them, and behaves as before.
   bill keeps its number and the next becomes "111 (2)", then "(3)". A purchase
   order turned into a bill whose "BILL-…" number the vendor already has takes
   "BILL-…-2".
-**A company that charges no sales tax can stop unticking the Tax box on every
-line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
-items are taxable". It stays Yes, as before, unless you change it. Set it to
-No and every new invoice, estimate, sales receipt, credit memo, recurring
-invoice and Quick Entry line starts untaxed, and so does every new item, on
-the Items form and in the line's quick add. You can still tick Tax on any
-line, an item marked taxable still taxes the line it is picked on, and a
-tax-exempt customer is still never charged. Through the API, a line or item
-sent without `is_taxable` follows the same setting.
-**A new account from the bill line that needs it** (#485). The Account cell on
-an Enter Bill line has an Add button beside the picker, as the bank register's
-category picker has had since 2.27.0. It opens a small panel for the account's
-name, its type (Expense or Cost of Goods Sold), an optional parent account and
-an optional number; Save adds it to the chart, picks it on that line and
-offers it on the others, and the bill stays as it was. The same Add is on
-vendor credit lines, on each line when a purchase order is turned into a bill,
-and beside the expense's account. Control accounts (Cost of Goods Sold 5000,
-Payroll Tax Expense and the others the software posts to by number) are never
-offered as a parent. Cancel or Escape closes the panel, and the keyboard goes
-back to the picker either way. A read-only or accountant sign-in is not
-offered it. Items keep their own quick add, which records an item in a cost
-of goods account.
 
-**Bill Quick Entry** (#487). A stack of vendor bills can be keyed one after
-another, as paper invoices can on Quick Entry: Vendors & Payables → Bill Quick
-Entry, the top bar's Bill Entry, or Quick Entry on the Bills page. Pick the
-vendor (or add one; its terms and default account follow), the date and the
-vendor's bill number, then each line's account, words and amount, with no
-quantity or rate. Save & Next (or Ctrl+Enter) saves the bill, lists it in this
-batch's log under the form with a running count and total, and starts the
-next bill with the vendor, date and terms kept and the focus back on the
-vendor. A line's Account can add a new account and its Item a new item, as on
-Enter Bill. A read-only or accountant sign-in is not offered the page.
-**A new account from the bank-feed review and the Bank Rule form** (#492). The
-"Pick a category" picker on a To review line and the Bank Rule form's Category
-Account have the same Add button. On a review line the new account is picked
-and kept on the line, as a category you choose is, and every other line can
-choose it too; on the rule form it becomes the rule's category. Reviewing a
-feed with a new kind of expense no longer means leaving the review for the
-Chart of Accounts.
+**A typed deposit can't exceed Undeposited Funds** (#494, @ContractorKeith). Make Deposits with
+no payments ticked took the typed total as given and posted it, so a $5,000
+figure went into the bank against a single $100 payment waiting to be
+deposited. The ticked-payments path already refused a total that disagreed
+with what was waiting; the no-ticket path now caps the typed total at the
+Undeposited Funds balance the same way and answers 400 with what is actually
+waiting when it is asked for more. The cap is the live Undeposited Funds
+balance: after a partial typed deposit ($60 of a $100 payment) only the $40
+left can be deposited, where the payment used to count in full and a second
+$100 deposit drove Undeposited Funds to -$60.
+
+**The Payables card nets vendor credits** (#495, @ContractorKeith). The dashboard's Payables
+card summed open bill balances by itself, so a $100 bill with a $30 unapplied
+vendor credit read $100 against an A/P Aging total of $70. The card now reads
+the A/P Aging report's TOTAL row, the same source the report page shows and
+the way the Receivables card already reads A/R Aging, so the two can no longer
+disagree.
+
+**Emailing an invoice with no recipient is a clean 400** (#496, @ContractorKeith). The Email
+Invoice request let the recipient default to nothing, but EmailLog.recipient
+is NOT NULL, so a send with no address crashed on its own log row — and the
+route's own error handler crashed a second time logging the same empty
+address — leaving the operator an unhandled 500. The route now settles the
+recipient first (the typed address, else the customer's email on file) and,
+with neither, answers 400 asking for one before anything is logged. The
+statement and collection-letter sends already skipped a customer with no
+email, so they were left as they were. The email preview now shows the same
+address the send will use (it showed the typed one, empty, while the send
+went to the customer's email on file).
+
+**A no-charge invoice no longer leaves an empty journal entry behind** (#499, @ContractorKeith). A
+$0.00 invoice saved with the no-charge say-so used to post a journal whose
+A/R debit and every line were zero, so the invoice pointed at a transaction
+header that held no splits — an entry that balanced only because it was
+empty. A $0.00 invoice now posts no journal at all and keeps no transaction;
+voiding it still works, and an edit that gives it a real total posts the
+journal then. An invoice edited down to $0.00 drops its old header the same
+way instead of leaving the husk. Editing the amounts of an invoice the
+QuickBooks Online import created still posts it exactly once, and the QBO
+import paths that post invoices handle a $0.00 one too.
+
+**A late fee now carries the invoice's job, and voiding the invoice takes the
+fee with it** (#500, @ContractorKeith). A late fee posts its own A/R debit on top of the
+invoice; it used to carry no job even on a job-costed invoice, so the job's
+A/R came up short, and a void reversed only the invoice and left the fee's
+A/R debit stranded with nothing to apply it to. The fee's lines and its
+journal entry now take the invoice's job the same way the invoice's own
+posting and void reversal do, and the invoice void reverses every late-fee
+posting for the invoice in the same transaction, so the customer balance,
+A/R and the job's A/R all return to zero. A fee already voided in the
+journal is not reversed a second time, and each fee line comes off with its
+own job and class, so a fee posted before this release (with no job) or
+before the invoice's job changed never credits the job's A/R.
+
+**A QuickBooks Desktop ledger import checks each total against its own
+section.** An account the report lists as two sections no longer trips the
+cut-short check: each "Total" row is measured against its own section's lines
+(sub-accounts included) rather than every line posted to that account path.
+
+Two schema changes, run in every company file one after the other:
+`transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice
+number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
+"111 (2)"; the head is `f2e3d4c5b6a7`. 637 API operations.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
@@ -554,55 +580,6 @@ payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
 
-### Unreleased
-
-- QuickBooks Desktop import: an account the report lists as two sections no
-  longer trips the cut-short check. Each "Total" row is measured against its
-  own section's lines (sub-accounts included) rather than every line posted to
-  that account path.
-### Unreleased
-
-**The Payables card nets vendor credits** (#495). The dashboard's Payables
-card summed open bill balances by itself, so a $100 bill with a $30 unapplied
-vendor credit read $100 against an A/P Aging total of $70. The card now reads
-the A/P Aging report's TOTAL row, the same source the report page shows and
-the way the Receivables card already reads A/R Aging, so the two can no longer
-disagree.
-### Unreleased
-
-**A typed deposit can't exceed Undeposited Funds** (#494). Make Deposits with
-no payments ticked took the typed total as given and posted it, so a $5,000
-figure went into the bank against a single $100 payment waiting to be
-deposited. The ticked-payments path already refused a total that disagreed
-with what was waiting; the no-ticket path now caps the typed total at the
-Undeposited Funds balance the same way and answers 400 with what is actually
-waiting when it is asked for more.
-**Emailing an invoice with no recipient is a clean 400** (#496). The Email
-Invoice request let the recipient default to nothing, but EmailLog.recipient
-is NOT NULL, so a send with no address crashed on its own log row — and the
-route's own error handler crashed a second time logging the same empty
-address — leaving the operator an unhandled 500. The route now settles the
-recipient first (the typed address, else the customer's email on file) and,
-with neither, answers 400 asking for one before anything is logged. The
-statement and collection-letter sends already skipped a customer with no
-email, so they were left as they were.
-A no-charge invoice no longer leaves an empty journal entry behind (#499). A
-$0.00 invoice saved with the no-charge say-so used to post a journal whose
-A/R debit and every line were zero, so the invoice pointed at a transaction
-header that held no splits — an entry that balanced only because it was
-empty. A $0.00 invoice now posts no journal at all and keeps no transaction;
-voiding it still works, and an edit that gives it a real total posts the
-journal then. An invoice edited down to $0.00 drops its old header the same
-way instead of leaving the husk.
-A late fee now carries the invoice's job, and voiding the invoice takes the
-fee with it (#500). A late fee posts its own A/R debit on top of the
-invoice; it used to carry no job even on a job-costed invoice, so the job's
-A/R came up short, and a void reversed only the invoice and left the fee's
-A/R debit stranded with nothing to apply it to. The fee's lines and its
-journal entry now take the invoice's job the same way the invoice's own
-posting and void reversal do, and the invoice void reverses every late-fee
-posting for the invoice in the same transaction, so the customer balance,
-A/R and the job's A/R all return to zero.
 
 ### v2.28.0 — Account types and sub-accounts
 
