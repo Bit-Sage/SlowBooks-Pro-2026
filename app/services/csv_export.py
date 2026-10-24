@@ -260,13 +260,16 @@ def export_accounts(db: Session) -> str:
     accounts = db.query(Account).order_by(Account.account_number).all()
     output = io.StringIO()
     writer = _SafeWriter(output)
-    writer.writerow(["Number", "Name", "Type", "Balance", "Active", "System"])
+    writer.writerow(
+        ["Number", "Name", "Type", "Detail type", "Balance", "Active", "System"]
+    )
     for a in accounts:
         writer.writerow(
             [
                 a.account_number or "",
                 a.name,
                 a.account_type.value,
+                a.detail_type_label,
                 _money_cell(a.balance),
                 a.is_active,
                 a.is_system,

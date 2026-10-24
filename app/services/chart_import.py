@@ -36,7 +36,16 @@ from dataclasses import dataclass, field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import (
+    BASE_TYPE_OF,
+    DETAIL_TYPES,
+    Account,
+    AccountType,
+    DetailType,
+    default_detail_type,
+    detail_label,
+    detail_type_problem,
+)
 from app.models.transactions import TransactionLine
 from app.services import control_accounts
 from app.services.account_tree import MAX_DEPTH, loop_message
@@ -77,6 +86,42 @@ TYPE_WORDS: dict[str, tuple[str, str | None]] = {
     "expenses": ("expense", None),
     "other expense": ("expense", None),
 }
+
+# Type words that also name a detail type (#390). A word not here (asset,
+# expense, ...) leaves the account the default for its type.
+DETAIL_WORDS: dict[str, str] = {
+    "bank": "bank",
+    "cash": "bank",
+    "accounts receivable": "accounts_receivable",
+    "current asset": "other_current_asset",
+    "other current asset": "other_current_asset",
+    "fixed asset": "fixed_asset",
+    "other asset": "other_asset",
+    "credit card": "credit_card",
+    "accounts payable": "accounts_payable",
+    "current liability": "other_current_liability",
+    "other current liability": "other_current_liability",
+    "long term liability": "long_term_liability",
+    "long-term liability": "long_term_liability",
+    "other income": "other_income",
+    "other expense": "other_expense",
+}
+
+
+_DETAIL_BANK_KIND = {"bank": "bank", "credit_card": "credit_card"}
+
+
+def _norm_detail(word: str | None) -> str | None:
+    """A Detail type cell — the label the export writes ("Long Term
+    Liability") or the API value ("long_term_liability") — or None."""
+    if not word:
+        return None
+    w = word.strip().lower().replace("_", " ")
+    for d, (label, _base) in DETAIL_TYPES.items():
+        if w in (label.lower(), d.value.replace("_", " ")):
+            return d.value
+    return DETAIL_WORDS.get(w)
+
 
 # hledger's one-letter account types: Asset, Liability, Equity, Revenue,
 # eXpense, Cash (an asset you can spend from), conVersion (equity).
@@ -150,6 +195,7 @@ _HEADER_ALIASES = {
     "account": "name",
     "account type": "type",
     "type": "type",
+    "detail type": "detail_type",
     "parent": "parent",
     "parent account": "parent",
     "sub-account of": "parent",
@@ -169,6 +215,7 @@ class Row:
     parent_ref: str | None = None  # a path (hledger) or a number/name (CSV)
     description: str | None = None
     bank_kind: str | None = None
+    detail_type: str | None = None  # #390; None takes the type's default
     path: str | None = None  # hledger only: the full colon path
     active: bool | None = None
     synthesized: bool = False  # an hledger parent the file never listed
@@ -354,14 +401,31 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
             continue
         number = cell("number") or None
         typed = _norm_type(cell("type"))
+        detail = _norm_detail(cell("detail_type"))
+        if cell("detail_type") and detail is None:
+            errors.append(
+                f"Row {n}: unknown detail type '{cell('detail_type')}' for '{name}'"
+            )
+            continue
         if typed:
             acct_type, bank_kind = typed
+            detail = detail or DETAIL_WORDS.get(cell("type").lower().replace("_", " "))
+            base = BASE_TYPE_OF[DetailType(detail)] if detail else None
+            if base is not None and base.value != acct_type:
+                errors.append(
+                    f"Row {n}: '{name}' is typed {acct_type} and its detail type "
+                    f"'{cell('detail_type')}' is a {base.value} type"
+                )
+                continue
         elif cell("type"):
+            # an unknown Type is an error whatever the Detail type says
             errors.append(
                 f"Row {n}: unknown account type '{cell('type')}' for '{name}' "
                 f"(use asset, liability, equity, income, cogs or expense)"
             )
             continue
+        elif detail:
+            acct_type, bank_kind = BASE_TYPE_OF[DetailType(detail)].value, None
         else:
             acct_type, bank_kind = _type_from_number(number), None
             if not acct_type:
@@ -369,6 +433,9 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
                     f"Row {n}: '{name}' has no type and no number to infer it from"
                 )
                 continue
+        # a Bank / Credit Card detail type is a register, as the type words
+        # "bank" and "credit card" are
+        bank_kind = bank_kind or _DETAIL_BANK_KIND.get(detail)
         active_cell = cell("active").lower()
         active = None
         if active_cell in ("false", "no", "0", "inactive"):
@@ -384,6 +451,7 @@ def _parse_csv(text: str, errors: list[str]) -> tuple[list[Row], list[str], str]
                 parent_ref=cell("parent") or None,
                 description=(cell("description") or None),
                 bank_kind=bank_kind,
+                detail_type=detail,
                 active=active,
             )
         )
@@ -578,6 +646,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             resolved[r.path or number] = ("new", i)
             resolved[number] = ("new", i)
             resolved[r.name.lower()] = ("new", i)
+        entry["detail_type"] = _planned_detail(r, target, entry)
         entry["_row"] = r
         plan.rows.append(entry)
 
@@ -712,6 +781,43 @@ def _flag_parent_loops(db: Session, plan: Plan) -> None:
             entry.pop("_parent", None)
         else:
             accepted[node] = parent
+def _note_detail_fallback(entry: dict, declared: str, actual: str) -> None:
+    """One wording, used by the dry run and the apply, so the preview and
+    the import read the same when a declared detail type cannot stand."""
+    note = (
+        f"detail type {detail_label(declared)} in the file; came in "
+        f"as {detail_label(actual)}"
+    )
+    if note not in (entry.get("note") or ""):
+        entry["note"] = (entry["note"] + "; " if entry["note"] else "") + note
+
+
+def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
+    """The detail type the row will have (#390): the chart's own for an
+    account already there (an import never changes it, unless its type
+    changes), else the file's, else the default. A sub-account given none
+    takes its parent's when applied. A file detail type the account cannot
+    carry (Accounts Receivable away from 1100, Bank without a bank kind)
+    falls back to the default here exactly as the apply path does, so the
+    preview shows what the import will actually write, with the same note."""
+    retyped = any(c.startswith("type ") for c in entry.get("changes", []))
+    if target is not None and not retyped:
+        if r.detail_type and r.detail_type != target.detail_type:
+            entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
+                f"detail type stays {detail_label(target.detail_type)} (the "
+                f"chart's), not {detail_label(r.detail_type)}"
+            )
+        return target.detail_type
+    if r.detail_type:
+        problem = detail_type_problem(
+            r.detail_type, r.type, r.bank_kind, entry.get("number")
+        )
+        if problem is None:
+            return r.detail_type
+        fell_back = default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+        _note_detail_fallback(entry, r.detail_type, fell_back)
+        return fell_back
+    return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
 
 
 # --- applying ---------------------------------------------------------------
@@ -719,6 +825,7 @@ def _flag_parent_loops(db: Session, plan: Plan) -> None:
 
 def apply_chart_import(db: Session, plan: Plan) -> None:
     created: dict[int, Account] = {}  # row index -> account
+    declared: dict[int, Account] = {}  # rows whose file named a detail type
     for i, entry in enumerate(plan.rows):
         if entry["action"] != "create":
             continue
@@ -729,6 +836,7 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             account_type=AccountType(r.type),
             description=r.description,
             bank_kind=r.bank_kind,
+            detail_type=r.detail_type,
             is_active=r.active is not False,
             is_system=False,
         )
@@ -746,6 +854,9 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
                     a.name = r.name
                 elif change.startswith("type "):
                     a.account_type = AccountType(r.type)
+                    # the old detail type cannot stand under a new type; the
+                    # file's, else the default (Account._settle_detail_type)
+                    a.detail_type = r.detail_type
                 elif change.startswith("number "):
                     a.account_number = r.number
                 elif change == "description":
@@ -769,6 +880,20 @@ def apply_chart_import(db: Session, plan: Plan) -> None:
             pid = created[ref].id if kind == "new" else ref
             if pid != a.id:
                 a.parent_id = pid
+        if r.detail_type:
+            declared[i] = a
+    db.flush()
+    # A declared detail type the account cannot carry (Bank without a bank
+    # kind, AR away from 1100) fell back; say so on the row
+    for i, a in declared.items():
+        entry, r = plan.rows[i], plan.rows[i]["_row"]
+        if entry["action"] == "update" and not any(
+            c.startswith("type ") for c in entry["changes"]
+        ):
+            continue
+        if a.detail_type != r.detail_type:
+            _note_detail_fallback(entry, r.detail_type, a.detail_type)
+        entry["detail_type"] = a.detail_type
     db.commit()
 
 

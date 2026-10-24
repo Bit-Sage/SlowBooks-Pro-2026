@@ -1117,13 +1117,17 @@ const App = {
         App._accountsFilter = text || '';
         const needle = App._accountsFilter.trim().toLowerCase();
         const groups = {};
+        const details = {};
         $$('tr[data-account-row]').forEach(tr => {
             const shown = !needle || (tr.dataset.accountRow || '').includes(needle);
             tr.hidden = !shown;
             const type = tr.dataset.accountType;
             groups[type] = (groups[type] || 0) + (shown ? 1 : 0);
+            const detail = tr.dataset.accountDetail;
+            details[detail] = (details[detail] || 0) + (shown ? 1 : 0);
         });
         $$('tr[data-account-group]').forEach(tr => { tr.hidden = !(groups[tr.dataset.accountGroup] || 0); });
+        $$('tr[data-account-detail-group]').forEach(tr => { tr.hidden = !(details[tr.dataset.accountDetailGroup] || 0); });
         const note = $('#accounts-filter-note');
         if (note) {
             const n = Object.values(groups).reduce((a, b) => a + b, 0);
@@ -1158,8 +1162,16 @@ const App = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // QuickBooks' fifteen account types (#390), in picker order, from the
+    // server so the page never keeps its own copy of the list.
+    async _detailTypes() {
+        if (!App._detailTypeList) App._detailTypeList = await API.get('/accounts/detail-types');
+        return App._detailTypeList;
+    },
+
     async renderAccounts() {
-        const accounts = await API.get('/accounts');
+        const [accounts, detailTypes] = await Promise.all([API.get('/accounts'), App._detailTypes()]);
+        const detailOrder = detailTypes.map(d => d.value);
         const grouped = {};
         let inactiveCount = 0;
         for (const a of accounts) {
@@ -1188,20 +1200,30 @@ const App = {
             </div>
             <p style="font-size:11px; color:var(--gray-500); margin:-4px 0 8px;">An account's name opens its register: the bank register for a bank or card account, this year's transactions for the rest.</p>
             <nav aria-labelledby="accounts-heading"><div class="table-container"><table>
-                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:100px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
+                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:160px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
                 <tbody>`;
 
         for (const type of typeOrder) {
             const accts = grouped[type] || [];
             if (accts.length === 0) continue;
             html += `<tr data-account-group="${type}" style="background:linear-gradient(180deg, #e8ecf2 0%, #dde2ea 100%);"><td colspan="5" style="font-weight:700; color:var(--qb-navy); font-size:11px; padding:4px 10px;">${typeNames[type]}</td></tr>`;
+            // A second heading per detail type under the type (#390), so an
+            // account under the wrong one (a loan among the current
+            // liabilities) shows in the first scroll. Number order within.
+            const rank = d => { const i = detailOrder.indexOf(d); return i < 0 ? detailOrder.length : i; };
+            accts.sort((x, y) => rank(x.detail_type) - rank(y.detail_type));
+            let detailShown = null;
             for (const a of accts) {
+                if (a.detail_type !== detailShown) {
+                    detailShown = a.detail_type;
+                    html += `<tr data-account-detail-group="${escapeHtml(a.detail_type || '')}"><td colspan="5" style="font-weight:600; color:var(--gray-600); font-size:11px; padding:3px 10px 3px 22px; background:var(--gray-50);">${escapeHtml(T(a.detail_type_label || ''))}</td></tr>`;
+                }
                 const inactive = a.is_active === false;
                 const haystack = escapeHtml(`${a.account_number || ''} ${a.name}`.toLowerCase());
-                html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-row="${haystack}" data-account-type="${type}">
+                html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
                     <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
                     <td><a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="Open the register">${escapeHtml(a.name)}</a>${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
-                    <td>${a.account_type}</td>
+                    <td>${escapeHtml(T(a.detail_type_label || a.account_type))}</td>
                     <td class="amount">${formatCurrency(a.balance)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="App.showAccountForm(${a.id})">Edit</button>
@@ -1220,10 +1242,23 @@ const App = {
     },
 
     async showAccountForm(id = null) {
-        let acct = { name: '', account_number: '', account_type: 'expense', description: '' };
+        let acct = { name: '', account_number: '', account_type: 'expense', detail_type: 'expense', description: '' };
         if (id) acct = await API.get(`/accounts/${id}`);
 
-        const types = ['asset','liability','equity','income','cogs','expense'];
+        // One picker (#390): a group per base type, QuickBooks' types inside;
+        // the base type follows from the choice. Accounts Receivable and
+        // Payable belong to 1100 and 2000 alone, so they are offered only
+        // where the account already is one.
+        const detailTypes = await App._detailTypes();
+        const typeHeadings = { asset: 'Assets', liability: 'Liabilities', equity: T('Equity'),
+            income: T('Income'), cogs: 'Cost of Goods Sold', expense: 'Expenses' };
+        const picker = Object.keys(typeHeadings).map(t => {
+            const opts = detailTypes
+                .filter(d => d.account_type === t && (!d.control_only || d.value === acct.detail_type))
+                .map(d => `<option value="${d.value}" data-account-type="${d.account_type}" ${acct.detail_type === d.value ? 'selected' : ''}>${escapeHtml(T(d.label))}</option>`)
+                .join('');
+            return opts ? `<optgroup label="${escapeHtml(typeHeadings[t])}">${opts}</optgroup>` : '';
+        }).join('');
         // A control account is found by its number when a document posts, so the
         // number and the type are fixed and the API refuses to change them (400).
         // Renaming is allowed and is the point — say so instead of hiding the form.
@@ -1236,7 +1271,7 @@ const App = {
             ? `<div class="form-group full-width"><div class="hint hint--locked">
                    <strong>${escapeHtml(acct.account_number || '')} ${escapeHtml(acct.name)} is a control account.</strong>
                    The software finds it by its number to post ${escapeHtml(acct.control_purpose || 'part of the books')},
-                   so the number and type cannot change — a document that could not find it would have nowhere to post.
+                   so the number and type (and its detail type) cannot change — a document that could not find it would have nowhere to post.
                    <em>You can rename it.</em>
                </div></div>`
             : '';
@@ -1251,9 +1286,10 @@ const App = {
                     <div class="form-group"><label>Name *</label>
                         <input name="name" required value="${escapeHtml(acct.name)}"></div>
                     <div class="form-group"><label>Type *</label>
-                        <select name="account_type"${locked ? ' disabled' : ''}>
-                            ${types.map(t => `<option value="${t}" ${acct.account_type===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
-                        </select></div>
+                        <select name="detail_type" data-was="${escapeHtml(acct.detail_type || '')}" aria-describedby="account-type-hint"${locked ? ' disabled' : ''}>
+                            ${picker}
+                        </select>
+                        <span id="account-type-hint" class="hint">A bank or card account gets a register. A sub-account shares its parent's detail type, except under a bank, card, or a 1100 or 2000 parent, where it is set on its own.</span></div>
                     <div class="form-group full-width"><label>Description</label>
                         <textarea name="description">${escapeHtml(acct.description || '')}</textarea></div>
                 </div>
@@ -1397,6 +1433,22 @@ const App = {
     async saveAccount(e, id) {
         e.preventDefault();
         const data = Object.fromEntries(new FormData(e.target).entries());
+        // The picker's choice sets the base type and the bank kind with it
+        // (#390); a locked control account sends neither.
+        if (data.detail_type) {
+            const sel = e.target.detail_type;
+            data.account_type = sel.selectedOptions[0].dataset.accountType;
+            // bank_kind only when the choice moves into or out of Bank /
+            // Credit Card: an untouched field must never clear a register's
+            // kind (the server refuses that for a register in use anyway)
+            const kinds = ['bank', 'credit_card'];
+            const was = sel.dataset.was || '';
+            if (kinds.includes(data.detail_type)) {
+                if (data.detail_type !== was) data.bank_kind = data.detail_type;
+            } else if (kinds.includes(was)) {
+                data.bank_kind = null;
+            }
+        }
         try {
             if (id) { await API.put(`/accounts/${id}`, data); toast('Account updated'); }
             else { await API.post('/accounts', data); toast('Account created'); }

@@ -7,7 +7,16 @@ from sqlalchemy import nullslast
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.accounts import Account
+from app.models.accounts import (
+    BASE_TYPE_OF,
+    PINNED_DETAIL_TYPES,
+    Account,
+    DETAIL_TYPES,
+    DetailType,
+    default_detail_type,
+    detail_label,
+    detail_type_problem,
+)
 from app.services import control_accounts
 from app.services.account_tree import loop_message, loop_through
 from app.models.transactions import TransactionLine
@@ -114,16 +123,229 @@ def _check_bank_kind(bank_kind, account_type) -> None:
         )
 
 
+def _bank_history(db: Session, account: Account) -> list[str]:
+    """What hangs off a bank or card account as a register: reconciliations,
+    bank-feed rows, register entries and transfers. Each is keyed off
+    bank_kind; clearing it would orphan them."""
+    from app.models.banking import BankAccount, BankTransaction, Reconciliation
+    from app.models.transactions import Transaction
+
+    feeds = [
+        i
+        for (i,) in db.query(BankAccount.id).filter(
+            BankAccount.account_id == account.id
+        )
+    ]
+    found = []
+    recs = (
+        db.query(func.count(Reconciliation.id))
+        .filter(
+            (Reconciliation.account_id == account.id)
+            | (Reconciliation.bank_account_id.in_(feeds or [-1]))
+        )
+        .scalar()
+    )
+    if recs:
+        found.append(f"{recs} reconciliation(s)")
+    rows = (
+        db.query(func.count(BankTransaction.id))
+        .filter(BankTransaction.bank_account_id.in_(feeds or [-1]))
+        .scalar()
+    )
+    if rows:
+        found.append(f"{rows} bank-feed row(s)")
+    entries = (
+        db.query(func.count(func.distinct(Transaction.id)))
+        .join(TransactionLine, TransactionLine.transaction_id == Transaction.id)
+        .filter(
+            TransactionLine.account_id == account.id,
+            Transaction.source_type.in_(("bank_entry", "transfer")),
+        )
+        .scalar()
+    )
+    if entries:
+        found.append(f"{entries} register entr{'y' if entries == 1 else 'ies'}")
+    return found
+
+
+def _check_bank_kind_kept(db: Session, account: Account, fields: dict) -> None:
+    """A bank or card account in use keeps its bank kind: the register, its
+    reconciliations and its feed all key off it (#390 review)."""
+    if "bank_kind" not in fields or not account.bank_kind:
+        return
+    if fields["bank_kind"] == account.bank_kind:
+        return
+    used = _bank_history(db, account)
+    if used:
+        kind = account.bank_kind.replace("_", " ")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{account.name}' is a {kind} account with {', '.join(used)}; "
+                f"changing its kind would take its register, reconciliations "
+                f"and feed away. Make a new account for the other use and "
+                f"deactivate this one."
+            ),
+        )
+
+
+def _named(acct: Account) -> str:
+    return " ".join(p for p in (acct.account_number, acct.name) if p)
+
+
+def _move_out_first(child: Account, parent: Account) -> str:
+    """The way out of a type change a parent and its sub-account block for
+    each other: base types are not cascaded."""
+    return (
+        f" Move {_named(child) or 'the sub-account'} out from under "
+        f"{_named(parent)} first (set its parent to none), change the types, "
+        f"then put it back."
+    )
+
+
+def _sub_account_refusal(
+    parent: Account, why: str | None = None, child: Account | None = None, atype=None
+) -> HTTPException:
+    label = detail_label(parent.detail_type)
+    detail = (
+        f"a sub-account shares its parent's detail type, except under a bank, "
+        f"card, Accounts Receivable or Accounts Payable parent; a sub-account "
+        f"of {_named(parent)} ({label}) must be "
+        f"a{'n' if label[0] in 'AEIOU' else ''} {label} too"
+    ) + (f": {why}" if why else "")
+    base = BASE_TYPE_OF[DetailType(parent.detail_type)]
+    if (
+        child is not None
+        and atype is not None
+        and getattr(atype, "value", atype) != (base.value)
+    ):
+        detail += "." + _move_out_first(child, parent)
+    return HTTPException(status_code=400, detail=detail)
+
+
+def _shares_parent(parent: Account | None) -> bool:
+    """A sub-account matches its parent's detail type, except under a
+    pinned one (1100, 2000, a bank, a card): those are checked alone."""
+    return parent is not None and parent.detail_type not in PINNED_DETAIL_TYPES
+
+
+def _create_detail_type(db: Session, data: AccountCreate) -> str:
+    """The detail type a new account gets (#390): the one sent, else its
+    parent's, else the default for its type and bank kind. A sub-account
+    shares its parent's detail type; the pair with the type, the bank kind
+    and the control numbers is checked in detail_type_problem."""
+    parent = db.get(Account, data.parent_id) if data.parent_id else None
+    if _shares_parent(parent):
+        if data.detail_type is not None and data.detail_type.value != (
+            parent.detail_type
+        ):
+            raise _sub_account_refusal(parent)
+        why = detail_type_problem(
+            parent.detail_type, data.account_type, data.bank_kind, data.account_number
+        )
+        if why:
+            raise _sub_account_refusal(parent, why)
+        return parent.detail_type
+    detail = data.detail_type or default_detail_type(
+        data.account_type, data.bank_kind, data.account_number
+    )
+    why = detail_type_problem(
+        detail, data.account_type, data.bank_kind, data.account_number
+    )
+    if why:
+        raise HTTPException(status_code=400, detail=why)
+    return getattr(detail, "value", detail)
+
+
+def _cascade_detail_type(account: Account, old: str, new: str, seen: set) -> None:
+    """A parent's new detail type goes down to the sub-accounts that shared
+    the old one; one that cannot take it refuses the change."""
+    if old in PINNED_DETAIL_TYPES or new in PINNED_DETAIL_TYPES:
+        return  # nothing shares a pinned detail type by inheritance
+    for child in account.children:
+        if child.id in seen or child.detail_type != old:
+            continue
+        seen.add(child.id)
+        why = detail_type_problem(
+            new, child.account_type, child.bank_kind, child.account_number
+        )
+        if why:
+            detail = (
+                f"its sub-account {_named(child)} would have to become "
+                f"{detail_label(new)} too, and cannot: {why}."
+            )
+            if BASE_TYPE_OF[DetailType(new)] != BASE_TYPE_OF[DetailType(old)]:
+                detail += _move_out_first(child, account)
+            raise HTTPException(status_code=400, detail=detail)
+        _cascade_detail_type(child, old, new, seen)
+        child.detail_type = new
+
+
+def _update_detail_type(db: Session, account: Account, fields: dict) -> None:
+    """Settle fields["detail_type"] for a PUT (#390). Omitted, the current
+    detail type stays while it still fits; a type or bank-kind change that
+    it no longer fits resets it to the default, and a new parent's is taken.
+    Control accounts keep theirs; a sub-account matches its parent."""
+    atype = fields.get("account_type", account.account_type)
+    kind = fields.get("bank_kind", account.bank_kind)
+    number = fields.get("account_number", account.account_number)
+    parent_id = fields.get("parent_id", account.parent_id)
+    parent = db.get(Account, parent_id) if parent_id else None
+    current = account.detail_type
+    if fields.get("detail_type") is not None:
+        detail = fields["detail_type"].value
+    elif (
+        "parent_id" in fields
+        and _shares_parent(parent)
+        and not control_accounts.is_control_number(account.account_number)
+    ):
+        # a control account never takes a parent's: the sub-account check
+        # below says why it cannot go there
+        detail = parent.detail_type
+    elif detail_type_problem(current, atype, kind, number) is None:
+        detail = current
+    else:
+        detail = default_detail_type(atype, kind, number).value
+    asked = {"detail_type", "bank_kind", "account_type"} & set(fields)
+    if (
+        detail != current
+        and asked
+        and control_accounts.is_control_number(account.account_number)
+    ):
+        name, purpose = control_accounts.describe(account.account_number)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{account.account_number} {name} is a control account — the "
+                f"software finds it by its number to post {purpose}. Its detail "
+                f"type stays {detail_label(current)}. You can rename it."
+            ),
+        )
+    if _shares_parent(parent) and ("parent_id" in fields or detail != current):
+        parent_why = detail_type_problem(parent.detail_type, atype, kind, number)
+        if detail != parent.detail_type or parent_why:
+            raise _sub_account_refusal(parent, parent_why, account, atype)
+    why = detail_type_problem(detail, atype, kind, number)
+    if why:
+        raise HTTPException(status_code=400, detail=why)
+    if detail != current:
+        _cascade_detail_type(account, current, detail, {account.id})
+    if detail != current or "detail_type" in fields:
+        fields["detail_type"] = detail
+
+
 @router.get("", response_model=list[AccountResponse])
 def list_accounts(
     active_only: bool = False,
     account_type: str = None,
     bank: bool = False,
+    detail_type: str = None,
     db: Session = Depends(get_db),
 ):
     """`?bank=1` lists the bank and credit-card accounts (bank_kind set) —
     what the register, the transfer form and every paid-from / deposit-to
-    picker use."""
+    picker use. `?detail_type=long_term_liability` filters on the detail
+    type (#390)."""
     q = db.query(Account)
     if active_only:
         q = q.filter(Account.is_active)
@@ -131,6 +353,8 @@ def list_accounts(
         q = q.filter(Account.account_type == account_type)
     if bank:
         q = q.filter(Account.bank_kind.isnot(None))
+    if detail_type:
+        q = q.filter(Account.detail_type == detail_type)
     # By number, and accounts without one (a chart imported from QuickBooks
     # Online, whose accounts carry none) by name, so a sub-account named
     # Parent:Child sits with its parent.
@@ -206,6 +430,22 @@ def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
     return removable, kept
 
 
+@router.get("/detail-types")
+def list_detail_types():
+    """QuickBooks' fifteen account types, in picker order, each with its
+    base type (#390). Accounts Receivable and Payable are kept for 1100 and
+    2000 (`control_only`), so the picker offers them nowhere else."""
+    return [
+        {
+            "value": d.value,
+            "label": label,
+            "account_type": base.value,
+            "control_only": d.value in ("accounts_receivable", "accounts_payable"),
+        }
+        for d, (label, base) in DETAIL_TYPES.items()
+    ]
+
+
 @router.get("/unused-seeded")
 def unused_seeded(db: Session = Depends(get_db)):
     """A dry run: the seeded accounts that can go, and the ones that stay."""
@@ -259,6 +499,7 @@ def _in_company_words(db: Session, accounts):
 @router.post("", response_model=AccountResponse, status_code=201)
 def create_account(data: AccountCreate, db: Session = Depends(get_db)):
     _check_bank_kind(data.bank_kind, data.account_type)
+    data.detail_type = _create_detail_type(db, data)
     _check_account_number(data.account_number)
     _reject_duplicate_number(db, data.account_number)
     _check_parent_exists(db, data.parent_id)
@@ -348,6 +589,8 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
             fields.get("bank_kind", account.bank_kind),
             fields.get("account_type", account.account_type),
         )
+    _check_bank_kind_kept(db, account, fields)
+    _update_detail_type(db, account, fields)
 
     for key, val in fields.items():
         setattr(account, key, val)
