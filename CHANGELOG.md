@@ -61,6 +61,18 @@ before the invoice's job changed never credits the job's A/R.
   number or name and can leave the adjusting entries out; a line's Type opens
   its document. Saves as PDF (landscape) and CSV, and as a saved report.
 
+- **The Profit & Loss's totals open the transactions behind them** (#479).
+  Total Income, Total Expenses, Gross Profit, Other Income / Other Expense, Net
+  Income and each sub-account family's "Total …" are links on the Profit &
+  Loss and on one class's P&L, and so are the Total column's subtotals on P&L
+  by Class and P&L by Job (when no columns are left out) and each job's
+  subtotals on P&L by Job. They open the drill-down for every account behind
+  the total, on the statement's dates, class, job and adjusting-entries
+  choice: each line with its account, costs counting against Gross Profit and
+  Net Income, and a running total that ends on the statement's figure. The
+  drill-down's address takes `section=` or `family=` in place of
+  `account_id`, and saves, prints and exports the same way.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

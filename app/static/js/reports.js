@@ -21,7 +21,9 @@ const ReportsPage = {
         'profit-loss-class':    { label: () => T('Profit & Loss'),      open: (p) => ReportsPage.profitLossOfClass(p.class_id, null, p, p.from || null), keep: ['class_id'] },
         'profit-loss-unclassified': { label: () => `${T('P&L')} Unclassified`, open: (p) => ReportsPage.profitLossUnclassified(p) },
         'profit-loss-by-job':   { label: () => `${T('P&L')} by ${T('Job')}`, open: (p) => ReportsPage.profitLossByJob(p) },
-        'account-transactions': { label: 'Drill-down',         open: (p) => ReportsPage.openDrillDown(p.account_id, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null }) },
+        'account-transactions': { label: 'Drill-down',         open: (p) => (p.section || p.family)
+            ? ReportsPage.openSetDrillDown({ section: p.section, family: p.family }, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null, exclude_adjusting: p.exclude_adjusting })
+            : ReportsPage.openDrillDown(p.account_id, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null }) },
         'ar-aging':             { label: () => T('Accounts Receivable Aging'), open: (p) => ReportsPage.arAging(p), asOf: true },
         'ap-aging':             { label: 'Accounts Payable Aging',    open: (p) => ReportsPage.apAging(p), asOf: true },
         'sales-tax':            { label: 'Sales Tax Report',   open: (p) => ReportsPage.salesTax(p) },
@@ -487,6 +489,8 @@ const ReportsPage = {
         const given = (v) => v !== undefined && v !== null && v !== '';
         const parts = [];
         if (given(p.account_id)) parts.push(names.account(p.account_id));
+        if (given(p.section)) parts.push(ReportsPage._setLabel(p.section));
+        if (given(p.family)) parts.push(`Total ${names.account(p.family)}`);
         if (given(p.class_id)) parts.push(names.cls(p.class_id));
         if (given(p.job_id)) parts.push(`${T('Job')}: ${names.job(p.job_id)}`);
         for (const [key, one, many] of [['class_ids', names.cls, T('classes')], ['job_ids', names.job, T('jobs')]]) {
@@ -505,7 +509,7 @@ const ReportsPage = {
         try {
             [lists.cls, lists.account, lists.job] = await Promise.all([
                 has('class_id') || has('class_ids') ? API.get('/classes?include_archived=true').catch(() => []) : [],
-                has('account_id') ? API.get('/accounts').catch(() => []) : [],
+                has('account_id') || has('family') ? API.get('/accounts').catch(() => []) : [],
                 has('job_id') || has('job_ids') ? API.get('/jobs?include_inactive=true').catch(() => []) : [],
             ]);
         } catch (e) { /* the ids stand */ }
@@ -757,6 +761,141 @@ const ReportsPage = {
                     </tbody>
                 </table></div></div>`;
         }, 'Dates', false, { reportType: 'account_transactions', view: 'account-transactions', params, toolbar, actions: backBtn, wide: true, prefill: { period, start_date: startDate, end_date: endDate } });
+    },
+
+    // The P&L's total rows by the key their figure is under, and the set
+    // of accounts behind each (#479).
+    _PL_TOTAL_SETS: {
+        total_operating_income: 'income', total_cogs: 'cogs', operating_gross_profit: 'gross_profit',
+        total_operating_expenses: 'expenses', net_operating_income: 'net_operating_income',
+        total_other_income: 'other_income', total_other_expense: 'other_expense',
+        net_other_income: 'net_other_income', net_income: 'net_income',
+    },
+    // the grid's column keys for the same rows (P&L by Class / by Job)
+    _GRID_TOTAL_SETS: {
+        operating_income: 'income', cogs: 'cogs', operating_gross_profit: 'gross_profit',
+        operating_expenses: 'expenses', net_operating_income: 'net_operating_income',
+        other_income: 'other_income', other_expense: 'other_expense',
+        net_other_income: 'net_other_income', net_income: 'net_income',
+    },
+
+    // A P&L total's own words (#479): what its row says on the statement.
+    _SET_WORDS: {
+        income: () => T('Total Income'), cogs: 'Total Cost of Goods Sold', expenses: 'Total Expenses',
+        other_income: () => T('Total Other Income'), other_expense: 'Total Other Expense',
+        gross_profit: 'Gross Profit', net_operating_income: () => T('Net Operating Income'),
+        net_other_income: () => T('Net Other Income'), net_income: () => T('Net Income'),
+    },
+    _setLabel(section) {
+        const w = Object.hasOwn(ReportsPage._SET_WORDS, String(section || '')) ? ReportsPage._SET_WORDS[section] : null;
+        return w ? (typeof w === 'function' ? w() : w) : String(section || '');
+    },
+
+    // A statement total's link (#479): the row's own words, and its
+    // drill-down for the accounts behind it. `set` is { section } or
+    // { family } (a parent's id); `scope` the class, job and adjusting
+    // choice the statement is on; `from` the view to go back to.
+    _setLink(text, set, label, range, scope, from) {
+        const s = scope || {};
+        const key = set.family ? `family:${set.family}` : `set:${set.section}`;
+        const call = `ReportsPage.openSetDrillDown(${JSON.stringify(set)},${JSON.stringify(label)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},${JSON.stringify(s.class_id || null)},${JSON.stringify(s.class_name || null)},${JSON.stringify(from)},${JSON.stringify({ job_id: s.job_id, job_name: s.job_name, exclude_adjusting: s.exclude_adjusting })})`;
+        return `<a href="javascript:void(0)" class="pl-total-link" style="color:var(--text-link); text-decoration:none;" data-row-key="${escapeHtml(key)}" title="The transactions behind ${escapeHtml(label)}" onclick="${escapeHtml(call)}">${text}</a>`;
+    },
+
+    // The drill-down for a set of accounts (#479): a P&L total (Total
+    // Income, Gross Profit, Net Income, …) or a sub-account family, on the
+    // statement's dates, class, job and adjusting-entries choice. Every
+    // line of the set in date order with its account, signed toward the
+    // total, and a running total that ends on the statement's figure. Its
+    // address is the drill-down's with section= or family= in place of
+    // account_id; Back returns to the statement that opened it.
+    async openSetDrillDown(set, label, startDate, endDate, classId = null, className = null, from = null, extra = {}) {
+        const section = set && set.section ? String(set.section) : null;
+        const family = set && set.family ? parseInt(set.family, 10) || null : null;
+        if (!section && !family) { toast('No total on this row', 'error'); return; }
+        if (section && !Object.hasOwn(ReportsPage._SET_WORDS, section)) { toast(`There is no total called "${section}"`, 'error'); return; }
+        classId = classId ? parseInt(classId, 10) || null : null;
+        extra = extra || {};
+        const jobGiven = extra.job_id !== undefined && extra.job_id !== null && extra.job_id !== '';
+        const jobId = jobGiven ? parseInt(extra.job_id, 10) : null;
+        const jobOn = jobGiven && !Number.isNaN(jobId);
+        const adj = ['1', 'true', true].includes(extra.exclude_adjusting);
+        const back = ReportsPage._view(from) ? from : null;
+        const params = {
+            section: section || undefined, family: family || undefined,
+            period: undefined, start_date: undefined, end_date: undefined,
+            class_id: classId, job_id: jobOn ? String(jobId) : undefined,
+            exclude_adjusting: adj ? 'true' : undefined, from: back || undefined,
+        };
+        ReportsPage._leaveFrom();
+        let backBtn = '';
+        if (back) {
+            const v = ReportsPage._view(back);
+            const backParams = { start_date: startDate, end_date: endDate };
+            if ((v.keep || []).includes('class_id') && classId) backParams.class_id = classId;
+            if (ReportsPage._viewReturn[back]) Object.assign(backParams, ReportsPage._viewReturn[back]);
+            backBtn = ReportsPage._backButton(back, backParams, back === 'profit-loss-class' ? (className || T('Class')) : '');
+        }
+        let name = label || (section ? ReportsPage._setLabel(section) : '');
+        const title = (n, cls, job) => `Drill-down — ${n || 'Total'}${cls ? ` · ${cls}` : ''}${job ? ` · ${T('Job')}: ${job}` : ''}`;
+        await ReportsPage.openPeriodModal(title(name, className, extra.job_name), ReportsPage.defaultPeriod(), async (_period, range, p) => {
+            const q = new URLSearchParams({ start_date: range.start, end_date: range.end });
+            if (p.section) q.set('section', p.section);
+            if (p.family) q.set('family', p.family);
+            if (p.class_id) q.set('class_id', p.class_id);
+            if (p.job_id !== undefined && p.job_id !== null && p.job_id !== '') q.set('job_id', p.job_id);
+            if (p.exclude_adjusting) q.set('exclude_adjusting', 'true');
+            const data = await API.get(`/reports/account-transactions?${q.toString()}`);
+            name = data.set.label;
+            $('#modal-title').textContent = title(name, data.class_name, data.job_name);
+            if (back === 'profit-loss-class' && !className && data.class_name) {
+                const btn = $('#modal-body [data-back-to="profit-loss-class"]');
+                if (btn) btn.textContent = ReportsPage._backText(back, data.class_name);
+            }
+            const rows = (data.entries || []).map(e => {
+                const link = e.source_link || `/#/journal/${e.transaction_id}`;
+                const words = `${e.type}${e.num ? ` ${e.num}` : ''}, ${formatDate(e.date)}`;
+                return `<tr${e.voided ? ' class="row--void" style="color:var(--text-muted); text-decoration:line-through;"' : ''}>
+                    <td>${formatDate(e.date)}</td>
+                    <td>${escapeHtml(e.account_label || '')}</td>
+                    <td><a href="${escapeHtml(link)}" data-row-key="line:${escapeHtml(String(e.line_id))}" aria-label="${escapeHtml(words)}" onclick="ReportsPage._leaveFrom(this)" style="color:var(--text-link); text-decoration:none;">${escapeHtml(e.type)}</a>${e.voided ? ' <span class="badge badge-void" style="text-decoration:none;">void</span>' : ''}</td>
+                    <td>${escapeHtml(e.num || '')}</td>
+                    <td>${escapeHtml(e.name || '')}</td>
+                    <td>${escapeHtml(e.memo || '')}</td>
+                    <td class="amount">${formatCurrency(e.amount)}</td>
+                    <td class="amount">${formatCurrency(e.running_balance)}</td>
+                </tr>`;
+            }).join('');
+            const scope = [
+                data.class_name ? `${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong>` : '',
+                data.job_name ? `${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong>` : '',
+                data.exclude_adjusting ? 'adjusting entries left out' : '',
+            ].filter(Boolean).join(' &middot; ');
+            const signed = ['gross_profit', 'net_operating_income', 'net_other_income', 'net_income'].includes(data.set.section);
+            return `<div id="drilldown-body" style="font-size:11px; color:var(--gray-500);">
+                ${ReportsPage._exportButtons('account-transactions', q.toString())}
+                <p style="margin-bottom:8px; color:var(--gray-500); font-size:12px;">
+                    ${escapeHtml(data.set.label)} &middot; ${data.account_ids.length} ${data.account_ids.length === 1 ? 'account' : 'accounts'}
+                    ${scope ? `&middot; ${scope}` : ''}
+                    &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}
+                    &middot; Total: <strong>${formatCurrency(data.period_net)}</strong>
+                    ${signed ? '<br>Income adds and costs subtract, so the running total ends on the statement\'s figure.' : ''}
+                </p>
+                <div class="table-container"><table>
+                    <caption class="visually-hidden">${escapeHtml(data.set.label)}, ${escapeHtml(data.start_date)} to ${escapeHtml(data.end_date)}</caption>
+                    <thead><tr>
+                        <th scope="col">Date</th><th scope="col">Account</th><th scope="col">Type</th><th scope="col">Num</th><th scope="col">Name</th><th scope="col">Memo</th>
+                        <th scope="col" class="amount">Amount</th><th scope="col" class="amount">Running</th>
+                    </tr></thead>
+                    <tbody>
+                        ${rows || '<tr><td colspan="8" style="text-align:center; color:var(--gray-400);">No entries in range</td></tr>'}
+                        <tr style="font-weight:600; background:var(--gray-50);">
+                            <td colspan="6">${escapeHtml(data.set.label)}</td>
+                            <td class="amount">${formatCurrency(data.period_net)}</td><td></td>
+                        </tr>
+                    </tbody>
+                </table></div></div>`;
+        }, 'Dates', false, { reportType: 'account_transactions', view: 'account-transactions', params, actions: backBtn, wide: true, spotlight: false, prefill: { period: extra.period || null, start_date: startDate, end_date: endDate } });
     },
 
     // The accounts the drill-down steps through: the report's own, in its
@@ -1303,10 +1442,17 @@ const ReportsPage = {
                     blank: '<td></td>'.repeat(cols - 1),
                     cells: (r) => figures(r.amount, r.prior_amount, r.kind === 'total' ? null : r),
                     call: (r) => drillCall(r, range.start, range.end),
+                    total: (r, text) => ReportsPage._setLink(text, { family: r.account_id }, r.label, range, scope, 'profit-loss'),
                 });
             };
+            // a total opens the transactions behind it (#479), on the
+            // statement's dates and its adjusting-entries choice
+            const scope = { exclude_adjusting: params.exclude_adjusting };
+            const totalLabel = (label, key) => ReportsPage._PL_TOTAL_SETS[key]
+                ? ReportsPage._setLink(label, { section: ReportsPage._PL_TOTAL_SETS[key] }, label, range, scope, 'profit-loss')
+                : label;
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
-            const total = (label, key, style) => `<tr style="${style}"><td>${label}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
+            const total = (label, key, style) => `<tr style="${style}"><td>${totalLabel(label, key)}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             return `${pdfBtn}
                 <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}</p>
@@ -1430,8 +1576,9 @@ const ReportsPage = {
     // parents (#416): the server's tree rows (kind account / heading /
     // direct / total, with a depth) or a flat list. `opts.cells(r)` writes
     // a row's amount cells, `opts.call(r)` its drill-down onclick (escaped),
-    // `opts.blank` the empty cells of a heading. A family's total is not a
-    // link: it is several accounts.
+    // `opts.blank` the empty cells of a heading. A family's total opens the
+    // family's lines when the view gives `opts.total(r, text)` (#479): it
+    // is several accounts, so a drill-down for the set.
     _treeRows(rows, opts) {
         return rows.map(r => {
             const depth = r.depth || 0;
@@ -1444,7 +1591,8 @@ const ReportsPage = {
                 return `<tr class="pl-family"><td style="padding-left:${pad}px; font-weight:600;">${label}</td>${opts.blank}</tr>`;
             }
             if (r.kind === 'total') {
-                return `<tr class="pl-family-total" style="font-weight:600;"><td style="padding-left:${pad}px;">${label}</td>${opts.cells(r)}</tr>`;
+                const text = r.account_id && opts.total ? opts.total(r, label) : label;
+                return `<tr class="pl-family-total" style="font-weight:600;"><td style="padding-left:${pad}px;">${text}</td>${opts.cells(r)}</tr>`;
             }
             const text = r.kind === 'direct' ? `<em>${label}</em>` : label;
             return `<tr><td style="padding-left:${pad}px;">${link(text)}</td>${opts.cells(r)}</tr>`;
@@ -2661,11 +2809,13 @@ ReportsPage._pivotGrid = function (spec) {
         + (rows.length
             ? rows.map(a => `<tr><th scope="row" style="padding-left:24px;">${label(a)}</th>${cols.map((_, i) => cell(a, i)).join('')}<td class="amount">${formatCurrency(a.total)}</td></tr>`).join('')
             : `<tr><td style="padding-left:24px; color:var(--gray-400);">None</td>${empties}</tr>`);
+    // the Total column's subtotals open the transactions behind them when
+    // the view gives spec.total(key) (#479)
     const sum = (title, key, style) => `<tr style="${style}"><th scope="row">${title}</th>${cols.map((c, i) => {
         const text = formatCurrency(c[key]);
         const call = spec.sum ? spec.sum(c, key) : null;
         return `<td class="amount" data-col="${i}">${call ? link(call, text) : text}</td>`;
-    }).join('')}<td class="amount">${formatCurrency(totals[key])}</td></tr>`;
+    }).join('')}<td class="amount">${spec.total && spec.total(key) ? link(spec.total(key), formatCurrency(totals[key])) : formatCurrency(totals[key])}</td></tr>`;
     const subtotal = 'font-weight:600; background:var(--gray-50);';
     const heads = cols.map((c, i) => {
         const call = spec.head ? spec.head(c) : null;
@@ -2961,6 +3111,10 @@ ReportsPage.profitLossByClass = async function (prefill) {
                 drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, c.class_id, c.class_name, 'profit-loss-by-class')})`,
                 head: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
                 sum: (c) => `ReportsPage.profitLossOfClass(${args(c.class_id, c.class_name, dates)}, null, this)`,
+                // the Total column is the company's P&L unless the columns
+                // are chosen: then it is theirs alone, and no one drill-down
+                total: (key) => !data.filtered && ReportsPage._GRID_TOTAL_SETS[key]
+                    ? `ReportsPage.openSetDrillDown(${args({ section: ReportsPage._GRID_TOTAL_SETS[key] }, null, range.start, range.end, null, null, 'profit-loss-by-class')})` : null,
             })}`;
     }, "Dates", false, { reportType: 'profit_loss_by_class', view: 'profit-loss-by-class', params, prefill, toolbar, wide: true, afterRender: (_c, first) => { ReportsPage._gridFit(); if (first && prefill && prefill.jump) ReportsPage.gridJumpTo(prefill.jump); } });
 };
@@ -3012,6 +3166,12 @@ ReportsPage.profitLossByJob = async function (prefill) {
                 totalLabel: data.filtered ? 'Total (shown)' : 'Total',
                 drill: (a, c) => `ReportsPage.openDrillDown(${args(a.account_id, a.account_path || a.account_name, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})`,
                 head: (c) => c.job_id ? `ReportsPage._leaveFrom(this);App.navigate(${JSON.stringify(jobUrl(c))})` : null,
+                // a job's subtotal opens that job's transactions behind it,
+                // the Total column's the company's (#479)
+                sum: (c, key) => ReportsPage._GRID_TOTAL_SETS[key]
+                    ? `ReportsPage.openSetDrillDown(${args({ section: ReportsPage._GRID_TOTAL_SETS[key] }, null, range.start, range.end, null, null, 'profit-loss-by-job', { job_id: jobKey(c), job_name: c.job_name })})` : null,
+                total: (key) => !data.filtered && ReportsPage._GRID_TOTAL_SETS[key]
+                    ? `ReportsPage.openSetDrillDown(${args({ section: ReportsPage._GRID_TOTAL_SETS[key] }, null, range.start, range.end, null, null, 'profit-loss-by-job')})` : null,
             })}`;
     }, "Dates", false, { reportType: 'profit_loss_by_job', view: 'profit-loss-by-job', params, prefill, toolbar, wide: true, afterRender: () => ReportsPage._gridFit() });
 };
@@ -3093,9 +3253,16 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 blank: '<td></td>',
                 cells: (r) => `<td class="amount">${formatCurrency(r.amount)}</td>`,
                 call: (r) => escapeHtml(`ReportsPage.openDrillDown(${args(r.account_id, r.account_name, range.start, range.end, id, data.class_name, 'profit-loss-class')})`),
+                total: (r, text) => ReportsPage._setLink(text, { family: r.account_id }, r.label, range, scope, 'profit-loss-class'),
             });
         };
-        const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${formatCurrency(amount)}</td></tr>`;
+        // a subtotal opens this class's transactions behind it (#479)
+        const scope = { class_id: id, class_name: data.class_name };
+        const subtotal = (title, amount, key) => {
+            const set = ReportsPage._PL_TOTAL_SETS[key];
+            const text = set ? ReportsPage._setLink(title, { section: set }, title, range, scope, 'profit-loss-class') : title;
+            return `<tr style="font-weight:600; background:var(--gray-50);"><td>${text}</td><td class="amount">${formatCurrency(amount)}</td></tr>`;
+        };
         return `<div id="class-pl-body">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                 ${ReportsPage._backButton(back || 'profit-loss-by-class', back ? { start_date: range.start, end_date: range.end } : { period, start_date: range.start, end_date: range.end })}
@@ -3107,15 +3274,15 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 <tbody>
                     <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
                     ${section(data.income, 'income')}
-                    ${subtotal(T('Total Income'), data.total_operating_income)}
+                    ${subtotal(T('Total Income'), data.total_operating_income, 'total_operating_income')}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
                     ${section(data.cogs, 'cogs')}
-                    ${subtotal('Gross Profit', data.operating_gross_profit)}
+                    ${subtotal('Gross Profit', data.operating_gross_profit, 'operating_gross_profit')}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
                     ${section(data.expenses, 'expenses')}
-                    ${subtotal('Total Expenses', data.total_operating_expenses)}
-                    ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
-                    <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
+                    ${subtotal('Total Expenses', data.total_operating_expenses, 'total_operating_expenses')}
+                    ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key], key))}
+                    <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${ReportsPage._setLink(T('Net Income'), { section: 'net_income' }, T('Net Income'), range, scope, 'profit-loss-class')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                 </tbody>
             </table></div></div>`;
     }, "Dates", false, { reportType: 'profit_loss_class', view: 'profit-loss-class', params, prefill, toolbar });
