@@ -26,7 +26,9 @@ brought the first batch back. The list now always has every item the
 company can hide, and a box now means "show": everything is ticked to start
 with, untick an item to hide it, tick it again to bring it back, one at a
 time or in batches. An item hidden for another reason (a nonprofit page on a
-business company) keeps the choice made for it. The stored setting is
+business company, an administrator's page for another role) keeps the choice
+made for it, and a nonprofit page unticked on a nonprofit company no longer
+comes back on the next reload. The stored setting is
 unchanged (`hidden_menu` lists the hidden items), so a list saved by an
 earlier version keeps working.
 

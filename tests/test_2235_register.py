@@ -187,6 +187,6 @@ def test_the_hidden_list_round_trips_and_a_save_keeps_earlier_choices(
     settings_js = (ROOT / "app/static/js/settings.js").read_text(encoding="utf-8")
     # the list offers the menu-hidden items (unticked: a tick means shown),
     # and Save keeps the stored keys the page did not offer
-    assert "li.hidden && !byMenu" in settings_js
+    assert "if (d.hiddenKind || d.hiddenRole) return;" in settings_js
     assert "_hiddenMenuToSave(menuBoxes)" in settings_js
     assert "set.has(key) ? '' : 'checked'" in settings_js

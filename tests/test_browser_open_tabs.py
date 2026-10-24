@@ -228,6 +228,8 @@ def test_the_dropdown_by_keyboard(browser, company, books):
         page.wait_for_function("() => location.hash === '#/vendors'")
         settle(page, handled)
         assert page.evaluate(STATE)["hidden"]
+        # the list closed under the keyboard: the button has it, not <body>
+        assert page.evaluate(FOCUSED) == "recent-toggle"
         assert _tabs(page)[0] == {"label": "Vendors", "key": "/vendors", "here": True}
         # Tab out of the open list moves on and closes it behind
         page.focus(TOGGLE)
@@ -353,3 +355,37 @@ def test_hidden_menu_and_recent_leave_each_other_alone(browser, company, books):
     finally:
         page.close()
         company.put("/api/settings", json={"hidden_menu": "[]"})
+
+
+def test_a_mouse_pick_leaves_the_focus_on_the_button(browser, company, books):
+    page, handled = _open_at(browser, company, "#/customers")
+    try:
+        _visit(page, handled, "#/vendors")
+        page.click(TOGGLE)
+        page.click('#recent-menu .recent-screens__link[data-key="/customers"]')
+        page.wait_for_function("() => location.hash === '#/customers'")
+        settle(page, handled)
+        assert page.evaluate(STATE)["hidden"]
+        assert page.evaluate("() => document.activeElement !== document.body")
+        assert page.evaluate(FOCUSED) == "recent-toggle"
+    finally:
+        page.close()
+
+
+def test_a_list_stored_before_seven_shows_the_newest_seven(browser, company, books):
+    """A list stored by the twelve-line version (#336) shows only its
+    newest seven, on the Dashboard too (which adds no line of its own)."""
+    page, handled = _open_at(browser, company, "#/customers")
+    try:
+        _visit(page, handled, "#/")
+        # the stored list, owner kept, as the twelve-line version left it
+        page.evaluate(
+            """() => { const s = JSON.parse(sessionStorage.getItem('slowbooks-open-screens'));
+                       s.tabs = Array.from({ length: 12 }, (_, i) => ({ key: `/old-${i}`, label: `Old ${i}`, n: null, load: 'old' }));
+                       sessionStorage.setItem('slowbooks-open-screens', JSON.stringify(s)); }"""
+        )
+        _reload(page, handled)
+        keys = [t["key"] for t in _tabs(page)]
+        assert keys == [f"/old-{i}" for i in range(11, 4, -1)], keys
+    finally:
+        page.close()

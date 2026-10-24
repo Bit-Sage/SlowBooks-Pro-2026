@@ -1229,19 +1229,26 @@ const SettingsPage = {
                 ${escapeHtml(label)}</label>`;
         let html = '';
         const items = (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') ? [...document.querySelectorAll('#sidebar li')] : [];
+        // A link hidden for its company's kind or the sign-in's role carries
+        // its own mark (App.syncSidebarHidden), so what is offered does not
+        // hang on which of the start-up steps finished first; a section is
+        // offered when at least one of its links is.
+        let section = '';
         items.forEach(li => {
             if (li.closest && li.closest('#recent-screens')) return;
-            const byMenu = !!(li.dataset && li.dataset.hiddenByMenu);
             const parent = li.parentElement;
-            if ((li.hidden && !byMenu) || (parent && typeof parent.closest === 'function' && parent.closest('[hidden]'))) return;
+            if (parent && typeof parent.closest === 'function' && parent.closest('[hidden]')) return;
             if (li.classList.contains('nav-section')) {
                 const name = li.textContent.trim();
-                if (name) html += box(`section:${name}`, `${name} (the whole section)`, false);
+                section = name ? box(`section:${name}`, `${name} (the whole section)`, false) : '';
                 return;
             }
+            const d = li.dataset || {};
+            if (d.hiddenKind || d.hiddenRole) return;
             const link = li.querySelector('.nav-link[data-page]');
             if (!link || link.dataset.page === 'settings') return;
-            html += box(link.dataset.page, link.textContent.trim(), true);
+            html += section + box(link.dataset.page, link.textContent.trim(), true);
+            section = '';
         });
         return html || '<span style="color:var(--text-muted);">The sidebar is not on this page.</span>';
     },

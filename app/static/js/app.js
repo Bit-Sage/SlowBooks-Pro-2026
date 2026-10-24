@@ -410,7 +410,10 @@ const App = {
         try { stored = JSON.parse(sessionStorage.getItem(App.OPEN_TABS_KEY) || 'null'); } catch (e) { stored = null; }
         const list = Array.isArray(stored) ? [] : ((stored && Array.isArray(stored.tabs)) ? stored.tabs : []);
         if (stored && !Array.isArray(stored) && typeof stored.owner === 'string' && !App._tabsOwner) App._tabsOwner = stored.owner;
-        App._openTabs = list.filter(t => t && typeof t.key === 'string' && typeof t.label === 'string');
+        // kept oldest first; a list stored before #462 held up to twelve,
+        // so only the newest seven are kept
+        App._openTabs = list.filter(t => t && typeof t.key === 'string' && typeof t.label === 'string')
+            .slice(-App.OPEN_TABS_MAX);
         return App._openTabs;
     },
 
@@ -542,8 +545,12 @@ const App = {
                 <li class="recent-screens__foot"><button type="button" class="recent-screens__clear" data-recent="clear">Clear</button></li>
             </ul>`;
         if (keep !== null) {
-            const again = (keep && group.querySelector(`[data-key="${CSS.escape(keep)}"], [data-recent="${CSS.escape(keep)}"]`))
-                || group.querySelector('#recent-toggle');
+            // a screen picked from the list closes it: the link that had the
+            // keyboard is now inside the hidden list, so the button takes it
+            // (focus on a hidden link drops to <body>)
+            let again = keep ? group.querySelector(`[data-key="${CSS.escape(keep)}"], [data-recent="${CSS.escape(keep)}"]`) : null;
+            if (again && !open && again.closest('#recent-menu')) again = null;
+            again = again || group.querySelector('#recent-toggle');
             if (again) again.focus();
         }
     },
@@ -2121,35 +2128,43 @@ const App = {
         try { hidden = JSON.parse((s && s.hidden_menu) || '[]'); } catch (e) { hidden = []; }
         if (!Array.isArray(hidden)) hidden = [];
         const set = new Set(hidden.map(String));
-        let section = null;
         let sectionHidden = false;
         $$('#sidebar li').forEach(li => {
             if (li.classList.contains('nav-section')) {
-                section = li;
                 sectionHidden = set.has(`section:${li.textContent.trim()}`);
-                li.hidden = sectionHidden;
                 li.dataset.hiddenByMenu = sectionHidden ? '1' : '';
                 return;
             }
             const link = li.querySelector('.nav-link[data-page]');
             if (!link) return;
-            const hide = sectionHidden || set.has(link.dataset.page);
-            // an item already hidden for another reason (a nonprofit page on a
-            // business company, an admin page for a clerk) is not the menu's
-            // to show again later, so it is not marked (#457)
-            if (hide) { if (!li.hidden || li.dataset.hiddenByMenu) { li.hidden = true; li.dataset.hiddenByMenu = '1'; } }
-            else if (li.dataset.hiddenByMenu) { li.hidden = false; li.dataset.hiddenByMenu = ''; }
+            li.dataset.hiddenByMenu = (sectionHidden || set.has(link.dataset.page)) ? '1' : '';
         });
-        // a section with every link hidden hides too
+        App.syncSidebarHidden();
+    },
+
+    // Three things hide a sidebar item, each with its own mark on the <li>,
+    // so the order they run in does not matter (#457): the menu setting
+    // (data-hidden-by-menu), the company's kind (data-hidden-kind: the
+    // nonprofit pages on a business company, set in index.html and by
+    // applyTerminology) and the sign-in's role (data-hidden-role: the admin
+    // pages for a clerk, set by initSystemInfo). An item shows when none is
+    // set; a section shows unless the menu hid it or every link under it is
+    // hidden. Settings → Sidebar offers what the kind and the role leave.
+    syncSidebarHidden() {
         const items = [...$$('#sidebar li')];
+        items.forEach(li => {
+            if (li.classList.contains('nav-section') || !li.querySelector('.nav-link[data-page]')) return;
+            const d = li.dataset;
+            li.hidden = !!(d.hiddenByMenu || d.hiddenKind || d.hiddenRole);
+        });
         items.forEach((li, i) => {
-            if (!li.classList.contains('nav-section') || li.hidden) return;
+            if (!li.classList.contains('nav-section')) return;
             let j = i + 1, any = false;
             while (j < items.length && !items[j].classList.contains('nav-section')) {
                 if (!items[j].hidden) any = true;
                 j++;
             }
-            if (!any) { li.hidden = true; li.dataset.hiddenByMenu = '1'; }
+            li.hidden = !!li.dataset.hiddenByMenu || !any;
         });
     },
 
@@ -2232,8 +2247,14 @@ const App = {
         const search = $('#global-search');
         if (search) search.placeholder = Terms.text(search.placeholder);
         const np = Terms.isNonprofit();
-        $$('[data-nonprofit]').forEach(el => { el.hidden = !np; });
-        $$('[data-business-only]').forEach(el => { el.hidden = np; });
+        // a sidebar item keeps its own mark for this (see syncSidebarHidden)
+        const kind = (el, hide) => {
+            if (el.matches('#sidebar li')) el.dataset.hiddenKind = hide ? '1' : '';
+            else el.hidden = hide;
+        };
+        $$('[data-nonprofit]').forEach(el => kind(el, !np));
+        $$('[data-business-only]').forEach(el => kind(el, np));
+        App.syncSidebarHidden();
     },
 
     init() {
@@ -2451,8 +2472,9 @@ const App = {
                     // them for other roles, so do not offer the pages.
                     App.ADMIN_ONLY_PAGES.forEach(page => {
                         const link = document.querySelector(`#sidebar .nav-link[data-page="${page}"]`);
-                        if (link && link.parentElement) link.parentElement.hidden = true;
+                        if (link && link.parentElement) link.parentElement.dataset.hiddenRole = '1';
                     });
+                    App.syncSidebarHidden();
                 }
                 if (a.multi_user && a.user) {
                     const right = document.querySelector('.topbar-right');

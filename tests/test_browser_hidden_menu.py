@@ -108,3 +108,76 @@ def test_a_stored_key_the_page_does_not_offer_is_kept(browser, company, books):
     finally:
         page.close()
         company.put("/api/settings", json={"hidden_menu": "[]"})
+
+
+def test_a_nonprofit_keeps_an_unticked_nonprofit_item_hidden_after_reload(
+    browser, company, books
+):
+    """The menu setting ran before the company's kind showed the nonprofit
+    pages, so one unticked came back on every reload."""
+    company.put("/api/settings", json={"company_type": "nonprofit"})
+    company.put("/api/settings", json={"hidden_menu": json.dumps(["in-kind-gifts"])})
+    page, handled = _open_at(browser, company, "#/settings")
+    try:
+        page.wait_for_selector("#hidden-menu-choices input[data-show-menu]")
+        assert page.evaluate(SIDEBAR_HIDDEN, ["in-kind-gifts", "releases"]) == [
+            "in-kind-gifts"
+        ]
+        boxes = page.evaluate(BOXES)
+        assert boxes["in-kind-gifts"] is False and boxes["releases"] is True
+        page.reload()
+        page.wait_for_function("window.App && document.readyState === 'complete'")
+        settle(page, handled)
+        page.wait_for_selector("#hidden-menu-choices input[data-show-menu]")
+        assert page.evaluate(SIDEBAR_HIDDEN, ["in-kind-gifts", "releases"]) == [
+            "in-kind-gifts"
+        ]
+        assert page.evaluate(BOXES)["in-kind-gifts"] is False
+    finally:
+        page.close()
+        company.put(
+            "/api/settings", json={"hidden_menu": "[]", "company_type": "business"}
+        )
+
+
+# The start-up steps, in either order: the menu setting, the company's kind,
+# and the clerk's role (as App.initSystemInfo marks it). The Settings list and
+# the sidebar come out the same, without the admin pages.
+STEPS_IN_ORDER = """(order) => {
+    document.querySelectorAll('#sidebar li').forEach(li => {
+        li.dataset.hiddenByMenu = ''; li.dataset.hiddenRole = ''; });
+    const steps = {
+        menu: () => App.applyHiddenMenu({ hidden_menu: JSON.stringify(['jobs']) }),
+        kind: () => App.applyTerminology(),
+        role: () => {
+            App.ADMIN_ONLY_PAGES.forEach(p => {
+                const a = document.querySelector(`#sidebar .nav-link[data-page="${p}"]`);
+                if (a) a.parentElement.dataset.hiddenRole = '1';
+            });
+            App.syncSidebarHidden();
+        },
+    };
+    order.forEach(s => steps[s]());
+    const div = document.createElement('div');
+    div.innerHTML = SettingsPage._hiddenMenuChoices(JSON.stringify(['jobs']));
+    return {
+        offered: [...div.querySelectorAll('input[data-show-menu]')].map(b => b.dataset.showMenu),
+        hidden: [...document.querySelectorAll('#sidebar li')].filter(li => li.hidden)
+            .map(li => li.textContent.trim()),
+    };
+}"""
+
+
+def test_the_settings_list_does_not_hang_on_the_start_up_order(browser, company, books):
+    page, handled = _open_at(browser, company, "#/customers")
+    try:
+        a = page.evaluate(STEPS_IN_ORDER, ["menu", "role", "kind"])
+        b = page.evaluate(STEPS_IN_ORDER, ["role", "kind", "menu"])
+        c = page.evaluate(STEPS_IN_ORDER, ["kind", "menu", "role"])
+        assert a == b == c
+        admin = page.evaluate("() => App.ADMIN_ONLY_PAGES")
+        assert not set(admin) & set(a["offered"])
+        assert "jobs" in a["offered"] and "in-kind-gifts" not in a["offered"]
+        assert "hr-time-entries" in a["offered"]
+    finally:
+        page.close()
