@@ -18,7 +18,7 @@ from alembic import command
 from alembic.config import Config
 
 ROOT = Path(__file__).resolve().parents[1]
-BEFORE = "d3e4f5a6b7c8"
+BEFORE = "b7d2e9a41c63"
 REVISION = "4ac01efbd72a"
 
 # (key, number, name, type as stored, bank_kind, parent key)
