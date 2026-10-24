@@ -86,6 +86,16 @@ before the invoice's job changed never credits the job's A/R.
   sub-account indented beneath its parent) or one row per account and month. The
   prior-year comparison is off while the columns are on.
 
+- **The Profit & Loss CSV carries the sub-account families** (#489). The
+  export was flat, one row per account by its full path, so a spreadsheet lost
+  the grouping the screen shows. It now prints the screen's tree: the parent's
+  row, its sub-accounts beneath it (the name indented two spaces a level, still
+  the full path), "Direct postings to …" and the family's "Total …", with the
+  prior-year columns when the comparison is on, so the file adds up the way
+  the screen does. The columns are where they were (Section, Account number,
+  Account name, then the figures). One class's P&L exports the same way; P&L by
+  Class and P&L by Job have no families on the screen and stay as they were.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

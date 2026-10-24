@@ -175,16 +175,63 @@ def test_the_pdf_indents_the_families(client, books, monkeypatch):
     assert "7000 - Travel: Hotel" not in by  # the path is the indent now
 
 
-def test_the_csv_stays_flat_with_full_paths(client, books):
+def test_the_csv_carries_the_families_as_the_screen_does(client, books):
+    """#489: the CSV was flat, one row per account by its full path, no
+    family rows; a bookkeeper who opened it lost the grouping the screen
+    shows. Now it prints the screen's tree: the parent's heading, the
+    sub-accounts indented beneath it, "Direct postings to …" and the
+    family's total, in the columns the flat file had."""
     rows = rows_of(client.get(f"/api/reports/profit-loss/csv?{PERIOD}").text)
-    names = [r[2] for r in rows if r[0] == "Expenses"]
-    assert "Travel: Hotel: Lodging Tax" in names
-    assert "Travel" in names and "Total Expenses" in names
-    assert not any(n.startswith("Total Travel") or "Direct" in n for n in names)
-    total = sum(
-        Decimal(r[3]) for r in rows if r[0] == "Expenses" and r[2] != "Total Expenses"
+    assert rows[0] == ["Section", "Account number", "Account name", "Amount"]
+    expenses = [r for r in rows if r[0] == "Expenses"]
+    assert [(r[1], r[2], r[3]) for r in expenses] == [
+        ("6000", "Advertising & Marketing", "400.00"),
+        ("7000", "Travel", ""),
+        ("7010", "  Travel: Hotel", ""),
+        ("7011", "    Travel: Hotel: Lodging Tax", "10.00"),
+        ("7010", "    Direct postings to Hotel", "100.00"),
+        ("", "  Total 7010 - Hotel", "110.00"),
+        ("7020", "  Travel: Flight", "200.00"),
+        ("7000", "  Direct postings to Travel", "50.00"),
+        ("", "Total 7000 - Travel", "360.00"),
+        ("7100", "Vehicle", ""),
+        ("7110", "  Vehicle: Fuel", "30.00"),
+        ("", "Total 7100 - Vehicle", "30.00"),
+        ("", "Total Expenses", "790.00"),
+    ]
+    # it adds up the way the screen does: the top level's accounts and
+    # family totals to the section's total, and so do every account and
+    # direct-postings row; nothing counted twice
+    top = sum(
+        Decimal(r[3])
+        for r in expenses
+        if r[3] and not r[2].startswith(" ") and r[2] != "Total Expenses"
     )
-    assert total == Decimal("790.00")
+    lines = sum(Decimal(r[3]) for r in expenses if r[1] and r[3])
+    assert top == lines == Decimal("790.00")
+
+
+def test_the_prior_year_csv_carries_the_families_in_both_columns(
+    client, db_session, books
+):
+    a = books
+    _je(db_session, date(2025, 4, 1), [(a["flight"], 70, 0), (a["1000"], 0, 70)])
+    db_session.commit()
+    text = client.get(
+        f"/api/reports/profit-loss/csv?{PERIOD}&compare=prior_year&hide_changes=1"
+    ).text
+    rows = rows_of(text)
+    assert rows[0] == [
+        "Section",
+        "Account number",
+        "Account name",
+        "Current",
+        "Prior year",
+    ]
+    by = {r[2].strip(): r for r in rows}
+    assert by["Total 7000 - Travel"][3:] == ["360.00", "70.00"]
+    assert by["Travel: Flight"][3:] == ["200.00", "70.00"]
+    assert by["Travel"][3:] == ["", ""]
 
 
 def test_a_parent_of_another_section_does_not_gather_the_line(
