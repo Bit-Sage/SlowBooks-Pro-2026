@@ -330,6 +330,18 @@ once at start, and an administrator can run the same repair any time
 (`POST /api/accounts/rebuild-balances` answers with the accounts it
 corrected, none when the books agree).
 
+**A bank entry's row says what its link opens.** In the register, a bank
+entry (posted with + Entry, the quick-entry row or Add from the bank feed)
+showed its memo as a link to `#/journal/…`, which read as "this is a
+journal entry", the kind that cannot be edited, when Edit on the same row
+is where it changes. The memo is now words, with a small Posting link
+beside it that says what it is (the journal posting behind this bank
+entry; use Edit to change it), and the posting's own page says "Posted
+from the bank register of <account>; edit it there" with the account
+linked. A void bank entry keeps the plain link. `GET /api/journal/{id}`
+carries `register_account_id` and `register_account_name` for a bank
+entry, empty for everything else.
+
 **The IIF export guards the contact fields too.** The CUST and VEND rows'
 phone, mobile or fax, email, terms and tax id went out as typed, so a
 vendor whose email was `=HYPERLINK(...)` would run in Excel, the documented
