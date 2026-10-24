@@ -82,8 +82,7 @@ def test_editing_a_zero_invoice_up_to_a_total_posts_a_journal(
 ):
     inv = _invoice(client, seed_customer.id, FREE, allow_zero_total=True).json()
     assert (
-        db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id
-        is None
+        db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id is None
     )
 
     r = client.put(f"/api/invoices/{inv['id']}", json={"lines": [PRICED]})
@@ -103,3 +102,75 @@ def test_editing_a_zero_invoice_up_to_a_total_posts_a_journal(
     cr = sum((Decimal(str(line.credit)) for line in lines), Decimal("0"))
     assert dr == cr == Decimal("100.00")
     assert _ar(db_session, seed_accounts) == Decimal("100.00")
+
+
+def _postings(db_session, invoice_id):
+    return (
+        db_session.query(Transaction)
+        .filter(
+            Transaction.source_type == "invoice",
+            Transaction.source_id == invoice_id,
+        )
+        .count()
+    )
+
+
+def test_editing_a_priced_invoice_down_to_zero_drops_its_journal(
+    client, db_session, seed_accounts, seed_customer
+):
+    inv = _invoice(client, seed_customer.id, PRICED).json()
+    old_txn_id = (
+        db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id
+    )
+    assert old_txn_id is not None
+    assert _ar(db_session, seed_accounts) == Decimal("100.00")
+
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"lines": [FREE], "allow_zero_total": True},
+    )
+    assert r.status_code == 200, r.text
+    assert Decimal(r.json()["total"]) == Decimal("0")
+
+    db_session.expire_all()
+    assert (
+        db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id is None
+    )
+    assert db_session.get(Transaction, old_txn_id) is None
+    assert _postings(db_session, inv["id"]) == 0
+    assert _ar(db_session, seed_accounts) == Decimal("0")
+
+
+def test_editing_a_qbo_imported_invoice_posts_it_once(
+    client, db_session, seed_accounts, seed_customer
+):
+    """An invoice the QBO import created (no posting of its own, a QBO
+    mapping) is adopted when its amounts change and posted once. The $0
+    handling posted a fresh journal for any invoice without one, then the
+    adopting branch posted it again: A/R counted the invoice twice."""
+    from app.models.qbo_mapping import QBOMapping
+
+    inv = _invoice(client, seed_customer.id, PRICED).json()
+    invoice = db_session.query(Invoice).filter_by(id=inv["id"]).first()
+    # Make it look imported: no posting of its own, mapped to QBO.
+    txn = db_session.get(Transaction, invoice.transaction_id)
+    invoice.transaction_id = None
+    db_session.flush()
+    db_session.delete(txn)
+    db_session.add(
+        QBOMapping(entity_type="invoice", slowbooks_id=invoice.id, qbo_id="9001")
+    )
+    db_session.commit()
+    assert _ar(db_session, seed_accounts) == Decimal("0")
+
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"lines": [{**PRICED, "rate": 150}]},
+    )
+    assert r.status_code == 200, r.text
+    assert Decimal(r.json()["total"]) == Decimal("150.00")
+
+    db_session.expire_all()
+    assert _postings(db_session, inv["id"]) == 1
+    assert _ar(db_session, seed_accounts) == Decimal("150.00")
+    assert db_session.query(Invoice).filter_by(id=inv["id"]).first().transaction_id

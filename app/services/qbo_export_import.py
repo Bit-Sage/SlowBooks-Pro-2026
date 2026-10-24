@@ -1062,7 +1062,8 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
         db.add(line)
         db.flush()
         txn = _post_invoice_journal(db, invoice, [line], who.name)
-        invoice.transaction_id = txn.id
+        # A $0.00 line posts no journal (#499).
+        invoice.transaction_id = txn.id if txn is not None else None
     for spec in plan["payments"]:
         who = customer(spec["customer"])
         amount = -spec["open"]

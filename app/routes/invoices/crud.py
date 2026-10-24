@@ -499,26 +499,29 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         # path. An edit crossing $0 in either direction is handled: an invoice
         # that had no journal (a $0 one) gets a fresh one when it gains a
         # total, and one edited down to $0 drops its now-empty header rather
-        # than leave a husk behind.
-        from app.models.transactions import Transaction
+        # than leave a husk behind. An invoice the QBO import created is
+        # posted once, by the adopting branch below — posting it here too
+        # would count its A/R twice.
+        if not adopting:
+            from app.models.transactions import Transaction
 
-        old_txn = (
-            db.get(Transaction, invoice.transaction_id)
-            if invoice.transaction_id
-            else None
-        )
-        if old_txn:
-            _reverse_and_delete_journal(db, old_txn.id)
-        new_txn = _post_invoice_journal(
-            db,
-            invoice,
-            effective_lines,
-            invoice.customer.name if invoice.customer else "",
-            existing_transaction=old_txn,
-        )
-        if new_txn is None and old_txn is not None:
-            db.delete(old_txn)
-        invoice.transaction_id = new_txn.id if new_txn is not None else None
+            old_txn = (
+                db.get(Transaction, invoice.transaction_id)
+                if invoice.transaction_id
+                else None
+            )
+            if old_txn:
+                _reverse_and_delete_journal(db, old_txn.id)
+            new_txn = _post_invoice_journal(
+                db,
+                invoice,
+                effective_lines,
+                invoice.customer.name if invoice.customer else "",
+                existing_transaction=old_txn,
+            )
+            if new_txn is None and old_txn is not None:
+                db.delete(old_txn)
+            invoice.transaction_id = new_txn.id if new_txn is not None else None
 
         # Phase 11 (audit fix): post compensating inventory movements for
         # lines that changed. No-op if nothing was inventory-tracked.
