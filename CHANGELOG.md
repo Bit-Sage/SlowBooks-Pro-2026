@@ -21,6 +21,10 @@ the stock. The choice applies to every check print path — a bill payment,
 Pay Bills, a register check and an expense paid from a bank account — through
 one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
 `check_nudge_y_in`; `GET /api/checks/test-print`).
+On pre-printed stock the labels, signature rule, company name and address and
+check number are left blank in place rather than taken out, so every value
+sits where it does on plain stock and one nudge lines them all up; the test
+print uses the form's unsaved stock and nudges.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
