@@ -1171,7 +1171,7 @@ const ReportsPage = {
                         ${total(T('Total Income'), 'total_operating_income', sub)}
                         ${head('Cost of Goods Sold')}
                         ${section(data.cogs, 'cogs')}
-                        ${total('Gross Profit', 'gross_profit', sub)}
+                        ${total('Gross Profit', 'operating_gross_profit', sub)}
                         ${head('Expenses')}
                         ${section(data.expenses, 'expenses')}
                         ${total('Total Expenses', 'total_operating_expenses', sub)}
@@ -2138,6 +2138,7 @@ ReportsPage._grid = { current: -1, count: 0, names: [] };
 ReportsPage._gridTotals = function (data) {
     return {
         income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit,
+        operating_gross_profit: data.total_operating_gross_profit,
         expenses: data.total_expenses, net_operating_income: data.total_net_operating_income,
         operating_income: data.total_operating_income, operating_expenses: data.total_operating_expenses,
         other_income: data.total_other_income, other_expense: data.total_other_expense,
@@ -2191,7 +2192,7 @@ ReportsPage._pivotGrid = function (spec) {
                     ${section(T('Income'), spec.accounts.income)}
                     ${sum(T('Total Income'), 'operating_income', subtotal)}
                     ${section('Cost of Goods Sold', spec.accounts.cogs)}
-                    ${sum('Gross Profit', 'gross_profit', subtotal)}
+                    ${sum('Gross Profit', 'operating_gross_profit', subtotal)}
                     ${section('Expenses', spec.accounts.expenses)}
                     ${sum('Total Expenses', 'operating_expenses', subtotal)}
                     ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
@@ -2612,7 +2613,7 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                     ${subtotal(T('Total Income'), data.total_operating_income)}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
                     ${section(data.cogs, 'cogs')}
-                    ${subtotal('Gross Profit', data.gross_profit)}
+                    ${subtotal('Gross Profit', data.operating_gross_profit)}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
                     ${section(data.expenses, 'expenses')}
                     ${subtotal('Total Expenses', data.total_operating_expenses)}

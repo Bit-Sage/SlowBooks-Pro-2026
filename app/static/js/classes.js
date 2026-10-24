@@ -345,7 +345,7 @@ const ClassesPage = {
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px" id="class-stats">
                 ${stat(T('Income'), ClassesPage.money(d.total_operating_income))}
                 ${stat('Cost of goods', ClassesPage.money(d.total_cogs))}
-                ${stat('Gross profit', ClassesPage.money(d.gross_profit))}
+                ${stat('Gross profit', ClassesPage.money(d.operating_gross_profit))}
                 ${stat('Expenses', ClassesPage.money(d.total_operating_expenses))}
                 ${(d.total_other_income || d.total_other_expense)
                     ? stat('Net other income', ClassesPage.money(d.net_other_income), d.net_other_income < 0 ? 'var(--text-danger)' : null)
@@ -367,7 +367,7 @@ const ClassesPage = {
                             ${subtotal(T('Total Income'), d.total_operating_income)}
                             <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
                             ${section(d.cogs)}
-                            ${subtotal('Gross Profit', d.gross_profit)}
+                            ${subtotal('Gross Profit', d.operating_gross_profit)}
                             <tr><td><strong>Expenses</strong></td><td></td></tr>
                             ${section(d.expenses)}
                             ${subtotal('Total Expenses', d.total_operating_expenses)}

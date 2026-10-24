@@ -315,7 +315,12 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
         "total_income": round(total_operating_income + total_other_income, 2),
         "total_operating_income": total_operating_income,
         "total_cogs": total_cogs,
-        "gross_profit": round(total_operating_income - total_cogs, 2),
+        # gross_profit keeps its 2.27.0 meaning too (all income less cost of
+        # goods); the statement prints the operating one (#390)
+        "gross_profit": round(
+            total_operating_income + total_other_income - total_cogs, 2
+        ),
+        "operating_gross_profit": round(total_operating_income - total_cogs, 2),
         "total_expenses": round(total_operating_expenses + total_other_expense, 2),
         "total_operating_expenses": total_operating_expenses,
         "net_operating_income": net_operating_income,
@@ -397,6 +402,7 @@ _PL_TOTALS = (
     "total_income",
     "total_cogs",
     "gross_profit",
+    "operating_gross_profit",
     "total_expenses",
     "net_income",
     "net_operating_income",
@@ -1084,7 +1090,8 @@ def _pl_pivot(
             "income": float(t["income"] + t["other_income"]),
             "operating_income": float(t["income"]),
             "cogs": float(t["cogs"]),
-            "gross_profit": float(t["income"] - t["cogs"]),
+            "gross_profit": float(t["income"] + t["other_income"] - t["cogs"]),
+            "operating_gross_profit": float(t["income"] - t["cogs"]),
             "expenses": float(t["expenses"] + t["other_expense"]),
             "operating_expenses": float(t["expenses"]),
             "net_operating_income": float(operating),
@@ -1144,6 +1151,7 @@ def _pl_pivot(
         "total_operating_income": shown["operating_income"],
         "total_cogs": shown["cogs"],
         "total_gross_profit": shown["gross_profit"],
+        "total_operating_gross_profit": shown["operating_gross_profit"],
         "total_expenses": shown["expenses"],
         "total_operating_expenses": shown["operating_expenses"],
         "total_net_operating_income": shown["net_operating_income"],
@@ -1231,6 +1239,7 @@ def profit_loss_by_class(
             "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
+            "operating_gross_profit": c["operating_gross_profit"],
             "expenses": c["expenses"],
             "operating_expenses": c["operating_expenses"],
             "net_operating_income": c["net_operating_income"],
@@ -1333,6 +1342,7 @@ def profit_loss_by_job(
             "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
+            "operating_gross_profit": c["operating_gross_profit"],
             "expenses": c["expenses"],
             "operating_expenses": c["operating_expenses"],
             "net_operating_income": c["net_operating_income"],
@@ -1533,7 +1543,7 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
     rows = []
     section(t("Income"), "income", "total_operating_income")
     section("Cost of Goods Sold", "cogs", "total_cogs")
-    rows.append(total("Gross Profit", "gross_profit"))
+    rows.append(total("Gross Profit", "operating_gross_profit"))
     section("Expenses", "expenses", "total_operating_expenses")
     if data.get("has_other"):
         # below Net Operating Income, only when there is something (#390)
@@ -1581,8 +1591,8 @@ def _grid_layout(data: dict, t) -> list[tuple]:
             "Cost of Goods Sold",
             "cogs",
             "Gross Profit",
-            "gross_profit",
-            "total_gross_profit",
+            "operating_gross_profit",
+            "total_operating_gross_profit",
         ),
         (
             "Expenses",

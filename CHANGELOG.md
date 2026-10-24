@@ -73,10 +73,11 @@ them sees the P&L it saw, Net Operating Income included only when there is
 something below it. The printed Total Income and Total Expenses no longer
 include the Other Income / Other Expense accounts (4900 Other Income, 6999
 and 7999 among them): the two together are the old figures. The API keeps
-`total_income` and `total_expenses` as they were (every income / expense
-account, Other included) and adds `total_operating_income` and
-`total_operating_expenses` for the printed figures (on the grids, also
-`operating_income` / `operating_expenses` per column). P&L by Class and by Job
+`total_income`, `total_expenses` and `gross_profit` as they were (every
+income / expense account, Other included) and adds `total_operating_income`,
+`total_operating_expenses` and `operating_gross_profit` for the printed
+figures (on the grids, also `operating_income` / `operating_expenses` /
+`operating_gross_profit` per column and `total_operating_gross_profit`). P&L by Class and by Job
 get the same rows, so the three reports tie line for line; the Classes list
 counts other income and expense with income and expenses, as before. The
 cash flow statement reads the detail type instead of guessing from numbers

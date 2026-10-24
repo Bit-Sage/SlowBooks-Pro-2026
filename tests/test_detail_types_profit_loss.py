@@ -75,7 +75,8 @@ def test_other_income_and_expense_sit_below_net_operating_income(client, books):
     assert d["has_other"] is True
     # the operating sections' totals, as the statement prints them
     assert d["total_operating_income"] == 2000
-    assert d["gross_profit"] == 1500
+    assert d["operating_gross_profit"] == 1500  # what the statement prints
+    assert d["gross_profit"] == 1800  # the 2.27.0 meaning, Other Income included
     assert d["total_operating_expenses"] == 400
     # total_income / total_expenses mean what they meant in 2.27.0
     assert d["total_income"] == 2300
@@ -164,6 +165,12 @@ def test_the_api_totals_keep_their_2_27_meaning_on_the_pl_and_both_grids(client,
     assert pl["net_income"] == round(
         pl["total_income"] - pl["total_cogs"] - pl["total_expenses"], 2
     )
+    # gross_profit keeps its 2.27.0 meaning (all income less cost of goods);
+    # the statement prints operating_gross_profit
+    assert pl["gross_profit"] == round(pl["total_income"] - pl["total_cogs"], 2)
+    assert pl["operating_gross_profit"] == round(
+        pl["total_operating_income"] - pl["total_cogs"], 2
+    )
     for path, cols in (
         ("profit-loss-by-class", "classes"),
         ("profit-loss-by-job", "jobs"),
@@ -175,6 +182,12 @@ def test_the_api_totals_keep_their_2_27_meaning_on_the_pl_and_both_grids(client,
         assert g["total_operating_expenses"] == 400, path
         assert g["unfiltered"]["income"] == 2300, path
         assert g["unfiltered"]["operating_income"] == 2000, path
+        assert g["total_gross_profit"] == round(
+            g["total_income"] - g["total_cogs"], 2
+        ), path
+        assert g["total_operating_gross_profit"] == round(
+            g["total_operating_income"] - g["total_cogs"], 2
+        ), path
         for c in g[cols]:
             assert round(c["income"], 2) == round(
                 c["operating_income"] + c["other_income"], 2
@@ -392,7 +405,7 @@ def test_the_classes_activity_carries_the_grids_figures(client, books):
     company = d["company"]
     assert company["income"] == 2300 and company["other_income"] == 300
     assert company["expenses"] == 450 and company["other_expense"] == 50
-    assert company["gross_profit"] == 1500
+    assert company["gross_profit"] == 1800  # 2.27.0's meaning: all income less COGS
     for row in d["classes"] + [company, d["totals"]]:
         assert round(row["income"] - row["cogs"] - row["expenses"], 2) == round(
             row["net_income"], 2
