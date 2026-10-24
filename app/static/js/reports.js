@@ -2963,8 +2963,13 @@ ReportsPage.possibleDuplicates = async function (prefill) {
             }).join('');
             return head + lines;
         }).join('');
-        const hidden = !data.include_dismissed && data.dismissed_count
-            ? ` · ${data.dismissed_count} marked not a duplicate, not shown` : '';
+        // The count is the groups still open; the marked ones are counted
+        // apart, shown or not, so the line never reads "0 groups" above a
+        // marked group the box is showing (2.27.0 gate, W-32, #458).
+        const hidden = !data.dismissed_count ? ''
+            : data.include_dismissed
+                ? ` · ${data.dismissed_count} marked not a duplicate (shown)`
+                : ` · ${data.dismissed_count} marked not a duplicate, not shown`;
         return `${ReportsPage._exportButtons('possible-duplicates', qs)}
             <p style="margin-bottom:12px; color:var(--gray-500);">${escapeHtml(data.account.number || '')} ${escapeHtml(data.account.name)} · ${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'group' : 'groups'}${hidden}</p>
             <p style="margin-bottom:12px; font-size:12px; color:var(--gray-500);">Entries with the same amount on the same side and the same or a similar payee, at most ${data.window_days} days apart. Nothing here is voided unless you void it.</p>
