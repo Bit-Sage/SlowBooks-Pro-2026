@@ -177,8 +177,8 @@ jobs:
           # the account detail types add Postgres-only migration tests.
           # 147 with opening YTD by quarter (#433): its migration's
           # PostgreSQL test needs SLOWBOOKS_TEST_POSTGRES_URL, like the others.
-          # 127 with past customers (#436): the API sweep's case for the new
-          # labels PDF endpoint skips without WeasyPrint's native stack
+          # 147 with past customers (#436): the API sweep's case for the new
+          # labels PDF endpoint skips without WeasyPrint's native stack.
           MAX_SKIPS: "147"
         shell: pwsh
         run: |
