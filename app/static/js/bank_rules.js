@@ -49,6 +49,10 @@ const BankRulesPage = {
     // rules list is the default.
     _afterSave: null,
 
+    // The kinds of account a rule can file a line under.
+    CATEGORY_TYPES: ['expense', 'income', 'asset', 'liability', 'cogs'],
+    _accounts: [],
+
     // prefill: a rule's fields filled in from another screen (#259).
     async showForm(id = null, prefill = null) {
         let rule = { name: '', pattern: '', account_id: '', vendor_id: '', rule_type: 'contains', priority: 0, is_active: true };
@@ -62,8 +66,9 @@ const BankRulesPage = {
         }
 
         const accounts = await API.get('/accounts');
+        BankRulesPage._accounts = accounts;
         const acctOpts = accounts
-            .filter(a => ['expense','income','asset','liability','cogs'].includes(a.account_type))
+            .filter(a => BankRulesPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}" ${rule.account_id==a.id?'selected':''}>${accountLabel(a)}</option>`).join('');
 
         openModal(id ? 'Edit Bank Rule' : 'New Bank Rule', `
@@ -81,7 +86,7 @@ const BankRulesPage = {
                             <option value="exact" ${rule.rule_type==='exact'?'selected':''}>Exact Match</option>
                         </select></div>
                     <div class="form-group"><label>Category Account</label>
-                        <select name="account_id"><option value="">-- None --</option>${acctOpts}</select></div>
+                        ${AccountQuickAdd.picker(`<select name="account_id" id="rule-account"><option value="">-- None --</option>${acctOpts}</select>`, 'bank-rule')}</div>
                     <div class="form-group"><label>Priority</label>
                         <input name="priority" type="number" value="${rule.priority}" title="Higher = checked first"></div>
                     <div class="form-group"><label>Active</label>
@@ -131,3 +136,14 @@ const BankRulesPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 };
+
+// The rule's Category Account adds a new account (#492, the shared quick
+// add of #485): of the kinds a rule files under, picked on save, and the
+// keyboard goes back to the picker.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('bank-rule', {
+        types: BankRulesPage.CATEGORY_TYPES,
+        compact: true,
+        chart: () => BankRulesPage._accounts,
+    });
+}

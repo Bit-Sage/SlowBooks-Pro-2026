@@ -74,3 +74,24 @@ def test_the_purchase_order_conversion_offers_it_on_each_line():
     po = _src("purchase_orders.js")
     assert 'cell = AccountQuickAdd.picker(`<select class="po-conv-account"' in po
     assert "PurchaseOrdersPage._convAccounts = posting;" in po
+
+
+def test_the_review_line_and_the_bank_rule_form_use_it():
+    # #492: the review's category picker keeps a new account as a pick is
+    banking = _src("banking.js")
+    assert "'review', { ctx: accountId })" in banking
+    reg = banking[banking.index("AccountQuickAdd.register('review', {") :]
+    reg = reg[: reg.index("});")]
+    assert "change: true," in reg and "types: BankingPage.CATEGORY_TYPES," in reg
+    assert "added: () => BankingPage._fillReviewCats()," in reg
+    assert "if (cfg.change) select.dispatchEvent(new Event('change'" in AQA
+    rules = _src("bank_rules.js")
+    assert (
+        'AccountQuickAdd.picker(`<select name="account_id" id="rule-account">' in rules
+    )
+    assert "AccountQuickAdd.register('bank-rule', {" in rules
+    assert (
+        "CATEGORY_TYPES: ['expense', 'income', 'asset', 'liability', 'cogs']," in rules
+    )
+    index = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert index.index("account_quick_add.js") < index.index("bank_rules.js")

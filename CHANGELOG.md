@@ -21,6 +21,14 @@ back to the picker either way. A read-only or accountant sign-in is not
 offered it. Items keep their own quick add, which records an item in a cost
 of goods account.
 
+**A new account from the bank-feed review and the Bank Rule form** (#492). The
+"Pick a category" picker on a To review line and the Bank Rule form's Category
+Account have the same Add button. On a review line the new account is picked
+and kept on the line, as a category you choose is, and every other line can
+choose it too; on the rule form it becomes the rule's category. Reviewing a
+feed with a new kind of expense no longer means leaving the review for the
+Chart of Accounts.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

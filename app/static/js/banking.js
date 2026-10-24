@@ -800,7 +800,7 @@ const BankingPage = {
                 <td>${formatDate(t.date)}</td>
                 <td>${escapeHtml(t.payee || '')}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(t.description || '')}</div></td>
                 <td class="amount" style="${t.amount >= 0 ? 'color:var(--text-success)' : 'color:var(--text-danger)'}">${formatCurrency(t.amount)}</td>
-                <td><select id="cat-${t.id}" class="review-cat" data-write data-current="${t.category_account_id || ''}" aria-label="Category" onchange="BankingPage.setCategory(${t.id}, this)"><option value="">${t.category_name ? escapeHtml(t.category_name) : 'Pick a category…'}</option></select></td>
+                <td>${AccountQuickAdd.picker(`<select id="cat-${t.id}" class="review-cat" data-write data-current="${t.category_account_id || ''}" aria-label="Category" onchange="BankingPage.setCategory(${t.id}, this)"><option value="">${t.category_name ? escapeHtml(t.category_name) : 'Pick a category…'}</option></select>`, 'review', { ctx: accountId })}</td>
                 <td style="white-space:nowrap;" data-write>
                     <button class="btn btn-sm btn-primary" onclick="BankingPage.addLine(${t.id}, ${accountId})">Add</button>
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.showMatch(${t.id}, ${accountId})">Match</button>
@@ -828,9 +828,18 @@ const BankingPage = {
 
     async _fillCategorySelects(kind) {
         const accounts = await API.get('/accounts?active_only=true');
-        const usable = accounts.filter(a => ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'].includes(a.account_type));
+        BankingPage._reviewAccounts = accounts.filter(a => BankingPage.CATEGORY_TYPES.includes(a.account_type));
+        BankingPage._fillReviewCats();
+    },
+
+    // Every review line's category picker drawn from the chart as it is
+    // now; a line keeps its own choice (one picked a moment ago, not yet
+    // reloaded, included).
+    _reviewAccounts: null,
+    _fillReviewCats() {
+        const usable = BankingPage._reviewAccounts || [];
         document.querySelectorAll('select.review-cat').forEach(sel => {
-            const current = sel.dataset.current;
+            const current = sel.value || sel.dataset.current;
             sel.innerHTML = '<option value="">Pick a category…</option>' + usable.map(a =>
                 `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${accountLabel(a)}${a.bank_kind ? ' (' + BankingPage._kindLabel(a.bank_kind).toLowerCase() + ')' : ''}</option>`).join('');
         });
@@ -1474,6 +1483,17 @@ const BankingPage = {
             next: (select) => (select.id === 'qe-category'
                 ? document.getElementById('qe-out')
                 : document.querySelector('#modal-body input[name="description"]')),
+        });
+        // A review line's category (#492): the new account is picked on that
+        // line and saved there as a pick is (its change event), and every
+        // other line can choose it. The keyboard goes back to the picker.
+        AccountQuickAdd.register('review', {
+            types: BankingPage.CATEGORY_TYPES,
+            compact: true,
+            change: true,
+            chart: () => (BankingPage._reviewAccounts = BankingPage._reviewAccounts || []),
+            excludeId: (accountId) => accountId,
+            added: () => BankingPage._fillReviewCats(),
         });
     },
 
