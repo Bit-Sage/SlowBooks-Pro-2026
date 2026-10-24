@@ -194,6 +194,13 @@ const SettingsPage = {
                             <input name="default_tax_rate" type="number" min="0" max="100" step="0.0001"
                                 title="A percent from 0 to 100, up to four decimal places: 8.875 means 8.875%"
                                 value="${escapeHtml(SettingsPage._ratePercent(s.default_tax_rate))}"></div>
+                        <div class="form-group full-width"><label for="new-lines-taxable">New lines and items are taxable</label>
+                            <select id="new-lines-taxable" name="new_lines_taxable" aria-describedby="new-lines-taxable-help">
+                                <option value="true" ${s.new_lines_taxable !== 'false' ? 'selected' : ''}>Yes: a new line's Tax box starts ticked, and a new item is taxable</option>
+                                <option value="false" ${s.new_lines_taxable === 'false' ? 'selected' : ''}>No: new lines and new items start untaxed</option>
+                            </select>
+                            <div id="new-lines-taxable-help" style="font-size:10px; color:var(--text-muted); margin-top:4px;">For a company that charges no sales tax. A line still takes its item's own setting, you can tick Tax on any line, and a tax-exempt ${T('customer')} is never charged.</div>
+                        </div>
                         <div class="form-group"><label>${`${T('Invoice')} Prefix`}</label>
                             <input name="invoice_prefix" value="${escapeHtml(s.invoice_prefix || '')}" placeholder="e.g. INV-"></div>
                         <div class="form-group"><label>${`Next ${T('Invoice')} #`}</label>

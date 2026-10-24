@@ -103,7 +103,7 @@ const ItemsPage = {
 
     async showForm(id = null) {
         let item = { name:'', code:'', item_type:'service', description:'', rate:0, cost:0,
-            income_account_id:'', expense_account_id:'', is_taxable:true,
+            income_account_id:'', expense_account_id:'', is_taxable: TaxDefault.on(),
             track_inventory:false, quantity_on_hand:0, reorder_point:0,
             asset_account_id:'', avg_cost:0 };
         if (id) item = await API.get(`/items/${id}`);

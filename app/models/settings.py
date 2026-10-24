@@ -52,6 +52,13 @@ DEFAULT_SETTINGS = {
     "ask_password_on_start": "false",
     "default_terms": "Net 30",
     "default_tax_rate": "0.0",
+    # "false" starts every new sales line (invoice, estimate, sales receipt,
+    # credit memo, recurring, Quick Entry) and every new item untaxed (#486):
+    # a service company that charges no sales tax stops unticking the Tax box
+    # line by line. "true" (the default) is how it always was. A line or an
+    # item that says is_taxable keeps what it says; a tax-exempt customer
+    # still makes every line untaxed.
+    "new_lines_taxable": "true",
     "invoice_prefix": "",
     "invoice_next_number": "1001",
     "estimate_prefix": "E-",

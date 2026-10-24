@@ -141,6 +141,15 @@ at a time, never saw them, and behaves as before.
   bill keeps its number and the next becomes "111 (2)", then "(3)". A purchase
   order turned into a bill whose "BILL-…" number the vendor already has takes
   "BILL-…-2".
+**A company that charges no sales tax can stop unticking the Tax box on every
+line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
+items are taxable". It stays Yes, as before, unless you change it. Set it to
+No and every new invoice, estimate, sales receipt, credit memo, recurring
+invoice and Quick Entry line starts untaxed, and so does every new item, on
+the Items form and in the line's quick add. You can still tick Tax on any
+line, an item marked taxable still taxes the line it is picked on, and a
+tax-exempt customer is still never charged. Through the API, a line or item
+sent without `is_taxable` follows the same setting.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

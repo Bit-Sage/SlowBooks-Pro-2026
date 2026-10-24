@@ -15,6 +15,7 @@ from app.schemas.items import (
     LowStockResponse,
 )
 from app.routes._helpers import get_or_404, reject_null_updates
+from app.services.settings_service import new_lines_taxable
 from app.services.inventory_service import (
     current_valuation,
     record_adjustment,
@@ -252,6 +253,8 @@ def create_item(data: ItemCreate, db: Session = Depends(get_db)):
     _refuse_duplicate_name(db, data.name)
     _refuse_duplicate_code(db, data.code)
     fields = data.model_dump()
+    if fields.get("is_taxable") is None:
+        fields["is_taxable"] = new_lines_taxable(db)
     # as_of dates the opening entry only; it is not an Item column.
     as_of = fields.pop("as_of", None)
     opening_qty = Decimal("0")

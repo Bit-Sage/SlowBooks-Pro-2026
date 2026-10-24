@@ -162,6 +162,23 @@ const SalesLines = {
 };
 window.SalesLines = SalesLines;
 
+// Whether a new sales line's Tax box starts ticked and a new item is taxable:
+// the company's "New lines and items are taxable" setting (#486), on unless
+// it is "false". A stored line or an item that says is_taxable keeps it.
+// Here beside SalesLines, which every sales form already loads.
+const TaxDefault = {
+    on() {
+        const s = (typeof App !== 'undefined' && App && App.settings) || {};
+        return s.new_lines_taxable !== 'false';
+    },
+    // The Tax box's attribute for a line drawn from `line` (blank = new).
+    checked(line) {
+        const flag = line ? line.is_taxable : undefined;
+        return (flag === true || (flag !== false && TaxDefault.on())) ? 'checked' : '';
+    },
+};
+window.TaxDefault = TaxDefault;
+
 const InvoicesPage = {
     // The document's literal face, as the PDF prints it: a flagged pledge is a
     // PLEDGE, everything else an INVOICE regardless of company vocabulary.
@@ -805,7 +822,7 @@ const InvoicesPage = {
             ${InvoicesPage.lineClasses() ? Nonprofit.classCellHtml('line-class', line.class_id) : ''}
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="InvoicesPage.recalc()"></td>
             <td><input class="line-rate" type="number" step="0.0001" ${Number(line.rate) < 0 || items.some(i => i.is_discount && i.id == line.item_id) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="InvoicesPage.recalc()"></td>
-            <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="InvoicesPage.recalc()"></td>
+            <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked(line)} onchange="InvoicesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="InvoicesPage.removeLine(${idx})">X</button></td>
         </tr>`;

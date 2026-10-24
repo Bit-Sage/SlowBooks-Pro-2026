@@ -187,23 +187,28 @@ def resolve_line_taxable(db: Session, lines_data, customer=None) -> None:
     defaulted from the item, so an exemption that only filled unset lines
     was never consulted for anything made at the window (2.16.2 gate,
     skytech: 8.90 charged where 0.00 was owed). Otherwise an unset line
-    takes the item's flag, else taxable. Mutates the pydantic line objects
-    in place so the same objects feed both the totals and the stored rows."""
+    takes the item's flag, else the company's "New lines and items are
+    taxable" setting (#486; on by default, so taxable as before). Mutates
+    the pydantic line objects in place so the same objects feed both the
+    totals and the stored rows."""
     from app.models.items import Item
+    from app.services.settings_service import new_lines_taxable
 
     cust_taxable = True if customer is None else (customer.is_taxable is not False)
+    company_default = None
     for ln in lines_data:
         if not cust_taxable:
             ln.is_taxable = False
             continue
         if getattr(ln, "is_taxable", None) is not None:
             continue
-        default = cust_taxable
-        if default and getattr(ln, "item_id", None):
-            item = db.get(Item, ln.item_id)
-            if item is not None and item.is_taxable is False:
-                default = False
-        ln.is_taxable = default
+        item = db.get(Item, ln.item_id) if getattr(ln, "item_id", None) else None
+        if item is not None:
+            ln.is_taxable = item.is_taxable is not False
+            continue
+        if company_default is None:
+            company_default = new_lines_taxable(db)
+        ln.is_taxable = company_default
 
 
 def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
