@@ -636,11 +636,11 @@ const BillsPage = {
             };
             if (id) {
                 await API.put(`/bills/${id}`, body);
-                toast('Bill updated');
+                toastPosted('Bill updated');
             } else {
                 const result = await API.post('/bills', body);
                 await ScanHelper.attachAfterSave('bill', result.id);
-                toast('Bill saved');
+                toastPosted('Bill saved');
             }
             closeModal();
             App.navigate('#/bills');
@@ -774,7 +774,7 @@ const BillsPage = {
                 paid.push(v.name);
             }
             BillsPage._payKey = null;
-            toast(byVendor.size > 1 ? `Bills paid: ${byVendor.size} payments, one per vendor` : 'Bills paid');
+            toastPosted(byVendor.size > 1 ? `Bills paid: ${byVendor.size} payments, one per vendor` : 'Bills paid');
             closeModal();
             App.navigate('#/bills');
         } catch (err) {

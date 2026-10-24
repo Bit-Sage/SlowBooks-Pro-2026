@@ -549,7 +549,7 @@ const PaymentsPage = {
         try {
             await API.post('/payments', data, null, { 'Idempotency-Key': PaymentsPage._requestKey });
             PaymentsPage._requestKey = null;
-            toast('Payment recorded');
+            toastPosted('Payment recorded');
             App.refresh();
         } catch (err) {
             toast(err.message, 'error');

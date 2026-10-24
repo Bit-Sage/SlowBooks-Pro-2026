@@ -117,7 +117,7 @@ const TaxPage = {
                 pay_from_account_id: parseInt(form.pay_from_account_id.value),
                 check_number: form.check_number.value || null,
             });
-            toast('Sales tax payment recorded');
+            toastPosted('Sales tax payment recorded');
             App.refresh();
         } catch (err) { toast(err.message, 'error'); }
     },

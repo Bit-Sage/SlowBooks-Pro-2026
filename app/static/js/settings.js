@@ -425,7 +425,7 @@ const SettingsPage = {
                     </div>
                 </div>
 
-                <div class="settings-section" role="group" aria-labelledby="settings-h-sounds">
+                <div class="settings-section" id="settings-sounds" role="group" aria-labelledby="settings-h-sounds">
                     <h3 id="settings-h-sounds">Sounds</h3>
                     <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
                         A personal preference, kept per sign-in: it follows you to another computer, and everyone sets their own.
@@ -436,7 +436,7 @@ const SettingsPage = {
                         Play a sound when a transaction posts
                     </label>
                     <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">
-                        A short chime on a successful save, post, payment, or finished reconciliation — the way QuickBooks Desktop beeped. Off by default (#476).
+                        A short chime when a transaction posts — an invoice, bill, payment, deposit, check, journal entry, transfer or pay run — the way QuickBooks Desktop beeped. Deletes, voids and saved settings stay silent. Off by default (#476).
                     </div>
                 </div>
 
@@ -1546,9 +1546,17 @@ const SettingsPage = {
     // the preferences API (post_sound), not the company-settings form, so it
     // follows a person across machines and each user keeps their own. The
     // checkbox saves itself on change, like the OCR engine above.
+    // A read-only or accountant sign-in cannot write preferences (PUT
+    // /api/preferences answers 403), so the section is hidden for them, the
+    // way other controls they cannot save are; their chime stays off.
     async loadPostSoundPref() {
         const box = $('#post-sound-pref');
         if (!box) return;
+        const section = document.getElementById('settings-sounds');
+        if (typeof App !== 'undefined' && App.isLocked && App.isLocked()) {
+            if (section) section.hidden = true;
+            return;
+        }
         try {
             const pref = await API.get('/preferences/post_sound');
             box.checked = !!(pref && pref.value && pref.value.enabled);
@@ -1556,13 +1564,22 @@ const SettingsPage = {
     },
 
     async savePostSound(on) {
+        // The change event is a user gesture: make (or resume) the audio
+        // context now, before the await, so WKWebView does not leave it
+        // suspended — the later chime is no longer inside a gesture.
+        if (typeof setPostSoundEnabled === 'function') setPostSoundEnabled(!!on);
+        if (on && typeof primePostAudio === 'function') primePostAudio();
         try {
             await API.put('/preferences/post_sound', { value: { enabled: !!on } });
-            // keep utils.js's cache current so toast() rings right away; the
-            // success toast below is the preview when turning it on
-            if (typeof setPostSoundEnabled === 'function') setPostSoundEnabled(!!on);
             toast(on ? 'Sound on when a transaction posts' : 'Sound off when a transaction posts');
-        } catch (err) { toast(err.message, 'error'); }
+            // the preview: what a posting will sound like
+            if (on && typeof playPostSound === 'function') playPostSound();
+        } catch (err) {
+            if (typeof setPostSoundEnabled === 'function') setPostSoundEnabled(!on);
+            const box = $('#post-sound-pref');
+            if (box) box.checked = !on;
+            toast(err.message, 'error');
+        }
     },
 
     async loadOcrEnginePref() {

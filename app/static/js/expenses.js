@@ -202,7 +202,7 @@ const ExpensesPage = {
                 is_billable: !!(form.is_billable && form.is_billable.checked),
             });
             await ScanHelper.attachAfterSave('expense', result.id);
-            toast('Expense recorded');
+            toastPosted('Expense recorded');
             closeModal();
             App.navigate('#/expenses');
         } catch (err) { toast(err.message, 'error'); }

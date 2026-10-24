@@ -156,29 +156,65 @@ function toastMs(message, type) {
 // An optional short chime when a transaction posts (#476, asked for by a
 // QuickBooks Desktop user who keys a stack and misses the toast). Off by
 // default, per-user (the preference post_sound, set on the Settings page).
-// toast() rings it on any success toast — save, post, record payment and
-// finish reconcile all end in one — and never on an error or warning.
-// App.init reads the preference once and calls setPostSoundEnabled (the
-// fetch lives in app.js, which already sends its own; this file never does),
-// the Settings toggle keeps the cache current, and playPostSound() reads the
-// cache so toast() stays synchronous.
+// It rings only where a transaction posts — the posting paths call
+// toastPosted() (or toastAction with opts.posted) — never on a plain toast,
+// so a delete, a void, a copy or a saved setting stays silent. App.init
+// reads the preference once and calls setPostSoundEnabled (the fetch lives
+// in app.js, which already sends its own; this file never does), the
+// Settings toggle keeps the cache current, and playPostSound() reads the
+// cache so the toast stays synchronous.
 let _postSoundOn = false;
 let _postAudioCtx = null;
 
-function setPostSoundEnabled(on) { _postSoundOn = !!on; }
+function setPostSoundEnabled(on) {
+    _postSoundOn = !!on;
+    if (_postSoundOn) _armPostAudio();
+}
 
-// Two short sine tones, about 120 ms, quiet — an original chime, not the
-// QuickBooks sound, and no audio asset. Guarded for a browser or WebView
-// with no AudioContext and for an autoplay refusal before the first user
-// gesture: both are caught, so a post never throws because of the sound.
-// The context is made on first use (after a gesture).
-function playPostSound() {
+// The AudioContext is made (or resumed) inside a user gesture: a context
+// created outside one starts suspended in WKWebView (macOS) and stays
+// silent, and a toast after an awaited save is no longer in the gesture.
+// So the setting's change handler primes it, and so does the first click or
+// key press once the sound is on.
+function primePostAudio() {
     if (!_postSoundOn) return;
     try {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
         if (!_postAudioCtx) _postAudioCtx = new Ctx();
+        if (_postAudioCtx.state === 'suspended' && _postAudioCtx.resume) {
+            _postAudioCtx.resume().catch(() => {});
+        }
+    } catch (e) { /* no audio: silent */ }
+}
+
+let _postAudioArmed = false;
+function _armPostAudio() {
+    if (_postAudioArmed || typeof document === 'undefined' || !document.addEventListener) return;
+    _postAudioArmed = true;
+    const prime = () => {
+        primePostAudio();
+        if (_postAudioCtx && _postAudioCtx.state === 'running') {
+            document.removeEventListener('pointerdown', prime, true);
+            document.removeEventListener('keydown', prime, true);
+            _postAudioArmed = false;
+        }
+    };
+    document.addEventListener('pointerdown', prime, true);
+    document.addEventListener('keydown', prime, true);
+}
+
+// Two short sine tones, about 120 ms, quiet — an original chime, not the
+// QuickBooks sound, and no audio asset. Guarded for a browser or WebView
+// with no AudioContext and for an autoplay refusal: both are caught, so a
+// post never throws because of the sound.
+function playPostSound() {
+    if (!_postSoundOn) return;
+    try {
+        if (!_postAudioCtx) primePostAudio();
         const ctx = _postAudioCtx;
+        if (!ctx) return;
+        if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
         const now = ctx.currentTime;
         // a rising two-note chime; each tone fades in and out so it doesn't click
         [[880, 0], [1320, 0.06]].forEach(([freq, at]) => {
@@ -203,7 +239,14 @@ function toast(message, type = 'success') {
     el.textContent = message;
     container.appendChild(el);
     setTimeout(() => el.remove(), toastMs(message, type));
-    if (type === 'success') playPostSound();  // #476: the post chime, when it's on
+}
+
+// The success toast of a posting path — an invoice, bill, payment, sales
+// receipt, deposit, check or expense, journal entry, transfer, pay run,
+// credit memo, a register row — with the post chime when it is on (#476).
+function toastPosted(message) {
+    toast(message);
+    playPostSound();
 }
 
 // Chart colours for the current theme, from the --chart-* colours the
@@ -444,6 +487,8 @@ function chartFigures(opts = {}) {
 //   focusOnShow  move focus to the action button when the toast appears
 //   returnFocus  an element, or a function returning one, to focus when the
 //                toast goes (the row the question is about)
+//   posted       the toast confirms a transaction that posted: ring the
+//                post chime when it is on (#476), as toastPosted() does
 // The auto-dismiss never fires while the toast has focus or the pointer is
 // over it, so a keyboard user is not raced; it re-arms when both leave.
 function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = null, opts = {}) {
@@ -487,6 +532,7 @@ function toastAction(message, actionLabel, onClick, ms = 8000, dismissLabel = nu
         el.appendChild(no);
     }
     container.appendChild(el);
+    if (opts.posted) playPostSound();
     if (opts.focusOnShow) focusFor(btn, true);
     // auto-dismiss, but hold while the pointer or the keyboard is on it
     const arm = () => setTimeout(() => {

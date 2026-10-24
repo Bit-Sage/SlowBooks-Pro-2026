@@ -257,7 +257,7 @@ const InvoicesPage = {
             const cm = await API.post(`/invoices/${id}/write-off`, {
                 date: form.date.value, amount: parseFloat(form.amount.value), memo: form.memo.value || null,
             });
-            toast(`Written off as credit memo ${cm.memo_number}`);
+            toastPosted(`Written off as credit memo ${cm.memo_number}`);
             closeModal();
             App.navigate('#/invoices');
         } catch (err) { toast(err.message, 'error'); }
@@ -524,7 +524,7 @@ const InvoicesPage = {
         try {
             const data = await API.post(`/payments/${provider || 'stripe'}/check-status/${id}`);
             if (data.status === 'payment_recorded') {
-                toast('Payment received and recorded');
+                toastPosted('Payment received and recorded');
                 closeModal();
                 App.navigate('#/invoices');
             } else if (data.status === 'already_processed') {
@@ -945,7 +945,7 @@ const InvoicesPage = {
                 return id ? API.put(`/invoices/${id}`, body) : API.post('/invoices', body);
             }, InvoicesPage._overLimitOk ? { allow_over_credit_limit: true } : {});
             if (!saved) return; // $0.00 and the user said no: the form stays open
-            toast(Terms.text(id ? 'Invoice updated' : 'Invoice created'));
+            toastPosted(Terms.text(id ? 'Invoice updated' : 'Invoice created'));
             App.refresh();
         } catch (err) { toast(err.message, 'error'); }
     },

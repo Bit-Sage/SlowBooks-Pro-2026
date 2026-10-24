@@ -201,7 +201,7 @@ const VendorCreditsPage = {
                 class_id: classIdFromForm(form),
                 lines,
             });
-            toast('Vendor credit created');
+            toastPosted('Vendor credit created');
             closeModal();
             App.navigate('#/vendor-credits');
         } catch (err) { toast(err.message, 'error'); }

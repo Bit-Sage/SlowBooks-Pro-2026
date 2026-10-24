@@ -393,7 +393,7 @@ const PayrollPage = {
             await (stale
                 ? API.post(`/payroll/${id}/process?acknowledge_stale=1`)
                 : API.post(`/payroll/${id}/process`));
-            toast('Payroll processed');
+            toastPosted('Payroll processed');
             App.navigate('#/payroll');
         } catch (err) { toast(err.message, 'error'); }
     },

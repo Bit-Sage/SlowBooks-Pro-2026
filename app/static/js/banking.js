@@ -294,7 +294,7 @@ const BankingPage = {
         if (!d) return;
         try {
             await API.post(`/banking/accounts/${feedId}/post-legacy-balance`, { date: d });
-            toast('Opening balance posted');
+            toastPosted('Opening balance posted');
             BankingPage.go('#/banking');
         } catch (err) { toast(err.message, 'error'); }
     },
@@ -1044,7 +1044,7 @@ const BankingPage = {
         };
         try {
             await API.post('/banking/transactions', data);
-            toast('Entry posted');
+            toastPosted('Entry posted');
             BankingPage.payeeTyped(data.payee, inn > 0, 'qe-payee');
             await BankingPage.go(`#/banking/${accountId}`);
             BankingPage._focusPayee();
@@ -1335,7 +1335,7 @@ const BankingPage = {
         if (entryId) { await BankingPage._putEntry(entryId, data, accountId); return; }
         try {
             await API.post('/banking/transactions', data);
-            toast('Entry posted');
+            toastPosted('Entry posted');
             BankingPage.payeeTyped(data.payee, parseFloat(data.amount) > 0, 'qe-payee');
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
@@ -1351,7 +1351,7 @@ const BankingPage = {
     async _putEntry(entryId, data, accountId) {
         try {
             const saved = await API.put(`/banking/entries/${entryId}`, data);
-            toast(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
+            toastPosted(saved.note ? `Entry saved. ${saved.note}` : 'Entry saved');
             closeModal();
             BankingPage.go(`#/banking/${accountId}`);
         } catch (err) {
@@ -1562,7 +1562,7 @@ const BankingPage = {
                 memo: form.memo.value || null,
                 reference: form.reference.value || null,
             });
-            toast('Transfer posted');
+            toastPosted('Transfer posted');
             closeModal();
             BankingPage.go(`#/banking/${t.from_account_id}`);
         } catch (err) { toast(err.message, 'error'); }

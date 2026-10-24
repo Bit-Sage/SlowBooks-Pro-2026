@@ -333,7 +333,7 @@ const JournalPage = {
                 is_adjusting: !!(form.is_adjusting && form.is_adjusting.checked),
                 lines,
             });
-            toast(form.is_adjusting && form.is_adjusting.checked ? 'Adjusting entry created' : 'Journal entry created');
+            toastPosted(form.is_adjusting && form.is_adjusting.checked ? 'Adjusting entry created' : 'Journal entry created');
             closeModal();
             App.navigate('#/journal');
         } catch (err) { toast(err.message, 'error'); }

@@ -236,6 +236,21 @@ check number are left blank in place rather than taken out, so every value
 sits where it does on plain stock and one nudge lines them all up; the test
 print uses the form's unsaved stock and nudges.
 
+**An optional sound when a transaction posts** (#476, asked for by a
+QuickBooks Desktop user). QuickBooks Desktop played a short beep when a
+transaction saved, and the toast is easy to miss when you're keying a stack.
+Settings → Sounds now has a per-user toggle, "Play a sound when a transaction
+posts" — off by default, kept per sign-in so it follows you to another
+machine. When it's on, a short original chime plays when a transaction
+posts — an invoice, bill, payment, sales receipt, deposit, check or expense,
+journal entry, transfer, pay run, credit memo or a register row; a delete, a
+void, a copy, a saved setting, an error or a warning stays silent. The sound
+is generated in the browser (Web Audio, no asset) and guarded, so a browser or
+desktop WebView without it carries on quietly; its audio is started inside a
+click or key press so the macOS app's WebView does not leave it muted. A
+read-only or accountant sign-in, which cannot save preferences, does not see
+the toggle.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

@@ -117,7 +117,7 @@ const InKindPage = {
                 job_id: jobIdFromForm(form),
                 lines,
             });
-            toast(`${g.number} posted`);
+            toastPosted(`${g.number} posted`);
             closeModal();
             App.navigate('#/in-kind-gifts');
         } catch (err) { toast(err.message, 'error'); }
