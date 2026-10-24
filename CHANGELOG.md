@@ -433,6 +433,14 @@ recipient first (the typed address, else the customer's email on file) and,
 with neither, answers 400 asking for one before anything is logged. The
 statement and collection-letter sends already skipped a customer with no
 email, so they were left as they were.
+A no-charge invoice no longer leaves an empty journal entry behind (#499). A
+$0.00 invoice saved with the no-charge say-so used to post a journal whose
+A/R debit and every line were zero, so the invoice pointed at a transaction
+header that held no splits — an entry that balanced only because it was
+empty. A $0.00 invoice now posts no journal at all and keeps no transaction;
+voiding it still works, and an edit that gives it a real total posts the
+journal then. An invoice edited down to $0.00 drops its old header the same
+way instead of leaving the husk.
 
 ### v2.28.0 — Account types and sub-accounts
 
