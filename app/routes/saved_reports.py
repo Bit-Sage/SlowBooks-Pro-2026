@@ -45,6 +45,9 @@ _ALLOWED_TYPES = {
     "possible_duplicates",  # one bank or card account's (#414)
     "income_by_customer",
     "past_customers",  # a mailing list by service address and last job (#436)
+    # what sold / was bought, by item (#435)
+    "sales_by_item",
+    "purchases_by_item",
     "account_transactions",
     "cash_flow",
     "analytics_dashboard",
