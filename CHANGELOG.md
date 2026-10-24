@@ -15,7 +15,10 @@ A/R debit stranded with nothing to apply it to. The fee's lines and its
 journal entry now take the invoice's job the same way the invoice's own
 posting and void reversal do, and the invoice void reverses every late-fee
 posting for the invoice in the same transaction, so the customer balance,
-A/R and the job's A/R all return to zero.
+A/R and the job's A/R all return to zero. A fee already voided in the
+journal is not reversed a second time, and each fee line comes off with its
+own job and class, so a fee posted before this release (with no job) or
+before the invoice's job changed never credits the job's A/R.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
