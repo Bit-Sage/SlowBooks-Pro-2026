@@ -55,17 +55,16 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.26 — Direct deposit from the page, and last year beside this one.** A processed pay run makes its direct deposit
-(ACH) file from the page, with the bank's numbers kept under Settings →
-Direct Deposit (discussion #211); the Profit & Loss and Balance Sheet
-compare to last year, with $ and % change on screen and in the PDF and CSV
-(#347); and a security pass: a session ends when its user is deactivated,
-demoted or has a new password, account balances update atomically, a
-reverse proxy's real client address reaches the rate limits and the audit
-log, and hostile input is refused with a 422. An import's whole error list
-is shown and saved as a file. The Mac app now needs macOS 15 or later.
+**v2.28 — Account types and sub-accounts.** Every account carries one of QuickBooks'
+detail types (#390), picked on the account form; a new account gets a sensible
+one from its number and name, and it can be changed. The Balance Sheet groups
+current and long-term assets and liabilities, and the Profit & Loss puts Other
+Income and Other Expense below Net Operating Income. Sub-accounts nest under
+their parents on the Chart of Accounts and on the statements, with family
+subtotals, and move from the account form (#416). Upgrading moves no figure:
+every statement shows the same numbers as before, only grouped.
 
-Patch releases and everything before 2.26 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.28 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -80,7 +79,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (587 operations in v2.26.0) — built for Claude
+self-documenting local REST API (603 operations in v2.28.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

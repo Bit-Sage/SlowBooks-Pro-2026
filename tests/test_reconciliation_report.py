@@ -165,6 +165,8 @@ def test_finish_is_offered_and_says_why_it_cannot_finish():
     assert "the difference is ${formatCurrency(data.difference)}" in finish
     assert finish.index("data.difference") < finish.index("confirm(")
     assert "showReconReport(reconId)" in finish
-    report = re.search(r"async showReconReport\(reconId\).*?\n    },\n", JS, re.S)
+    report = re.search(
+        r"async showReconReport\(reconId, onClose\).*?\n    },\n", JS, re.S
+    )
     assert "/report`" in report.group(0) and "/pdf'" in report.group(0)
     assert "BankingPage.showReconciliations(${id})" in JS

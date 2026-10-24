@@ -130,14 +130,14 @@ def test_edit_shows_a_taxed_bills_tax_and_its_own_total(
         page.wait_for_function(OPEN, timeout=5000)
         settle(page, handled)
         shown = page.evaluate("""() => ({
-                amounts: [...document.querySelectorAll('#bill-lines .line-amount')].map(c => c.textContent),
+                amounts: [...document.querySelectorAll('#bill-lines .line-amt')].map(c => c.value),
                 subtotal: document.getElementById('bill-subtotal').textContent,
                 taxLabel: document.getElementById('bill-tax').previousElementSibling.textContent,
                 tax: document.getElementById('bill-tax').textContent,
                 total: document.getElementById('bill-total').textContent,
             })""")
         assert shown == {
-            "amounts": ["$33.43", "$0.30"],
+            "amounts": ["33.43", "0.30"],
             "subtotal": "$33.73",
             "taxLabel": "Tax (5%)",
             "tax": "$1.69",

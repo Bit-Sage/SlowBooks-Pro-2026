@@ -22,7 +22,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.services.migration_common import (
     build_code_map,
     skip_report_preamble,
@@ -61,6 +61,17 @@ _MYOB_TYPE_MAP = {
     "cost of sales": AccountType.COGS,
     "expense": AccountType.EXPENSE,
     "other expense": AccountType.EXPENSE,
+}
+
+# MYOB's types that say more than the base type (#390).
+_MYOB_DETAIL = {
+    "accounts receivable": DetailType.ACCOUNTS_RECEIVABLE,
+    "fixed asset": DetailType.FIXED_ASSET,
+    "other asset": DetailType.OTHER_ASSET,
+    "accounts payable": DetailType.ACCOUNTS_PAYABLE,
+    "long term liability": DetailType.LONG_TERM_LIABILITY,
+    "other income": DetailType.OTHER_INCOME,
+    "other expense": DetailType.OTHER_EXPENSE,
 }
 
 _FILE_KINDS = (
@@ -105,6 +116,7 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
                 or None,
                 "name": name,
                 "type": acct_type,
+                "detail_type": _MYOB_DETAIL.get(myob_type),
                 "description": field(row, "description") or None,
             }
         )

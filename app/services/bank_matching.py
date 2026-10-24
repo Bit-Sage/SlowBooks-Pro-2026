@@ -25,6 +25,7 @@ from app.services.bank_register import (
     voided_transaction_ids,
 )
 from app.services.closing_date import check_closing_date
+from app.services.entry_text import header_text
 
 AUTO_WINDOW_DAYS = 5
 CANDIDATE_WINDOW_DAYS = 30
@@ -84,7 +85,7 @@ def candidate_lines(
             "transaction_id": txn.id,
             "date": txn.date.isoformat(),
             "days_off": abs((txn.date - on_date).days),
-            "description": txn.description or tl.description or "",
+            "description": header_text(txn, tl.description),
             "payee": payees.get(txn.id, ""),
             "reference": refs.get(txn.id, ""),
             "source_type": txn.source_type,

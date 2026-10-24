@@ -1,41 +1,54 @@
 # ============================================================================
 # IIF type correspondences shared by iif_import.py and iif_export.py.
 #
-# The two directions are deliberately asymmetric: QB2003's ACCNTTYPE
-# vocabulary is finer-grained than our six AccountType enums, so export
-# picks a specific IIF type from the account-number range while import
-# collapses every IIF type back to the nearest enum. Keeping both
-# directions in one module (plus tests/test_interchange_roundtrip.py)
-# is what stops them drifting apart.
+# QuickBooks' ACCNTTYPE is our detail type (#390): the fifteen posting types
+# map one to one, both directions read the same table, and the base
+# AccountType is derived from the detail type. Keeping both directions in
+# one module (plus tests/test_interchange_roundtrip.py) is what stops them
+# drifting apart.
+#
+# NONPOSTING (estimates, purchase orders) is not a ledger account here; the
+# lists import skips it rather than make an asset of it.
 #
 # Known-lossy round trips (inherent to the IIF vocabulary, not bugs):
 #   ItemType.MATERIAL exports as PART and re-imports as ItemType.PRODUCT.
 # ============================================================================
 
-from app.models.accounts import Account, AccountType
+from app.models.accounts import (
+    BASE_TYPE_OF,
+    Account,
+    AccountType,
+    DetailType,
+)
 from app.models.items import Item, ItemType
 
-IIF_TO_ACCOUNT_TYPE = {
-    "BANK": AccountType.ASSET,
-    "AR": AccountType.ASSET,
-    "OCASSET": AccountType.ASSET,
-    "OASSET": AccountType.ASSET,
-    "FIXASSET": AccountType.ASSET,
-    "AP": AccountType.LIABILITY,
+IIF_TO_DETAIL_TYPE = {
+    "BANK": DetailType.BANK,
+    "AR": DetailType.ACCOUNTS_RECEIVABLE,
+    "OCASSET": DetailType.OTHER_CURRENT_ASSET,
+    "FIXASSET": DetailType.FIXED_ASSET,
+    "OASSET": DetailType.OTHER_ASSET,
+    "AP": DetailType.ACCOUNTS_PAYABLE,
     # a credit card is what is owed on it (it fell back to EXPENSE: 2.23.4
     # gate, NEW-125)
-    "CCARD": AccountType.LIABILITY,
-    "OCLIAB": AccountType.LIABILITY,
-    "LTLIAB": AccountType.LIABILITY,
-    "EQUITY": AccountType.EQUITY,
-    "INC": AccountType.INCOME,
-    "EXP": AccountType.EXPENSE,
-    "COGS": AccountType.COGS,
-    # Additional QB types mapped to closest Slowbooks equivalent
-    "EXINC": AccountType.INCOME,
-    "EXEXP": AccountType.EXPENSE,
-    "NONPOSTING": AccountType.ASSET,
+    "CCARD": DetailType.CREDIT_CARD,
+    "OCLIAB": DetailType.OTHER_CURRENT_LIABILITY,
+    "LTLIAB": DetailType.LONG_TERM_LIABILITY,
+    "EQUITY": DetailType.EQUITY,
+    "INC": DetailType.INCOME,
+    "COGS": DetailType.COST_OF_GOODS_SOLD,
+    "EXP": DetailType.EXPENSE,
+    "EXINC": DetailType.OTHER_INCOME,
+    "EXEXP": DetailType.OTHER_EXPENSE,
 }
+DETAIL_TYPE_TO_IIF = {d: iif for iif, d in IIF_TO_DETAIL_TYPE.items()}
+# The base type of each ACCNTTYPE, derived: what the import matches an
+# existing account on.
+IIF_TO_ACCOUNT_TYPE: dict[str, AccountType] = {
+    iif: BASE_TYPE_OF[d] for iif, d in IIF_TO_DETAIL_TYPE.items()
+}
+# Read but not imported: QuickBooks' non-posting accounts.
+IIF_SKIPPED_TYPES = {"NONPOSTING"}
 
 IIF_TO_ITEM_TYPE = {
     "SERV": ItemType.SERVICE,
@@ -46,51 +59,22 @@ IIF_TO_ITEM_TYPE = {
 }
 
 
-def _account_number_value(raw) -> int:
-    """Leading digits of an account number, or 0. Account numbers are free
-    text ("1000", "1000-A", "sweep-account_number"), and a non-numeric one
-    used to crash the whole chart export (found by the API sweep on a real
-    company file)."""
-    import re
-
-    m = re.match(r"\s*(\d+)", str(raw or ""))
-    return int(m.group(1)) if m else 0
-
-
 def account_to_iif_type(acct: Account) -> str:
-    """Map Slowbooks AccountType + account_number to IIF ACCNTTYPE.
+    """The account's ACCNTTYPE: its detail type, read back through the
+    import's table (#390). The number-range guess this replaced sent 2400
+    Loan Payable out as OCLIAB and 2500 Other Current Liabilities as LTLIAB,
+    and never wrote CCARD."""
+    from app.models.accounts import _enum, default_detail_type
 
-    QB2003 has finer-grained account types than our 6 enums.
-    We use account_number ranges to distinguish sub-types within
-    each Slowbooks category.
-    """
-    num = _account_number_value(acct.account_number)
-    atype = acct.account_type.value
-
-    if atype == "asset":
-        if 1000 <= num <= 1099:
-            return "BANK"
-        if num == 1100:
-            return "AR"
-        if num < 1500:
-            return "OCASSET"
-        if num < 2000:
-            return "FIXASSET"
-        return "OASSET"
-
-    if atype == "liability":
-        if num == 2000:
-            return "AP"
-        if num < 2500:
-            return "OCLIAB"
-        return "LTLIAB"
-
-    return {
-        "equity": "EQUITY",
-        "income": "INC",
-        "expense": "EXP",
-        "cogs": "COGS",
-    }[atype]
+    try:
+        detail = _enum(DetailType, acct.detail_type)  # value or NAME form
+    except ValueError:
+        detail = None  # a stray stored value: write what the type implies
+    if detail is None:
+        detail = default_detail_type(
+            acct.account_type, acct.bank_kind, acct.account_number
+        )
+    return DETAIL_TYPE_TO_IIF[detail]
 
 
 def item_to_iif_type(item: Item) -> str:

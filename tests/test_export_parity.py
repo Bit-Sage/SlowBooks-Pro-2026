@@ -263,8 +263,9 @@ def test_non_numeric_account_number_does_not_break_the_chart_export(
     db_session.commit()
     text = client.get("/api/iif/export/accounts").text
     assert "Odd numbered" in text and "Dashed" in text
-    from app.services.iif_common import _account_number_value
-
-    assert _account_number_value("sweep-account_number") == 0
-    assert _account_number_value("1000-A") == 1000
-    assert _account_number_value(None) == 0
+    # the type comes from the detail type now, never from the number (#390)
+    rows = [ln.split("\t") for ln in text.splitlines() if ln.startswith("ACCNT\t")]
+    assert {r[1]: r[2] for r in rows if r[1] in ("Odd numbered", "Dashed")} == {
+        "Odd numbered": "OCASSET",
+        "Dashed": "OCASSET",
+    }
