@@ -2071,7 +2071,10 @@ const App = {
             const link = li.querySelector('.nav-link[data-page]');
             if (!link) return;
             const hide = sectionHidden || set.has(link.dataset.page);
-            if (hide) { li.hidden = true; li.dataset.hiddenByMenu = '1'; }
+            // an item already hidden for another reason (a nonprofit page on a
+            // business company, an admin page for a clerk) is not the menu's
+            // to show again later, so it is not marked (#457)
+            if (hide) { if (!li.hidden || li.dataset.hiddenByMenu) { li.hidden = true; li.dataset.hiddenByMenu = '1'; } }
             else if (li.dataset.hiddenByMenu) { li.hidden = false; li.dataset.hiddenByMenu = ''; }
         });
         // a section with every link hidden hides too

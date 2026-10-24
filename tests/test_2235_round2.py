@@ -175,10 +175,10 @@ def test_the_reconcile_day_box_refilters_and_keeps_its_day():
 def test_a_business_companys_sidebar_choices_leave_out_the_nonprofit_pages():
     js = _js("settings.js")
     body = js[js.index("_hiddenMenuChoices(raw) {") :][:1600]
-    assert (
-        "if (li.hidden || (typeof li.closest === 'function' && li.closest('[hidden]'))) return;"
-        in body
-    )
+    # an item hidden for another reason is left out; one the menu setting
+    # hid stays on the list so it can be shown again (#457)
+    assert "if ((li.hidden && !byMenu) || (parent" in body
+    assert "parent.closest('[hidden]')" in body
     app = _js("app.js")
     assert "$$('[data-nonprofit]').forEach(el => { el.hidden = !np; });" in app
 

@@ -1,0 +1,110 @@
+"""Hidden menu items that stay hidden (#457), in playwright's Chromium on the
+bakery's books, by the reporter's steps: in Settings → Sidebar a ticked box
+shows the item and an unticked one hides it; hide four, leave Settings, come
+back, hide two more, and all six are hidden; tick one again and only it
+returns. The list used to drop every item already hidden (so it could not be
+shown again) and the next save wrote only what was on the page. Skipped where
+playwright or its Chromium is not installed."""
+
+import json
+
+import pytest
+
+pytest.importorskip("playwright.sync_api")
+
+from tests.test_browser_report_views import _open_at  # noqa: E402
+from tests.test_theme_contrast import (  # noqa: E402,F401  (the fixtures)
+    _visit,
+    browser_fixture,
+    company_fixture,
+    settle,
+)
+
+FIRST = ["reseller-permits", "estimates", "purchase-orders", "hr-deductions"]
+MORE = ["vendor-credits", "batch-payments"]
+
+BOXES = """() => Object.fromEntries([...document.querySelectorAll('#hidden-menu-choices input[data-show-menu]')]
+    .map(b => [b.dataset.showMenu, b.checked]))"""
+SIDEBAR_HIDDEN = """(pages) => pages.filter(p => {
+    const a = document.querySelector(`#sidebar .nav-link[data-page="${p}"]`);
+    return a && a.closest('li').hidden; })"""
+
+
+def _save(page, handled):
+    page.click("#settings-save-btn")
+    page.wait_for_function(
+        "() => !document.getElementById('settings-save-btn').disabled"
+    )
+    settle(page, handled)
+
+
+def _untick(page, keys):
+    for k in keys:
+        page.uncheck(f'#hidden-menu-choices input[data-show-menu="{k}"]')
+
+
+def _back_to_settings(page, handled):
+    _visit(page, handled, "#/customers")
+    _visit(page, handled, "#/settings")
+    page.wait_for_selector("#hidden-menu-choices input[data-show-menu]")
+
+
+def test_hide_some_leave_return_hide_more_then_show_one(browser, company, books):
+    every = FIRST + MORE
+    page, handled = _open_at(browser, company, "#/settings")
+    try:
+        page.wait_for_selector("#hidden-menu-choices input[data-show-menu]")
+        boxes = page.evaluate(BOXES)
+        # everything ticked (shown) to start with
+        assert all(boxes[k] for k in every)
+        _untick(page, FIRST)
+        _save(page, handled)
+        assert sorted(page.evaluate(SIDEBAR_HIDDEN, every)) == sorted(FIRST)
+
+        # leave Settings and come back: the hidden four are still listed, unticked
+        _back_to_settings(page, handled)
+        boxes = page.evaluate(BOXES)
+        for k in FIRST:
+            assert k in boxes and boxes[k] is False, k
+        for k in MORE:
+            assert boxes[k] is True, k
+
+        # two more: all six hidden, the first four stay hidden
+        _untick(page, MORE)
+        _save(page, handled)
+        assert sorted(page.evaluate(SIDEBAR_HIDDEN, every)) == sorted(every)
+        stored = json.loads(company.get("/api/settings").json()["hidden_menu"])
+        assert sorted(stored) == sorted(every)
+
+        # back again, tick one: only it returns
+        _back_to_settings(page, handled)
+        page.check('#hidden-menu-choices input[data-show-menu="estimates"]')
+        _save(page, handled)
+        rest = [k for k in every if k != "estimates"]
+        assert sorted(page.evaluate(SIDEBAR_HIDDEN, every)) == sorted(rest)
+        stored = json.loads(company.get("/api/settings").json()["hidden_menu"])
+        assert sorted(stored) == sorted(rest)
+    finally:
+        page.close()
+        company.put("/api/settings", json={"hidden_menu": "[]"})
+
+
+def test_a_stored_key_the_page_does_not_offer_is_kept(browser, company, books):
+    """A nonprofit page hidden while the company was a nonprofit is not on
+    offer on a business company; a save there keeps its choice."""
+    company.put(
+        "/api/settings", json={"hidden_menu": json.dumps(["in-kind-gifts", "jobs"])}
+    )
+    page, handled = _open_at(browser, company, "#/settings")
+    try:
+        page.wait_for_selector("#hidden-menu-choices input[data-show-menu]")
+        boxes = page.evaluate(BOXES)
+        assert "in-kind-gifts" not in boxes and boxes["jobs"] is False
+        page.check('#hidden-menu-choices input[data-show-menu="jobs"]')
+        _save(page, handled)
+        stored = json.loads(company.get("/api/settings").json()["hidden_menu"])
+        assert stored == ["in-kind-gifts"]
+        assert not page.evaluate(SIDEBAR_HIDDEN, ["jobs"])
+    finally:
+        page.close()
+        company.put("/api/settings", json={"hidden_menu": "[]"})
