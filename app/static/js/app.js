@@ -63,6 +63,7 @@ const App = {
         // Phase 2: Accounts Payable
         '/purchase-orders': { page: 'purchase-orders', label: 'Purchase Orders',  render: () => PurchaseOrdersPage.render() },
         '/bills':         { page: 'bills',           label: 'Bills',              render: () => BillsPage.render() },
+        '/bill-entry':    { page: 'bill-entry',      label: 'Bill Quick Entry',   render: () => BillQuickEntry.render() },
         '/bills/:id':         { page: 'bills',      label: 'Bill',          render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.view(id)) },
         '/bill-payments/:id': { page: 'bills',      label: 'Bill Payment',  render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.viewPayment(id)) },
         '/credit-memos':  { page: 'credit-memos',    label: 'Credit Memos',       render: () => CreditMemosPage.render() },
@@ -922,7 +923,7 @@ const App = {
         if ((App.isAdmin() && !App.inCopy) || !page) return;
         if (App.isLocked()) {
             // the toolbar's shortcuts to new documents, and batch entry
-            document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]')
+            document.querySelectorAll('#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"], #topbar .tb-btn[data-nav="#/bill-entry"]')
                 .forEach(b => b.classList.add('hidden'));
             // the sidebar's pages that only enter things (Batch Payments...)
             App.hideWriteControls(document.getElementById('sidebar'));
@@ -2337,9 +2338,9 @@ const App = {
             // behind and no form is open over the page (the Mac app's
             // window has no Back of its own, NEW-30)
             if (App.isBackKey(e) && App.backAllowed()) { e.preventDefault(); App.goBack(); return; }
-            // Ctrl+Enter: submit quick entry form
+            // Ctrl+Enter: submit a quick entry form (invoices, or bills #487)
             if (e.ctrlKey && e.key === 'Enter') {
-                const qeForm = $('#qe-form');
+                const qeForm = $('#qe-form') || $('#bqe-form');
                 if (qeForm) { qeForm.requestSubmit(); e.preventDefault(); }
             }
             // Ctrl+S: save current modal form (Feature 13)

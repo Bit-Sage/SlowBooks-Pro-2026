@@ -279,6 +279,7 @@ FOUND_ON_PAGES = {
     },
     "#/batch-payments": {"Select All", "Apply Batch Payment"},
     "#/quick-entry": {"Save & Next (Ctrl+Enter)"},
+    "#/bill-entry": {"Save & Next (Ctrl+Enter)"},
     "#/csv": {"Import"},
     "#/banking": {"Connect"},
 }
@@ -434,7 +435,12 @@ def _sweep_pages(browser, client, role, books):
                 " return document.querySelectorAll('#page-content .readonly-note').length; }",
                 route,
             )
-            for route in ("#/settings", "#/quick-entry", "#/batch-payments")
+            for route in (
+                "#/settings",
+                "#/quick-entry",
+                "#/bill-entry",
+                "#/batch-payments",
+            )
         }
     finally:
         page.close()
@@ -569,11 +575,12 @@ def test_no_page_offers_a_read_only_sign_in_a_write(
     assert ro_run["notes"] == {
         "#/settings": 1,
         "#/quick-entry": 1,
+        "#/bill-entry": 1,
         "#/batch-payments": 1,
     }
     assert set(admin_run["notes"].values()) == {0}
     # the sidebar does not offer the pages that only enter things
-    only_enter = {"batch-payments", "opening-balances", "migrate"}
+    only_enter = {"batch-payments", "bill-entry", "opening-balances", "migrate"}
     assert only_enter <= set(admin_run["sidebar"])
     assert only_enter & set(ro_run["sidebar"]) == set()
     assert {"invoices", "reports", "accounts", "settings"} <= set(ro_run["sidebar"])

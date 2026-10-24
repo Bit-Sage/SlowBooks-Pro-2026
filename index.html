@@ -67,6 +67,7 @@
             <button class="tb-btn" data-action="InvoicesPage.showForm">Create Invoice</button>
             <button class="tb-btn" data-action="PaymentsPage.showForm">Receive Payment</button>
             <button class="tb-btn" data-nav="#/quick-entry">Quick Entry</button>
+            <button class="tb-btn" data-nav="#/bill-entry">Bill Entry</button>
             <div class="tb-sep"></div>
             <button class="tb-btn" data-nav="#/reports">Reports</button>
             <div class="tb-sep"></div>
@@ -127,6 +128,8 @@
                         <span class="nav-icon" aria-hidden="true">&#9997;</span> Purchase Orders</a></li>
                     <li><a href="#/bills" class="nav-link" data-page="bills">
                         <span class="nav-icon" aria-hidden="true">&#9830;</span> Bills</a></li>
+                    <li data-write><a href="#/bill-entry" class="nav-link" data-page="bill-entry">
+                        <span class="nav-icon" aria-hidden="true">&#8801;</span> Bill Quick Entry</a></li>
                     <li><a href="#/vendor-credits" class="nav-link" data-page="vendor-credits">
                         <span class="nav-icon" aria-hidden="true">&#8722;</span> Vendor Credits</a></li>
                     <li><a href="#/job-costs" class="nav-link" data-page="job-costs">
@@ -280,6 +283,7 @@
     <!-- Phase 2: Accounts Payable -->
     <script src="/static/js/purchase_orders.js"></script>
     <script src="/static/js/bills.js"></script>
+    <script src="/static/js/bill_quick_entry.js"></script>
     <script src="/static/js/expenses.js"></script>
     <script src="/static/js/credit_memos.js"></script>
     <script src="/static/js/vendor_credits.js"></script>
