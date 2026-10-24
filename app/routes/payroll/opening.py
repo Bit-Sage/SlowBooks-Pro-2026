@@ -73,15 +73,13 @@ def opening_ytd_template(request: Request):
 async def import_opening_ytd(
     file: UploadFile = File(...),
     dry_run: bool = Query(True),
-    as_of: date = Query(default=None),
     reason: str = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Import every employee's opening balance from the SlowBooks template
-    or a QuickBooks Payroll Summary. `dry_run=1` (the default) returns the
-    plan and writes nothing; `dry_run=0` writes the rows that are not
-    errors. `as_of` dates a Payroll Summary whose header says no "through"
-    date; `reason` lets the import correct a locked employee's balance."""
+    """Import every employee's opening balance from the SlowBooks template.
+    `dry_run=1` (the default) returns the plan and writes nothing;
+    `dry_run=0` writes the rows that are not errors. `reason` lets the
+    import correct a locked employee's balance."""
     from app.routes.csv import _decode_csv_upload
     from app.services.payroll_opening_import import apply_plan, plan_import
 
@@ -92,7 +90,7 @@ async def import_opening_ytd(
         reason = po.check_reason(reason)
     except po.OpeningError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    plan = plan_import(db, content, as_of=as_of, reason=reason)
+    plan = plan_import(db, content, reason=reason)
     applied = 0
     if not dry_run and not plan["errors"]:
         try:

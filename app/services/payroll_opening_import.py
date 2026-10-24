@@ -1,16 +1,9 @@
 # ============================================================================
 # Opening YTD import (#433) — every employee's opening balance from one CSV.
 #
-# Two readers, told apart by the header:
-#   1. The SlowBooks template (opening_template_csv): one row per employee,
-#      a second state as a second row with only the state columns, benefit
-#      amounts in "Benefit:<code>" / "Benefit employer:<code>" columns. The
-#      sure path.
-#   2. QuickBooks Desktop's Payroll Summary by employee: employees across,
-#      payroll items down, a TOTAL column last. Read best-effort: the items
-#      it can name are mapped, deductions go by their heading, and every item
-#      it cannot place is named in the row's note. When the first column
-#      cannot be read with confidence the plan says so and imports nothing.
+# One reader: the SlowBooks template (opening_template_csv). A reader for
+# QuickBooks Desktop's Payroll Summary waits for a real export to build
+# against; a named third-party format is never read from a hand-made file.
 #
 # Dry run first, as the chart import: the plan is computed and nothing is
 # written; the apply posts the same file and writes exactly that plan.
@@ -22,7 +15,6 @@ import csv
 import io
 import re
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -155,16 +147,6 @@ def _num(cell):
     return s
 
 
-def _abs_amount(cell) -> Decimal | None:
-    s = _num(cell)
-    if s is None:
-        return None
-    try:
-        return abs(Decimal(s))
-    except InvalidOperation:
-        return None
-
-
 def _parse_date(s):
     s = (s or "").strip()
     for fmt in (
@@ -229,7 +211,7 @@ def _plan_row(db, line, name, employee, payload, errors, notes, reason):
 
 
 # ---------------------------------------------------------------------------
-# Reader 1: the SlowBooks template
+# The SlowBooks template
 # ---------------------------------------------------------------------------
 def _is_template(header: list[str]) -> bool:
     names = {_norm(h) for h in header}
@@ -352,258 +334,9 @@ def _read_template(db: Session, rows: list[list[str]], reason) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Reader 2: QuickBooks Desktop Payroll Summary (best effort)
-# ---------------------------------------------------------------------------
-_STATE_ITEM_RE = re.compile(r"^([A-Z]{2})\s*-\s*(.+)$")
-_THROUGH_RE = re.compile(
-    r"through\s+([A-Za-z]+\.? \d{1,2},? \d{4}|\d{1,2}/\d{1,2}/\d{2,4})", re.I
-)
-
-# Headings of the report's first column, and what their items are.
-_SECTIONS = {
-    "employee wages, taxes and adjustments": "wages",
-    "gross pay": "earnings",
-    "deductions from gross pay": "pretax",
-    "taxes withheld": "withheld",
-    "deductions from net pay": "posttax",
-    "adjustments to net pay": "adjustments",
-    "employer taxes and contributions": "employer",
-}
-_GARNISH_WORDS = ("garnish", "child support", "levy", "wage order")
-_STATE_OTHER_EMPLOYEE = ("disability", "sdi", "pfml", "family leave", "paid leave")
-
-
-def _looks_like_qb(rows: list[list[str]]) -> bool:
-    head = rows[:12]
-    if any(_norm(c) == "total" for r in head for c in r):
-        return True
-    return any("payroll summary" in _norm(c) for r in head for c in r)
-
-
-def _read_qb_summary(db: Session, rows: list[list[str]], as_of_param, reason) -> dict:
-    sure = (
-        "Use the SlowBooks template instead (Payroll → Import opening "
-        "balances → template), which reads every figure by name."
-    )
-    header_idx = next(
-        (i for i, r in enumerate(rows[:12]) if any(_norm(c) == "total" for c in r)),
-        None,
-    )
-    if header_idx is None:
-        return _qb_refused(
-            "This looks like a QuickBooks Payroll Summary but has no TOTAL "
-            "column header, so its employee columns cannot be found. " + sure
-        )
-    header = rows[header_idx]
-    total_col = next(i for i, c in enumerate(header) if _norm(c) == "total")
-    name_cols = [i for i, c in enumerate(header[:total_col]) if c.strip()]
-    if not name_cols or name_cols[0] == 0:
-        return _qb_refused(
-            "The QuickBooks report's header row has no employee names before "
-            "its TOTAL column (or a name sits in the item column), so the "
-            "layout cannot be read with confidence. " + sure
-        )
-    first_data = name_cols[0]
-    body_start = header_idx + 1
-    amount_cols: dict[int, str] = {}
-    sub = rows[header_idx + 1] if header_idx + 1 < len(rows) else []
-    sub_names = [_norm(c) for c in sub]
-    if any(s in ("hours", "rate") for s in sub_names):
-        # each employee has Hours / Rate / amount columns: the amount is the
-        # one that is neither, and belongs to the nearest name at or before it
-        body_start += 1
-        for j in range(first_data, total_col):
-            label = sub_names[j] if j < len(sub_names) else ""
-            if not label or label in ("hours", "rate"):
-                continue
-            owner = max((c for c in name_cols if c <= j), default=None)
-            if owner is not None and owner not in amount_cols.values():
-                amount_cols[j] = header[owner].strip()
-        names_with_amount = set(amount_cols.values())
-        missing = [
-            header[c].strip()
-            for c in name_cols
-            if header[c].strip() not in names_with_amount
-        ]
-        if missing:
-            return _qb_refused(
-                "The QuickBooks report has Hours/Rate columns, but no amount "
-                f"column could be found for {', '.join(missing)}. " + sure
-            )
-    else:
-        amount_cols = {c: header[c].strip() for c in name_cols}
-
-    errors: list[str] = []
-    through = None
-    for r in rows[:header_idx]:
-        m = _THROUGH_RE.search(" ".join(r))
-        if m:
-            through = _parse_date(m.group(1).replace(".", ""))
-            if through:
-                break
-    as_of = through or as_of_param
-    if as_of is None:
-        errors.append(
-            'The report does not say the date it runs through ("... through '
-            'June 30, 2026" in its header); send as_of with the import.'
-        )
-
-    figures: dict[int, dict] = {c: {"states": {}} for c in amount_cols}
-    unmatched: set[str] = set()
-    found = {"gross": False, "net": False}
-    earnings = {c: Decimal("0") for c in amount_cols}
-    section = None
-
-    def add(c, field, value):
-        figures[c][field] = figures[c].get(field, Decimal("0")) + value
-
-    def add_state(c, st, field, value):
-        s = figures[c]["states"].setdefault(st, {"state": st})
-        s[field] = s.get(field, Decimal("0")) + value
-
-    for r in rows[body_start:]:
-        labels = [(i, c.strip()) for i, c in enumerate(r[:first_data]) if c.strip()]
-        if not labels:
-            continue
-        label = labels[0][1]
-        key = _norm(label)
-        values = {c: _abs_amount(r[c]) if c < len(r) else None for c in amount_cols}
-        has_values = any(v is not None for v in values.values())
-        if not has_values:
-            if key in _SECTIONS:
-                section = _SECTIONS[key]
-            continue
-        if key in ("total gross pay", "gross pay"):
-            found["gross"] = True
-            for c, v in values.items():
-                figures[c]["gross"] = v or Decimal("0")
-            continue
-        if key == "net pay":
-            found["net"] = True
-            for c, v in values.items():
-                figures[c]["net"] = v or Decimal("0")
-            continue
-        if key.startswith("total ") or key == "adjusted gross pay":
-            continue  # subtotals of items read one by one
-        st = _STATE_ITEM_RE.match(label)
-        field = None
-        state_field = None
-        if key == "federal withholding":
-            field = "federal_tax"
-        elif key.startswith("medicare employee"):
-            field = "medicare_tax"
-        elif key.startswith("social security employee"):
-            field = "ss_tax"
-        elif key == "federal unemployment":
-            field = "futa_tax"
-        elif key.startswith("medicare company"):
-            field = "employer_medicare_tax"
-        elif key.startswith("social security company"):
-            field = "employer_ss_tax"
-        elif st and _norm(st.group(2)) == "withholding":
-            state_field = "withholding"
-        elif st and _norm(st.group(2)).startswith("unemployment"):
-            field = "suta_tax"
-        elif (
-            st
-            and section == "withheld"
-            and any(w in _norm(st.group(2)) for w in _STATE_OTHER_EMPLOYEE)
-        ):
-            state_field = "other_employee"
-        elif st and section == "employer":
-            state_field = "other_employer"
-        elif section == "earnings":
-            for c, v in values.items():
-                earnings[c] += v or Decimal("0")
-            continue
-        elif section == "pretax":
-            field = "pretax_deductions"
-        elif section == "posttax":
-            field = (
-                "garnishments"
-                if any(w in key for w in _GARNISH_WORDS)
-                else "posttax_deductions"
-            )
-        if field is None and state_field is None:
-            unmatched.add(label)
-            continue
-        for c, v in values.items():
-            if v is None:
-                continue
-            if state_field:
-                add_state(c, st.group(1), state_field, v)
-            else:
-                add(c, field, v)
-
-    if not found["gross"] and any(earnings.values()):
-        found["gross"] = True
-        for c in amount_cols:
-            figures[c]["gross"] = earnings[c]
-    if not (found["gross"] and found["net"]):
-        missing = [k.title() + " Pay" for k, v in found.items() if not v]
-        return _qb_refused(
-            "The QuickBooks report's first column has no "
-            + " or ".join(missing)
-            + " line, so it cannot be read with confidence. "
-            + sure
-        )
-
-    notes = [
-        "A Payroll Summary has no taxable-wage lines: SS, Medicare, FUTA, "
-        "SUTA and state wages are left at 0; enter them on the employee's "
-        "Opening YTD before filing"
-    ]
-    if unmatched:
-        notes.append("Not imported: " + ", ".join(sorted(unmatched)))
-    plan_rows = []
-    for c, name in amount_cols.items():
-        f = figures[c]
-        payload = {
-            "year": as_of.year if as_of else None,
-            "as_of": as_of,
-            "states": list(f["states"].values()),
-            "benefits": [],
-        }
-        for field in OPENING_AMOUNT_FIELDS:
-            payload[field] = f.get(field, Decimal("0"))
-        employee, err = (None, None)
-        if not errors:
-            employee, err = _match_employee(db, name, None)
-        row, clean = _plan_row(
-            db,
-            body_start,
-            name,
-            employee,
-            payload,
-            ([err] if err else []) + errors,
-            notes,
-            reason,
-        )
-        row["_clean"] = clean
-        plan_rows.append(row)
-    return {
-        "format": "quickbooks_payroll_summary",
-        "rows": plan_rows,
-        "errors": errors,
-        "warnings": [],
-    }
-
-
-def _qb_refused(message: str) -> dict:
-    return {
-        "format": "quickbooks_payroll_summary",
-        "rows": [],
-        "errors": [message],
-        "warnings": [],
-    }
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-def plan_import(
-    db: Session, text: str, as_of: date | None = None, reason: str | None = None
-) -> dict:
+def plan_import(db: Session, text: str, reason: str | None = None) -> dict:
     """The plan for a file: {format, rows, errors, warnings}. Each row
     keeps its clean payload under "_clean" for apply_plan; the route drops
     it from the response."""
@@ -619,16 +352,13 @@ def plan_import(
     rows = rows[first:]
     if _is_template(rows[0]):
         return _read_template(db, rows, reason)
-    if _looks_like_qb(rows):
-        return _read_qb_summary(db, rows, as_of, reason)
     return {
         "format": None,
         "rows": [],
         "errors": [
-            "The file is neither the SlowBooks opening-balance template (an "
-            "Employee and a Gross column) nor a QuickBooks Payroll Summary "
-            "(employees across, a TOTAL column). Download the template and "
-            "fill it in."
+            "The file is not the SlowBooks opening-balance template (an "
+            "Employee and a Gross column). Download the template and fill it "
+            "in."
         ],
         "warnings": [],
     }

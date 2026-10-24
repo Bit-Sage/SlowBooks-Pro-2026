@@ -20,7 +20,6 @@ import pytest
 from app.services.payroll_service import SS_WAGE_BASE
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -512,68 +511,6 @@ def test_template_download_is_a_csv_the_importer_reads(client):
     assert plan["format"] == "template"
     # the example matches no one, so it imports nothing
     assert [r["action"] for r in plan["rows"]] == ["error"]
-
-
-def test_quickbooks_payroll_summary_imports_what_it_can_name(client):
-    sam = _employee(client)
-    _employee(client, first="Hana", last="Lee")
-    text = (FIXTURES / "qb_payroll_summary.csv").read_text()
-    plan = _import(client, text).json()
-    assert plan["format"] == "quickbooks_payroll_summary", plan
-    assert plan["errors"] == []
-    rows = {r["employee"]: r for r in plan["rows"]}
-    assert set(rows) == {"Ortiz, Sam", "Lee, Hana"}
-    s = rows["Ortiz, Sam"]
-    assert s["action"] == "create" and s["employee_id"] == sam["id"]
-    assert s["as_of"] == "2026-06-30" and s["year"] == 2026
-    assert (s["gross"], s["federal_tax"], s["net"]) == (30000.0, 3100.0, 22095.0)
-    assert (s["ss_tax"], s["medicare_tax"]) == (1860.0, 435.0)
-    assert (s["employer_ss_tax"], s["employer_medicare_tax"]) == (1860.0, 435.0)
-    assert (s["futa_tax"], s["suta_tax"]) == (42.0, 189.0)
-    assert (s["pretax_deductions"], s["posttax_deductions"]) == (1500.0, 200.0)
-    assert s["states"] == [
-        {
-            "state": "GA",
-            "wages": 0.0,
-            "withholding": 800.0,
-            "other_employee": 0.0,
-            "other_employer": 0.0,
-        }
-    ]
-    # nothing silently dropped: the items it could not place are named
-    assert "GA - Special Local Tax" in s["note"]
-    assert "401(k) Company Match" in s["note"]
-    assert "no taxable-wage lines" in s["note"]
-    done = _import(client, text, dry_run=0).json()
-    assert done["applied"] == 2
-
-
-def test_a_quickbooks_report_it_cannot_read_is_refused_not_guessed(client):
-    _employee(client)
-    text = (
-        ",,Payroll Summary,,\n"
-        ',,"January 1 through June 30, 2026",,\n'
-        ',,"Ortiz, Sam",TOTAL\n'
-        ",Something else,100.00,100.00\n"
-    )
-    plan = _import(client, text).json()
-    assert plan["rows"] == []
-    assert "cannot be read with confidence" in plan["errors"][0]
-    assert "template" in plan["errors"][0]
-    done = _import(client, text, dry_run=0).json()
-    assert done["applied"] == 0
-
-
-def test_a_payroll_summary_without_a_through_date_needs_as_of(client):
-    _employee(client)
-    _employee(client, first="Hana", last="Lee")
-    text = (FIXTURES / "qb_payroll_summary.csv").read_text()
-    text = text.replace("January 1 through June 30, 2026", "Year to date")
-    plan = _import(client, text).json()
-    assert plan["errors"] and "as_of" in plan["errors"][0]
-    plan = _import(client, text, as_of="2026-05-31").json()
-    assert plan["errors"] == []
-    assert {r["as_of"] for r in plan["rows"]} == {"2026-05-31"}
 
 
 def test_an_unknown_file_is_refused(client):

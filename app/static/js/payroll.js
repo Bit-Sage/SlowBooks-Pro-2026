@@ -46,24 +46,20 @@ const PayrollPage = {
     },
 
     // ---- Opening YTD import (#433) ----------------------------------------
-    // Every employee's opening balance from one CSV: the template, or
-    // QuickBooks Desktop's Payroll Summary by employee. A dry run first
-    // shows the plan (rows, notes, errors); Apply posts the same file again.
+    // Every employee's opening balance from one CSV, the template. A dry
+    // run first shows the plan (rows, notes, errors); Apply posts the same
+    // file again.
     showOpeningImport() {
         openModal('Import opening balances', `
             <form onsubmit="PayrollPage.previewOpeningImport(event)">
                 <p class="hint" style="margin-bottom:10px;">
                     What each employee was paid this year before the first SlowBooks pay run: the
                     <a href="/api/payroll/opening-ytd/template" download>SlowBooks template</a>
-                    (one row per employee; a second state on a row with only the state columns), or a
-                    QuickBooks Desktop <em>Payroll Summary</em> by employee saved as CSV. A Payroll Summary
-                    is read best-effort and has no taxable-wage lines; the plan names every item it could not place.
+                    (one row per employee; a second state on a row with only the state columns).
                     No journal entry is made.
                 </p>
                 <div class="form-group"><label>File</label>
                     <input type="file" name="file" accept=".csv,.txt" required></div>
-                <div class="form-group"><label>As of (when the report does not say "through …")</label>
-                    <input type="date" name="as_of"></div>
                 <div class="form-group"><label>Reason (only to correct an employee whose balance is locked by a processed pay run)</label>
                     <input name="reason" maxlength="300"></div>
                 <div id="opening-import-preview"></div>
@@ -80,7 +76,6 @@ const PayrollPage = {
         const fd = new FormData();
         fd.append('file', form.file.files[0]);
         const q = new URLSearchParams({ dry_run: dryRun ? '1' : '0' });
-        if (form.as_of.value) q.append('as_of', form.as_of.value);
         if (form.reason.value.trim()) q.append('reason', form.reason.value.trim());
         const resp = await fetch(`/api/payroll/opening-ytd/import?${q.toString()}`,
             { method: 'POST', body: fd, headers: { 'X-Slowbooks-Desktop': '1' } });
