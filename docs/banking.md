@@ -137,8 +137,10 @@ company. **Plain / voucher stock** (the default) prints the full face —
 "Pay to the order of", the memo and signature lines, the amount box and
 borders — and the two stubs, onto blank paper or voucher stock. **Pre-printed
 stock: values only** is for stock that already carries those labels, lines
-and the signature rule: SlowBooks then prints only the values — payee,
-amount, amount in words, date and memo — in their places, with nothing of its
+and the signature rule, the company's name and address and the check number:
+SlowBooks then prints only the values — payee, amount, amount in words, date
+and memo — in exactly the places they take on plain stock (what the stock
+carries is left blank, not taken out, so nothing shifts), with nothing of its
 own on top. The stubs are the same either way.
 
 Because no two batches of stock line up exactly, a **horizontal** and a
@@ -147,8 +149,10 @@ portion only — not the stubs — to line the values up with the pre-printed
 boxes. A positive nudge moves the values right and down. **Print a test
 check** opens a sample check (Sample Payee, $1,234.56, today, "Alignment
 test") in a new tab; print it on plain paper and hold it against your stock
-to see how far to nudge. Save the setting, then print the test check again
-to check the change. This applies to every check print path — a bill
+to see how far to nudge. The test check uses the stock and nudges as they
+stand in the form, saved or not, so a change can be tried before saving it
+(`GET /api/checks/test-print?check_stock=&check_nudge_x_in=&check_nudge_y_in=`,
+each optional). This applies to every check print path — a bill
 payment, Pay Bills, a register check and an expense paid from a bank
 account.
 

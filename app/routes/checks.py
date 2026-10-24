@@ -17,7 +17,8 @@ from app.models.transactions import Transaction
 from app.services.bank_register import payees_for, voided_transaction_ids
 from app.services.pdf_service import generate_check_pdf
 from app.services.request_utils import content_disposition
-from app.routes.settings import _get_all as get_settings
+from app.routes.settings import ENUM_SETTINGS, _get_all as get_settings
+from app.services.settings_service import SettingValueError, clean_setting_value
 
 router = APIRouter(prefix="/api/checks", tags=["checks"])
 
@@ -105,10 +106,19 @@ def register_check_data(db: Session, txn_id: int) -> dict:
 
 
 @router.get("/test-print")
-def test_print_check(db: Session = Depends(get_db)):
+def test_print_check(
+    check_stock: str = Query(default=None),
+    check_nudge_x_in: str = Query(default=None),
+    check_nudge_y_in: str = Query(default=None),
+    db: Session = Depends(get_db),
+):
     """A sample check with placeholder values (#440), printed through the
     same renderer and the same check-stock settings as a real check, so the
-    alignment nudge can be set by holding the sheet against the stock."""
+    alignment nudge can be set by holding the sheet against the stock.
+
+    The Settings page passes the form's current (unsaved) stock and nudge, so
+    a nudge can be tried before it is saved; each is checked the way saving
+    it would be. Any left out reads the saved setting. Nothing is stored."""
     check_data = {
         "payee": "Sample Payee",
         "date": date.today(),
@@ -117,7 +127,23 @@ def test_print_check(db: Session = Depends(get_db)):
         "memo": "Alignment test",
         "details": [{"description": "Alignment test", "amount": Decimal("1234.56")}],
     }
-    company = get_settings(db)
+    company = dict(get_settings(db))
+    if check_stock is not None:
+        if check_stock not in ENUM_SETTINGS["check_stock"]:
+            raise HTTPException(
+                status_code=422,
+                detail="check_stock must be one of: plain, preprinted",
+            )
+        company["check_stock"] = check_stock
+    for key, value in (
+        ("check_nudge_x_in", check_nudge_x_in),
+        ("check_nudge_y_in", check_nudge_y_in),
+    ):
+        if value is not None:
+            try:
+                company[key] = clean_setting_value(key, value)
+            except SettingValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
     pdf_bytes = generate_check_pdf(check_data, company)
     return Response(
         content=pdf_bytes,

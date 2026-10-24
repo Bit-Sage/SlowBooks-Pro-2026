@@ -604,7 +604,7 @@ const SettingsPage = {
                                 value="${escapeHtml(s.check_nudge_y_in || '0')}"></div>
                         <div class="form-group full-width">
                             <button type="button" class="btn btn-sm btn-secondary" onclick="SettingsPage.testPrintCheck()">Print a test check</button>
-                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Prints a sample check with placeholder values on plain paper. Hold it against your check stock to see how far to nudge the values left/right (horizontal) or up/down (vertical); a positive nudge moves them right and down. Save the setting before printing to see your change.</div>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Prints a sample check with placeholder values on plain paper. Hold it against your check stock to see how far to nudge the values left/right (horizontal) or up/down (vertical); a positive nudge moves them right and down. The test print uses the stock and nudges as set here, saved or not.</div>
                         </div>
                     </div>
                 </div>
@@ -2031,11 +2031,18 @@ const SettingsPage = {
         window.open(`/api/donors/giving-statement/preview?year=${year}`, '_blank');
     },
 
-    // Opens a sample check PDF in a new tab, using the saved check-stock
-    // setting and nudge (#440) — so the operator sees the effect of the
-    // values they just saved.
+    // Opens a sample check PDF in a new tab (#440) with the stock and nudge
+    // as they stand in the form — saved or not — so a nudge can be tried
+    // before it is saved.
     testPrintCheck() {
-        window.open('/api/checks/test-print', '_blank');
+        const form = document.getElementById('settings-form');
+        const params = new URLSearchParams();
+        for (const name of ['check_stock', 'check_nudge_x_in', 'check_nudge_y_in']) {
+            const el = form && form.querySelector(`[name="${name}"]`);
+            if (el) params.set(name, el.value);
+        }
+        const qs = params.toString();
+        window.open('/api/checks/test-print' + (qs ? `?${qs}` : ''), '_blank');
     },
 
     // ----- AI Insights config (provider/model/key/etc.) ------------------

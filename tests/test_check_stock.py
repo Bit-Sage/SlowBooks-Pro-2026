@@ -86,10 +86,34 @@ def test_plain_stock_has_no_transform_and_no_override_style():
     assert "border-bottom: none" not in html
 
 
-def test_preprinted_stock_prints_no_labels():
+_HIDDEN_RULE = (
+    ".check-company, .check-company-addr, .check-number,\n"
+    "    .check-date-label, .pay-to-label, .memo-label, .signature-line "
+    "{ visibility: hidden; }"
+)
+
+
+def test_preprinted_stock_hides_what_the_stock_carries():
+    # The labels, the signature rule, the company's name and address and the
+    # check number are on the stock already: hidden with visibility, so they
+    # do not print but keep their space.
     html = _render(check_stock="preprinted")
+    assert _HIDDEN_RULE in html
+    assert "display: none" not in html
+
+
+def test_preprinted_stock_keeps_the_layout_of_plain_stock():
+    # Hidden, not removed: take away the pre-printed override style and the
+    # markup is exactly plain stock's, so every value sits where it does on
+    # plain stock and one nudge moves them all together.
+    import re
+
+    html = _render(check_stock="preprinted")
+    stripped = re.sub(r"\n<style>\s*/\* Pre-printed check stock.*?</style>", "", html, flags=re.S)
+    assert stripped == _render()
     for label in _LABELS:
-        assert label not in html
+        assert label in html
+    assert '<div class="signature-line"></div>' in html
 
 
 def test_preprinted_stock_still_prints_the_values():
@@ -102,10 +126,11 @@ def test_preprinted_stock_still_prints_the_values():
 
 def test_preprinted_stock_drops_the_lines_and_borders():
     html = _render(check_stock="preprinted")
-    # the pre-printed stock carries the lines/box; ours are turned off, and
-    # the signature rule is left out of the markup entirely.
+    # the pre-printed stock carries the lines/box; ours are turned off. The
+    # amount box keeps its padding (a transparent border, not none) so the
+    # amount does not shift sideways against the other values.
     assert ".pay-to-line, .amount-words, .memo-text { border-bottom: none; }" in html
-    assert '<div class="signature-line"></div>' not in html
+    assert ".amount-box { border-color: transparent; }" in html
 
 
 def test_the_nudge_appears_in_the_css_of_the_check_area_only():
@@ -182,3 +207,35 @@ def test_a_bill_payment_check_follows_the_setting_too(client, seed_accounts):
     text = pypdf.PdfReader(io.BytesIO(r.content)).pages[0].extract_text()
     assert "PAY TO THE ORDER OF" not in text
     assert "Gulf Supply" in text
+
+
+def test_test_print_refuses_a_bad_unsaved_nudge(client):
+    # The form's unsaved values are checked the way saving them would be.
+    r = client.get("/api/checks/test-print?check_nudge_x_in=0.9")
+    assert r.status_code == 422, r.text
+    assert "Horizontal nudge must be a number of inches" in r.json()["detail"]
+    r = client.get("/api/checks/test-print?check_stock=glossy")
+    assert r.status_code == 422, r.text
+
+
+def test_test_print_uses_the_unsaved_form_values(client, monkeypatch):
+    # The values passed (as the Settings form sends them) are what the sample
+    # check renders with; nothing is saved. Rendered to HTML so it runs
+    # without WeasyPrint's native stack.
+    import app.routes.checks as checks
+
+    seen = {}
+
+    def fake_pdf(check_data, company):
+        seen["html"] = render_check_html(check_data, company)
+        return b"%PDF-fake"
+
+    monkeypatch.setattr(checks, "generate_check_pdf", fake_pdf)
+    r = client.get(
+        "/api/checks/test-print?check_stock=preprinted"
+        "&check_nudge_x_in=0.1&check_nudge_y_in=-0.05"
+    )
+    assert r.status_code == 200, r.text
+    assert "translate(0.1in, -0.05in)" in seen["html"]
+    assert "visibility: hidden" in seen["html"]
+    assert client.get("/api/settings").json()["check_stock"] == "plain"

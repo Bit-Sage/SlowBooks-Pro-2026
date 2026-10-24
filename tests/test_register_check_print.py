@@ -70,8 +70,9 @@ def test_a_register_check_prints_values_only_on_preprinted_stock(
 ):
     # The register/expense path reads the check-stock setting through the
     # same helper every path does (#440): on pre-printed stock the labels
-    # and the signature rule are gone and the values remain. Rendered to
-    # HTML so it runs without WeasyPrint's native stack.
+    # and the signature rule are hidden (kept in place, not printed) and the
+    # values remain. Rendered to HTML so it runs without WeasyPrint's native
+    # stack.
     from app.routes.checks import register_check_data
     from app.services.pdf_service import render_check_html
 
@@ -79,8 +80,7 @@ def test_a_register_check_prints_values_only_on_preprinted_stock(
     data = register_check_data(db_session, e["id"])
     company = {"company_name": "Acme", "check_stock": "preprinted"}
     html = render_check_html(data, company)
-    assert "PAY TO THE ORDER OF" not in html
-    assert '<div class="signature-line"></div>' not in html
+    assert ".pay-to-label, .memo-label, .signature-line { visibility: hidden; }" in html
     assert "Main Street Properties" in html
     assert "October rent" in html
 

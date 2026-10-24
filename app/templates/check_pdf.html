@@ -32,11 +32,15 @@
 {%- if stock == 'preprinted' %}
 <style>
     /* Pre-printed check stock (#440): the stock already carries the payee,
-       memo and signature lines and the amount border, so the values print
-       with no lines or boxes of our own. The labels and the signature rule
-       are left out of the markup below. */
+       memo and signature lines, the amount border, the company's name and
+       address and the check number, so the values print with no lines or
+       boxes of our own. What the stock carries is hidden, not removed:
+       visibility keeps its space, so every value sits exactly where it does
+       on plain stock and one nudge lines them all up. */
     .pay-to-line, .amount-words, .memo-text { border-bottom: none; }
-    .amount-box { border: none; padding: 4px 0; }
+    .amount-box { border-color: transparent; }
+    .check-company, .check-company-addr, .check-number,
+    .check-date-label, .pay-to-label, .memo-label, .signature-line { visibility: hidden; }
 </style>
 {%- endif %}
 </head>
@@ -99,20 +103,20 @@
             </div>
             <div class="check-number">#{{ check.check_number }}</div>
             <div class="check-date">
-                {% if stock != 'preprinted' %}<span class="check-date-label">DATE</span><br>{% endif %}
+                <span class="check-date-label">DATE</span><br>
                 {{ check.date | fdate }}
             </div>
             <div class="pay-to">
-                {% if stock != 'preprinted' %}<span class="pay-to-label">PAY TO THE ORDER OF</span><br>{% endif %}
+                <span class="pay-to-label">PAY TO THE ORDER OF</span><br>
                 <span class="pay-to-line">{{ check.payee }}</span>
             </div>
             <div class="amount-box">{{ check.amount | currency }}</div>
             <div class="amount-words">{{ check.amount_words }} ******</div>
             <div class="memo-line">
-                {% if stock != 'preprinted' %}<span class="memo-label">MEMO</span>{% endif %}
+                <span class="memo-label">MEMO</span>
                 <span class="memo-text">{{ check.memo or '' }}</span>
             </div>
-            {% if stock != 'preprinted' %}<div class="signature-line"></div>{% endif %}
+            <div class="signature-line"></div>
         </div>
     </div>
 </body>
