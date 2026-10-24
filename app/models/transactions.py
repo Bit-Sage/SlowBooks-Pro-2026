@@ -40,6 +40,11 @@ class Transaction(Base):
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     # Job-costing dimension (QB "Customer:Job"); NULL = no job
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    # The vendor a register entry was paid to or refunded by (#491): a
+    # line added from a bank feed names its payee's vendor here, so the
+    # vendor's page and payments list include it. Documents (bills,
+    # expenses, payments) carry their party on their own row, not here.
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True, index=True)
 
     # An adjusting entry (#341): an accountant's correction, marked so the
     # owner can tell it from the daily books, listed by the Adjusting

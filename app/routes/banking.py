@@ -38,6 +38,7 @@ from app.schemas.banking import (
     ReconciliationCreate,
     ReconciliationUpdate,
     StatementAdd,
+    StatementVendors,
     StatementCategory,
     StatementMatch,
     ReconciliationResponse,
@@ -297,12 +298,15 @@ def post_legacy_balance(
 
 # Bank Transactions
 def _statement_out(rows: list, db: Session) -> list[dict]:
+    from app.services.bank_matching import entry_vendors
+
     ids = {r.category_account_id for r in rows if r.category_account_id}
     names = (
         {a.id: a.name for a in db.query(Account).filter(Account.id.in_(ids)).all()}
         if ids
         else {}
     )
+    vendors = entry_vendors(db, rows)
     return [
         {
             "id": r.id,
@@ -320,6 +324,8 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
             "import_source": r.import_source,
             "reconciled": bool(r.reconciled),
             "created_at": r.created_at,
+            "vendor_id": vendors[r.id].id if r.id in vendors else None,
+            "vendor_name": vendors[r.id].name if r.id in vendors else None,
         }
         for r in rows
     ]
@@ -403,10 +409,22 @@ def statement_add(
         memo=data.memo,
         class_id=data.class_id,
         job_id=data.job_id,
+        vendor_id=data.vendor_id,
     )
     db.commit()
     db.refresh(bt)
     return _statement_out([bt], db)[0]
+
+
+@router.post("/transactions/vendors")
+def statement_vendors(data: StatementVendors, db: Session = Depends(get_db)):
+    """Make the payees of these added feed lines vendors, or link them to
+    the vendor of that name, and name it on their entries (#491)."""
+    from app.services import bank_matching as m
+
+    out = m.attach_vendors(db, data.line_ids)
+    db.commit()
+    return out
 
 
 @router.patch("/transactions/{txn_id}", response_model=BankTransactionResponse)

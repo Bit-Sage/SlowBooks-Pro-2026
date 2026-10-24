@@ -177,6 +177,9 @@ class BankTransactionResponse(BaseModel):
     import_source: Optional[str] = None
     reconciled: bool
     created_at: datetime
+    # the vendor the added line's entry names (#491)
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -191,6 +194,15 @@ class StatementAdd(StrictModel):
     memo: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    # the vendor the entry names (#491); left out, the payee's vendor
+    vendor_id: Optional[int] = None
+
+
+class StatementVendors(StrictModel):
+    """Added feed lines whose payee should become (or be linked to) a
+    vendor (#491)."""
+
+    line_ids: list[int]
 
 
 class StatementCategory(StrictModel):

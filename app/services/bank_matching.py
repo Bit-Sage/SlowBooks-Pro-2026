@@ -10,10 +10,11 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import exists
+from sqlalchemy import exists, func
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
+from app.models.contacts import Vendor
 from app.models.banking import BankAccount, BankTransaction
 from app.models.transactions import Transaction, TransactionLine
 from app.services.accounting import _q
@@ -25,7 +26,7 @@ from app.services.bank_register import (
     voided_transaction_ids,
 )
 from app.services.closing_date import check_closing_date
-from app.services.entry_text import header_text
+from app.services.entry_text import BANK_ENTRY_HEADER, header_text
 
 AUTO_WINDOW_DAYS = 5
 CANDIDATE_WINDOW_DAYS = 30
@@ -190,6 +191,34 @@ def unmatch(db: Session, bt: BankTransaction) -> BankTransaction:
     return bt
 
 
+def vendor_named(db: Session, name: str | None) -> Vendor | None:
+    """The vendor whose name is `name`, ignoring capitals and the spaces
+    around it: an active one first, else an inactive one (its history is
+    still its own). None for an empty name or no such vendor."""
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    return (
+        db.query(Vendor)
+        .filter(func.lower(func.trim(Vendor.name)) == key)
+        .order_by(Vendor.is_active.desc(), Vendor.id)
+        .first()
+    )
+
+
+def _entry_vendor(
+    db: Session, payee: str | None, vendor_id: int | None
+) -> Vendor | None:
+    """The vendor a feed line posts to (#491): the one asked for, else
+    the vendor its payee names."""
+    if vendor_id is not None:
+        vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+        if not vendor:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+        return vendor
+    return vendor_named(db, payee)
+
+
 def add(
     db: Session,
     bt: BankTransaction,
@@ -198,8 +227,12 @@ def add(
     memo: str | None = None,
     class_id: int | None = None,
     job_id: int | None = None,
+    vendor_id: int | None = None,
 ) -> BankTransaction:
-    """Post the statement line as a register entry and link it."""
+    """Post the statement line as a register entry and link it. The entry
+    names the vendor asked for, or the one whose name is the payee (#491);
+    a payee no vendor has is left as text, and the review row offers to
+    make it one (`attach_vendors`)."""
     acct = _feed_account(db, bt)
     if bt.transaction_line_id or bt.match_status == "added":
         raise HTTPException(
@@ -214,19 +247,24 @@ def add(
     if not category:
         raise HTTPException(status_code=404, detail="Category account not found")
     check_closing_date(db, bt.date)
+    payee = payee or bt.payee
+    vendor = _entry_vendor(db, payee, vendor_id)
     txn = post_bank_entry(
         db,
         acct,
         bt.date,
         bt.amount,
         category,
-        payee=payee or bt.payee,
+        payee=payee,
         memo=memo or bt.description,
         reference=bt.check_number,
         class_id=class_id,
         job_id=job_id,
         source_id=bt.id,
     )
+    if vendor is not None and txn.source_type == "bank_entry":
+        # a transfer between two bank or card accounts has no vendor
+        txn.vendor_id = vendor.id
     db.flush()
     line = (
         db.query(TransactionLine)
@@ -240,6 +278,66 @@ def add(
     if category_account_id:
         bt.category_account_id = category_account_id
     return bt
+
+
+def entry_vendors(db: Session, rows) -> dict[int, Vendor]:
+    """The vendor on each added statement line's entry, by line id."""
+    txn_ids = {r.transaction_id for r in rows if r.transaction_id}
+    if not txn_ids:
+        return {}
+    pairs = (
+        db.query(Transaction.id, Vendor)
+        .join(Vendor, Transaction.vendor_id == Vendor.id)
+        .filter(Transaction.id.in_(txn_ids))
+        .all()
+    )
+    by_txn = dict(pairs)
+    return {r.id: by_txn[r.transaction_id] for r in rows if r.transaction_id in by_txn}
+
+
+def needs_vendor(db: Session, bt: BankTransaction) -> bool:
+    """An added line whose entry is money out, has a payee and names no
+    vendor: the one the review row offers to make a vendor of."""
+    if bt.match_status != "added" or not bt.transaction_id or bt.amount >= 0:
+        return False
+    txn = db.query(Transaction).filter(Transaction.id == bt.transaction_id).first()
+    return bool(
+        txn
+        and txn.source_type == "bank_entry"
+        and txn.vendor_id is None
+        and (txn.description or "").strip()
+        and txn.description != BANK_ENTRY_HEADER
+    )
+
+
+def attach_vendors(db: Session, line_ids: list[int]) -> dict:
+    """Name a vendor on the entries these added feed lines posted (#491):
+    the vendor their payee names, made when there is none, the way the
+    register's "Add X as a vendor?" makes one. A line not added from the
+    feed, money in, a transfer or an entry that already names a vendor is
+    left as it is. Returns the vendors made and the entries linked."""
+    rows = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.id.in_(line_ids or [-1]))
+        .order_by(BankTransaction.id)
+        .all()
+    )
+    created, linked = [], 0
+    for bt in rows:
+        if not needs_vendor(db, bt):
+            continue
+        txn = db.query(Transaction).get(bt.transaction_id)
+        name = txn.description.strip()
+        vendor = vendor_named(db, name)
+        if vendor is None:
+            vendor = Vendor(name=name)
+            db.add(vendor)
+            db.flush()
+            created.append({"id": vendor.id, "name": vendor.name})
+        txn.vendor_id = vendor.id
+        linked += 1
+    db.flush()
+    return {"created": created, "linked": linked}
 
 
 def set_category(
@@ -299,7 +397,7 @@ def add_all(db: Session, bank_account: BankAccount) -> dict:
         .order_by(BankTransaction.date, BankTransaction.id)
         .all()
     )
-    added, skipped = 0, []
+    added, skipped, no_vendor = 0, [], []
     for bt in rows:
         try:
             with db.begin_nested():
@@ -307,4 +405,8 @@ def add_all(db: Session, bank_account: BankAccount) -> dict:
             added += 1
         except HTTPException as exc:
             skipped.append({"id": bt.id, "reason": exc.detail})
-    return {"added": added, "skipped": skipped}
+            continue
+        if needs_vendor(db, bt):
+            no_vendor.append(bt.id)
+    # the lines whose payee is no vendor yet, for the page to offer them
+    return {"added": added, "skipped": skipped, "without_vendor": no_vendor}
