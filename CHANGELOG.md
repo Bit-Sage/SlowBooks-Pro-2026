@@ -21,6 +21,17 @@ back to the picker either way. A read-only or accountant sign-in is not
 offered it. Items keep their own quick add, which records an item in a cost
 of goods account.
 
+**Bill Quick Entry** (#487). A stack of vendor bills can be keyed one after
+another, as paper invoices can on Quick Entry: Vendors & Payables → Bill Quick
+Entry, the top bar's Bill Entry, or Quick Entry on the Bills page. Pick the
+vendor (or add one; its terms and default account follow), the date and the
+vendor's bill number, then each line's account, words and amount, with no
+quantity or rate. Save & Next (or Ctrl+Enter) saves the bill, lists it in this
+batch's log under the form with a running count and total, and starts the
+next bill with the vendor, date and terms kept and the focus back on the
+vendor. A line's Account can add a new account and its Item a new item, as on
+Enter Bill. A read-only or accountant sign-in is not offered the page.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

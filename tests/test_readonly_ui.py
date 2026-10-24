@@ -48,7 +48,8 @@ def test_create_buttons_are_hidden_for_a_read_only_sign_in():
     assert "[page, document.getElementById('modal-body')]" in app
     # the toolbar's New Customer / Create Invoice / Receive Payment / Quick Entry
     assert (
-        '#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"]' in app
+        '#topbar .tb-btn[data-action], #topbar .tb-btn[data-nav="#/quick-entry"], #topbar .tb-btn[data-nav="#/bill-entry"]'
+        in app
     )
 
 

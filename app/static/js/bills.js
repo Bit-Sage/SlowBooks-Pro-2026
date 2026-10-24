@@ -19,6 +19,7 @@ const BillsPage = {
             headerHtml: `<div class="btn-group">
                     <button class="btn btn-primary" ${App.shortcutAttrs('B', 'Enter Bill')} onclick="BillsPage.showForm()">+ Enter Bill</button>
                     <button class="btn btn-secondary" onclick="BillsPage.showPayForm()">Pay Bills</button>
+                    <button class="btn btn-secondary" data-write onclick="App.navigate('#/bill-entry')" title="A stack of bills, one after another">Quick Entry</button>
                 </div>` + (all ? '' : listCapNote(rows, 500, 'BillsPage.showAll()', 'bills')),
             filter: {
                 id: 'bill-status-filter',
