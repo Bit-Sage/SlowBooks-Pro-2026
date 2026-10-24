@@ -155,7 +155,8 @@ federal withholding, Social Security, Medicare and FUTA wages and tax (both
 sides), deductions, garnishments and net for each quarter; per state and
 quarter the state wages, withholding, SUTA wages and tax and other state
 taxes; benefit amounts by code for the year. Enter it on the employee's page
-(Opening YTD) or import it for everyone from Payroll → Import opening
+(Opening YTD, where each quarter's state table fits the dialog instead of
+running past its edge) or import it for everyone from Payroll → Import opening
 balances, using the template there (a Quarter column, one row per employee
 per quarter, a further state on a row with only the state columns); the
 import's Apply button appears only after a Preview says what there is to

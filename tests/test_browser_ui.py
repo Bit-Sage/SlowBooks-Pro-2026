@@ -25,6 +25,12 @@ or its Chromium is not installed.
   over the State and Permit number boxes, and a click on either box's lower
   part landed on the note. Checked with a long note and a short one, typed
   and empty, in a wide window and a narrow one.
+- W-36 (2.29.0 gate, skytech): an employee's Opening YTD quarter with a
+  state row was 852 px wide in a 682 px dialog: the state table's seven
+  fixed-width inputs pushed Q2's Federal withholding through Net past the
+  edge, behind a sideways scrollbar. Opened for an employee with a state in
+  Q1 and Q2 at 1280 x 800, in both themes; the state inputs still take the
+  keyboard in order.
 """
 
 import json
@@ -35,7 +41,7 @@ import pytest
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-from tests.test_theme_contrast import new_page  # noqa: E402  (a Linux browser)
+from tests.test_theme_contrast import _theme, new_page  # noqa: E402  (a Linux browser)
 
 ROOT = Path(__file__).resolve().parents[1]
 ORIGIN = "http://slowbooks.test"
@@ -86,6 +92,76 @@ API = {
     "/api/accounts": [
         {"id": 1, "name": "Checking", "account_number": "1000", "bank_kind": "bank"}
     ],
+    "/api/employees/1": {
+        "id": 1,
+        "first_name": "Lena",
+        "last_name": "Ortiz",
+        "email": "lena@harborlight.test",
+        "pay_type": "salary",
+        "pay_rate": 52000,
+        "pay_frequency": "biweekly",
+        "filing_status": "single",
+        "hire_date": "2024-03-04",
+        "work_state": "GA",
+        "is_active": True,
+    },
+    "/api/employees/1/ytd": {
+        "gross": 30000,
+        "federal": 3100,
+        "state": 1140,
+        "ss": 1798,
+        "medicare": 420.5,
+        "net": 22000,
+    },
+    # a May switch: Q1 and Q2 each carry the old payroll, one state apiece
+    "/api/employees/1/opening-ytd": {
+        "locked": False,
+        "first_pay_date": None,
+        "opening": {
+            "id": 1,
+            "employee_id": 1,
+            "year": 2026,
+            "as_of": "2026-05-15",
+            "gross": 30000,
+            "federal_tax": 3100,
+            "ss_tax": 1798,
+            "medicare_tax": 420.5,
+            "net": 22000,
+            "states": [{"state": "GA", "wages": 30000, "withholding": 1140}],
+            "quarters": [
+                {
+                    "quarter": q,
+                    "gross": gross,
+                    "federal_tax": round(gross * 0.1033, 2),
+                    "ss_wages": gross,
+                    "ss_tax": round(gross * 0.062, 2),
+                    "employer_ss_tax": round(gross * 0.062, 2),
+                    "medicare_wages": gross,
+                    "medicare_tax": round(gross * 0.0145, 2),
+                    "employer_medicare_tax": round(gross * 0.0145, 2),
+                    "futa_wages": futa,
+                    "futa_tax": round(futa * 0.006, 2),
+                    "pretax_deductions": 0,
+                    "posttax_deductions": 0,
+                    "garnishments": 0,
+                    "net": round(gross * 0.7333, 2),
+                    "states": [
+                        {
+                            "state": "GA",
+                            "wages": gross,
+                            "withholding": round(gross * 0.038, 2),
+                            "suta_wages": futa,
+                            "suta_tax": round(futa * 0.027, 2),
+                            "other_employee": 0,
+                            "other_employer": 0,
+                        }
+                    ],
+                }
+                for q, gross, futa in ((1, 18000, 7000), (2, 12000, 0))
+            ],
+            "benefits": [],
+        },
+    },
     "/api/invoices/1": {
         "id": 1,
         "invoice_number": "HLB-2005",
@@ -341,6 +417,79 @@ def test_the_opening_import_offers_apply_only_after_preview(browser):
             "() => { document.getElementById('opening-import-apply').hidden = false; }"
         )
         assert page.evaluate(OPENING_IMPORT_BUTTONS)["apply"] is True
+    finally:
+        page.close()
+
+
+OPENING_QUARTERS_FIT = """() => {
+    const body = document.getElementById('modal-body');
+    const box = body.getBoundingClientRect();
+    const edge = box.right - parseFloat(getComputedStyle(body).paddingRight);
+    const inBody = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.left >= box.left - 0.5 && r.right <= edge + 0.5;
+    };
+    const net = document.getElementById('emp-opening-1-q2-net');
+    const states = [...body.querySelectorAll('[data-opening-state] [data-k]')];
+    // the quarter's table wrapper may scroll if a wider row ever appears;
+    // at the dialog's own size it has no reason to
+    const wraps = [...body.querySelectorAll('[data-opening-quarter] table')]
+        .map(t => t.parentElement).filter(w => w !== null);
+    return {
+        body_scroll: [body.scrollWidth, body.clientWidth],
+        q2_net_in_body: inBody(net),
+        state_inputs_outside: states.filter(el => !inBody(el)).map(el => el.getAttribute('aria-label')),
+        wraps_scroll: wraps.filter(w => w.scrollWidth > w.clientWidth).length,
+        quarters: body.querySelectorAll('[data-opening-quarter]').length,
+        state_rows: body.querySelectorAll('[data-opening-state]').length,
+    }; }"""
+
+TAB_THROUGH_STATE_ROW = """(n) => {
+    const row = document.querySelector(`#emp-opening-states-1-q${n} [data-opening-state]`);
+    row.querySelector('[data-k=state]').focus();
+    return document.activeElement.getAttribute('aria-label'); }"""
+
+
+def test_the_opening_quarters_fit_the_employee_dialog(browser):
+    """Employees -> Details -> Opening YTD: a quarter with a state row was
+    852 px wide in a 682 px dialog body, the state table's seven fixed-width
+    inputs pushing Q2's Federal withholding through Net past the edge behind
+    a sideways scrollbar (2.29.0 gate, skytech W-36). The state inputs now
+    size to their cells; the dialog does not scroll sideways, and the state
+    row still takes the keyboard in order, State through Remove."""
+    page = _open(browser, 1280, 800, "#/employees")
+    try:
+        _open_dialog(page, "EmployeesPage.viewDetails(1)", "#emp-opening-1-q2-net")
+        for theme in ("light", "dark"):
+            _theme(page, theme)
+            seen = page.evaluate(OPENING_QUARTERS_FIT)
+            assert seen["quarters"] == 4 and seen["state_rows"] == 2, (theme, seen)
+            assert seen["body_scroll"][0] == seen["body_scroll"][1], (theme, seen)
+            assert seen["q2_net_in_body"] is True, (theme, seen)
+            assert seen["state_inputs_outside"] == [], (theme, seen)
+            assert seen["wraps_scroll"] == 0, (theme, seen)
+        # Tab walks each state row left to right: State, the six amounts,
+        # then its Remove
+        for n in (1, 2):
+            order = [page.evaluate(TAB_THROUGH_STATE_ROW, n)]
+            for _ in range(7):
+                page.keyboard.press("Tab")
+                order.append(
+                    page.evaluate(
+                        "() => document.activeElement.getAttribute('aria-label')"
+                        " || document.activeElement.textContent.trim()"
+                    )
+                )
+            assert order == [
+                f"Q{n} State",
+                f"Q{n} GA Wages",
+                f"Q{n} GA Withholding",
+                f"Q{n} GA SUTA wages",
+                f"Q{n} GA SUTA tax",
+                f"Q{n} GA Other (employee)",
+                f"Q{n} GA Other (employer)",
+                "Remove",
+            ]
     finally:
         page.close()
 

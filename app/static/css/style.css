@@ -1410,6 +1410,33 @@ a:hover { text-decoration: underline; }
     padding: 14px 16px;
 }
 
+/* An employee's Opening YTD: each quarter's state table (State, six
+   amounts, Remove). Its inputs were a fixed 90px each, 852px of row in a
+   682px dialog, and Q2's Federal withholding through Net sat past the edge
+   behind a sideways scrollbar (2.29.0 gate, skytech W-36). The columns now
+   share the table's width and the inputs fill their cells; the wrapper
+   scrolls on its own should a wider row ever appear, so the dialog never
+   does. */
+.opening-states-wrap { overflow-x: auto; }
+.opening-states {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 12px;
+}
+.opening-states col.opening-states__state { width: 52px; }
+.opening-states col.opening-states__remove { width: 78px; }
+.opening-states thead th {
+    white-space: normal;
+    padding: 4px 5px;
+}
+.opening-states tbody td { padding: 3px 4px; }
+.opening-states input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 4px 3px;
+}
+
 /* ========================================================================
  * TOAST NOTIFICATIONS
  * ======================================================================== */

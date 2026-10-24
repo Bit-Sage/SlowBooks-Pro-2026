@@ -553,9 +553,11 @@ const EmployeesPage = {
     _openingStateRow(st, n) {
         st = st || {};
         const q = n ? `Q${n} ` : '';
-        const num = (k, label) => `<input type="number" step="0.01" min="0" data-k="${k}" value="${st[k] ?? ''}" style="width:90px" aria-label="${escapeHtml(q + (st.state ? st.state + ' ' : '') + label)}">`;
+        // the inputs size to their cells (.opening-states): seven fixed
+        // 90px ones made the quarter wider than the dialog (W-36)
+        const num = (k, label) => `<input type="number" step="0.01" min="0" data-k="${k}" value="${st[k] ?? ''}" aria-label="${escapeHtml(q + (st.state ? st.state + ' ' : '') + label)}">`;
         return `<tr data-opening-state>
-            <td><input data-k="state" maxlength="2" value="${escapeHtml(st.state || '')}" style="width:40px;text-transform:uppercase" aria-label="${q}State"></td>
+            <td><input data-k="state" maxlength="2" value="${escapeHtml(st.state || '')}" style="text-transform:uppercase" aria-label="${q}State"></td>
             ${EmployeesPage.OPENING_STATE_FIELDS.map(([k, label]) => `<td>${num(k, label)}</td>`).join('')}
             <td><button type="button" class="btn btn-sm btn-secondary" onclick="this.closest('tr').remove()">Remove</button></td>
         </tr>`;
@@ -598,10 +600,13 @@ const EmployeesPage = {
         return `<fieldset data-opening-quarter="${n}" style="margin:6px 0;border:1px solid var(--panel-border);border-radius:4px;padding:6px 10px">
             <legend style="font-size:12px;font-weight:600">Q${n} (${months})</legend>
             <div class="form-grid">${fields}</div>
-            <table class="data-table" style="font-size:12px">
+            <div class="opening-states-wrap">
+            <table class="data-table opening-states">
+                <colgroup><col class="opening-states__state">${EmployeesPage.OPENING_STATE_FIELDS.map(() => '<col>').join('')}<col class="opening-states__remove"></colgroup>
                 <thead><tr><th scope="col">State</th>${heads}<th scope="col"></th></tr></thead>
                 <tbody id="emp-opening-states-${id}-q${n}">${(q.states || []).map(st => EmployeesPage._openingStateRow(st, n)).join('')}</tbody>
             </table>
+            </div>
             <button type="button" class="btn btn-sm btn-secondary" onclick="EmployeesPage._addOpeningRow(${id}, 'states', ${n})">Add state<span class="visually-hidden"> to Q${n}</span></button>
         </fieldset>`;
     },
