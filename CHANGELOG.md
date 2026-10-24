@@ -14,7 +14,9 @@ header that held no splits — an entry that balanced only because it was
 empty. A $0.00 invoice now posts no journal at all and keeps no transaction;
 voiding it still works, and an edit that gives it a real total posts the
 journal then. An invoice edited down to $0.00 drops its old header the same
-way instead of leaving the husk.
+way instead of leaving the husk. Editing the amounts of an invoice the
+QuickBooks Online import created still posts it exactly once, and the QBO
+import paths that post invoices handle a $0.00 one too.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

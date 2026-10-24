@@ -452,7 +452,8 @@ def adopt_unposted_payments(db: Session, invoice) -> None:
                     sibling.customer.name if sibling.customer else "",
                     balance_on_income=True,
                 )
-                sibling.transaction_id = txn.id
+                # A $0.00 sibling posts no journal (#499).
+                sibling.transaction_id = txn.id if txn is not None else None
                 mark_changed_here(db, sibling_map)
                 invoices.append(sibling)
 
