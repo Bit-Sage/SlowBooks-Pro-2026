@@ -158,6 +158,8 @@ REPORTS = [
     "ReportsPage.customerStatementPicker()",
     "ReportsPage.fixedAssetReconciliation()",
     "ReportsPage.openDrillDown({checking}, 'Checking', '2026-01-01', '2026-09-30')",
+    # a P&L total's drill-down (#479)
+    "ReportsPage.openSetDrillDown({{section: 'net_income'}}, 'Net Income', '2026-01-01', '2026-09-30')",
     # what emailing statements answers when some could not be sent
     "ReportsPage._sendResult('Statements', 'Emailed 1 statement.',"
     " ['Harbor District Events: no email address on file'])",

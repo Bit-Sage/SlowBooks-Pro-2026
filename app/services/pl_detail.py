@@ -167,3 +167,134 @@ def pl_detail_lines(
         block["debit"] = float(block.pop("_debit"))
         block["credit"] = float(block.pop("_credit"))
     return blocks
+
+
+# The P&L's totals a drill-down can open (#479): each a set of sections and
+# the sign each section's lines carry toward the total, so the lines add up
+# to the figure on the statement (Gross Profit is income less cost of goods).
+SET_SECTIONS = {
+    "income": {"income": 1},
+    "cogs": {"cogs": 1},
+    "expenses": {"expenses": 1},
+    "other_income": {"other_income": 1},
+    "other_expense": {"other_expense": 1},
+    "gross_profit": {"income": 1, "cogs": -1},
+    "net_operating_income": {"income": 1, "cogs": -1, "expenses": -1},
+    "net_other_income": {"other_income": 1, "other_expense": -1},
+    "net_income": {
+        "income": 1,
+        "cogs": -1,
+        "expenses": -1,
+        "other_income": 1,
+        "other_expense": -1,
+    },
+}
+# the statement's words for each total, and the P&L key that holds it
+SET_TOTALS = {
+    "income": ("Total Income", "total_operating_income"),
+    "cogs": ("Total Cost of Goods Sold", "total_cogs"),
+    "expenses": ("Total Expenses", "total_operating_expenses"),
+    "other_income": ("Total Other Income", "total_other_income"),
+    "other_expense": ("Total Other Expense", "total_other_expense"),
+    "gross_profit": ("Gross Profit", "operating_gross_profit"),
+    "net_operating_income": ("Net Operating Income", "net_operating_income"),
+    "net_other_income": ("Net Other Income", "net_other_income"),
+    "net_income": ("Net Income", "net_income"),
+}
+
+
+def family_ids(chart: dict, parent_id: int) -> set:
+    """The parent and every account beneath it that prints in its family on
+    the P&L: a sub-account of the same section, walking down (a child of
+    another type or detail type prints elsewhere and is not counted, as
+    statement_layout.family_rows leaves it out). A parent loop stops."""
+    from app.routes.reports.financial import _pl_section_of
+
+    if parent_id not in chart:
+        return set()
+    section = _pl_section_of(chart[parent_id][3], chart[parent_id][4])
+    kids: dict = defaultdict(list)
+    for aid, row in chart.items():
+        if row[2] is not None:
+            kids[row[2]].append(aid)
+    out, todo = set(), [parent_id]
+    while todo:
+        node = todo.pop()
+        if node in out:
+            continue
+        out.add(node)
+        for kid in kids.get(node, ()):
+            if _pl_section_of(chart[kid][3], chart[kid][4]) == section:
+                todo.append(kid)
+    return out
+
+
+def account_set_lines(
+    db: Session,
+    start: date,
+    end: date,
+    *,
+    section: str | None = None,
+    family: int | None = None,
+    class_id: int | None = None,
+    job_id: int | None = None,
+    exclude_adjusting: bool = False,
+    words=None,
+) -> dict:
+    """The drill-down for a set of accounts (#479): a P&L total (`section`,
+    a SET_SECTIONS key) or a sub-account family (`family`, its parent's
+    id). Every line of the set in date order, each with its account, its
+    `amount` signed toward the total and a running total from zero; the
+    last running total is the statement's figure."""
+    from app.routes.reports.financial import _chart_index
+
+    chart = _chart_index(db)
+    if family is not None:
+        ids = family_ids(chart, family)
+        signs = None
+    else:
+        signs = SET_SECTIONS[section]
+        ids = None
+    blocks = pl_detail_lines(
+        db,
+        start,
+        end,
+        class_id=class_id,
+        job_id=job_id,
+        exclude_adjusting=exclude_adjusting,
+        account_ids=ids,
+        chart=chart,
+        words=words,
+    )
+    lines = []
+    for block in blocks.values():
+        sign = 1 if signs is None else signs.get(block["section"])
+        if sign is None:
+            continue
+        for e in block["entries"]:
+            lines.append(
+                {
+                    **e,
+                    "account_id": block["account_id"],
+                    "account_label": block["account_label"],
+                    "amount": e["amount"] * sign,
+                    "_sign": sign,
+                }
+            )
+    lines.sort(key=lambda e: (e["date"], e["transaction_id"], e["line_id"]))
+    running = ZERO
+    debit = credit = ZERO
+    for e in lines:
+        running += Decimal(str(e["amount"]))
+        debit += Decimal(str(e["debit"]))
+        credit += Decimal(str(e["credit"]))
+        e["running_balance"] = float(running)
+        e["balance"] = float(running)
+        e.pop("_sign")
+    return {
+        "account_ids": sorted({e["account_id"] for e in lines} | (ids or set())),
+        "entries": lines,
+        "period_debit": float(debit),
+        "period_credit": float(credit),
+        "period_net": float(running),
+    }

@@ -788,7 +788,10 @@ def general_ledger(
 
 @router.get("/account-transactions")
 def account_transactions(
-    account_id: int = Query(..., description="Account to drill into"),
+    account_id: int = Query(
+        default=None,
+        description="Account to drill into; or section / family for several",
+    ),
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
@@ -801,21 +804,62 @@ def account_transactions(
         Optional[int],
         Query(description="Only this job's lines (#242); 0 for the lines with no job"),
     ] = None,
+    section: Annotated[
+        Optional[str],
+        Query(
+            description="A P&L total's accounts in place of one account (#479)",
+            pattern="^(income|cogs|expenses|other_income|other_expense|gross_profit"
+            "|net_operating_income|net_other_income|net_income)$",
+        ),
+    ] = None,
+    family: Annotated[
+        Optional[int],
+        Query(description="A parent account and its sub-accounts (#479)"),
+    ] = None,
+    exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
     """Phase 11: drill-down support. Every journal entry line hitting a
     given account in the date range, with source document linkage so the
     UI can jump from a P&L row straight to the underlying invoice/bill/JE.
     The register service (bank_register.account_register) does the work —
-    the bank register is the same view."""
+    the bank register is the same view.
+
+    In place of one account, a set of them (#479): `section` is one of
+    the P&L's totals (income, cogs, expenses, other_income, other_expense,
+    gross_profit, net_operating_income, net_other_income, net_income) and
+    `family` a parent account with its sub-accounts. Every line of the set,
+    each with its account, signed toward the total, with a running total
+    from zero that ends on the statement's figure (`period_net`), for the
+    same dates, class, job and adjusting-entries choice."""
     from app.services.bank_register import account_register
 
-    acct = db.query(Account).filter(Account.id == account_id).first()
-    if not acct:
-        raise HTTPException(status_code=404, detail="Account not found")
+    section = section if isinstance(section, str) else None
+    family = family if isinstance(family, int) else None
+    exclude_adjusting = _flag(exclude_adjusting)
+    asked = [x for x in (account_id, section, family) if x is not None]
+    if len(asked) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Give one of account_id, section or family",
+        )
     if not start_date:
         start_date = fiscal_year_start(db, date.today())
     if not end_date:
         end_date = date.today()
+    if account_id is None:
+        return _account_set(
+            db,
+            start_date,
+            end_date,
+            section,
+            family,
+            class_id,
+            job_id,
+            exclude_adjusting,
+        )
+    acct = db.query(Account).filter(Account.id == account_id).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
     cls = _in_class(db, class_id)[0] if class_id is not None else None
     job_name = None
     if job_id is not None:
@@ -839,6 +883,79 @@ def account_transactions(
     out["class_name"] = cls.name if cls else None
     out["job_id"] = job_id
     out["job_name"] = job_name
+    return out
+
+
+def _job_words(db, job_id) -> Optional[str]:
+    """The job's name for a drill-down's title, "No job" for 0 (#242)."""
+    if job_id is None:
+        return None
+    if job_id == 0:
+        from app.services.jobs_service import NO_JOB_LABEL
+
+        return terms_from_db(db).text(NO_JOB_LABEL)
+    from app.models.jobs import Job
+
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.name
+
+
+def _account_set(
+    db, start_date, end_date, section, family, class_id, job_id, exclude_adjusting
+) -> dict:
+    """The drill-down for a P&L total or a sub-account family (#479)."""
+    from app.services.pl_detail import SET_TOTALS, account_set_lines
+
+    t = terms_from_db(db)
+    chart = _chart_index(db)
+    if family is not None:
+        if family not in chart:
+            raise HTTPException(status_code=404, detail="Account not found")
+        if chart[family][3] not in _PL_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail="A family is a Profit & Loss account and its sub-accounts",
+            )
+        label = f"Total {_account_words(chart, family)[1]}"
+        total_key = None
+    else:
+        words, total_key = SET_TOTALS[section]
+        label = t(words)
+    cls = _in_class(db, class_id)[0] if class_id is not None else None
+    job_name = _job_words(db, job_id)
+    out = account_set_lines(
+        db,
+        start_date,
+        end_date,
+        section=section,
+        family=family,
+        class_id=class_id,
+        job_id=job_id,
+        exclude_adjusting=exclude_adjusting,
+        words=t,
+    )
+    out.update(
+        {
+            "set": {
+                "kind": "family" if family is not None else "section",
+                "section": section,
+                "family": family,
+                "label": label,
+                "total_key": total_key,
+            },
+            "account": None,
+            "opening_balance": 0.0,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "class_id": cls.id if cls else None,
+            "class_name": cls.name if cls else None,
+            "job_id": job_id,
+            "job_name": job_name,
+            "exclude_adjusting": bool(exclude_adjusting),
+        }
+    )
     return out
 
 
@@ -2075,7 +2192,12 @@ def general_ledger_csv_route(
 
 
 def _account_transactions_section(data: dict, t) -> dict:
-    """The drill-down's rows for the PDF (#333)."""
+    """The drill-down's rows for the PDF (#333). A P&L total's or a
+    family's (#479) names each line's account where the payee is, the
+    payee after it, and its Amount (signed toward the total) and running
+    total in place of the debit, credit and balance."""
+    if data.get("set"):
+        return _account_set_section(data, t)
     acct = data.get("account") or {}
     head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
     rows = [
@@ -2137,52 +2259,144 @@ def _account_transactions_section(data: dict, t) -> dict:
     }
 
 
+def _account_set_section(data: dict, t) -> dict:
+    rows = []
+    for e in data.get("entries", []):
+        rows.append(
+            {
+                "cells": [
+                    e.get("date", ""),
+                    (e.get("account_label") or "")[:40],
+                    (e.get("payee") or e.get("name") or "")[:30],
+                    ((e.get("memo") or "") + (" (void)" if e.get("voided") else ""))[
+                        :50
+                    ],
+                    _money(e.get("amount", 0)),
+                    _money(e.get("running_balance", 0)),
+                ]
+            }
+        )
+    rows.append(
+        {
+            "cells": ["", "", "", data["set"]["label"], _money(data["period_net"]), ""],
+            "style": "subtotal",
+        }
+    )
+    period = f"{data['start_date']} — {data['end_date']}"
+    if data.get("class_name"):
+        period += f" · {t('Class')}: {data['class_name']} only"
+    if data.get("job_name"):
+        period += f" · {t('Job')}: {data['job_name']}"
+    if data.get("exclude_adjusting"):
+        period += " · adjusting entries left out"
+    return {
+        "title": f"Account detail — {data['set']['label']}",
+        "period": period,
+        "columns": ["Date", "Account", "Name", "Memo", "Amount", "Running"],
+        "text_columns": 4,
+        "rows": rows,
+    }
+
+
+def _drill_slug(data: dict, t) -> str:
+    """The file name's words: the account's number and name, or the set's
+    label ("Total Income", "Total 7000 - Travel", #479)."""
+    if data.get("set"):
+        return t.slug(data["set"]["label"]) or "accounts"
+    acct = data.get("account") or {}
+    return t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
+
+
+def _drill_data(
+    db,
+    account_id,
+    start_date,
+    end_date,
+    class_id,
+    job_id,
+    section,
+    family,
+    exclude_adjusting,
+):
+    return account_transactions(
+        account_id,
+        start_date,
+        end_date,
+        db,
+        class_id=class_id,
+        job_id=job_id,
+        section=section,
+        family=family,
+        exclude_adjusting=exclude_adjusting,
+    )
+
+
 @router.get("/account-transactions/csv")
 def account_transactions_csv_route(
     request: Request,
-    account_id: int = Query(...),
+    account_id: int = Query(default=None),
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
     class_id: Optional[int] = Query(default=None),
     job_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    section: Optional[str] = Query(default=None),
+    family: Optional[int] = Query(default=None),
+    exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
-    """The drill-down as a CSV, the figures on the screen (#333)."""
+    """The drill-down as a CSV, the figures on the screen (#333); a P&L
+    total's or a family's too, with each line's account (#479)."""
     from app.services.ledger_exports import account_transactions_csv
 
-    data = account_transactions(
-        account_id, start_date, end_date, db, class_id=class_id, job_id=job_id
+    data = _drill_data(
+        db,
+        account_id,
+        start_date,
+        end_date,
+        class_id,
+        job_id,
+        section,
+        family,
+        exclude_adjusting,
     )
     t = terms_from_db(db)
-    acct = data.get("account") or {}
-    slug = t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
     return _csv_download(
         account_transactions_csv(data, _company_name(db), t),
-        f"AccountDetail_{slug}_{data['start_date']}_{data['end_date']}.csv",
+        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.csv",
         request,
     )
 
 
 @router.get("/account-transactions/pdf")
 def account_transactions_pdf_route(
-    account_id: int = Query(...),
+    account_id: int = Query(default=None),
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
     class_id: Optional[int] = Query(default=None),
     job_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    section: Optional[str] = Query(default=None),
+    family: Optional[int] = Query(default=None),
+    exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
-    """The drill-down as a PDF (#333)."""
-    data = account_transactions(
-        account_id, start_date, end_date, db, class_id=class_id, job_id=job_id
+    """The drill-down as a PDF (#333); a P&L total's or a family's too
+    (#479)."""
+    data = _drill_data(
+        db,
+        account_id,
+        start_date,
+        end_date,
+        class_id,
+        job_id,
+        section,
+        family,
+        exclude_adjusting,
     )
     t = terms_from_db(db)
-    acct = data.get("account") or {}
-    slug = t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
     return _pdf_response(
         [_account_transactions_section(data, t)],
         db,
-        f"AccountDetail_{slug}_{data['start_date']}_{data['end_date']}.pdf",
+        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.pdf",
     )
 
 

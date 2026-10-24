@@ -179,9 +179,13 @@ def general_ledger_csv(data: dict, company: str, words=None) -> str:
 def account_transactions_csv(data: dict, company: str, words) -> str:
     """The drill-down (one account's lines for a date range, the balance
     brought forward and the running balance) as the screen shows it
-    (#333): a bookkeeper hands a client what was spent on one account."""
+    (#333): a bookkeeper hands a client what was spent on one account. A
+    P&L total's or a family's (#479) has each line's account, and its
+    Amount signed toward the total with a running total."""
     out = io.StringIO()
     w = _SafeWriter(out)
+    if data.get("set"):
+        return _account_set_csv(data, company, words, out, w)
     acct = data.get("account") or {}
     head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
     period = f"{data['start_date']} to {data['end_date']}"
@@ -248,6 +252,61 @@ def account_transactions_csv(data: dict, company: str, words) -> str:
             _money(data.get("period_debit", 0)),
             _money(data.get("period_credit", 0)),
             _money(closing),
+            "",
+        ]
+    )
+    return out.getvalue()
+
+
+def _account_set_csv(data: dict, company: str, words, out, w) -> str:
+    period = f"{data['start_date']} to {data['end_date']}"
+    if data.get("class_name"):
+        period += f" ({words('Class')}: {data['class_name']} only)"
+    if data.get("job_name"):
+        period += f" ({words('Job')}: {data['job_name']})"
+    if data.get("exclude_adjusting"):
+        period += " (adjusting entries left out)"
+    _preamble(w, company, f"Account detail — {data['set']['label']}", period)
+    w.writerow(
+        [
+            "Date",
+            "Account",
+            "Type",
+            "Num",
+            "Name",
+            "Memo",
+            "Debit",
+            "Credit",
+            "Amount",
+            "Running total",
+        ]
+    )
+    for e in data.get("entries", []):
+        w.writerow(
+            [
+                e.get("date", ""),
+                e.get("account_label") or "",
+                e.get("type") or "",
+                e.get("num") or "",
+                e.get("name") or "",
+                (e.get("memo") or "") + (" (void)" if e.get("voided") else ""),
+                _money(e["debit"]) if e.get("debit") else "",
+                _money(e["credit"]) if e.get("credit") else "",
+                _money(e.get("amount", 0)),
+                _money(e.get("running_balance", 0)),
+            ]
+        )
+    w.writerow(
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            data["set"]["label"],
+            _money(data.get("period_debit", 0)),
+            _money(data.get("period_credit", 0)),
+            _money(data.get("period_net", 0)),
             "",
         ]
     )
