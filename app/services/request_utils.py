@@ -68,6 +68,26 @@ def _ascii_file_name(name: str) -> str:
     return "".join(out)
 
 
+# Longest stem (the name before its extension) a download is given. A name
+# built from something a person typed (a 300-character vendor name) would
+# otherwise run as long as they typed it; the old per-route slugs stopped at
+# 40, and 80 keeps a full name and date range readable (#423).
+FILE_NAME_STEM_MAX = 80
+
+
+def _capped_file_name(name: str) -> str:
+    """The name with its stem cut to FILE_NAME_STEM_MAX characters and the
+    extension (".csv", ".pdf", ".ach") kept whole."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem or not ext or len(ext) > 10 or not ext.isalnum():
+        stem, ext = name, ""
+    else:
+        ext = "." + ext
+    if len(stem) <= FILE_NAME_STEM_MAX:
+        return name
+    return stem[:FILE_NAME_STEM_MAX].rstrip(" -_.") + ext
+
+
 def file_name(*parts) -> str:
     """A file name from what the file is and who it is for, "_" between the
     parts and "-" between a name's words: ("W-2", 2026, "Lena Ortiz") ->
@@ -89,8 +109,10 @@ def content_disposition(filename: str, disposition: str = "inline") -> str:
     encoded, and every current browser uses it; ``filename="…"`` is a
     plain-ASCII stand-in for any reader that doesn't (and it is what the
     desktop shell reads)."""
-    name = _file_name_text(filename)
+    name = _capped_file_name(_file_name_text(filename))
+    # Transliteration can lengthen the ASCII name ("Æ" -> "AE"); cap it too.
+    fallback = _capped_file_name(_ascii_file_name(name))
     return (
-        f'{disposition}; filename="{_ascii_file_name(name)}"; '
+        f'{disposition}; filename="{fallback}"; '
         f"filename*=UTF-8''{quote(name, safe='')}"
     )

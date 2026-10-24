@@ -198,6 +198,136 @@ def test_a_taken_number_gets_the_next_free_one_and_says_so(
     ] not in _by_number(db_session)
 
 
+def test_a_declared_child_detail_takes_the_parents_with_a_note(
+    client, db_session, seed_accounts
+):
+    """Trent's pair (#416 / #390): the file gives the child a detail type its
+    parent cannot share. The link is right, so the child takes the parent's
+    and the row says so — the account API would refuse the mismatch, and the
+    P&L needs the family together."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "8900,Penalties,Expense,Other Expense,\n"
+        "8910,Late fees,Expense,Expense,8900\n"
+    )
+    plan = _upload(client, text).json()
+    late = next(r for r in plan["rows"] if r["name"] == "Late fees")
+    assert late["detail_type"] == "other_expense"
+    assert "Expense in the file" in (late["note"] or "")
+    assert "Other Expense" in (late["note"] or "")
+
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    nums = _by_number(db_session)
+    pen, lf = nums["8900"], nums["8910"]
+    assert lf.detail_type == "other_expense" and lf.parent_id == pen.id
+
+    got = client.get(f"/api/accounts/{lf.id}").json()
+    assert got["detail_type"] == "other_expense" and got["parent_id"] == pen.id
+    # a PUT resending the now-saved pair is accepted, not refused
+    body = {
+        k: got[k]
+        for k in (
+            "name",
+            "account_number",
+            "account_type",
+            "detail_type",
+            "parent_id",
+            "description",
+        )
+    }
+    assert client.put(f"/api/accounts/{lf.id}", json=body).status_code == 200
+
+
+def test_a_child_under_a_pinned_parent_keeps_its_own_detail(
+    client, db_session, seed_accounts
+):
+    """Under 1100 (or a bank) a sub-account is checked on its own detail type
+    and keeps it — nothing is handed down (#416)."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "1105,Retainage Receivable,asset,Other Current Asset,1100\n"
+    )
+    plan = _upload(client, text).json()
+    row = next(r for r in plan["rows"] if r["name"] == "Retainage Receivable")
+    assert row["detail_type"] == "other_current_asset"
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    child = _by_number(db_session)["1105"]
+    assert child.detail_type == "other_current_asset"
+    assert child.parent.account_number == "1100"
+
+
+def test_a_grandchild_listed_before_its_parent_still_inherits(
+    client, db_session, seed_accounts
+):
+    """Trent's order (#416): the file lists the grandchild above its parent
+    above the root. The inheritance walks the tree from the roots, not the
+    rows top to bottom, so Child and Grand both take the root's Other Expense
+    — in the dry run and the import — and a full PUT of Grand resending its
+    parent is still 200."""
+    text = (
+        "Number,Name,Type,Detail Type,Parent\n"
+        "8920,Grand,Expense,Expense,8910\n"
+        "8910,Child,Expense,Expense,8900\n"
+        "8900,Root,Expense,Other Expense,\n"
+    )
+    plan = _upload(client, text).json()
+    rows = {r["name"]: r for r in plan["rows"]}
+    assert rows["Child"]["detail_type"] == "other_expense"
+    assert rows["Grand"]["detail_type"] == "other_expense"
+    assert "Expense in the file" in (rows["Grand"]["note"] or "")
+
+    done = _upload(client, text, dry_run=0).json()
+    assert done["dry_run"] is False
+    nums = _by_number(db_session)
+    root, child, grand = nums["8900"], nums["8910"], nums["8920"]
+    assert child.detail_type == "other_expense" and child.parent_id == root.id
+    assert grand.detail_type == "other_expense" and grand.parent_id == child.id
+
+    got = client.get(f"/api/accounts/{grand.id}").json()
+    body = {
+        k: got[k]
+        for k in (
+            "name",
+            "account_number",
+            "account_type",
+            "detail_type",
+            "parent_id",
+            "description",
+        )
+    }
+    assert client.put(f"/api/accounts/{grand.id}", json=body).status_code == 200
+
+
+def test_the_chart_import_leaves_off_an_inactive_parent(
+    client, db_session, seed_accounts
+):
+    """An inactive account takes no sub-accounts, as the account API refuses
+    one (#416); the chart import leaves the link off with the same words,
+    minus the "Reactivate it" an importer cannot do, in dry run and import."""
+    made = client.post(
+        "/api/accounts",
+        json={
+            "name": "Old travel",
+            "account_number": "8810",
+            "account_type": "expense",
+        },
+    ).json()
+    assert (
+        client.put(f"/api/accounts/{made['id']}", json={"is_active": False}).status_code
+        == 200
+    )
+    text = "Number,Name,Type,Parent\n8820,Tolls,Expense,8810\n"
+    for dry_run in (1, 0):
+        out = _upload(client, text, dry_run=dry_run).json()
+        note = next(r for r in out["rows"] if r["name"] == "Tolls")["note"] or ""
+        assert "8810 Old travel is inactive and cannot take sub-accounts" in note
+        assert "left off" in note.lower()
+        assert "Reactivate" not in note
+    assert _by_number(db_session)["8820"].parent_id is None
+
+
 # --- replace mode -------------------------------------------------------------
 
 
@@ -312,7 +442,7 @@ def test_a_parent_segment_named_like_a_control_account_becomes_it_and_the_import
 
     text = (FIX / "accounts.txt").read_text(encoding="utf-8")
     plan = _upload(client, text).json()
-    control_names = {name.lower() for name, _ in CONTROL_ACCOUNTS.values()}
+    control_names = {entry[0].lower() for entry in CONTROL_ACCOUNTS.values()}
     twins = [
         r
         for r in plan["rows"]
@@ -372,12 +502,51 @@ def test_the_shipped_template_imports_cleanly_into_the_seeded_chart(
     assert r.status_code == 200 and r.text == text
 
 
-def test_the_control_registry_is_fifteen_accounts():
+def test_the_control_registry_is_sixteen_accounts():
     """The gate's checks compare created rows against "the fifteen control
     names". One entry is declared across two lines, and a line-based reader
     returned fourteen without noticing (skytech, 2.15.0 gate). Pin the count
-    where a change to the registry will trip it."""
+    where a change to the registry will trip it. Sixteen since 3900 Opening
+    Balance Equity is found by number (#413)."""
     from app.services.control_accounts import CONTROL_ACCOUNTS
 
-    assert len(CONTROL_ACCOUNTS) == 15
+    assert len(CONTROL_ACCOUNTS) == 16
+    assert "3900" in CONTROL_ACCOUNTS
     assert "3200" in CONTROL_ACCOUNTS
+
+
+def test_csv_import_refuses_a_foreign_account_on_a_reserved_number(
+    client, db_session, seed_accounts
+):
+    """The review's hole: `/api/csv/import/accounts` had no reserved-number
+    guard, so a `5900,Marketing Promotions,expense` row created 5900 under a
+    foreign name and every inventory write-off then posted there. The new-row
+    path now refuses it, the dry run shows the refusal, and apply creates
+    nothing. 5900 is on demand, so the slot is empty on a seeded chart."""
+    text = "Number,Name,Type\n5900,Marketing Promotions,expense\n"
+
+    out = _upload(client, text, dry_run=1).json()
+    row = next(x for x in out["rows"] if x["name"] == "Marketing Promotions")
+    assert row["action"] == "error"
+    assert "5900" in row["note"] and "reserved" in row["note"].lower()
+    assert out["row_errors"] >= 1
+    assert "5900" not in _by_number(db_session)
+
+    out = _upload(client, text, dry_run=0).json()
+    assert out["dry_run"] is False
+    assert "5900" not in _by_number(db_session)
+
+
+def test_csv_import_restores_the_control_account_itself(
+    client, db_session, seed_accounts
+):
+    """The guard refuses a FOREIGN account only: a row that IS the control
+    account — the registry's name and expected type — restores the empty
+    slot, the same exception the API's New Account form allows."""
+    text = "Number,Name,Type\n5900,Inventory Adjustments,expense\n"
+    out = _upload(client, text, dry_run=0).json()
+    assert out["row_errors"] == 0
+    created = _by_number(db_session)
+    assert "5900" in created
+    assert created["5900"].name == "Inventory Adjustments"
+    assert created["5900"].account_type.value == "expense"

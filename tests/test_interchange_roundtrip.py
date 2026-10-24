@@ -11,48 +11,38 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.accounts import AccountType
+from app.models.accounts import BASE_TYPE_OF, DetailType
 from app.models.items import ItemType
 from app.services.iif_common import (
     IIF_TO_ACCOUNT_TYPE,
+    IIF_TO_DETAIL_TYPE,
     IIF_TO_ITEM_TYPE,
     account_to_iif_type,
     item_to_iif_type,
 )
 
 
-def _acct(number: str, atype: AccountType):
-    return SimpleNamespace(account_number=number, account_type=atype)
+def _acct(detail: DetailType):
+    return SimpleNamespace(
+        account_number="",
+        account_type=BASE_TYPE_OF[detail],
+        bank_kind=None,
+        detail_type=detail.value,
+    )
 
 
 def _item(itype: ItemType):
     return SimpleNamespace(item_type=itype)
 
 
-# Representative account numbers covering every branch of
-# account_to_iif_type's range logic.
-IIF_ACCOUNT_CASES = [
-    ("1000", AccountType.ASSET),  # BANK
-    ("1099", AccountType.ASSET),  # BANK upper bound
-    ("1100", AccountType.ASSET),  # AR
-    ("1300", AccountType.ASSET),  # OCASSET
-    ("1500", AccountType.ASSET),  # FIXASSET
-    ("3000", AccountType.ASSET),  # OASSET (>= 2000 fallthrough)
-    ("2000", AccountType.LIABILITY),  # AP
-    ("2100", AccountType.LIABILITY),  # OCLIAB
-    ("2700", AccountType.LIABILITY),  # LTLIAB
-    ("3900", AccountType.EQUITY),
-    ("4000", AccountType.INCOME),
-    ("6000", AccountType.EXPENSE),
-    ("5000", AccountType.COGS),
-]
-
-
-@pytest.mark.parametrize("number,atype", IIF_ACCOUNT_CASES)
-def test_iif_account_type_round_trips(number, atype):
-    iif_type = account_to_iif_type(_acct(number, atype))
-    assert iif_type in IIF_TO_ACCOUNT_TYPE, f"export emits unknown ACCNTTYPE {iif_type}"
-    assert IIF_TO_ACCOUNT_TYPE[iif_type] == atype
+# The export reads the detail type back through the import's own table
+# (#390): every one of the fifteen goes out as the ACCNTTYPE that imports as
+# it, whatever the account's number.
+@pytest.mark.parametrize("detail", list(DetailType))
+def test_iif_account_type_round_trips(detail):
+    iif_type = account_to_iif_type(_acct(detail))
+    assert IIF_TO_DETAIL_TYPE[iif_type] == detail
+    assert IIF_TO_ACCOUNT_TYPE[iif_type] == BASE_TYPE_OF[detail]
 
 
 @pytest.mark.parametrize(

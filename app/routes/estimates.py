@@ -22,6 +22,7 @@ from app.routes.invoices.helpers import (
     resolve_line_taxable,
 )
 from app.routes._helpers import clamp_pagination, reject_null_updates
+from app.routes.invoice_messages import default_message_body
 from app.services.audit import audited_bulk_delete
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
@@ -391,7 +392,11 @@ def convert_to_invoice(
         balance_due=total,
         class_id=estimate.class_id,
         job_id=own_job(db, estimate.customer_id, estimate.job_id, left_off),
-        notes=estimate.notes or settings.get("invoice_notes") or None,
+        # the estimate's own notes; else what a new invoice starts with (#392)
+        notes=estimate.notes
+        or default_message_body(db)
+        or settings.get("invoice_notes")
+        or None,
         **address,
     )
     db.add(invoice)

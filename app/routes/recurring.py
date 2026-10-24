@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routes._helpers import reject_null_updates
 from app.routes.invoices.helpers import refuse_zero_total, resolve_line_taxable
+from app.models.invoices import Invoice
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.contacts import Customer
 from app.schemas.recurring import RecurringCreate, RecurringUpdate, RecurringResponse
@@ -18,7 +19,10 @@ from app.services.jobs_service import (
     refuse_other_customers_jobs,
     refuse_other_customers_jobs_on_edit,
 )
-from app.services.recurring_service import generate_due_invoices
+from app.services.recurring_service import (
+    generate_due_invoices,
+    roll_next_due_forward,
+)
 from app.services.terminology import terms_from_db
 
 router = APIRouter(prefix="/api/recurring", tags=["recurring"])
@@ -144,8 +148,17 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
             compute_line_totals(data.lines, tax_rate)[2], _schedule_noun(db)
         )
 
+    was_active = rec.is_active
     for key, val in changes.items():
         setattr(rec, key, val)
+
+    # Re-activating a paused template resumed from a stale next_due and
+    # back-dated an invoice for every missed period (and a date inside the
+    # closing date made generate refuse every schedule). When Active goes
+    # from off to on, roll next_due forward by whole periods to the first
+    # occurrence on or after today; missed periods are skipped, not billed.
+    if changes.get("is_active") and not was_active:
+        rec.next_due = roll_next_due_forward(rec.next_due, rec.frequency, date.today())
 
     if data.lines is not None:
         db.query(RecurringInvoiceLine).filter(
@@ -181,6 +194,21 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    # A template that has made invoices cannot be deleted: deleting it left
+    # those invoices pointing at a template that no longer existed
+    # (SlowBooks-Pro-Testing#101). It keeps billing until the user acts.
+    made = db.query(Invoice).filter(Invoice.recurring_invoice_id == rec.id).count()
+    if made:
+        t = terms_from_db(db)
+        noun = t("invoice") if made == 1 else t("invoices")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This {_schedule_noun(db)} has made {made} {noun}, so it "
+                "cannot be deleted, and it keeps billing until you act. Set an "
+                "End Date to stop it for good, or clear Active to pause it."
+            ),
+        )
     db.delete(rec)
     db.commit()
     return {"message": "Recurring invoice deleted"}

@@ -286,6 +286,8 @@ def list_accounts(
                 "account_number": a.account_number,
                 "name": a.name,
                 "account_type": a.account_type.value if a.account_type else None,
+                "detail_type": a.detail_type,
+                "detail_type_label": a.detail_type_label,
                 "balance": _to_float(a.balance),
             }
             for a in accounts
@@ -309,6 +311,8 @@ def get_account_balance(
         "account_number": acct.account_number,
         "name": acct.name,
         "account_type": acct.account_type.value if acct.account_type else None,
+        "detail_type": acct.detail_type,
+        "detail_type_label": acct.detail_type_label,
         "balance": _to_float(acct.balance),
     }
 

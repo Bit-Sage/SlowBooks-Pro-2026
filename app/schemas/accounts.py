@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import model_validator, BaseModel, field_validator
 from app.schemas.common import StrictModel
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType, detail_label
 
 BankKind = Literal["bank", "credit_card"]
 
@@ -34,6 +34,9 @@ class AccountCreate(StrictModel):
     parent_id: Optional[int] = None
     description: Optional[str] = None
     bank_kind: Optional[BankKind] = None
+    # Omitted: the default for the type and bank kind (#390); a sub-account
+    # takes its parent's.
+    detail_type: Optional[DetailType] = None
 
     @field_validator("account_number")
     @classmethod
@@ -50,11 +53,23 @@ class AccountUpdate(StrictModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     bank_kind: Optional[BankKind] = None
+    detail_type: Optional[DetailType] = None
 
     @field_validator("account_number")
     @classmethod
     def blank_account_number_to_none(cls, v):
         return v.strip() or None if isinstance(v, str) else v
+
+
+class RetypedSubAccount(BaseModel):
+    """A sub-account the PUT's cascade retyped (#416): named so an API client
+    knows which ones changed with the parent."""
+
+    id: int
+    name: str
+    account_number: Optional[str] = None
+    from_detail_type: str
+    to_detail_type: str
 
 
 class AccountResponse(BaseModel):
@@ -67,6 +82,13 @@ class AccountResponse(BaseModel):
     is_active: bool
     is_system: bool
     bank_kind: Optional[str] = None
+    # QuickBooks' fifteen types (#390), and the label the chart page and the
+    # AI tools print, so neither keeps its own copy of the list.
+    detail_type: Optional[str] = None
+    detail_type_label: str = ""
+    # The sub-accounts a PUT's detail-type cascade retyped (#416); None on
+    # every response but that PUT, so a client can name what changed.
+    retyped_sub_accounts: Optional[list[RetypedSubAccount]] = None
     # Issue #122: the posting code finds these by number, so the number and
     # the type cannot change (PUT refuses with 400). The UI reads this rather
     # than keeping its own copy of the registry, which would drift.
@@ -87,12 +109,18 @@ class AccountResponse(BaseModel):
         return Decimal("0") if v is None else v
 
     @model_validator(mode="after")
+    def label_detail_type(self):
+        if self.detail_type and not self.detail_type_label:
+            self.detail_type_label = detail_label(self.detail_type)
+        return self
+
+    @model_validator(mode="after")
     def mark_control_account(self):
         """Derived from the number, so it can never drift from the registry
         the posting code and the route guard actually read (issue #122)."""
         from app.services import control_accounts
 
-        if control_accounts.is_control_number(self.account_number):
+        if control_accounts.is_control(self.account_number, self.account_type):
             self.is_control = True
             if self.control_purpose is None:
                 # The route may already have said it in the company's

@@ -92,10 +92,14 @@ from app.models.budgets import Budget
 from app.models.attachments import Attachment
 from app.models.stored_files import StoredFile
 from app.models.email_templates import EmailTemplate
+from app.models.invoice_messages import InvoiceMessage
 
 # Phase 11: Inventory + Saved Reports
 from app.models.items import InventoryMovement
 from app.models.saved_reports import SavedReport
+
+# Possible Duplicates report (#414): groups kept as "not a duplicate"
+from app.models.duplicate_dismissals import DuplicateDismissal  # noqa: F401
 
 __all__ = [
     "Account",
@@ -167,6 +171,7 @@ __all__ = [
     "Attachment",
     "StoredFile",
     "EmailTemplate",
+    "InvoiceMessage",
     # Phase 11
     "InventoryMovement",
     "SavedReport",

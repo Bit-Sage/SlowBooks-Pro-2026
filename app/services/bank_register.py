@@ -18,6 +18,7 @@ from app.models.bills import BillPayment
 from app.models.contacts import Customer, Vendor
 from app.models.payments import Payment
 from app.models.transactions import Transaction, TransactionLine
+from app.services.entry_text import BANK_ENTRY_HEADER
 
 DEBIT_NORMAL = {AccountType.ASSET, AccountType.EXPENSE, AccountType.COGS}
 
@@ -120,6 +121,7 @@ _LINKS = {
     "transfer": "/#/banking/transfers/{txn}",
     "bank_entry": "/#/journal/{txn}",
     "opening_balance": "/#/journal/{txn}",
+    "item_opening": "/#/journal/{txn}",
     "qbo_ledger": "/#/journal/{txn}",
     "qbo_journal": "/#/journal/{txn}",
     # Postings that have a page of their own (#241): the document opens
@@ -235,6 +237,10 @@ def payees_for(db: Session, txns) -> dict[int, str]:
             name = pay_names.get(t.source_id, "")
         if not name:
             name = (t.description or "").removeprefix("CC Charge: ").strip()
+        # a register entry with no payee carries the sentinel "Bank entry" on
+        # its header (bank_entry_lines), not a counterparty: show it blank
+        if t.source_type == "bank_entry" and name == BANK_ENTRY_HEADER:
+            name = ""
         out[t.id] = name
     return out
 
