@@ -412,6 +412,43 @@ def test_a_long_reference_is_not_re_imported_as_a_duplicate(db_session, seed_acc
     assert len(_journals(db_session, "long_ref_src")) == 1  # posted once
 
 
+def test_a_full_length_stored_reference_is_still_recognised(db_session, seed_accounts):
+    """Books imported before #498 hold the uncut source reference. The dedupe
+    set is cut the same way as the key, so re-importing them posts nothing."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.migration_common import run_import_bundle
+
+    long_ref = "K" * 130
+    chart = [
+        {"name": "Spare cash", "code": "1850", "type": AccountType.ASSET,
+         "description": "", "bank_kind": "bank", "parent": None},
+        {"name": "Sales", "code": "4100", "type": AccountType.INCOME,
+         "description": "", "parent": None},
+    ]
+    gl = [[
+        {"account": "Spare cash", "date": date(2026, 1, 15),
+         "debit": Decimal("100"), "credit": Decimal("0"), "reference": long_ref},
+        {"account": "Sales", "date": date(2026, 1, 15),
+         "debit": Decimal("0"), "credit": Decimal("100"), "reference": long_ref},
+    ]]
+    parsers = {"coa": lambda _t: (chart, []), "gl": lambda _t: (gl, [])}
+    bundle = {"coa": "x", "gl": "x"}
+
+    first = run_import_bundle(db_session, bundle, parsers, "old_ref_src", "Test")
+    assert first["imported_journals"] == 1
+    # Simulate a pre-fix import: the stored reference is the full source text.
+    (txn,) = _journals(db_session, "old_ref_src")
+    txn.reference = long_ref
+    db_session.flush()
+
+    second = run_import_bundle(db_session, bundle, parsers, "old_ref_src", "Test")
+    assert second["imported_journals"] == 0
+    assert second["duplicate_journals"] == 1
+    assert len(_journals(db_session, "old_ref_src")) == 1
+
+
 # ── Readiness metadata via the generic route ─────────────────────────────
 
 

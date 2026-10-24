@@ -122,7 +122,10 @@ def already_imported(db: Session, source_type: str | None) -> set[str]:
         .filter(Transaction.reference.isnot(None))
         .all()
     )
-    return {r[0] for r in rows}
+    # Cut stored references the way _group_reference() cuts the key: books
+    # imported before #498 hold the full source reference, and an uncut set
+    # would never match the cut key, so a re-import would double them.
+    return {r[0][:100] for r in rows}
 
 
 def _spec_parent(spec: dict):

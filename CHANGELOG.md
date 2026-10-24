@@ -208,6 +208,15 @@ Two schema changes, run in every company file one after the other:
 number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
 "111 (2)"; the head is `f2e3d4c5b6a7`. 637 API operations.
 
+Re-running a migration import no longer posts a journal twice when its source
+reference runs past 100 characters (#498). The dedupe key was cut to the
+reference column's width while the journal was stored with the full reference,
+so the two never matched and a second import booked the entry again. The
+import now stores the same cut value the key uses, so a re-import recognises
+what it already posted.
+Books imported before this fix, which hold the full reference, are recognised
+too: the already-imported set is cut to the same width.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
