@@ -7,14 +7,18 @@ mail-merge shape and an Avery 5160 labels PDF. A Do Not Contact note marks a
 row and keeps it out of the export unless asked.
 """
 
+import io
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from app.models.contacts import Customer
+from app.models.credit_memos import CreditMemo, CreditMemoStatus
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.jobs import Job
+from app.routes import customers_past
 from app.services import pdf_service
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -261,3 +265,238 @@ def test_the_report_center_card_and_view_and_customers_link_exist():
     assert "pastCustomers" in reports
     customers = (ROOT / "app/static/js/customers.js").read_text(encoding="utf-8")
     assert "#/reports/past-customers" in customers
+
+
+# ── site addresses in the shapes people type them ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # one line, commas between the parts
+        (
+            "123 Main St, Austin, TX 78701",
+            ("123 Main St", "", "Austin", "TX", "78701"),
+        ),
+        # one line with a suite: the suite is Address 2
+        (
+            "123 Main St, Suite 4, Austin, TX 78701",
+            ("123 Main St", "Suite 4", "Austin", "TX", "78701"),
+        ),
+        # street on one line, city on the next, no comma before the state
+        ("12 Oak St\nAustin TX 78701", ("12 Oak St", "", "Austin", "TX", "78701")),
+        # ZIP+4 kept whole, a lower-case state read upper-case
+        (
+            "12 Oak St\nRound Rock, tx 78664-1234",
+            ("12 Oak St", "", "Round Rock", "TX", "78664-1234"),
+        ),
+        # a comma between the state and the ZIP
+        ("9 Elm Rd\nReno, NV, 89501", ("9 Elm Rd", "", "Reno", "NV", "89501")),
+        # four lines: nothing past the second street line is dropped
+        (
+            "Harbor Plaza\n400 Bay St\nBuilding C\nPortland, OR 97201",
+            ("Harbor Plaza", "400 Bay St, Building C", "Portland", "OR", "97201"),
+        ),
+        # no comma says where the street ends: the city is not guessed at
+        (
+            "123 Main St Austin TX 78701",
+            ("123 Main St Austin", "", "", "TX", "78701"),
+        ),
+        # no state and ZIP at all: every line is a street line
+        (
+            "Lot 7 by the quarry\nMile marker 12",
+            ("Lot 7 by the quarry", "Mile marker 12", "", "", ""),
+        ),
+    ],
+)
+def test_site_address_shapes(text, expected):
+    a = customers_past._parse_site_address(text)
+    assert (a["address1"], a["address2"], a["city"], a["state"], a["zip"]) == (expected)
+
+
+def test_a_one_line_site_address_is_found_by_its_city(client, db_session):
+    cust = Customer(name="One Liner", is_active=True)
+    db_session.add(cust)
+    db_session.flush()
+    db_session.add(
+        Job(
+            customer_id=cust.id,
+            name="Patio",
+            site_address="123 Main St, Austin, TX 78701-4410",
+            end_date=date(2024, 3, 1),
+        )
+    )
+    db_session.commit()
+    _, rows = _rows(client, "?city=Austin")
+    row = rows[cust.id]
+    assert (row["address1"], row["city"], row["zip"]) == (
+        "123 Main St",
+        "Austin",
+        "78701-4410",
+    )
+    _, by_zip = _rows(client, "?zip=78701")
+    assert cust.id in by_zip
+
+
+# ── which notes say do not contact ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Do not contact — moved out of state",
+        "don't contact, sold the house",
+        "Dont contact",
+        "don\u2019t contact",
+        "do-not-contact",
+        "Customer asked: DO NOT MAIL",
+        "DNC",
+        "Moved away (dnc)",
+    ],
+)
+def test_notes_that_opt_out(note):
+    assert customers_past._DO_NOT_CONTACT.search(note), note
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "No contact person on site, call the office",
+        "Contact the super before arriving",
+        "Do contact them in spring for the follow-up",
+        "Prefers phone contact",
+        "Paid with DNCX card",  # DNC only as a word
+    ],
+)
+def test_notes_that_do_not_opt_out(note):
+    assert not customers_past._DO_NOT_CONTACT.search(note), note
+
+
+# ── lifetime sales net of credit memos ─────────────────────────────────────
+
+
+def test_lifetime_sales_take_off_credit_memos(client, db_session, seed_past):
+    a = seed_past["a"]  # 100 + 200 of invoices
+    for n, (amount, status, write_off) in enumerate(
+        [
+            (Decimal("40"), CreditMemoStatus.ISSUED, False),  # a return: counts
+            (Decimal("10"), CreditMemoStatus.APPLIED, False),  # counts
+            (Decimal("25"), CreditMemoStatus.VOID, False),  # voided: no
+            (Decimal("30"), CreditMemoStatus.ISSUED, True),  # a write-off: no
+        ]
+    ):
+        db_session.add(
+            CreditMemo(
+                memo_number=f"CM-{n}",
+                customer_id=a,
+                date=date(2024, 10, 1),
+                status=status,
+                subtotal=amount,
+                total=amount,
+                is_write_off=write_off,
+            )
+        )
+    db_session.commit()
+    body, rows = _rows(client)
+    assert rows[a]["lifetime_sales"] == 250.0
+    _, rich = _rows(client, "?min_sales=260")
+    assert a not in rich
+    csv = client.get("/api/customers/past.csv").text
+    assert "Acme Signs" in csv and ",250.00," in csv
+
+
+# ── a very large customer list ─────────────────────────────────────────────
+
+
+def test_no_query_lists_every_customer_id(client, db_session, seed_past):
+    """The figures are summed per customer in SQL, joined to the customers:
+    no query binds a parameter per customer, which ran past SQLite's limit
+    (32,766) on a large list."""
+    from sqlalchemy import event
+
+    engine = db_session.get_bind()
+    biggest = []
+
+    def count(conn, cursor, statement, params, context, executemany):
+        if not executemany and isinstance(params, (tuple, list, dict)):
+            biggest.append(len(params))
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        for i in range(40):
+            cust = Customer(name=f"Bulk {i:02d}", is_active=True)
+            db_session.add(cust)
+            db_session.flush()
+            _invoice(db_session, cust.id, date(2024, 2, 1), 5, number=f"B{i}")
+        db_session.commit()
+        biggest.clear()
+        _, rows = _rows(client)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert len(rows) == 44
+    assert max(biggest) < 10, biggest
+
+
+# ── the labels PDF, rendered: every line lands on its label ────────────────
+
+# Avery 5160 in points: a 0.5in top margin, 0.1875in sides, 2.625in x 1in
+# labels in 3 columns with 0.125in gutters, 10 rows. A line is on the label
+# when its glyphs sit inside the label less 0.1in top and bottom, the
+# margin the sheet's die cut and a printer's feed drift take.
+_TOP, _LEFT, _W, _H, _GUTTER, _SAFE = 36.0, 13.5, 189.0, 72.0, 9.0, 7.2
+
+
+def _label_lines(pdf: bytes):
+    """Each page's text runs as (text, x, baseline, font size), in points
+    from the page's top-left corner."""
+    pypdf = pytest.importorskip("pypdf")
+    pages = []
+    for page in pypdf.PdfReader(io.BytesIO(pdf)).pages:
+        runs = []
+
+        def visit(text, cm, tm, font, size, runs=runs):
+            if not text.strip():
+                return
+            # text space -> page space: tm then the page's cm
+            x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+            y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
+            runs.append((text.strip(), x, 792.0 - y, size * abs(cm[3] or cm[0])))
+
+        page.extract_text(visitor_text=visit)
+        pages.append(runs)
+    return pages
+
+
+def test_a_full_five_line_label_prints_its_city_line(db_session):
+    """Company, name, two street lines and the city/state/zip: five lines,
+    on all thirty labels of a sheet and on the next sheet's first. The city
+    line is the one the mail needs, so it is checked to sit on its label,
+    and a street line too long for the label stays on one line."""
+    pytest.importorskip("weasyprint")
+    labels = [
+        {
+            "line1": f"Company {i:02d} Holdings",
+            "line2": f"Person {i:02d}",
+            "address1": f"{i} Very Long Street Name Boulevard Northwest",
+            "address2": f"Suite {i:02d}",
+            "city_line": f"Round Rock, TX 78664-{i:04d}",
+        }
+        for i in range(31)
+    ]
+    pages = _label_lines(pdf_service.generate_labels_pdf(labels))
+    assert len(pages) == 2
+
+    for n, lb in enumerate(labels):
+        runs = pages[n // 30]
+        slot = n % 30
+        top = _TOP + (slot // 3) * _H
+        left = _LEFT + (slot % 3) * (_W + _GUTTER)
+        mine = [r for r in runs if left <= r[1] < left + _W and top <= r[2] < top + _H]
+        texts = [r[0] for r in mine]
+        assert texts[0] == lb["line1"] and texts[1] == lb["line2"], (n, texts)
+        assert texts[2].startswith(f"{n} Very Long"), (n, texts)
+        assert texts[3:] == [lb["address2"], lb["city_line"]], (n, texts)
+        for text, _x, baseline, size in mine:
+            # the cap height above the baseline and the descender below it
+            assert baseline - 0.75 * size >= top + _SAFE, (n, text, baseline)
+            assert baseline + 0.25 * size <= top + _H - _SAFE, (n, text, baseline)
