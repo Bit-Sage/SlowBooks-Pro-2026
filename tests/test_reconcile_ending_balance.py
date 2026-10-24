@@ -299,7 +299,10 @@ def test_the_reconcile_screen_offers_the_change():
     src = open("app/static/js/banking.js", encoding="utf-8").read()
     assert "BankingPage.changeStatement(${reconId}" in src
     assert "API.put(`/banking/reconciliations/${reconId}`" in src
-    assert 'name="statement_balance" class="money" type="number" step="0.01" required value=' in src
+    assert (
+        'name="statement_balance" class="money" type="number" step="0.01" required value='
+        in src
+    )
 
 
 def test_starting_over_an_open_session_puts_the_typed_values(client, statement):

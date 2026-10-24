@@ -113,6 +113,7 @@ MONEY = {
     "nonprofit.js": ['name="amount" class="money"'],
     "in_kind.js": ["ik-fv money"],
     "app.js": ["line-rate money"],
+    "bill_quick_entry.js": ["line-amt money"],
     "banking.js": [
         'id="qe-out" class="money"',
         'id="qe-in" class="money"',

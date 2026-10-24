@@ -1,7 +1,7 @@
 # ============================================================================
 # Duplicate check numbers (#481): QuickBooks Desktop's "Warn about duplicate
-# check numbers", on by default. A check, a register payment or a bill
-# payment whose number is already on that bank account is refused with a
+# check numbers", off until turned on (Settings → Transaction Warnings).
+# Turned on, a check, a register payment or a bill payment whose number is already on that bank account is refused with a
 # 409 the person answers: keep the number (the client sends the same
 # request again with ?allow_duplicate_check_number=true) or go back and
 # edit it. Possible Duplicates matches amount, payee and date afterwards and
@@ -36,7 +36,7 @@ def _number(text) -> str:
 def warning_on(db: Session) -> bool:
     from app.services.settings_service import get_all_settings
 
-    return get_all_settings(db).get(SETTING, "true") == "true"
+    return get_all_settings(db).get(SETTING, "false") == "true"
 
 
 def uses_of(

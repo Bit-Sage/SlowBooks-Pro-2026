@@ -377,7 +377,9 @@ const JournalPage = {
             }
         });
         if (lines.length < 2) { toast('At least 2 lines required', 'error'); return; }
-        if (!(await TxnWarn.ok(form))) return;
+        // an entry already saved (opened from the journal or the register,
+        // #388) asks before its changes save, as every edit does (#481)
+        if (!(await TxnWarn.ok(form, { editing: !!form.dataset.entryId }))) return;
         if (!(await ClassWarn.ok(form, { rows: '#je-lines tr', cls: 'je-function' }))) return;
 
         const data = {

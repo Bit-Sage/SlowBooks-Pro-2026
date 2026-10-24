@@ -78,7 +78,7 @@ const BillQuickEntry = {
                 <td><select class="line-item" onchange="BillQuickEntry.itemSelected(this)">${ItemQuickAdd.options(BillQuickEntry._items)}</select></td>
                 <td>${AccountQuickAdd.picker(`<select class="line-account"><option value="">Choose...</option>${acctOpts}</select>`, 'bill-entry')}</td>
                 <td><input class="line-desc"></td>
-                <td class="col-amount"><input class="line-amt" type="number" step="0.01" min="0" oninput="BillQuickEntry.recalc()"></td>
+                <td class="col-amount"><input class="line-amt money" type="number" step="0.01" min="0" oninput="BillQuickEntry.recalc()"></td>
             </tr>`;
     },
 
@@ -174,6 +174,8 @@ const BillQuickEntry = {
             AccountQuickAdd._focusPicker(missing.sel);
             return;
         }
+        // a date far from today asks first, as every bill form does (#481)
+        if (!(await TxnWarn.ok(form))) return;
         form.dataset.saving = '1';
         try {
             const vendorId = await VendorQuickAdd.ensure('bqe-vendor');

@@ -1,8 +1,8 @@
 """QuickBooks Desktop's transaction warnings (#481): a date far from
 today, a duplicate check number, and editing a transaction already saved.
-Company settings, on by default as QuickBooks has them.
+Company settings, off until a company turns them on.
 
-- The settings: defaults (on; 90 days back, 30 ahead), "true"/"false" only,
+- The settings: defaults (off; 90 days back, 30 ahead), "true"/"false" only,
   day counts whole numbers from 1 to 3650; Settings draws them as named
   boxes sent as "true"/"false".
 - A duplicate check number is a 409 (code duplicate_check_number) naming
@@ -37,15 +37,15 @@ def _js(name):
 # ---- the settings -----------------------------------------------------------
 
 
-def test_the_warnings_default_on_as_quickbooks_has_them(client):
+def test_the_warnings_default_off_until_turned_on(client):
     got = client.get("/api/settings").json()
     for key, want in {
-        "warn_date_past": "true",
+        "warn_date_past": "false",
         "warn_date_past_days": "90",
-        "warn_date_future": "true",
+        "warn_date_future": "false",
         "warn_date_future_days": "30",
-        "warn_duplicate_check_number": "true",
-        "warn_edit_transaction": "true",
+        "warn_duplicate_check_number": "false",
+        "warn_edit_transaction": "false",
     }.items():
         assert DEFAULT_SETTINGS[key] == want and got[key] == want, key
 
@@ -78,6 +78,11 @@ def test_the_settings_save(client):
 # ---- a duplicate check number ----------------------------------------------
 
 
+def _turn_on(client):
+    r = client.put("/api/settings", json={"warn_duplicate_check_number": "true"})
+    assert r.status_code == 200, r.text
+
+
 def _entry(client, accounts, ref, amount="-25.00", bank="1000", query=""):
     return client.post(
         "/api/banking/transactions" + query,
@@ -93,6 +98,7 @@ def _entry(client, accounts, ref, amount="-25.00", bank="1000", query=""):
 
 
 def test_a_second_register_payment_with_the_number_is_a_409(client, seed_accounts):
+    _turn_on(client)
     assert _entry(client, seed_accounts, "5001").status_code == 201
     r = _entry(client, seed_accounts, " 5001 ")
     assert r.status_code == 409, r.text
@@ -110,6 +116,7 @@ def test_a_second_register_payment_with_the_number_is_a_409(client, seed_account
 
 
 def test_what_is_not_a_duplicate(client, seed_accounts):
+    _turn_on(client)
     assert _entry(client, seed_accounts, "5001").status_code == 201
     # money in: a deposit slip's number is not a check
     assert _entry(client, seed_accounts, "5001", amount="40.00").status_code == 201
@@ -127,6 +134,7 @@ def test_what_is_not_a_duplicate(client, seed_accounts):
 def test_an_edit_keeping_its_number_is_not_asked_one_taking_another_is(
     client, seed_accounts
 ):
+    _turn_on(client)
     a = _entry(client, seed_accounts, "5001").json()
     b = _entry(client, seed_accounts, "5002").json()
     path = f"/api/banking/entries/{b['id']}"
@@ -177,6 +185,7 @@ def _pay(client, vendor, bill, number, query="", headers=None):
 
 
 def test_bill_payments_checks_and_register_share_the_numbers(client, seed_accounts):
+    _turn_on(client)
     vendor, bill = _vendor_bill(client, seed_accounts)
     # a bill payment from 1000 Checking (the default) takes 6001
     assert _pay(client, vendor, bill, "6001").status_code == 201
@@ -209,6 +218,7 @@ def test_bill_payments_checks_and_register_share_the_numbers(client, seed_accoun
 
 
 def test_a_payment_sent_again_with_its_key_answers_with_itself(client, seed_accounts):
+    _turn_on(client)
     vendor, bill = _vendor_bill(client, seed_accounts)
     key = {"Idempotency-Key": "pay-6001-once"}
     first = _pay(client, vendor, bill, "6001", headers=key)
@@ -218,7 +228,7 @@ def test_a_payment_sent_again_with_its_key_answers_with_itself(client, seed_acco
 
 
 def test_off_nothing_is_refused(client, seed_accounts):
-    client.put("/api/settings", json={"warn_duplicate_check_number": "false"})
+    # off by default: nothing to turn off
     assert _entry(client, seed_accounts, "5001").status_code == 201
     assert _entry(client, seed_accounts, "5001").status_code == 201
 
@@ -241,10 +251,16 @@ FORMS = {
     "vendor_credits.js": ["TxnWarn.ok(form)"],
     "expenses.js": ["TxnWarn.ok(form)"],
     "cc_charges.js": ["TxnWarn.ok(form)"],
-    "journal.js": ["TxnWarn.ok(form)"],
+    # the journal form edits too: from the journal or the register (#388)
+    "journal.js": ["TxnWarn.ok(form, { editing: !!form.dataset.entryId })"],
     "payments.js": ["TxnWarn.ok(form)"],
     "batch_payments.js": ["TxnWarn.ok(form)"],
-    "deposits.js": ["TxnWarn.ok(null, { date: $('#deposit-date').value })"],
+    "deposits.js": [
+        "TxnWarn.ok(null, { date: $('#deposit-date').value })",
+        # a deposit opened for editing from the register (#388)
+        "TxnWarn.ok(form, { date: form.date.disabled ? '' : form.date.value, editing: true })",
+    ],
+    "bill_quick_entry.js": ["TxnWarn.ok(form)"],
     "in_kind.js": ["TxnWarn.ok(form)"],
     "job_costs.js": ["TxnWarn.ok(form)"],
     "nonprofit.js": ["TxnWarn.ok(form)"],
@@ -279,6 +295,8 @@ def _fn(src, head):
             "API.post('/banking/transactions'",
         ),
         ("journal.js", "    async save(e) {", "API.post('/journal'"),
+        ("deposits.js", "    async saveEdit(id) {", "API.put(`/deposits/${id}`"),
+        ("bill_quick_entry.js", "    async save(e) {", "API.post('/bills'"),
     ],
 )
 def test_the_question_comes_before_the_request(file, head, call):

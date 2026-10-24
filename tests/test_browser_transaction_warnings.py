@@ -151,6 +151,21 @@ def test_off_nothing_is_asked(browser):
         page.close()
 
 
+def test_by_default_nothing_is_asked(browser):
+    """The three warnings ship off: books that never turned them on post
+    a far-off date with no question."""
+    posts = []
+    page = _page(browser, {}, posts)
+    try:
+        asked = _questions(page, answer=False)
+        _row(page, (date.today() + timedelta(days=700)).isoformat())
+        page.click("#reg-quick-entry button.btn-primary")
+        page.wait_for_timeout(300)
+        assert asked == [] and len(posts) == 1
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_a_duplicate_number_asks_keep_or_go_back(browser, theme):
     posts = []

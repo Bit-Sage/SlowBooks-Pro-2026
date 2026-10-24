@@ -328,12 +328,6 @@ section.** An account the report lists as two sections no longer trips the
 cut-short check: each "Total" row is measured against its own section's lines
 (sub-accounts included) rather than every line posted to that account path.
 
-Two schema changes, run in every company file one after the other:
-`transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice
-number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
-"111 (2)"; the head is `f2e3d4c5b6a7`. 641 API operations.
-### Unreleased
-
 **Enter can move between fields, and the decimal point can place itself** (#480).
 Two QuickBooks Desktop data-entry preferences, under Settings → My Preferences,
 each person's own and both off unless they are turned on:
@@ -347,32 +341,38 @@ each person's own and both off unless they are turned on:
 - *Automatically place the decimal point*: 12345 typed in an amount is
   $123.45, and 5 is $0.05. A decimal point you type yourself is kept, and an
   amount already on a saved document is never divided. It covers the amounts
-  on every transaction form and the register row.
+  on every transaction form, Bill Quick Entry and the register row.
 
 My Preferences sits above the company settings and saves each box as it
 changes. Every sign-in sets its own, read-only and accountant sign-ins
 included; an API token sets none.
-### Unreleased
 
-**Three QuickBooks Desktop warnings** (#481). Settings → Transaction Warnings
-has them for the whole company, each on by default as QuickBooks has it, and
-each answered "save it anyway" when the entry is right:
+**Three QuickBooks Desktop warnings** (#481), available under Settings →
+Transaction Warnings for the whole company, each off by default: turned on,
+each asks before a save and is answered "save it anyway" when the entry is
+right:
 
 - *A date far from today.* A transaction dated more than 90 days in the past
   or 30 days in the future (both numbers yours to change) asks before it saves,
-  on every transaction form and the register's new-entry row. A register entry
-  dated 2028-06-30 used to post without a word. January, with the books still
+  on every transaction form, Bill Quick Entry and the register's new-entry
+  row. A register entry dated 2028-06-30 used to post without a word. January, with the books still
   in last year, is when it catches most. The closing date keeps its own lock.
 - *A duplicate check number.* A check, register payment or bill payment whose
   number is already used on that bank account asks: keep the number, or go
   back and edit it. Two entries numbered 5001 used to post silently. The
   number is looked up across register entries, expenses and bill payments on
   the same account; a deposit's number, a void's and anything but digits
-  ("ACH", "DEBIT", "rcpt 1187") don't count. Through the API it is a 409 (`duplicate_check_number`)
-  that the request sent again with `allow_duplicate_check_number=true` passes.
+  ("ACH", "DEBIT", "rcpt 1187") don't count. Through the API, with the
+  warning on, it is a 409 (`duplicate_check_number`) that the request sent
+  again with `allow_duplicate_check_number=true` passes.
 - *Editing a transaction.* Saving changes to a transaction already saved asks
-  first (a void and a delete already asked).
-### Unreleased
+  first, a journal entry or deposit opened from the register included (a void
+  and a delete already asked).
+
+All three are off after the update, in new and existing books alike, so
+nothing asks until an administrator ticks one under Settings → Transaction
+Warnings (and changes the number of days, if 90 and 30 don't suit) and
+Saves.
 
 **An open report redraws after a change, and has a Refresh button** (#482).
 With the Profit & Loss open, a $1,000 journal entry left it at the old total
@@ -387,6 +387,10 @@ Running reports again by itself is a personal preference, "Refresh reports
 automatically", under Settings → My Preferences. It is on unless you turn it
 off; with it off, the report changes only when you press Refresh.
 
+Two schema changes, run in every company file one after the other:
+`transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice
+number (`f2e3d4c5b6a7`), which renames a duplicate already in the books to
+"111 (2)"; the head is `f2e3d4c5b6a7`. 641 API operations.
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

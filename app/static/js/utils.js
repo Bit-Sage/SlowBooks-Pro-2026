@@ -1258,8 +1258,8 @@ const ClassWarn = {
 };
 
 // ---- QuickBooks Desktop's transaction warnings (#481) --------------------
-// Company settings (Settings → Transaction Warnings), on by default as in
-// QuickBooks. They arrive with the company settings the shell loads
+// Company settings (Settings → Transaction Warnings), off until a company
+// turns them on. They arrive with the company settings the shell loads
 // (App.settings); a setting the server never sent is off.
 //   warn_date_past / _days, warn_date_future / _days: a transaction dated
 //       more than N days before today (90) or after it (30) asks before it

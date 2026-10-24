@@ -175,11 +175,11 @@ const SettingsPage = {
     },
 
     // A Transaction Warnings checkbox (#481): sent as "true" or "false"
-    // (data-bool), on unless the setting says "false". `extra` is the
+    // (data-bool), off unless the setting says "true". `extra` is the
     // days box that finishes its sentence.
     // The box's name is its whole sentence, the days' unit included.
     _warnBox(s, key, id, label, extra) {
-        const on = s[key] !== 'false';
+        const on = s[key] === 'true';
         const unit = extra ? ' ' + id + '-days-unit' : '';
         return '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px; font-size:12px;">'
             + '<input type="checkbox" id="' + id + '" name="' + key + '" value="true" data-bool'
@@ -393,7 +393,7 @@ const SettingsPage = {
                     <h3 id="settings-h-warnings">Transaction Warnings</h3>
                     <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
                         Questions every form asks before it saves, for everyone using these books. Each one can be answered
-                        &ldquo;save it anyway&rdquo;. Saved with Save Settings.
+                        &ldquo;save it anyway&rdquo;. Each is off until it is turned on here. Saved with Save Settings.
                     </div>
                     ${SettingsPage._warnBox(s, 'warn_date_past', 'warn-date-past', 'Warn when a transaction is dated more than',
                         SettingsPage._warnDays(s, 'warn_date_past_days', 'warn-date-past-days', 'days in the past', 90))}

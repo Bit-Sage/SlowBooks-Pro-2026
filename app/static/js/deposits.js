@@ -223,6 +223,10 @@ const DepositsPage = {
             line_ids: lineIds,
         };
         if (!form.date.disabled) body.date = form.date.value;
+        // the transaction warnings (#481): a date far from today (a
+        // reconciled deposit's date is locked, so it is not asked about),
+        // and changing a deposit already saved
+        if (!(await TxnWarn.ok(form, { date: form.date.disabled ? '' : form.date.value, editing: true }))) return;
         try {
             const saved = await API.put(`/deposits/${id}`, body);
             toastPosted(saved && saved.note ? `Deposit saved. ${saved.note}` : 'Deposit saved');
