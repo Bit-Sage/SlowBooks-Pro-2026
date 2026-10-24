@@ -207,6 +207,7 @@ def _plan_row(db, line, name, employee, payload, errors, notes, reason):
     it is a create, a replace or an error (with the reason)."""
     clean, problems = po.clean_payload(db, payload)
     errors = list(errors) + problems
+    notes = list(notes) + clean.get("warnings", [])
     action = "error"
     if not errors and employee is not None:
         existing = po.opening_for(db, employee.id, clean["year"])

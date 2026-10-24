@@ -28,8 +28,11 @@ def _employee(db: Session, emp_id: int) -> Employee:
 
 
 def _response(db: Session, emp_id: int, year: int) -> dict:
+    from app.services.payroll_service import wage_base_note
+
     opening = po.opening_for(db, emp_id, year)
     first = po.first_processed_pay_date(db, emp_id, year)
+    note = wage_base_note(year) if opening else None
     return {
         "employee_id": emp_id,
         "year": year,
@@ -37,6 +40,9 @@ def _response(db: Session, emp_id: int, year: int) -> dict:
         "locked": first is not None,
         "first_pay_date": first.isoformat() if first else None,
         "lock_message": po.lock_message(first) if first else None,
+        # the year has no Social Security wage base here (checked against
+        # the nearest year's): said, not refused
+        "warnings": [note] if note else [],
     }
 
 

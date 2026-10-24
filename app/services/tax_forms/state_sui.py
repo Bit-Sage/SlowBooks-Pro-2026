@@ -9,8 +9,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.payroll import Employee, PayRun, PayStub, PayRunStatus
 from app.services.accounting import _q
@@ -38,26 +37,67 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
     balance's rows by their own state.
     The quarter's opening-balance state rows (#433) count with the stubs.
     """
+    from app.services import payroll_opening as po
+    from app.services.payroll_service import _capped_wages, stub_taxable_wages
+    from app.services.state_tax import get_engine
+
     start, end = _quarter_bounds(year, quarter)
-    stubs = (
+    state = (state or "").strip().upper() or None
+    # January 1 to the quarter's end: the earlier stubs are what each
+    # state's SUTA base was already filled with
+    year_stubs = (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
         .join(Employee, PayStub.employee_id == Employee.id)
-        .options(joinedload(PayStub.pay_run), joinedload(PayStub.employee))
-        .filter(PayRun.status == PayRunStatus.PROCESSED)
-        .filter(PayRun.pay_date >= start)
-        .filter(PayRun.pay_date <= end)
-    )
-    if state:
-        # a stub's own work state (multi-state), else the employee's
-        stubs = stubs.filter(
-            func.coalesce(PayStub.work_state, Employee.work_state) == state
+        .options(
+            joinedload(PayStub.pay_run),
+            joinedload(PayStub.employee),
+            selectinload(PayStub.benefits),
         )
-    stubs = stubs.all()
+        .filter(PayRun.status == PayRunStatus.PROCESSED)
+        .filter(PayRun.pay_date >= date(year, 1, 1))
+        .filter(PayRun.pay_date <= end)
+        .all()
+    )
+    year_stubs.sort(key=lambda x: (x.pay_run.pay_date, x.id))
 
-    # Accumulate per employee. SUTA-taxable wages are taken as the wages that
-    # actually produced SUTA tax — we report gross alongside the SUTA tax that
-    # the payroll calculator recorded on each stub.
+    def stub_state(stub) -> str:
+        # a stub's own work state (multi-state), else the employee's
+        emp = stub.employee
+        return (stub.work_state or (emp.work_state if emp else None) or "WA").upper()
+
+    # SUTA-taxable wages are what the paycheck taxed: the stub's SUTA wages
+    # (gross less Section 125 and the like) up to what is left of the
+    # state's base, after the opening's SUTA wages for that state (#433)
+    # and the year's earlier stubs worked there (ytd.wage_base_ytd).
+    openings = po.openings_for_year(db, year)
+    filled: dict[tuple[int, str], Decimal] = {}
+    bases: dict[str, Decimal] = {}
+    taxable_of: dict[int, Decimal] = {}
+    for s in year_stubs:
+        st = stub_state(s)
+        key = (s.employee_id, st)
+        if key not in filled:
+            o = openings.get(s.employee_id)
+            filled[key] = (
+                po.wage_bases(o, st)["suta"]
+                if po.counts_before(o, s.pay_run.pay_date)
+                else Decimal("0")
+            )
+        if st not in bases:
+            bases[st] = Decimal(str(get_engine(st).suta_wage_base or 0))
+        wages = stub_taxable_wages(s)["fica"]
+        taxable_of[s.id] = _capped_wages(wages, filled[key], bases[st])
+        filled[key] += wages
+
+    stubs = [
+        s
+        for s in year_stubs
+        if s.pay_run.pay_date >= start and (not state or stub_state(s) == state)
+    ]
+
+    # Accumulate per employee: gross, the SUTA-taxable wages, and the SUTA
+    # tax the payroll calculator recorded on each stub.
     by_employee: dict[int, dict] = {}
     total_wages = Decimal("0")
     total_suta_tax = Decimal("0")
@@ -83,17 +123,12 @@ def compute_sui(db, year: int, quarter: int, state: str | None = None) -> dict:
             }
             by_employee[emp_id] = entry
         entry["total_wages"] += gross
-        # A stub contributes to SUTA-taxable wages only when it produced
-        # SUTA tax (i.e. the employee was still under the state wage base).
-        if suta > 0:
-            entry["suta_taxable_wages"] += gross
+        entry["suta_taxable_wages"] += taxable_of[s.id]
         entry["suta_tax"] += suta
 
     # Opening balances (#433): the old system's wages, SUTA wages and SUTA
     # tax in this quarter, state by state, as it reported them.
-    from app.services.payroll_opening import openings_for_year
-
-    for emp_id, o in openings_for_year(db, year).items():
+    for emp_id, o in openings.items():
         for row in o.states:
             if row.quarter != quarter or (state and row.state != state):
                 continue

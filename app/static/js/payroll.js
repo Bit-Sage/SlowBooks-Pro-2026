@@ -31,13 +31,14 @@ const PayrollPage = {
                     <td>${formatDate(r.period_start)} - ${formatDate(r.period_end)}</td>
                     <td>${formatDate(r.pay_date)}</td>
                     <td>${statusBadge(r.status)}${r.status === 'draft' && r.stale_reason
-                        ? ` <span style="color:var(--text-warning);font-size:11px" title="${escapeHtml(r.stale_reason)}">figured before an opening YTD changed</span>` : ''}</td>
+                        ? ` <span style="color:var(--text-warning);font-size:11px" title="${escapeHtml(r.stale_reason)}">figured before its year-to-date changed: process as figured, or discard it</span>` : ''}</td>
                     <td class="amount">${formatCurrency(r.total_gross)}</td>
                     <td class="amount">${formatCurrency(r.total_taxes)}</td>
                     <td class="amount">${formatCurrency(r.total_net)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="PayrollPage.view(${r.id})">View</button>
-                        ${r.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="PayrollPage.process(${r.id})">Process</button>` : ''}
+                        ${r.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="PayrollPage.process(${r.id})">Process</button>
+                        <button class="btn btn-sm btn-danger" onclick="PayrollPage.discard(${r.id})" title="Delete this draft and its stubs, and undo what creating it changed">Discard draft</button>` : ''}
                     </td>
                 </tr>`;
             }
@@ -241,10 +242,11 @@ const PayrollPage = {
             toast('Pay run created');
             closeModal();
             App.navigate('#/payroll');
-            // Time left unapproved in the period was not paid; a toast is
+            // Time left unapproved in the period was not paid, or the pay
+            // date's year has no Social Security wage base here; a toast is
             // gone before it can be read, so this waits to be closed.
             if (run.warnings && run.warnings.length) {
-                openModal('Pay run created: some time was not paid', `
+                openModal('Pay run created: read this before processing', `
                     <ul>${run.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
                     <div class="form-actions"><button class="btn btn-primary" onclick="closeModal()">OK</button></div>`);
             }
@@ -311,6 +313,7 @@ const PayrollPage = {
             ${PayrollPage._directDepositNote(run)}
             <div class="form-actions">
                 ${run.status === 'processed' && run.stubs.some(s => s.direct_deposit) ? `<button class="btn btn-primary" onclick="PayrollPage.downloadDirectDeposit(${run.id})" title="The ACH file to upload to the bank">Direct deposit file</button>` : ''}
+                ${run.status === 'draft' ? `<button class="btn btn-danger" onclick="PayrollPage.discard(${run.id})">Discard draft</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`, { wide: true });
     },
@@ -350,6 +353,22 @@ const PayrollPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // Discard a draft (never a processed run): its stubs go, and what
+    // creating it changed — benefit year-to-date, loan balances, the time
+    // entries it paid — is undone.
+    async discard(id, question) {
+        if (!confirm(question || 'Discard this draft pay run? Its stubs are deleted, and the benefit year-to-date, loan balances and time entries it took are put back as they were.')) return;
+        try {
+            const res = await API.del(`/payroll/${id}`);
+            const flagged = (res && res.flagged_runs) || [];
+            toast(flagged.length
+                ? `Draft discarded. ${flagged.length === 1 ? 'A later draft was' : `${flagged.length} later drafts were`} figured while it counted and ${flagged.length === 1 ? 'is' : 'are'} flagged.`
+                : 'Draft discarded');
+            closeModal();
+            App.navigate('#/payroll');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     async process(id) {
         if (!confirm('Process this pay run? This will create journal entries.')) return;
         // Net pay leaves the bank account (1000) when the run is processed;
@@ -362,8 +381,12 @@ const PayrollPage = {
             if (!(await Overdraft.confirm(null, Number(run.total_net) || 0, '1000', 'Process'))) return;
         } catch (e) { /* a failed lookup never blocks processing */ }
         // A draft figured before an employee's opening YTD changed (#433):
-        // say so, and process it as figured only when asked to.
-        if (stale && !confirm(`${stale}\n\nProcess it as figured anyway?`)) return;
+        // say so, and process it as figured only when asked to; otherwise
+        // offer to discard it, so the run can be created again.
+        if (stale && !confirm(`${stale}\n\nProcess it as figured anyway?`)) {
+            PayrollPage.discard(id, 'Discard this draft instead, so the run can be created again with the new figures?');
+            return;
+        }
         try {
             await (stale
                 ? API.post(`/payroll/${id}/process?acknowledge_stale=1`)

@@ -34,7 +34,11 @@ from app.models.payroll_opening import (
     PayrollOpeningStateBalance,
 )
 from app.services.accounting import _q
-from app.services.payroll_service import FUTA_WAGE_BASE, SS_WAGE_BASE
+from app.services.payroll_service import (
+    FUTA_WAGE_BASE,
+    ss_wage_base,
+    wage_base_note,
+)
 
 ZERO = Decimal("0")
 STATE_FIELDS = OPENING_STATE_FIELDS
@@ -371,15 +375,22 @@ def clean_payload(db: Session, data: dict) -> tuple[dict, list[str]]:
 
     # The old system's taxable wages are capped wages: more than the base
     # is a typing slip, and would leave the paychecks and the forms apart.
+    # The Social Security base is the opening's own year's; a year SlowBooks
+    # has no base for is checked against the nearest one, and says so
+    # (clean["warnings"]) rather than refusing the switch.
+    tax_year = year if isinstance(year, int) else None
+    clean["warnings"] = [n for n in (wage_base_note(tax_year),) if n]
     for field, base, label in (
-        ("ss_wages", SS_WAGE_BASE, "Social Security"),
+        ("ss_wages", ss_wage_base(tax_year), "Social Security"),
         ("futa_wages", FUTA_WAGE_BASE, "FUTA"),
     ):
         total = sum((r[field] for r in clean["quarters"]), ZERO)
         if total > base:
+            when = f"{tax_year} " if tax_year and label != "FUTA" else ""
             errors.append(
                 f"{label} wages for the year ({total}) are more than the "
-                f"{label} wage base ({base}); enter the taxable wages, not gross."
+                f"{when}{label} wage base ({base}); enter the taxable wages, "
+                "not gross."
             )
 
     clean["benefits"] = []

@@ -17,6 +17,8 @@ from app.services.payroll_service import (
     MEDICARE_ADDITIONAL_THRESHOLD,
     SS_WAGE_BASE,
     _capped_wages,
+    ss_wage_base,
+    stub_taxable_wages,
 )
 from app.services.pdf_service import _jinja_env, render_pdf
 
@@ -65,15 +67,7 @@ def _fica_wages(stub: PayStub) -> Decimal:
     """Gross less the pre-tax benefit amounts that reduce FICA wages
     (Section 125 cafeteria plans, HSA): the base the paycheck's Social
     Security and Medicare were figured on."""
-    reduced = sum(
-        (
-            Decimal(str(b.employee_amount or 0))
-            for b in stub.benefits
-            if b.category == "pretax" and b.reduces_fica
-        ),
-        Decimal("0"),
-    )
-    return max(Decimal("0"), Decimal(str(stub.gross_pay or 0)) - reduced)
+    return stub_taxable_wages(stub)["fica"]
 
 
 def _additional_medicare_wages(fica_wages: Decimal, ytd_gross: Decimal) -> Decimal:
@@ -88,7 +82,7 @@ def _additional_medicare_wages(fica_wages: Decimal, ytd_gross: Decimal) -> Decim
     return annual - MEDICARE_ADDITIONAL_THRESHOLD
 
 
-def compute_941(db, year: int, quarter: int) -> dict:
+def compute_941(db, year: int, quarter: int, legacy: bool = False) -> dict:
     """Aggregate quarterly Form 941 totals.
 
     Returns wage, withholding and tax-liability totals for the quarter along
@@ -100,8 +94,14 @@ def compute_941(db, year: int, quarter: int) -> dict:
     carries that difference on line 7 (fractions of cents), and line 12 is
     what was withheld and matched. Printing the per-paycheck sums on 5a/5c
     showed 12.4% of $3,726.67 as $462.10 (2.17.3, macbase1 F23).
+
+    `legacy` figures it as SlowBooks did before 2.29.0 (each earlier stub's
+    gross toward the wage base and the threshold, the 2026 Social Security
+    base for every year): Form history's Check uses it to tell a 941
+    generated then from books that changed (document_check).
     """
     start, end = _quarter_bounds(year, quarter)
+    wage_base = SS_WAGE_BASE if legacy else ss_wage_base(year)
 
     employee_ids: set[int] = set()
     stub_count = 0
@@ -116,7 +116,8 @@ def compute_941(db, year: int, quarter: int) -> dict:
     additional_wages = Decimal("0")
     # What already counted toward each employee's Social Security wage base
     # and Additional Medicare threshold: the measure the paycheck used
-    # (ytd.wage_base_ytd): a stub's gross, an opening's own taxable wages.
+    # (ytd.wage_base_ytd): a stub's FICA wages, an opening's own taxable
+    # wages.
     ss_before: dict[int, Decimal] = {}
     med_before: dict[int, Decimal] = {}
 
@@ -163,8 +164,11 @@ def compute_941(db, year: int, quarter: int) -> dict:
             continue
         s = item
         gross = Decimal(str(s.gross_pay or 0))
-        ss_before[emp_id] = ss_prior + gross
-        med_before[emp_id] = med_prior + gross
+        fica = _fica_wages(s)
+        # what the paycheck counted toward the base: its FICA wages
+        counted = gross if legacy else fica
+        ss_before[emp_id] = ss_prior + counted
+        med_before[emp_id] = med_prior + counted
         if s.pay_run.pay_date < start:
             continue
         stub_count += 1
@@ -177,8 +181,7 @@ def compute_941(db, year: int, quarter: int) -> dict:
         ss_employer += Decimal(str(s.employer_ss_tax or 0))
         medicare_employee += Decimal(str(s.medicare_tax or 0))
         medicare_employer += Decimal(str(s.employer_medicare_tax or 0))
-        fica = _fica_wages(s)
-        ss_wages += _capped_wages(fica, ss_prior, SS_WAGE_BASE)
+        ss_wages += _capped_wages(fica, ss_prior, wage_base)
         medicare_wages += fica
         additional_wages += _additional_medicare_wages(fica, med_prior)
 

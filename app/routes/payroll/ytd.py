@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.payroll import (
     PayRun,
@@ -19,6 +19,7 @@ def _ytd_stubs(db: Session, employee_id: int, year: int, before: date = None):
     q = (
         db.query(PayStub)
         .join(PayRun, PayStub.pay_run_id == PayRun.id)
+        .options(selectinload(PayStub.benefits))
         .filter(
             PayStub.employee_id == employee_id,
             PayRun.status != PayRunStatus.VOID,
@@ -81,8 +82,13 @@ def wage_base_ytd(
     941, 940 and SUI report measure the same way, so a run and the forms
     agree.
 
-    Each SlowBooks stub counts its gross, as it always has. The opening
-    balance (#433) counts the old system's own taxable wages: its Social
+    Each SlowBooks stub counts the wages the paycheck taxed: its gross
+    less the pre-tax amounts that reduce FICA (Section 125, HSA; a 401(k)
+    does not), toward Social Security, the Additional Medicare threshold,
+    FUTA and SUTA (payroll_service.stub_taxable_wages); its gross toward
+    the work state's own capped taxes, which the state engines measure on
+    gross. The opening balance (#433) counts the old system's own taxable
+    wages: its Social
     Security wages toward the Social Security base, its Medicare wages
     toward the Additional Medicare threshold, its FUTA wages toward the
     $7,000, and its SUTA and state wages for `work_state` only — the SUTA
@@ -90,15 +96,17 @@ def wage_base_ytd(
     either."""
     from app.models.payroll import Employee
     from app.services import payroll_opening as po
+    from app.services.payroll_service import stub_taxable_wages
 
     state = (work_state or "").strip().upper()
     home = None
     bases = {k: Decimal("0") for k in ("ss", "medicare", "futa", "suta", "state")}
     for s in _ytd_stubs(db, employee_id, year, before):
-        gross = Decimal(str(s.gross_pay or 0))
-        bases["ss"] += gross
-        bases["medicare"] += gross
-        bases["futa"] += gross
+        wages = stub_taxable_wages(s)
+        gross, fica = wages["gross"], wages["fica"]
+        bases["ss"] += fica
+        bases["medicare"] += fica
+        bases["futa"] += fica
         stub_state = (s.work_state or "").strip().upper()
         if not stub_state:
             if home is None:
@@ -106,7 +114,7 @@ def wage_base_ytd(
                 home = ((emp.work_state if emp else None) or "WA").strip().upper()
             stub_state = home
         if stub_state == state:
-            bases["suta"] += gross
+            bases["suta"] += fica
             bases["state"] += gross
     opening = po.opening_for(db, employee_id, year)
     if po.counts_before(opening, before):

@@ -701,8 +701,11 @@ const EmployeesPage = {
         });
         if (r.reason) body.reason = r.reason;
         try {
-            await API.put(`/employees/${id}/opening-ytd`, body);
-            toast('Opening balance saved');
+            const saved = await API.put(`/employees/${id}/opening-ytd`, body);
+            // a year SlowBooks has no Social Security wage base for is
+            // saved, and said (checked against the nearest year's)
+            const warn = (saved && saved.warnings) || [];
+            toast(warn.length ? `Opening balance saved. ${warn.join(' ')}` : 'Opening balance saved', warn.length ? 'warning' : undefined);
             EmployeesPage._loadOpening(id, body.year);
             EmployeesPage._loadYTD(id);
         } catch (err) {
