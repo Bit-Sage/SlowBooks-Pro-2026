@@ -31,7 +31,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Batch Payments** — Apply payments to multiple invoices across multiple customers in a single transaction. Each line pays only its own customer's invoices, in the home currency; a batch with one wrong line is refused whole
 - **Credit Memos** — Issue credits against customers, apply to that customer's invoices to reduce balance due. Picking an item fills its price; the form totals up; tax starts at the company's rate or the credited invoice's, and falls on the lines an invoice would tax. View, Save PDF and Print. Proper reversing journal entries
 - **Vendor Credits** — Record a credit a supplier gave you for a return, a short shipment or an overcharge. Debits Accounts Payable and credits the expense (or Inventory, for stock going back), then applies to any of that vendor's open bills or sits on their account until there is one. Applying posts nothing — A/P moved when the credit was issued
-- **Quick Entry Mode** — Batch invoice entry for paper invoice backlog. Save & Next (Ctrl+Enter) with running log
+- **Quick Entry Mode** — Batch invoice entry for paper invoice backlog. Save & Next (Ctrl+Enter) with running log. The customer picker has **+ New Customer** (v2.29.1, #484), as on the New Invoice form: a name, email and phone in place, Save adds the customer and picks it with the date, terms, PO and lines kept as typed, and the focus goes back to the picker (Enter in the quick add saves the customer, Escape closes it; Save & Next with it still open adds the customer first). A read-only or accountant sign-in is not offered it
 
 ![Invoices with IRS Pub 583 Mock Data](../screenshots/invoices.png)
 

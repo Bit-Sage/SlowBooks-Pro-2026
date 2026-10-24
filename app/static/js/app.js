@@ -1970,6 +1970,11 @@ const App = {
         App._qeCustomers = customers;
         App._qeItems = items;
         const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        // "+ New Customer", as on the New Invoice form (#484): the customer
+        // is added in place and picked, and nothing else typed is lost. A
+        // read-only or accountant sign-in is not offered it (the server
+        // would refuse the save).
+        const addCust = App.isLocked() ? '' : `<option value="__new__">+ ${T('New Customer')}</option>`;
         return `
             <div class="page-header">
                 <h2>Quick Entry Mode</h2>
@@ -1983,7 +1988,18 @@ const App = {
             <form id="qe-form" onsubmit="App.saveQuickEntry(event)">
                 <div class="form-grid">
                     <div class="form-group"><label>${T('Customer')} *</label>
-                        <select name="customer_id" id="qe-customer" required><option value="">Select...</option>${custOpts}</select></div>
+                        <select name="customer_id" id="qe-customer" required onchange="App.qeCustomerSelected(this.value)"><option value="">Select...</option>${addCust}${custOpts}</select>
+                        ${App.isLocked() ? '' : `<div id="qe-new-customer-form" style="display:none; margin-top:8px; padding:8px; border:1px solid var(--gray-300); border-radius:4px; background:var(--primary-light);"
+                            onkeydown="App.qeNewCustomerKey(event)">
+                            <div style="font-weight:700; font-size:11px; margin-bottom:6px;">Quick Add ${T('Customer')}</div>
+                            <input id="qe-new-cust-name" placeholder="Name *" aria-label="${T('Customer')} name" aria-required="true" maxlength="200" style="width:100%; margin-bottom:4px;">
+                            <input id="qe-new-cust-email" type="email" placeholder="Email" aria-label="${T('Customer')} email" style="width:100%; margin-bottom:4px;">
+                            <input id="qe-new-cust-phone" type="tel" placeholder="Phone" aria-label="${T('Customer')} phone" style="width:100%; margin-bottom:4px;">
+                            <div style="display:flex; gap:6px;">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="App.qeSaveNewCustomer()">Save</button>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="App.qeCancelNewCustomer()">Cancel</button>
+                            </div>
+                        </div>`}</div>
                     <div class="form-group"><label>Date *</label>
                         <input name="date" id="qe-date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Terms</label>
@@ -2016,6 +2032,82 @@ const App = {
                 </div>
             </form>
             <div id="qe-log" style="margin-top:16px;"></div>`;
+    },
+
+    // The customer picker's "+ New Customer" opens the quick add under it;
+    // any other choice closes it.
+    qeCustomerSelected(value) {
+        const box = $('#qe-new-customer-form');
+        if (!box) return;
+        const open = value === '__new__';
+        box.style.display = open ? 'block' : 'none';
+        if (open) { const n = $('#qe-new-cust-name'); if (n && !n.value) n.focus(); }
+    },
+
+    // What the keyboard is on for the customer: the type-ahead box when the
+    // select has one.
+    _qeFocusCustomer() {
+        const sel = $('#qe-customer');
+        const target = sel && sel._cbx ? sel._cbx.box : sel;
+        if (target) target.focus();
+    },
+
+    // Enter saves the customer, not the invoice; Escape closes the quick add.
+    qeNewCustomerKey(e) {
+        if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault(); e.stopPropagation(); App.qeSaveNewCustomer();
+        } else if (e.key === 'Escape') {
+            e.preventDefault(); e.stopPropagation(); App.qeCancelNewCustomer();
+        }
+    },
+
+    // POST /customers, then the customer is on the list and picked, the
+    // quick add closes, and the focus goes back to the customer picker. The
+    // date, terms, PO and lines stay as typed.
+    async qeSaveNewCustomer() {
+        const box = $('#qe-new-customer-form');
+        if (!box || box.dataset.saving) return null;
+        const nameEl = $('#qe-new-cust-name');
+        const name = nameEl.value.trim();
+        if (!name) { toast(`${T('Customer')} name is required`, 'error'); nameEl.focus(); return null; }
+        box.dataset.saving = '1';
+        let cust;
+        try {
+            cust = await API.post('/customers', {
+                name,
+                email: $('#qe-new-cust-email').value.trim() || null,
+                phone: $('#qe-new-cust-phone').value.trim() || null,
+            });
+        } catch (err) {
+            delete box.dataset.saving;
+            const dupes = err.status === 409 && err.detail && err.detail.duplicates;
+            toast(dupes ? `Not added: ${dupes.map(d => d.name).join(', ')} is already a ${T('customer')}` : err.message, 'error');
+            nameEl.focus();
+            return null;
+        }
+        delete box.dataset.saving;
+        (App._qeCustomers = App._qeCustomers || []).push(cust);
+        const sel = $('#qe-customer');
+        if (sel && !sel.querySelector(`option[value="${cust.id}"]`)) {
+            sel.insertAdjacentHTML('beforeend', `<option value="${cust.id}">${escapeHtml(cust.name)}</option>`);
+        }
+        if (sel) {
+            sel.value = String(cust.id);
+            if (sel._cbx) sel._cbx.sync();
+        }
+        ['name', 'email', 'phone'].forEach(k => { $(`#qe-new-cust-${k}`).value = ''; });
+        box.style.display = 'none';
+        toast(`${T('Customer')} "${cust.name}" added`);
+        App._qeFocusCustomer();
+        return cust;
+    },
+
+    qeCancelNewCustomer() {
+        const box = $('#qe-new-customer-form');
+        if (box) box.style.display = 'none';
+        const sel = $('#qe-customer');
+        if (sel) { sel.value = ''; if (sel._cbx) sel._cbx.sync(); }
+        App._qeFocusCustomer();
     },
 
     _qeLineCount: 1,
@@ -2074,6 +2166,11 @@ const App = {
             }
         });
         if (lines.length === 0) { toast('Add at least one line item', 'error'); return; }
+        // "+ New Customer" still open with a name typed: Save & Next adds the
+        // customer first, then the invoice
+        if (form.customer_id.value === '__new__') {
+            if (!(await App.qeSaveNewCustomer())) return;
+        }
         const data = {
             customer_id: parseInt(form.customer_id.value),
             date: form.date.value,

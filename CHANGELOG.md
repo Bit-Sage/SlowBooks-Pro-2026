@@ -292,6 +292,15 @@ company with no line classes or cost codes keeps each line's own class and
 cost code (the form sends them only where it shows a picker for them). A
 deposit whose new total takes the cleared mark off its bank line returns the
 same note a journal entry's edit does.
+### Unreleased
+
+**Invoice Quick Entry can add a customer** (#484). Its customer picker has the
+New Invoice form's "+ New Customer": type a name the books don't have and the
+quick add opens with it filled in, Save adds the customer and picks it, and the
+date, terms, PO number and lines you already typed stay as they were. The
+focus goes back to the customer picker. Before, the only way was the top bar's
+New Customer, which cleared the half-entered screen and left nobody picked.
+Read-only and accountant sign-ins are not offered it.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
