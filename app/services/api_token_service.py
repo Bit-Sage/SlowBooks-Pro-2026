@@ -27,7 +27,7 @@ def hash_token(token: str) -> str:
 
 
 def resolve(bearer: str) -> dict | None:
-    """Bearer secret → {"label", "role"} for an active token; {"revoked":
+    """Bearer secret → {"label", "role", "allow_backups"} for an active token; {"revoked":
     True, "label"} for one an administrator turned off (so the 401 can say
     so, #434); None for a secret that matches nothing."""
     if not bearer or not bearer.startswith(TOKEN_PREFIX):
@@ -50,6 +50,10 @@ def resolve(bearer: str) -> dict | None:
         if last is None or (now - last) > _LAST_USED_RESOLUTION:
             row.last_used_at = now
             db.commit()
-        return {"label": row.label, "role": row.role}
+        return {
+            "label": row.label,
+            "role": row.role,
+            "allow_backups": bool(row.allow_backups),
+        }
     finally:
         db.close()
