@@ -55,19 +55,16 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.27 — A register you can edit, and a bookkeeper's wish list.** The bank register adds a payee or category as
-it's typed, splits a deposit with a fee line the way a card processor pays, and
-opens an entry for editing, warning when it's reconciled (#386–#388). A bill
-line can be an amount alone (#391), the reconcile screen corrects the
-statement's ending balance (#389), and Reclassify filters by payee (#394).
-Also saved invoice messages (#392), a giving statement with the ministry's own
-message and footer (#415), a Possible Duplicates report for bank and card
-accounts (#414), Save CSV on the agings (#393), a Reconciliation Reports card
-with pinned Report Center cards (#395), an item's opening stock posting its
-value, and QuickBooks Desktop deposits printed under several check numbers
-importing.
+**v2.28 — Account types and sub-accounts.** Every account carries one of QuickBooks'
+detail types (#390), picked on the account form; a new account gets a sensible
+one from its number and name, and it can be changed. The Balance Sheet groups
+current and long-term assets and liabilities, and the Profit & Loss puts Other
+Income and Other Expense below Net Operating Income. Sub-accounts nest under
+their parents on the Chart of Accounts and on the statements, with family
+subtotals, and move from the account form (#416). Upgrading moves no figure:
+every statement shows the same numbers as before, only grouped.
 
-Patch releases and everything before 2.27 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.28 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -82,7 +79,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (602 operations in v2.27.0) — built for Claude
+self-documenting local REST API (603 operations in v2.28.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

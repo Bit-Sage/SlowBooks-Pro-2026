@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.28.0 — Account types and sub-accounts
 
 **Account detail types** (#390, from Kim Morden Bookkeeping's notes). Every
 account now carries one of QuickBooks' fifteen account types beside its
@@ -137,6 +137,20 @@ gives a sub-account a detail type its parent cannot share, the child takes
 the parent's instead — the link is right, so the family stays together on
 the Profit & Loss — with a note naming the type the file asked for; under a
 bank, card, 1100 or 2000 parent it keeps its own.
+
+**Possible Duplicates counts the groups it shows** (#458, from the 2.27.0
+release check). With "Show groups marked not a duplicate" ticked, the line
+read "0 groups" above the marked group it was showing; the open groups are
+counted, and the marked ones apart, "(shown)" when the box is ticked.
+
+**The macOS release staples on any retry** (#459). The 2.27.0 build's
+notarization ticket failed to staple once with a message the retry didn't
+recognize; once Apple has accepted the app, any stapler failure is retried
+within the same bound, and the error names what the stapler said.
+
+One schema change, run in every company file: `accounts.detail_type`
+(4ac01efbd72a), filled in so every statement shows the same figures as
+before. 603 API operations.
 
 ### v2.27.0 — A register you can edit, and a bookkeeper's wish list
 

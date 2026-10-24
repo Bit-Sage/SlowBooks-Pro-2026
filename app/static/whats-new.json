@@ -1,4 +1,13 @@
 {
+  "2.28.0": {
+    "title": "Account types and sub-accounts",
+    "items": [
+      "Every account carries a QuickBooks-style detail type, picked on the account form; a new account gets a sensible one from its number and name, and you can change it.",
+      "The Balance Sheet groups current and long-term assets and liabilities; the Profit & Loss puts Other Income and Other Expense below Net Operating Income.",
+      "Sub-accounts nest under their parents on the Chart of Accounts and the statements, with family subtotals, and move from the account form.",
+      "Upgrading moves no figure: every statement shows the same numbers as before, only grouped."
+    ]
+  },
   "2.27.0": {
     "title": "A register you can edit, and a bookkeeper's wish list",
     "items": [
