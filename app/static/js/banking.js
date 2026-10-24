@@ -498,7 +498,7 @@ const BankingPage = {
                     <div class="form-group"><label>Last 4 digits</label>
                         <input name="last_four" maxlength="4"></div>
                     <div class="form-group"><label>Statement balance</label>
-                        <input name="opening_balance" type="number" step="0.01" value="0" oninput="this.dataset.touched = '1'">
+                        <input name="opening_balance" class="money" type="number" step="0.01" value="0" oninput="this.dataset.touched = '1'">
                         <div style="font-size:10px; color:var(--gray-500);">What the statement says on the As-of date: cash in the bank, or the amount owed on a card. Posted against the opening-balance offset account (3900) — unless the books already carry this account, when only a difference you confirm is posted.</div>
                         <div id="acct-ledger-note" style="font-size:11px; margin-top:4px;" role="status"></div></div>
                     <div class="form-group"><label>As of</label>
@@ -967,7 +967,7 @@ const BankingPage = {
         const cats = (chart || [])
             .filter(a => a.id !== accountId && BankingPage.CATEGORY_TYPES.includes(a.account_type))
             .map(a => `<option value="${a.id}">${accountLabel(a, a.account_path || a.name)}${a.bank_kind ? ' (transfer)' : ''}</option>`).join('');
-        const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.postQuickEntry(${accountId}); }"`;
+        const key = `onkeydown="BankingPage._quickKey(event, ${accountId})"`;
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         // the row lives in its own <tfoot>, after the entries; every field is
@@ -977,13 +977,27 @@ const BankingPage = {
                     <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}></td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><span style="display:inline-flex; gap:2px; align-items:center;"><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>${cats}</select><button type="button" id="qe-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" title="Add a new account" style="font-size:11px; padding:2px 6px;" onclick="BankingPage.openNewAccount('qe-category', ${accountId})">Add</button></span></td>
-                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
-                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
+                    <td><span style="display:inline-flex; gap:2px; align-items:center;"><select id="qe-category" aria-label="New entry category" data-no-search ${key} style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>${cats}</select><button type="button" id="qe-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" title="Add a new account" style="font-size:11px; padding:2px 6px;" onclick="BankingPage.openNewAccount('qe-category', ${accountId})">Add</button></span></td>
+                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" class="money" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
+                    <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" class="money" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td></td><td></td>
                     <td><button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.postQuickEntry(${accountId})">Post</button></td>
                 </tr>
                 <tr data-write><td colspan="10" style="padding:0; border:0;">${BankingPage._newAccountPanel('qe-category', accountId)}</td></tr></tfoot>`;
+    },
+
+    // Enter in the quick row. As before, it posts the entry, unless the
+    // preference "Enter moves between fields" is on (#480): then it moves
+    // to the row's next field, and only Enter in the last amount (or Post)
+    // posts, the rule every form follows. Enter on a button is its own.
+    _quickKey(event, accountId) {
+        if (event.key !== 'Enter' || event.defaultPrevented) return;
+        // the category list never posted on Enter; it only moves through
+        if (!DataEntryPrefs.enter_moves && event.target.tagName === 'SELECT') return;
+        const row = document.getElementById('reg-quick-entry');
+        if (row && enterMovesOn(event, row)) return;
+        event.preventDefault();
+        BankingPage.postQuickEntry(accountId);
     },
 
     // The quick row posts through the same call as + Entry (#329): money
@@ -1058,7 +1072,7 @@ const BankingPage = {
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Amount *</label>
-                        <input name="amount" type="number" step="0.01" required>
+                        <input name="amount" class="money" type="number" step="0.01" required>
                         <div style="font-size:10px; color:var(--gray-500);">${isCard ? 'Negative = a charge (owe more). Positive = a payment to the card.' : 'Negative = money out (a payment). Positive = money in (a deposit).'}</div></div>
                     <div class="form-group"><label>Payee</label>
                         <input name="payee" id="entry-payee" onblur="BankingPage.payeeTyped(this.value, BankingPage._formMoneyIn(), 'entry-payee')"></div>
@@ -1203,7 +1217,7 @@ const BankingPage = {
         const n = body.querySelectorAll('tr').length + 1;
         body.insertAdjacentHTML('beforeend', `<tr>
             <td><select class="split-cat" aria-label="Split line ${n} account" data-no-search><option value="">Select…</option>${BankingPage._splitCats || ''}</select></td>
-            <td class="amount"><input class="split-amt" type="number" step="0.01" aria-label="Split line ${n} amount" oninput="BankingPage.splitNote()" style="width:100px; text-align:right;"></td>
+            <td class="amount"><input class="split-amt money" type="number" step="0.01" aria-label="Split line ${n} amount" oninput="BankingPage.splitNote()" style="width:100px; text-align:right;"></td>
             <td style="text-align:center;"><input class="split-fee" type="checkbox" aria-label="Split line ${n} taken out" title="A fee the processor kept, or a refund netted against a check: this line goes the other way from the entry" onchange="BankingPage.splitNote()"></td>
             <td><input class="split-memo" type="text" aria-label="Split line ${n} memo"></td>
             <td><button type="button" class="btn btn-sm btn-secondary" aria-label="Remove split line ${n}" onclick="this.closest('tr').remove(); BankingPage.splitNote();">×</button></td>
@@ -1558,7 +1572,7 @@ const BankingPage = {
                 <p style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">Move money between bank and card accounts. Paying a card is a transfer from the bank to the card.</p>
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label><input name="date" type="date" required value="${todayISO()}"></div>
-                    <div class="form-group"><label>Amount *</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+                    <div class="form-group"><label>Amount *</label><input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
                     <div class="form-group"><label>From *</label><select name="from_account_id" required>${fromOpts}</select></div>
                     <div class="form-group"><label>To *</label><select name="to_account_id" required>${toOpts}</select></div>
                     <div class="form-group"><label>Reference</label><input name="reference"></div>
@@ -1637,7 +1651,7 @@ const BankingPage = {
                     <div class="form-group"><label>Statement Date *</label>
                         <input name="statement_date" type="date" required value="${defaultDate}" ${minDate ? `min="${minDate}"` : ''}></div>
                     <div class="form-group"><label>Statement Ending Balance *</label>
-                        <input name="statement_balance" type="number" step="0.01" required></div>
+                        <input name="statement_balance" class="money" type="number" step="0.01" required></div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1760,7 +1774,7 @@ const BankingPage = {
                     <div class="form-group"><label>Statement Date *</label>
                         <input name="statement_date" type="date" required value="${escapeHtml(statementDate)}"></div>
                     <div class="form-group"><label>Statement Ending Balance *</label>
-                        <input name="statement_balance" type="number" step="0.01" required value="${Number(statementBalance).toFixed(2)}"></div>
+                        <input name="statement_balance" class="money" type="number" step="0.01" required value="${Number(statementBalance).toFixed(2)}"></div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>

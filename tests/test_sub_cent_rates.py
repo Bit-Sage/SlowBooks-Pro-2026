@@ -136,8 +136,8 @@ def test_the_sales_forms_take_four_places():
             if page == "invoices.js"
             else 'min="0"'
         )
-        assert f'<input class="line-rate" type="number" step="0.0001" {floor}' in src
-        assert 'class="line-rate" type="number" step="0.01"' not in src, page
+        assert f'<input class="line-rate money" type="number" step="0.0001" {floor}' in src
+        assert 'class="line-rate money" type="number" step="0.01"' not in src, page
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

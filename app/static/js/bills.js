@@ -324,8 +324,8 @@ const BillsPage = {
                 ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
-                <td><input class="line-rate" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
-                <td class="col-amount line-amount"><input class="line-amt" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.recalc()" onchange="BillsPage.amtChanged(this)"></td>
+                <td><input class="line-rate money" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
+                <td class="col-amount line-amount"><input class="line-amt money" type="number" step="0.01" value="${amount}" title="The line's amount; type a quantity and rate instead to price it" oninput="BillsPage.recalc()" onchange="BillsPage.amtChanged(this)"></td>
             </tr>`;
     },
 
@@ -674,7 +674,7 @@ const BillsPage = {
                 <td>${escapeHtml(b.vendor_name || '')}</td>
                 <td>${formatDate(b.due_date)}</td>
                 <td class="amount">${formatCurrency(b.balance_due)}</td>
-                <td><input type="number" step="0.01" class="pay-amount" data-bill="${b.id}" data-vendor="${b.vendor_id}" data-vendor-name="${escapeHtml(b.vendor_name || '')}" value="0" style="width:80px;"></td>
+                <td><input type="number" step="0.01" class="pay-amount money" data-bill="${b.id}" data-vendor="${b.vendor_id}" data-vendor-name="${escapeHtml(b.vendor_name || '')}" value="0" style="width:80px;"></td>
             </tr>`).join('');
 
         if (!billRows) billRows = '<tr><td colspan="6" style="color:var(--text-muted);">No open bills</td></tr>';

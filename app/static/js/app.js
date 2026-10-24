@@ -2000,7 +2000,7 @@ const App = {
                             <td><select class="line-item" onchange="App.qeItemSelected(0)">${ItemQuickAdd.options(items)}</select></td>
                             <td><input class="line-desc" value=""></td>
                             <td><input class="line-qty" type="number" step="0.01" value="1" oninput="App.qeRecalc()"></td>
-                            <td><input class="line-rate" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
+                            <td><input class="line-rate money" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
                             <td class="col-amount line-amount">$0.00</td>
                         </tr>
                     </tbody>
@@ -2024,7 +2024,7 @@ const App = {
                 <td><select class="line-item" onchange="App.qeItemSelected(${idx})">${ItemQuickAdd.options(App._qeItems)}</select></td>
                 <td><input class="line-desc" value=""></td>
                 <td><input class="line-qty" type="number" step="0.01" value="1" oninput="App.qeRecalc()"></td>
-                <td><input class="line-rate" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
+                <td><input class="line-rate money" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
                 <td class="col-amount line-amount">$0.00</td>
             </tr>`);
     },
@@ -2096,7 +2096,7 @@ const App = {
                     <td><select class="line-item" onchange="App.qeItemSelected(0)">${ItemQuickAdd.options(App._qeItems)}</select></td>
                     <td><input class="line-desc" value=""></td>
                     <td><input class="line-qty" type="number" step="0.01" value="1" oninput="App.qeRecalc()"></td>
-                    <td><input class="line-rate" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
+                    <td><input class="line-rate money" type="number" step="0.01" value="0" oninput="App.qeRecalc()"></td>
                     <td class="col-amount line-amount">$0.00</td>
                 </tr>`;
             App._qeLineCount = 1;
@@ -2308,6 +2308,10 @@ const App = {
 
         // Load saved theme
         App.loadTheme();
+
+        // The data-entry preferences (#480): Enter moves between fields, the
+        // decimal point places itself. Read once; both off until they arrive.
+        if (typeof DataEntryPrefs !== 'undefined') DataEntryPrefs.load();
 
         // Keyboard shortcuts. The Alt letters go by the key's place
         // (e.code: KeyD is the D key on any layout) with Alt alone held

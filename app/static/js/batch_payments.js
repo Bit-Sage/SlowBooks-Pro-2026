@@ -60,7 +60,7 @@ const BatchPaymentsPage = {
                         <td>${escapeHtml(cname)}</td>
                         <td>${formatDate(inv.due_date)}</td>
                         <td class="amount">${formatCurrency(inv.balance_due)}</td>
-                        <td><input type="number" step="0.01" class="batch-amt" data-inv="${inv.id}" data-cust="${inv.customer_id}" value="0" style="width:80px;"></td>
+                        <td><input type="number" step="0.01" class="batch-amt money" data-inv="${inv.id}" data-cust="${inv.customer_id}" value="0" style="width:80px;"></td>
                     </tr>`;
                 }
             }

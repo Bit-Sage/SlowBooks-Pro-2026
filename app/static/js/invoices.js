@@ -222,7 +222,7 @@ const InvoicesPage = {
             <form onsubmit="InvoicesPage.saveWriteOff(event, ${id})">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label><input name="date" type="date" required value="${todayISO()}"></div>
-                    <div class="form-group"><label>Amount *</label><input name="amount" type="number" step="0.01" min="0.01" max="${balance}" required value="${balance.toFixed(2)}"></div>
+                    <div class="form-group"><label>Amount *</label><input name="amount" class="money" type="number" step="0.01" min="0.01" max="${balance}" required value="${balance.toFixed(2)}"></div>
                     <div class="form-group full-width"><label>Memo</label><input name="memo" placeholder="${Terms.isNonprofit() ? 'e.g. pledge withdrawn' : 'e.g. too small to collect'}"></div>
                 </div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:6px">Posts a credit memo to Bad Debt Expense and applies it to this ${T('invoice')}. Void the credit memo to undo.</div>
@@ -351,7 +351,7 @@ const InvoicesPage = {
             return `<tr>
                 <td>${escapeHtml(label)}</td>
                 <td class="amount">${money(c.available)}</td>
-                <td><input class="credit-take" data-kind="${escapeHtml(c.kind)}" data-id="${c.id}" data-max="${c.available}"
+                <td><input class="credit-take money" data-kind="${escapeHtml(c.kind)}" data-id="${c.id}" data-max="${c.available}"
                     type="number" step="0.01" min="0" max="${c.available}" value="${take > 0 ? (take / 100).toFixed(2) : ''}"
                     aria-label="Apply from ${escapeHtml(label)}" oninput="InvoicesPage._applyCreditStatus()" style="width:100px;"></td>
             </tr>`;
@@ -804,7 +804,7 @@ const InvoicesPage = {
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             ${InvoicesPage.lineClasses() ? Nonprofit.classCellHtml('line-class', line.class_id) : ''}
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="InvoicesPage.recalc()"></td>
-            <td><input class="line-rate" type="number" step="0.0001" ${Number(line.rate) < 0 || items.some(i => i.is_discount && i.id == line.item_id) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="InvoicesPage.recalc()"></td>
+            <td><input class="line-rate money" type="number" step="0.0001" ${Number(line.rate) < 0 || items.some(i => i.is_discount && i.id == line.item_id) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="InvoicesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="InvoicesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="InvoicesPage.removeLine(${idx})">X</button></td>

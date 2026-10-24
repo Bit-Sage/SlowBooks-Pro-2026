@@ -207,9 +207,9 @@ const EstimatesPage = {
                 ${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
-            <td><input class="line-unit-cost" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
+            <td><input class="line-unit-cost money" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
-            <td><input class="line-rate" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
+            <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="EstimatesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="EstimatesPage.removeLine(${idx})">X</button></td>

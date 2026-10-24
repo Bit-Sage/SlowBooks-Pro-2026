@@ -193,7 +193,7 @@ const JobCostsPage = {
             <form onsubmit="JobCostsPage.saveAllocate(event)">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label><input name="date" type="date" required value="${todayISO()}"></div>
-                    <div class="form-group"><label>Amount *</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+                    <div class="form-group"><label>Amount *</label><input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
                     <div class="form-group"><label>Spread by</label>
                         <select name="method">
                             <option value="hours">Labor hours in the period</option>

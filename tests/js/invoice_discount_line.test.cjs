@@ -22,7 +22,7 @@ function page() {
     return context.window.InvoicesPage;
 }
 
-const rateBox = html => html.match(/<input class="line-rate"[^>]*>/)?.[0];
+const rateBox = html => html.match(/<input class="line-rate[ "][^>]*>/)?.[0];
 const items = [{ id: 7, name: 'Discount' }, { id: 8, name: 'Catering' }];
 
 test('a discount line takes its negative price, on its Discount item', () => {

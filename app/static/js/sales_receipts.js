@@ -179,7 +179,7 @@ const SalesReceiptsPage = {
                     <div class="form-group full-width" style="border-top:1px solid var(--gray-200); padding-top:8px; margin-top:4px;">
                         <label>Goods or services provided in exchange?</label>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                            <input name="fair_value_amount" type="number" step="0.01" min="0" placeholder="Fair value ($)" style="width:140px;">
+                            <input name="fair_value_amount" class="money" type="number" step="0.01" min="0" placeholder="Fair value ($)" style="width:140px;">
                             <input name="fair_value_description" maxlength="200" placeholder="e.g. gala dinner" style="flex:1; min-width:180px;">
                         </div>
                         <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Leave blank for a pure gift. The receipt states the deductible portion (IRS Pub. 1771).</div>
@@ -347,7 +347,7 @@ const SalesReceiptsPage = {
                 ${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="SalesReceiptsPage.recalc()"></td>
-            <td><input class="line-rate" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="SalesReceiptsPage.recalc()"></td>
+            <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="SalesReceiptsPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${line.is_taxable === false ? '' : 'checked'} onchange="SalesReceiptsPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="SalesReceiptsPage.removeLine(${idx})">X</button></td>

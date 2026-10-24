@@ -5,6 +5,27 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Enter can move between fields, and the decimal point can place itself** (#480).
+Two QuickBooks Desktop data-entry preferences, under Settings → My Preferences,
+each person's own and both off unless they are turned on:
+
+- *Enter key moves between fields*: Enter goes to the next field, and only
+  Enter in the last field, or on Save, saves. The register's new-entry row
+  works the same way: Enter walks Date, Payee, Memo, Ref, Category and the two
+  amounts, and posts from the last amount. A type-ahead picker keeps its own
+  Enter (open the list, take the name) and a memo box its new line. Off, Enter
+  saves a form and posts the register row from any of its fields, as before.
+- *Automatically place the decimal point*: 12345 typed in an amount is
+  $123.45, and 5 is $0.05. A decimal point you type yourself is kept, and an
+  amount already on a saved document is never divided. It covers the amounts
+  on every transaction form and the register row.
+
+My Preferences sits above the company settings and saves each box as it
+changes. Every sign-in sets its own, read-only and accountant sign-ins
+included; an API token sets none.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

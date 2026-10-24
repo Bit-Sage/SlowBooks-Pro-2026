@@ -209,16 +209,16 @@ const JournalPage = {
                             <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                             <td><input class="je-desc"></td>
                             ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
-                            <td><input class="je-debit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
-                            <td><input class="je-credit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                            <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                            <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
                         </tr>
                         <tr data-jeline="1">
                             <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                             <td><input class="je-desc"></td>
                             ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
-                            <td><input class="je-debit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
-                            <td><input class="je-credit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                            <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                            <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
                         </tr>
                     </tbody>
@@ -247,8 +247,8 @@ const JournalPage = {
                 <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                 <td><input class="je-desc"></td>
                             ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
-                <td><input class="je-debit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
-                <td><input class="je-credit" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
+                <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                 <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
             </tr>`);
     },
