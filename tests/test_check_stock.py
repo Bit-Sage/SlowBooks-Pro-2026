@@ -109,7 +109,9 @@ def test_preprinted_stock_keeps_the_layout_of_plain_stock():
     import re
 
     html = _render(check_stock="preprinted")
-    stripped = re.sub(r"\n<style>\s*/\* Pre-printed check stock.*?</style>", "", html, flags=re.S)
+    stripped = re.sub(
+        r"\n<style>\s*/\* Pre-printed check stock.*?</style>", "", html, flags=re.S
+    )
     assert stripped == _render()
     for label in _LABELS:
         assert label in html

@@ -422,17 +422,40 @@ def test_a_full_length_stored_reference_is_still_recognised(db_session, seed_acc
 
     long_ref = "K" * 130
     chart = [
-        {"name": "Spare cash", "code": "1850", "type": AccountType.ASSET,
-         "description": "", "bank_kind": "bank", "parent": None},
-        {"name": "Sales", "code": "4100", "type": AccountType.INCOME,
-         "description": "", "parent": None},
+        {
+            "name": "Spare cash",
+            "code": "1850",
+            "type": AccountType.ASSET,
+            "description": "",
+            "bank_kind": "bank",
+            "parent": None,
+        },
+        {
+            "name": "Sales",
+            "code": "4100",
+            "type": AccountType.INCOME,
+            "description": "",
+            "parent": None,
+        },
     ]
-    gl = [[
-        {"account": "Spare cash", "date": date(2026, 1, 15),
-         "debit": Decimal("100"), "credit": Decimal("0"), "reference": long_ref},
-        {"account": "Sales", "date": date(2026, 1, 15),
-         "debit": Decimal("0"), "credit": Decimal("100"), "reference": long_ref},
-    ]]
+    gl = [
+        [
+            {
+                "account": "Spare cash",
+                "date": date(2026, 1, 15),
+                "debit": Decimal("100"),
+                "credit": Decimal("0"),
+                "reference": long_ref,
+            },
+            {
+                "account": "Sales",
+                "date": date(2026, 1, 15),
+                "debit": Decimal("0"),
+                "credit": Decimal("100"),
+                "reference": long_ref,
+            },
+        ]
+    ]
     parsers = {"coa": lambda _t: (chart, []), "gl": lambda _t: (gl, [])}
     bundle = {"coa": "x", "gl": "x"}
 

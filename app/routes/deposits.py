@@ -428,9 +428,7 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
         and _q(others[0].credit) == old_total
         and _q(others[0].debit) == 0
     )
-    if not standard and data.line_ids and set(data.line_ids) != {
-        ln.id for ln in held
-    }:
+    if not standard and data.line_ids and set(data.line_ids) != {ln.id for ln in held}:
         accts = [db.get(Account, ln.account_id) for ln in others]
         names = ", ".join(
             dict.fromkeys(a.name for a in accts if a is not None and a.id != uf_id)

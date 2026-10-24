@@ -887,7 +887,9 @@ def test_an_imported_deposit_refuses_new_payments_with_a_reason(
     pay = _receive(client, cid, 120, check="77")
     r = client.put(
         f"/api/deposits/{dep}",
-        json={"line_ids": [_line_of(client, db_session, pay["id"])["transaction_line_id"]]},
+        json={
+            "line_ids": [_line_of(client, db_session, pay["id"])["transaction_line_id"]]
+        },
     )
     assert r.status_code == 400, r.text
     assert "posts to Service Income" in r.json()["detail"]
