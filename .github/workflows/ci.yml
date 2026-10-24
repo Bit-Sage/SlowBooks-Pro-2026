@@ -175,12 +175,21 @@ jobs:
           # (CI 40031366864): each PR raised it from 126 on its own base.
           # 146 for 2.28.0, the count on the integrated tree's own Windows run:
           # the account detail types add Postgres-only migration tests.
-          # 148 with the pre-printed check stock (#440): two tests reach
-          # GET /api/checks/test-print, which renders a PDF and so skips here
-          # with the other PDF tests (no WeasyPrint stack on the runner) — the
-          # API sweep, and the bookkeeper "server answers" sweep (the test
-          # print is a control a bookkeeper is offered).
-          MAX_SKIPS: "148"
+          # 153 for 2.29.0, the count on the integrated tree's own Windows run
+          # (CI 40105648413: 4,964 passed, 153 skipped): opening YTD by
+          # quarter's Postgres-only migration test, the past-customers labels
+          # PDF without WeasyPrint, item quick-add's and #457's Playwright
+          # modules, each PR having raised it from 146 on its own base.
+          # 154 with PR #470's fix commit (CI 40109192190: 4,988 passed, 154
+          # skipped): tests/test_past_customers.py's five-line label test
+          # renders the labels PDF, which skips here with the other PDF tests
+          # (no WeasyPrint stack on the runner).
+          # 159 with the pre-printed check stock (#440): five tests render a
+          # check PDF (tests/test_check_stock.py's three test-print tests, the
+          # API sweep reaching GET /api/checks/test-print, and the bookkeeper
+          # "server answers" sweep), which skip here with the other PDF tests
+          # (no WeasyPrint stack on the runner) — 154 + 5.
+          MAX_SKIPS: "159"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
