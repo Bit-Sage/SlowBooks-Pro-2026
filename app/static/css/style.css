@@ -747,6 +747,13 @@ body {
     color: var(--text-primary);
 }
 
+/* The `hidden` attribute loses to `.btn { display: inline-flex }` and
+   `.form-group { display: flex }` (the author rule outranks the browser's
+   `[hidden]`), so a button drawn `hidden` showed: the opening-balances
+   import's Apply before Preview (2.29.0 gate, macbase1 NEW-175), and the
+   locked opening balance's reason field. Per component, as .cbx[hidden]. */
+.btn[hidden], .form-group[hidden] { display: none; }
+
 .btn:hover:not(:disabled) {
     background: linear-gradient(180deg, #f0f4f8 0%, #d8dce4 100%);
     border-color: #5f7d99;

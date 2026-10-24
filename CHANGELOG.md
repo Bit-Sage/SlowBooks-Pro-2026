@@ -156,7 +156,9 @@ quarter the state wages, withholding, SUTA wages and tax and other state
 taxes; benefit amounts by code for the year. Enter it on the employee's page
 (Opening YTD) or import it for everyone from Payroll → Import opening
 balances, using the template there (a Quarter column, one row per employee
-per quarter, a further state on a row with only the state columns).
+per quarter, a further state on a row with only the state columns); the
+import's Apply button appears only after a Preview says what there is to
+write.
 
 - **Each quarter's 941 carries only that quarter.** The old system filed the
   941 for every quarter it finished, so a May switch's Q1 941 is exactly the

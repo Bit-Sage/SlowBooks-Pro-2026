@@ -562,3 +562,8 @@ def test_payroll_page_has_the_import_button_and_the_template_link():
     assert "/api/payroll/opening-ytd/template" in js
     assert "/api/payroll/opening-ytd/import?" in js
     assert "PayrollPage.applyOpeningImport()" in js
+    # Apply is drawn hidden until a Preview says there is something to write;
+    # the attribute needs the stylesheet's help against .btn's display
+    assert 'id="opening-import-apply" hidden' in js
+    css = (ROOT / "app/static/css/style.css").read_text()
+    assert ".btn[hidden]" in css and ".form-group[hidden]" in css
