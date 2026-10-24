@@ -184,6 +184,11 @@ jobs:
           # skipped): tests/test_past_customers.py's five-line label test
           # renders the labels PDF, which skips here with the other PDF tests
           # (no WeasyPrint stack on the runner).
+          # 148 with the pre-printed check stock (#440): two tests reach
+          # GET /api/checks/test-print, which renders a PDF and so skips here
+          # with the other PDF tests (no WeasyPrint stack on the runner) — the
+          # API sweep, and the bookkeeper "server answers" sweep (the test
+          # print is a control a bookkeeper is offered).
           # 163 for 2.29.1, PROVISIONAL: 154 plus one for each of the nine
           # new Playwright modules (P&L detail, total drill, month columns,
           # feed vendor, vendor bank rule, new lines taxable, account quick

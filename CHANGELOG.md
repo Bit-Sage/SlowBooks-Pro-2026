@@ -605,6 +605,22 @@ reference column's width while the journal was stored with the full reference,
 so the two never matched and a second import booked the entry again. The
 import now stores the same cut value the key uses, so a re-import recognises
 what it already posted.
+### Unreleased
+
+**Pre-printed check stock** (#440, from @KWBsupport's note in discussion
+#354). Check stock that already carries "Pay to the order of", the memo and
+signature lines and the amount box no longer gets SlowBooks' own labels and
+lines printed on top of it. Settings → Check Printing adds a per-company
+choice: plain / voucher stock (the default, unchanged) or pre-printed stock,
+which prints only the values — payee, amount, amount in words, date and memo
+— in their places. A horizontal and a vertical alignment nudge (−0.5 to +0.5
+inches, in 0.01 steps) shift the check portion only, not the stubs, to line
+the values up with the pre-printed boxes, and a "Print a test check" button
+produces a sample check so the nudge can be set on plain paper held against
+the stock. The choice applies to every check print path — a bill payment,
+Pay Bills, a register check and an expense paid from a bank account — through
+one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
+`check_nudge_y_in`; `GET /api/checks/test-print`).
 
 ### v2.28.0 — Account types and sub-accounts
 

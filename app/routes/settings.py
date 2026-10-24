@@ -53,6 +53,7 @@ ENUM_SETTINGS = {
     "invoice_show_logo": frozenset({"true", "false"}),
     "class_warn_blank": frozenset({"true", "false"}),
     "new_lines_taxable": frozenset({"true", "false"}),
+    "check_stock": frozenset({"plain", "preprinted"}),
 }
 
 
