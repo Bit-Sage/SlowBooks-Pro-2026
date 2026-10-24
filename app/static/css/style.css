@@ -1422,7 +1422,14 @@ a:hover { text-decoration: underline; }
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* A toast is a notice, not a control: clicks go through it to what is
+       beneath. "Settings saved" sat on Save Settings for five seconds and a
+       second save in that time hit the toast and saved nothing (2.29.0 gate,
+       skytech W-35). A toast question's buttons take their own clicks. */
+    pointer-events: none;
 }
+
+.toast .btn { pointer-events: auto; }
 
 .toast {
     padding: 6px 14px;

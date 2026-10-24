@@ -288,7 +288,9 @@ business company, an administrator's page for another role) keeps the choice
 made for it, and a nonprofit page unticked on a nonprofit company no longer
 comes back on the next reload. The stored setting is
 unchanged (`hidden_menu` lists the hidden items), so a list saved by an
-earlier version keeps working.
+earlier version keeps working. A toast no longer takes the click meant for
+what is under it: "Settings saved" sat on Save Settings for its few seconds,
+and a second save in that time saved nothing.
 
 **Chart import preview: the detail type and parent each row will get**
 (#461). The dry run of a chart CSV showed each row's base type only
