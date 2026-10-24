@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     Enum,
     ForeignKey,
+    Index,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -35,6 +36,12 @@ class BillStatus(str, enum.Enum):
 
 class Bill(Base):
     __tablename__ = "bills"
+    # One bill per vendor invoice number (#501): the route's check is a
+    # read, which two sign-ins on PostgreSQL can both pass; the index is
+    # what refuses the second.
+    __table_args__ = (
+        Index("uq_bills_vendor_bill_number", "vendor_id", "bill_number", unique=True),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     bill_number = Column(String(100), nullable=False)

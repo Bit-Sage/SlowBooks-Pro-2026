@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
@@ -317,6 +318,30 @@ def _post_bill_lines(
     return inv_receipts
 
 
+BILL_NUMBER_INDEX = "uq_bills_vendor_bill_number"
+
+
+def _flush_number(db: Session, number: str) -> None:
+    """Write the bill's number now, so a second sign-in saving the same
+    vendor's same number at the same moment meets the unique index here
+    and gets the 409 the check above gives (#501): the check is a read, and
+    two reads can both find nothing on PostgreSQL before either writes."""
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        text = str(exc.orig)
+        if (
+            BILL_NUMBER_INDEX not in text
+            and "bills.vendor_id, bills.bill_number" not in text
+        ):
+            raise
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bill number {number!r} already exists for this vendor",
+        )
+
+
 @router.post("", response_model=BillResponse, status_code=201)
 def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
@@ -393,7 +418,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         notes=data.notes,
     )
     db.add(bill)
-    db.flush()
+    _flush_number(db, bill.bill_number)
 
     _post_bill_lines(
         db,
@@ -562,8 +587,11 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         if txn:
             check_closing_date(db, txn.date)
 
+    renumbered = number != bill.bill_number or vendor.id != bill.vendor_id
     for key, val in update_data.items():
         setattr(bill, key, val)
+    if renumbered:
+        _flush_number(db, number)
 
     # Terms or date changed without a due date: the due date follows the
     # terms, as on create; a cleared due date is derived the same way.

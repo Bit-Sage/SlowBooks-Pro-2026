@@ -349,8 +349,21 @@ def convert_to_bill(
             )
         plan.append((poline, item, amt, tax_shares[i], posting_acct))
 
+    # A vendor has one bill per number (#501's unique index): a hand-entered
+    # "BILL-PO-0001" already there makes this one "BILL-PO-0001-2".
+    bill_number = f"BILL-{po.po_number}"
+    taken = {
+        n
+        for (n,) in db.query(Bill.bill_number).filter(
+            Bill.vendor_id == po.vendor_id, Bill.bill_number.like(f"{bill_number}%")
+        )
+    }
+    base, n = bill_number, 1
+    while bill_number in taken:
+        n += 1
+        bill_number = f"{base}-{n}"
     bill = Bill(
-        bill_number=f"BILL-{po.po_number}",
+        bill_number=bill_number,
         vendor_id=po.vendor_id,
         status=BillStatus.UNPAID,
         po_id=po.id,

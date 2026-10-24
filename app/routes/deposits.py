@@ -271,11 +271,16 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
                 )
             chosen.append(line)
         # Row-lock the chosen lines so two deposits at once can't both take
-        # the same payment (no-op on SQLite).
+        # the same payment (no-op on SQLite). populate_existing: the lines
+        # are already in this session from waiting_items(), and without it
+        # the query hands back those copies as read before the lock, so a
+        # deposit that committed while this one waited went unseen and the
+        # payment was deposited twice (#501).
         locked = (
             db.query(TransactionLine)
             .filter(TransactionLine.id.in_([ln.id for ln in chosen]))
             .with_for_update()
+            .populate_existing()
             .all()
         )
         if any(ln.deposit_transaction_id for ln in locked):
