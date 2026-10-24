@@ -107,9 +107,17 @@ def list_items(
     if item_type:
         query = query.filter(Item.item_type == item_type)
     if term:
-        # name or code (#445): "2x6" finds "2x6-16 — 2x6x16 SPF" either way
-        like = f"%{term}%"
-        query = query.filter(sqla_or_(Item.name.ilike(like), Item.code.ilike(like)))
+        # name or code (#445): "2x6" finds "2x6-16 — 2x6x16 SPF" either way.
+        # A typed % or _ is that character, not a LIKE wildcard: "50%" finds
+        # "50% deposit" and not every name with a 50 in it.
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
+        query = query.filter(
+            sqla_or_(
+                Item.name.ilike(like, escape="\\"),
+                Item.code.ilike(like, escape="\\"),
+            )
+        )
     return _flag_discounts(db, query.order_by(Item.name).all())
 
 

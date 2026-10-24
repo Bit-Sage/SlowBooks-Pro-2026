@@ -92,6 +92,27 @@ def test_q_finds_an_item_by_code_or_by_name(client):
     assert [i["name"] for i in found] == ["Drywall screw"]
 
 
+def test_q_takes_percent_and_underscore_as_themselves(client):
+    """A typed % or _ is that character, not a LIKE wildcard."""
+    _item(client, "50% deposit", "DEP_50")
+    _item(client, "500 lb flour", "FL-500")
+    _item(client, "Bolt kit", "BK1")
+    _item(client, "Back\\slash")
+
+    def names(q):
+        return sorted(
+            i["name"] for i in client.get("/api/items", params={"q": q}).json()
+        )
+
+    assert names("50%") == ["50% deposit"]
+    assert names("%") == ["50% deposit"]
+    assert names("_") == ["50% deposit"]  # in its code only
+    assert names("b_") == []  # not "any b and one more character"
+    assert names("dep_5") == ["50% deposit"]
+    assert names("k\\s") == ["Back\\slash"]
+    assert names("50") == ["50% deposit", "500 lb flour"]
+
+
 def test_the_csv_export_has_the_code_after_the_name(client):
     _item(client, "2x6x16 SPF", "2x6-16")
     _item(client, "Labor hour")
@@ -180,10 +201,125 @@ def test_the_migration_is_head_and_adds_a_unique_code(tmp_path):
     assert idx["ix_items_code"]["column_names"] == ["code"]
     assert idx["ix_items_code"]["unique"]
     engine.dispose()
-    command.downgrade(cfg, "d3e4f5a6b7c8")
+    command.downgrade(cfg, "4ac01efbd72a")
     engine = create_engine(f"sqlite:///{db}")
     assert "code" not in {c["name"] for c in inspect(engine).get_columns("items")}
     engine.dispose()
+
+
+# --- an item quick-added on a purchase line posts where it was asked to ---
+# (the body is what item_quick_add.js sends on a bill, purchase order or
+# vendor credit: a cost and an expense or COGS account, no income account)
+
+
+def _purchase_item(client, seed_accounts, name, number, **extra):
+    r = _item(
+        client,
+        name,
+        item_type="material",
+        rate=0,
+        cost=12.5,
+        expense_account_id=seed_accounts[number].id,
+        track_inventory=False,
+        **extra,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _posted(db, source_type, source_id):
+    from app.models.transactions import Transaction
+
+    txn = (
+        db.query(Transaction)
+        .filter(Transaction.source_type == source_type)
+        .filter(Transaction.source_id == source_id)
+        .one()
+    )
+    return {ln.account_id: (ln.debit, ln.credit) for ln in txn.lines}
+
+
+def test_a_purchase_quick_added_item_posts_to_its_expense_account(
+    client, db_session, seed_accounts
+):
+    from decimal import Decimal
+
+    item = _purchase_item(client, seed_accounts, "Cedar post", "5100")
+    assert item["income_account_id"] is None
+    assert Decimal(item["cost"]) == Decimal("12.5")
+    vendor = client.post("/api/vendors", json={"name": "Cedar Yard"}).json()
+    line = {
+        "item_id": item["id"],
+        "description": "posts",
+        "quantity": 2,
+        "rate": 12.5,
+        "line_order": 0,
+    }
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor["id"],
+            "bill_number": "CY-1",
+            "date": "2026-04-01",
+            "due_date": "2026-04-01",
+            "lines": [line],
+        },
+    )
+    assert bill.status_code == 201, bill.text
+    by_acct = _posted(db_session, "bill", bill.json()["id"])
+    assert by_acct[seed_accounts["5100"].id][0] == Decimal("25.00")
+    credit = client.post(
+        "/api/vendor-credits",
+        json={
+            "vendor_id": vendor["id"],
+            "date": "2026-04-05",
+            "lines": [{**line, "quantity": 1}],
+        },
+    )
+    assert credit.status_code == 201, credit.text
+    by_acct = _posted(db_session, "vendor_credit", credit.json()["id"])
+    assert by_acct[seed_accounts["5100"].id][1] == Decimal("12.50")
+
+
+def test_a_purchase_quick_added_stock_item_is_received_into_inventory(
+    client, db_session, seed_accounts
+):
+    from decimal import Decimal
+
+    stocked = _item(
+        client,
+        "Fence rail",
+        item_type="product",
+        rate=0,
+        cost=8,
+        expense_account_id=seed_accounts["5000"].id,
+        track_inventory=True,
+    )
+    assert stocked.status_code == 201, stocked.text
+    stocked = stocked.json()
+    vendor = client.post("/api/vendors", json={"name": "Rail Yard"}).json()
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor["id"],
+            "bill_number": "RY-1",
+            "date": "2026-04-01",
+            "due_date": "2026-04-01",
+            "lines": [
+                {
+                    "item_id": stocked["id"],
+                    "description": "rails",
+                    "quantity": 3,
+                    "rate": 8,
+                    "line_order": 0,
+                }
+            ],
+        },
+    )
+    assert bill.status_code == 201, bill.text
+    by_acct = _posted(db_session, "bill", bill.json()["id"])
+    assert by_acct[seed_accounts["1300"].id][0] == Decimal("24.00")
+    assert seed_accounts["5000"].id not in by_acct
 
 
 # --- the line pickers (source checks, as tests/test_keyboard_paths.py does) ---
@@ -234,13 +370,25 @@ def test_the_helper_labels_with_the_code_and_is_loaded():
     helper = _src("item_quick_add.js")
     assert "item.code ? `${item.code} — ${item.name}` : item.name" in helper
     assert "escapeHtml(ItemQuickAdd.label(i))" in helper
-    assert '<option value="${ItemQuickAdd.NEW}">+ Add item</option>' in helper
+    assert (
+        '<option value="${ItemQuickAdd.NEW}" data-explicit>+ Add item</option>'
+        in helper
+    )
     assert "/^\\d+$/.test(value) ? Number(value) : null" in helper
     index = (ROOT / "index.html").read_text(encoding="utf-8")
     at = index.index('<script src="/static/js/item_quick_add.js"></script>')
     # before every page that draws a picker
     for name in PICKERS:
         assert at < index.index(f'<script src="/static/js/{name}"></script>'), name
+
+
+def test_the_purchase_pickers_ask_for_a_cost_account_and_the_sales_ones_do_not():
+    purchase = ("bills.js", "purchase_orders.js", "vendor_credits.js")
+    for name in PICKERS:
+        src = _src(name)
+        call = src[src.index("ItemQuickAdd.selected(") :]
+        call = call[: call.index(")) return;")]
+        assert ("'purchase'" in call) == (name in purchase), (name, call)
 
 
 def test_the_items_page_shows_and_searches_the_code():
@@ -270,8 +418,16 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + '\\nthis.Q = ItemQuic
 const Q = ctx.Q;
 const ids = ['', '--', '__new__', '+ New Item', '12abc', '-3', '7', '0042']
     .map(v => Q.itemId({ value: v }));
-const html = Q.options([{ id: 7, name: '2x6x16 SPF', code: '2x6-16' }, { id: 8, name: 'Labor' }], 7);
-console.log(JSON.stringify({ ids, none: Q.itemId(null), html }));
+const list = [{ id: 7, name: '2x6x16 SPF', code: '2x6-16' }, { id: 8, name: 'Labor' }];
+const html = Q.options(list, 7);
+// a read-only or accountant sign-in is not offered the form (its Save
+// would be refused)
+const locked = {};
+for (const role of ['readonly', 'accountant', 'bookkeeper']) {
+    ctx.App = { isLocked: () => role !== 'bookkeeper' };
+    locked[role] = Q.options(list, 7);
+}
+console.log(JSON.stringify({ ids, none: Q.itemId(null), html, locked }));
 """
     out = subprocess.run(
         [node, "-e", script, str(JS / "item_quick_add.js")],
@@ -285,8 +441,14 @@ console.log(JSON.stringify({ ids, none: Q.itemId(null), html }));
     got = json.loads(out.stdout)
     assert got["ids"] == [None, None, None, None, None, None, 7, 42]
     assert got["none"] is None
-    assert got["html"] == (
-        '<option value="">--</option><option value="__new__">+ Add item</option>'
+    items = (
         '<option value="7" selected>2x6-16 — 2x6x16 SPF</option>'
         '<option value="8">Labor</option>'
     )
+    add = '<option value="__new__" data-explicit>+ Add item</option>'
+    assert got["html"] == '<option value="">--</option>' + add + items
+    assert got["locked"] == {
+        "readonly": '<option value="">--</option>' + items,
+        "accountant": '<option value="">--</option>' + items,
+        "bookkeeper": '<option value="">--</option>' + add + items,
+    }

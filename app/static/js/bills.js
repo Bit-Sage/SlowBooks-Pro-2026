@@ -332,7 +332,7 @@ const BillsPage = {
     // Picking an item fills what it costs and where it is recorded; a stock
     // item is recorded in Inventory, so its account is not a choice.
     itemSelected(select) {
-        if (ItemQuickAdd.selected(select, BillsPage._items, () => BillsPage.itemSelected(select))) return;
+        if (ItemQuickAdd.selected(select, BillsPage._items, () => BillsPage.itemSelected(select), 'purchase')) return;
         const row = select.closest('tr');
         const item = BillsPage._items.find(i => i.id == select.value);
         const acct = row.querySelector('.line-account');
