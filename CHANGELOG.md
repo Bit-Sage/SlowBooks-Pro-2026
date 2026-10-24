@@ -372,6 +372,20 @@ each answered "save it anyway" when the entry is right:
   that the request sent again with `allow_duplicate_check_number=true` passes.
 - *Editing a transaction.* Saving changes to a transaction already saved asks
   first (a void and a delete already asked).
+### Unreleased
+
+**An open report redraws after a change, and has a Refresh button** (#482).
+With the Profit & Loss open, a $1,000 journal entry left it at the old total
+until you went away and came Back. Now an open report runs again by itself
+after a change to the books made in this window, in another window or tab of
+the same books, or when you come back to the window after a while away. The
+figures change in place: the report keeps its scroll position, the keyboard
+stays where it was, and a note beside the buttons says when it last ran. Every
+report also has a Refresh button beside Close.
+
+Running reports again by itself is a personal preference, "Refresh reports
+automatically", under Settings → My Preferences. It is on unless you turn it
+off; with it off, the report changes only when you press Refresh.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

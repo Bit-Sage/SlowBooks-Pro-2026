@@ -96,17 +96,18 @@ const SettingsPage = {
         return text ? `<div id="company-logo-note" style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(text)}</div>` : '';
     },
 
-    // My Preferences (#480): what each person sets for themselves, kept per
-    // sign-in (the preferences store, /api/preferences/data_entry), so it
-    // follows them to another computer and a second user keeps their own.
-    // Outside the company-settings form: no administrator's Save, and every
-    // role can set its own. Each checkbox saves itself.
+    // My Preferences (#480, #482): what each person sets for themselves,
+    // kept per sign-in (the preferences store: /api/preferences/data_entry
+    // and /api/preferences/reports), so it follows them to another computer
+    // and a second user keeps their own. Outside the company-settings form:
+    // no administrator's Save, and every role can set its own. Each
+    // checkbox saves itself.
     _myPreferencesHtml() {
-        const box = (id, key, label, hint) =>
+        const box = (id, key, label, hint, onchange = 'SettingsPage.saveDataEntryPref(this)') =>
             '<div class="form-group full-width" style="margin-bottom:6px;">'
             + '<label for="' + id + '" style="font-weight:normal;">'
-            + '<input type="checkbox" id="' + id + '" data-pref="' + key + '" data-readonly-ok aria-describedby="' + id + '-hint"'
-            + ' style="width:auto; vertical-align:middle; margin-right:6px;" onchange="SettingsPage.saveDataEntryPref(this)">'
+            + '<input type="checkbox" id="' + id + '"' + (key ? ' data-pref="' + key + '"' : '') + ' data-readonly-ok aria-describedby="' + id + '-hint"'
+            + ' style="width:auto; vertical-align:middle; margin-right:6px;" onchange="' + onchange + '">'
             + label + '</label>'
             + '<div id="' + id + '-hint" style="font-size:11px; color:var(--text-muted); margin:2px 0 0 22px;">' + hint + '</div></div>';
         return '<div class="settings-section" id="settings-my-preferences" data-own-preference role="group" aria-labelledby="settings-h-my-preferences">'
@@ -116,19 +117,35 @@ const SettingsPage = {
                 'Enter goes to the next field; Enter in the last field (or Save) saves. Off: Enter saves the form, and posts the register&rsquo;s new entry.')
             + box('pref-auto-decimal', 'auto_decimal', 'Automatically place the decimal point',
                 'Type 12345 in an amount for $123.45. A decimal point you type yourself is kept.')
+            + box('pref-report-refresh', null, 'Refresh reports automatically',
+                'An open report runs again after a change to the books, here or in another window, and when you come back to the window. '
+                + 'Off: use the report&rsquo;s Refresh button.', 'SettingsPage.saveReportRefresh(this)')
             + '</div>';
     },
 
     loadMyPreferences() {
-        // (the probes that draw this page without utils.js have no copy)
-        if (typeof DataEntryPrefs === 'undefined' || typeof document.querySelectorAll !== 'function') return;
-        const sync = () => document.querySelectorAll('#settings-my-preferences input[data-pref]')
-            .forEach(el => { el.checked = DataEntryPrefs[el.dataset.pref] === true; });
-        sync();
-        // the latest saved, in case it was changed on another computer
-        API.get('/preferences/data_entry')
-            .then(pref => { DataEntryPrefs.set(pref && pref.value); sync(); })
-            .catch(() => { /* the copy App.init read stands */ });
+        // (the probes that draw this page without utils.js or reports.js
+        // have no copy of one or the other)
+        if (typeof document.querySelectorAll !== 'function') return;
+        if (typeof DataEntryPrefs !== 'undefined') {
+            const sync = () => document.querySelectorAll('#settings-my-preferences input[data-pref]')
+                .forEach(el => { el.checked = DataEntryPrefs[el.dataset.pref] === true; });
+            sync();
+            // the latest saved, in case it was changed on another computer
+            API.get('/preferences/data_entry')
+                .then(pref => { DataEntryPrefs.set(pref && pref.value); sync(); })
+                .catch(() => { /* the copy App.init read stands */ });
+        }
+        const refresh = document.getElementById('pref-report-refresh');
+        if (typeof ReportsPage !== 'undefined' && refresh) {
+            refresh.checked = ReportsPage.autoRefresh !== false;
+            API.get('/preferences/reports')
+                .then(pref => {
+                    ReportsPage.setAutoRefresh(pref && pref.value);
+                    refresh.checked = ReportsPage.autoRefresh;
+                })
+                .catch(() => { /* the copy App.init read stands */ });
+        }
     },
 
     async saveDataEntryPref(el) {
@@ -140,6 +157,19 @@ const SettingsPage = {
         } catch (err) {
             DataEntryPrefs.set(before);
             el.checked = before[el.dataset.pref];
+            toast(err.message, 'error');
+        }
+    },
+
+    async saveReportRefresh(el) {
+        const before = ReportsPage.autoRefresh;
+        ReportsPage.autoRefresh = !!el.checked;
+        try {
+            await API.put('/preferences/reports', { value: { auto_refresh: !!el.checked } });
+            toast('Preference saved');
+        } catch (err) {
+            ReportsPage.autoRefresh = before;
+            el.checked = before;
             toast(err.message, 'error');
         }
     },

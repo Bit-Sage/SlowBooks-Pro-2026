@@ -2426,6 +2426,18 @@ const App = {
         // decimal point places itself. Read once; both off until they arrive.
         if (typeof DataEntryPrefs !== 'undefined') DataEntryPrefs.load();
 
+        // Refresh reports automatically (#482), per user: on until turned
+        // off. A raw fetch, as the theme's: the API wrapper's 401 handler
+        // would put up the sign-in; before sign-in it stays on.
+        if (typeof fetch === 'function' && typeof ReportsPage !== 'undefined' && ReportsPage.setAutoRefresh) {
+            let company = null;
+            try { company = localStorage.getItem('slowbooks_company'); } catch (e) { /* no storage */ }
+            fetch('/api/preferences/reports', { credentials: 'same-origin', headers: company ? { 'X-Company-Id': company } : {} })
+                .then(res => (res.ok ? res.json() : null))
+                .then(data => ReportsPage.setAutoRefresh(data && data.value))
+                .catch(() => { /* stays on */ });
+        }
+
         // Keyboard shortcuts. The Alt letters go by the key's place
         // (e.code: KeyD is the D key on any layout) with Alt alone held
         // (Ctrl+Alt is AltGr on some layouts, Shift another shortcut), not

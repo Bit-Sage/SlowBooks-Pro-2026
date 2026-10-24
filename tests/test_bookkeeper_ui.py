@@ -137,6 +137,10 @@ SETTINGS_KEPT = {
     "My Preferences › #pref-auto-decimal": [
         ("PUT", "/api/preferences/data_entry", {"value": {"auto_decimal": True}}, 200)
     ],
+    # (#482's report refresh sits in the same section.)
+    "My Preferences › #pref-report-refresh": [
+        ("PUT", "/api/preferences/reports", {"value": {"auto_refresh": False}}, 200)
+    ],
 }
 # The page's own reads: what it shows loads for a bookkeeper
 SETTINGS_READS = [

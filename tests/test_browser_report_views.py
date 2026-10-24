@@ -410,6 +410,7 @@ def test_a_three_deep_chain_goes_back_twice_through_history_and_keeps_the_preset
         # (the drill-down can be saved since #241)
         assert _buttons(page) == [
             "Back to Profit & Loss — Uncategorized",
+            "Refresh",  # #482
             "Add to Saved Reports…",
             "Close",
         ]
@@ -462,6 +463,7 @@ def test_the_drill_down_rebuilt_from_its_address_names_the_class_it_returns_to(
         # (the drill-down can be saved since #241)
         assert _buttons(page) == [
             "Back to Profit & Loss — Uncategorized",
+            "Refresh",  # #482
             "Add to Saved Reports…",
             "Close",
         ]
@@ -498,7 +500,7 @@ def test_object_prototype_names_are_not_registered_views(browser, company, books
             f"&start_date={SEPT[0]}&end_date={SEPT[1]}&from=constructor",
         )
         page.wait_for_selector("#drilldown-body table")
-        assert _buttons(page) == ["Add to Saved Reports…", "Close"]
+        assert _buttons(page) == ["Refresh", "Add to Saved Reports…", "Close"]
         assert page.locator("#modal-body button", has_text="Back to").count() == 0
         assert "from=" not in _hash(page)
 
