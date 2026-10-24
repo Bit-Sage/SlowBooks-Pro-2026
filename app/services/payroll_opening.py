@@ -148,7 +148,10 @@ def wage_bases(opening, work_state: str | None) -> dict:
     stands in for the employee's work state, as one stub's would."""
     state = (work_state or "").strip().upper()
     if not opening.states:
-        gross = amount(opening, "gross")
+        home = (
+            (opening.employee.work_state if opening.employee else None) or "WA"
+        ).upper()
+        gross = amount(opening, "gross") if state == home else ZERO
         suta = state_wages = gross
     else:
         suta = state_total(opening, "suta_wages", state=state)
