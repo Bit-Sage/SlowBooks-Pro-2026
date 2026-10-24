@@ -121,7 +121,7 @@ const VendorCreditsPage = {
         const acctOpts = PurchaseAccounts.options(VendorCreditsPage._accounts);
         return `<tr data-vcline="${idx}">
                 <td><select class="line-item" onchange="VendorCreditsPage.itemSelected(this)">${ItemQuickAdd.options(VendorCreditsPage._items)}</select></td>
-                <td><select class="line-account" title="Blank: the item's expense account, else the vendor's default"><option value="">Item / vendor default</option>${acctOpts}</select></td>
+                <td>${AccountQuickAdd.picker(`<select class="line-account" title="Blank: the item's expense account, else the vendor's default"><option value="">Item / vendor default</option>${acctOpts}</select>`, 'vendor-credit')}</td>
                 <td><input class="line-desc"></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="1" oninput="VendorCreditsPage.recalc()"></td>
                 <td><input class="line-rate" type="number" step="0.0001" value="0" oninput="VendorCreditsPage.recalc()"></td>
@@ -253,3 +253,14 @@ const VendorCreditsPage = {
         App.navigate('#/vendor-credits');
     },
 };
+
+// A credit line's Account cell adds an expense or cost of goods account
+// (#485), on every line's picker and picked on its own line.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('vendor-credit', {
+        types: AccountQuickAdd.PURCHASE_TYPES,
+        compact: true,
+        chart: () => VendorCreditsPage._accounts,
+        added: () => AccountQuickAdd.refillPurchase($$('#vc-lines select.line-account'), VendorCreditsPage._accounts),
+    });
+}

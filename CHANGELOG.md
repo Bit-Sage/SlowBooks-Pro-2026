@@ -5,6 +5,22 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**A new account from the bill line that needs it** (#485). The Account cell on
+an Enter Bill line has an Add button beside the picker, as the bank register's
+category picker has had since 2.27.0. It opens a small panel for the account's
+name, its type (Expense or Cost of Goods Sold), an optional parent account and
+an optional number; Save adds it to the chart, picks it on that line and
+offers it on the others, and the bill stays as it was. The same Add is on
+vendor credit lines, on each line when a purchase order is turned into a bill,
+and beside the expense's account. Control accounts (Cost of Goods Sold 5000,
+Payroll Tax Expense and the others the software posts to by number) are never
+offered as a parent. Cancel or Escape closes the panel, and the keyboard goes
+back to the picker either way. A read-only or accountant sign-in is not
+offered it. Items keep their own quick add, which records an item in a cost
+of goods account.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

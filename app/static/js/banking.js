@@ -977,13 +977,13 @@ const BankingPage = {
                     <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}></td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><span style="display:inline-flex; gap:2px; align-items:center;"><select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>${cats}</select><button type="button" id="qe-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" title="Add a new account" style="font-size:11px; padding:2px 6px;" onclick="BankingPage.openNewAccount('qe-category', ${accountId})">Add</button></span></td>
+                    <td>${AccountQuickAdd.picker('<select id="qe-category" aria-label="New entry category" data-no-search style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>' + cats + '</select>', 'register', { ctx: accountId, id: 'qe-category-add', style: 'font-size:11px; padding:2px 6px;' })}</td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-out" aria-label="New entry ${escapeHtml(outLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td class="amount"><input type="number" step="0.01" min="0" id="qe-in" aria-label="New entry ${escapeHtml(inLabel)}" placeholder="0.00" style="width:90px; font-size:11px; padding:2px 4px; text-align:right;" ${key}></td>
                     <td></td><td></td>
                     <td><button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.postQuickEntry(${accountId})">Post</button></td>
                 </tr>
-                <tr data-write><td colspan="10" style="padding:0; border:0;">${BankingPage._newAccountPanel('qe-category', accountId)}</td></tr></tfoot>`;
+                <tr data-write><td colspan="10" id="qe-category-host" style="padding:0; border:0;"></td></tr></tfoot>`;
     },
 
     // The quick row posts through the same call as + Entry (#329): money
@@ -1065,8 +1065,7 @@ const BankingPage = {
                     <div class="form-group"><label>Check / ref #</label>
                         <input name="check_number"></div>
                     <div class="form-group full-width"><label>Category * <span style="font-weight:normal; color:var(--gray-500);">(the other side of the entry; a bank or card account makes it a transfer)</span></label>
-                        <span style="display:flex; gap:6px; align-items:center;"><select name="category_account_id" id="entry-category" style="flex:1;"><option value="">Select…</option>${catOpts}</select><button type="button" id="entry-category-add" class="btn btn-sm btn-secondary" aria-label="Add a new category account" onclick="BankingPage.openNewAccount('entry-category', ${accountId})">Add a new account…</button></span>
-                        ${BankingPage._newAccountPanel('entry-category', accountId)}</div>
+                        ${AccountQuickAdd.picker(`<select name="category_account_id" id="entry-category"><option value="">Select…</option>${catOpts}</select>`, 'register', { ctx: accountId, id: 'entry-category-add', label: 'Add a new account…' })}</div>
                     <div class="form-group full-width"><label>Memo</label>
                         <input name="description"></div>
                     ${classGroup}
@@ -1453,98 +1452,29 @@ const BankingPage = {
         }
     },
 
-    // The panel under a category picker: name, type, an optional parent of
-    // that type, an optional number. Hidden until the Add button beside the
-    // picker opens it; nothing in it is `required`, so the entry form still
-    // submits while it is hidden.
-    _newAccountPanel(selectId, accountId) {
-        const id = `${selectId}-new`;
-        const key = `onkeydown="if (event.key === 'Enter') { event.preventDefault(); BankingPage.saveNewAccount('${selectId}', ${accountId}); }"`;
-        const types = BankingPage.CATEGORY_TYPES
-            .map(t => `<option value="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('');
-        return `<div id="${id}" style="display:none; padding:8px; border:1px solid var(--gray-300); border-radius:4px; margin-top:4px;">
-            <div class="form-grid">
-                <div class="form-group"><label for="${id}-name">Account name *</label>
-                    <input id="${id}-name" aria-label="New account name" aria-required="true" ${key}></div>
-                <div class="form-group"><label for="${id}-type">Type</label>
-                    <select id="${id}-type" data-no-search onchange="BankingPage.newAccountTypeChanged('${selectId}', ${accountId})">${types}</select></div>
-                <div class="form-group"><label for="${id}-parent">Sub-account of</label>
-                    <select id="${id}-parent" data-no-search><option value="">None</option></select></div>
-                <div class="form-group"><label for="${id}-number">Number <span style="font-weight:normal; color:var(--gray-500);">(optional)</span></label>
-                    <input id="${id}-number" maxlength="20" placeholder="e.g. 6150, or leave blank" ${key}></div>
-            </div>
-            <div style="display:flex; gap:8px; margin-top:6px;">
-                <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveNewAccount('${selectId}', ${accountId})">Add account</button>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.cancelNewAccount('${selectId}')">Cancel</button>
-            </div>
-        </div>`;
-    },
-
-    // Opened by the Add button beside a category picker, never by the
-    // select itself: arrowing through the categories must not spring the
-    // panel open (#386 review — a native select with "+ Add…" on it trapped
-    // the keyboard one ArrowDown from the top).
-    openNewAccount(selectId, accountId) {
-        const panel = document.getElementById(`${selectId}-new`);
-        if (!panel) return;
-        panel.style.display = '';
-        BankingPage.newAccountTypeChanged(selectId, accountId);
-        focusFor(document.getElementById(`${selectId}-new-name`), true);
-    },
-
-    // The parents offered are the accounts of the chosen type (a
-    // sub-account takes its parent's type), never the register's own
-    // account, another bank or card, or a control account the software
-    // posts to by number (#386 review: 1100, 1200, 2000, 2200, 3200 …).
-    newAccountTypeChanged(selectId, accountId) {
-        const type = document.getElementById(`${selectId}-new-type`).value;
-        const parent = document.getElementById(`${selectId}-new-parent`);
-        parent.innerHTML = '<option value="">None</option>' + (BankingPage._accounts || [])
-            .filter(a => a.account_type === type && a.id !== accountId && !a.bank_kind && !a.is_control)
-            .map(a => `<option value="${a.id}">${accountLabel(a)}</option>`).join('');
-    },
-
-    cancelNewAccount(selectId) {
-        // The panel opens from the Add button now, not from a "__new__"
-        // choice, so the picker keeps whatever was already chosen — cancel
-        // only closes the panel and gives the keyboard back to the select.
-        const sel = document.getElementById(selectId);
-        const panel = document.getElementById(`${selectId}-new`);
-        if (panel) panel.style.display = 'none';
-        if (sel) { focusFor(sel._cbx ? sel._cbx.box : sel, true); }
-    },
-
-    // POST /accounts, then the new account goes into every category picker
-    // on the page (the split lines' list too) and is the choice; the cursor
-    // moves on, to the amount in the row or the memo in the form.
-    async saveNewAccount(selectId, accountId) {
-        const f = (part) => document.getElementById(`${selectId}-new-${part}`);
-        const name = f('name').value.trim();
-        if (!name) { toast('Name the account', 'error'); focusFor(f('name'), true); return; }
-        let made;
-        try {
-            made = await API.post('/accounts', {
-                name,
-                account_type: f('type').value,
-                parent_id: f('parent').value ? parseInt(f('parent').value, 10) : null,
-                account_number: f('number').value.trim() || null,
-            });
-        } catch (err) { toast(err.message, 'error'); return; }
-        (BankingPage._accounts = BankingPage._accounts || []).push(made);
-        const opt = `<option value="${made.id}">${accountLabel(made)}</option>`;
-        for (const id of ['qe-category', 'entry-category']) {
-            const s = document.getElementById(id);
-            if (s) s.insertAdjacentHTML('beforeend', opt);
-        }
-        if (BankingPage._splitCats) BankingPage._splitCats += opt;
-        f('name').value = ''; f('number').value = ''; f('parent').value = '';
-        document.getElementById(`${selectId}-new`).style.display = 'none';
-        document.getElementById(selectId).value = String(made.id);
-        toast(`${made.account_number ? made.account_number + ' - ' : ''}${made.name} added to the chart`);
-        const next = selectId === 'qe-category'
-            ? document.getElementById('qe-out')
-            : document.querySelector('#modal-body input[name="description"]');
-        focusFor(next, true);
+    // The category's new account is the shared quick add (account_quick_add.js,
+    // #485): any of the six types, never the register's own account as a
+    // parent; the new account goes into both category pickers and the split
+    // lines' list, and the cursor moves on to the amount in the row or the
+    // memo in the form.
+    _registerAccountAdd() {
+        AccountQuickAdd.register('register', {
+            types: BankingPage.CATEGORY_TYPES,
+            chart: () => (BankingPage._accounts = BankingPage._accounts || []),
+            excludeId: (accountId) => accountId,
+            host: (select) => (select.id === 'qe-category' ? document.getElementById('qe-category-host') : null),
+            added: (made) => {
+                const opt = `<option value="${made.id}">${accountLabel(made)}</option>`;
+                for (const id of ['qe-category', 'entry-category']) {
+                    const s = document.getElementById(id);
+                    if (s && !s.querySelector(`option[value="${made.id}"]`)) s.insertAdjacentHTML('beforeend', opt);
+                }
+                if (BankingPage._splitCats) BankingPage._splitCats += opt;
+            },
+            next: (select) => (select.id === 'qe-category'
+                ? document.getElementById('qe-out')
+                : document.querySelector('#modal-body input[name="description"]')),
+        });
     },
 
     async showTransferForm(fromId = null) {
@@ -2101,3 +2031,6 @@ const BankingPage = {
         }
     },
 };
+
+// the register's category quick add (#386), on the shared helper (#485)
+if (typeof AccountQuickAdd !== 'undefined') BankingPage._registerAccountAdd();

@@ -2055,6 +2055,21 @@ td > select[class$="-fund"] { min-width: 124px; }
 .bill-lines-table .line-rate { min-width: 84px; }
 .bill-lines-table .line-amt { min-width: 84px; text-align: right; }
 
+/* A picker with an Add button beside it, and the new-account panel the
+   button opens (#485, the register's #386 panel shared): in a line's cell
+   the panel stacks its fields; in a form it is the form's own grid. The
+   colours are the theme's tokens, so both themes keep their contrast. */
+.aqa-wrap { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.aqa-wrap > .cbx, .aqa-wrap > select { flex: 1 1 auto; min-width: 0; }
+.aqa-wrap > .aqa-add { flex: 0 0 auto; }
+.aqa-panel { margin-top: 4px; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px; }
+.aqa-panel--compact { background: var(--primary-light); min-width: 200px; }
+.aqa-title { font-weight: 700; font-size: 11px; margin-bottom: 6px; }
+.aqa-stack { display: flex; flex-direction: column; gap: 4px; }
+.aqa-stack .aqa-field label { font-size: 11px; }
+.aqa-panel .aqa-optional { font-weight: normal; color: var(--text-muted); }
+.aqa-actions { display: flex; gap: 6px; margin-top: 6px; }
+
 .iif-file-info {
     display: flex;
     align-items: center;

@@ -228,6 +228,7 @@ const PurchaseOrdersPage = {
         } catch (err) { toast(err.message, 'error'); return; }
         const itemById = Object.fromEntries(items.map(i => [i.id, i]));
         const posting = PurchaseAccounts.filter(accounts);
+        PurchaseOrdersPage._convAccounts = posting;
         const rows = po.lines.map((l, n) => {
             const item = l.item_id ? itemById[l.item_id] : null;
             let cell;
@@ -237,8 +238,8 @@ const PurchaseOrdersPage = {
                 cell = '<span style="color:var(--text-muted);">Nothing to record</span>';
             } else {
                 const pick = (item && item.expense_account_id) || vendor.default_expense_account_id || '';
-                cell = `<select class="po-conv-account" data-line="${l.id}" aria-label="Account for line ${n + 1}">
-                        <option value="">Choose an account...</option>${PurchaseAccounts.options(posting, pick)}</select>`;
+                cell = AccountQuickAdd.picker(`<select class="po-conv-account" data-line="${l.id}" aria-label="Account for line ${n + 1}">
+                        <option value="">Choose an account...</option>${PurchaseAccounts.options(posting, pick)}</select>`, 'po-convert');
             }
             return `<tr><td>${escapeHtml(l.description || (item ? item.name : ''))}</td>
                 <td class="amount">${formatCurrency(l.amount)}</td><td>${cell}</td></tr>`;
@@ -279,3 +280,14 @@ const PurchaseOrdersPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 };
+
+// Turning an order into a bill: each line's Account adds an expense or cost
+// of goods account (#485), offered on every line and picked on its own.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('po-convert', {
+        types: AccountQuickAdd.PURCHASE_TYPES,
+        compact: true,
+        chart: () => (PurchaseOrdersPage._convAccounts = PurchaseOrdersPage._convAccounts || []),
+        added: () => AccountQuickAdd.refillPurchase($$('.po-conv-account'), PurchaseOrdersPage._convAccounts),
+    });
+}

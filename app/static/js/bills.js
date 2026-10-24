@@ -319,7 +319,7 @@ const BillsPage = {
         const acctOpts = PurchaseAccounts.options(BillsPage._accounts, stock ? null : (l.account_id || BillsPage._defaultExpenseAccountId));
         return `<tr data-billline="${idx}">
                 <td><select class="line-item" onchange="BillsPage.itemSelected(this)">${ItemQuickAdd.options(BillsPage._items, l.item_id)}</select></td>
-                <td><select class="line-account"${stock ? ' disabled title="Stock items are recorded in Inventory"' : ''}><option value="">Choose...</option>${acctOpts}</select></td>
+                <td>${AccountQuickAdd.picker(`<select class="line-account"${stock ? ' disabled title="Stock items are recorded in Inventory"' : ''}><option value="">Choose...</option>${acctOpts}</select>`, 'bill', { disabled: stock })}</td>
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
                 ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
@@ -339,6 +339,10 @@ const BillsPage = {
         if (acct) {
             acct.disabled = !!(item && item.track_inventory);
             acct.title = acct.disabled ? 'Stock items are recorded in Inventory' : '';
+            // a stock line's account is not a choice, so nothing to add either
+            const add = row.querySelector('.aqa-add');
+            if (add) add.disabled = acct.disabled;
+            if (acct.disabled && acct._aqaPanel) AccountQuickAdd.cancel(acct._aqaPanel);
             if (acct.disabled) acct.value = '';
             else if (item && item.expense_account_id) acct.value = item.expense_account_id;
             else if (!acct.value && BillsPage._defaultExpenseAccountId) acct.value = BillsPage._defaultExpenseAccountId;
@@ -843,3 +847,15 @@ const BillsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 };
+
+// A line's Account cell adds an expense or cost of goods account (#485);
+// the new account is on every line's picker, picked on the line it was
+// added from.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('bill', {
+        types: AccountQuickAdd.PURCHASE_TYPES,
+        compact: true,
+        chart: () => BillsPage._accounts,
+        added: () => AccountQuickAdd.refillPurchase($$('#bill-lines select.line-account'), BillsPage._accounts),
+    });
+}

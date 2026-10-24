@@ -67,6 +67,7 @@ const ExpensesPage = {
         // Expense and cost-of-goods accounts: materials are bought against
         // 5100 Materials Cost as often as against an expense (W-L18).
         const expenseAccts = PurchaseAccounts.filter(accounts);
+        ExpensesPage._expenseAccounts = expenseAccts;
         const paidFrom = ExpensesPage.paidFromAccounts(accounts);
         const acctOpt = a => `<option value="${a.id}">${accountLabel(a)}</option>`;
         const checking = paidFrom.find(a => /checking/i.test(a.name || '')) || paidFrom[0];
@@ -80,7 +81,7 @@ const ExpensesPage = {
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
                     <div class="form-group"><label>Expense Account *</label>
-                        <select name="expense_account_id" required><option value="">Select...</option>${PurchaseAccounts.options(expenseAccts)}</select></div>
+                        ${AccountQuickAdd.picker(`<select name="expense_account_id" id="expense-account" required><option value="">Select...</option>${PurchaseAccounts.options(expenseAccts)}</select>`, 'expense')}</div>
                     <div class="form-group"><label>Paid From *</label>
                         <select name="paid_from_account_id" required>${paidFrom.map(acctOpt).join('')}</select></div>
                     <div class="form-group"><label>Amount *</label>
@@ -314,3 +315,14 @@ const Overdraft = {
         return confirm(`${acct.name} will be overdrawn by ${formatCurrency(-after)}. ${action} anyway?`);
     },
 };
+
+// The expense's account adds an expense or cost of goods account (#485),
+// picked when it is saved; the panel opens under the picker.
+if (typeof AccountQuickAdd !== 'undefined') {
+    AccountQuickAdd.register('expense', {
+        types: AccountQuickAdd.PURCHASE_TYPES,
+        compact: true,
+        chart: () => (ExpensesPage._expenseAccounts = ExpensesPage._expenseAccounts || []),
+        added: () => AccountQuickAdd.refillPurchase($$('#expense-form [name="expense_account_id"]'), ExpensesPage._expenseAccounts),
+    });
+}
