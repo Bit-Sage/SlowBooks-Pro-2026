@@ -20,7 +20,7 @@ def test_go_resolves_once_the_page_is_drawn_and_the_cursor_lands_in_payee():
     post = js[js.index("async postQuickEntry(accountId) {") :][:1400]
     assert "await BankingPage.go(`#/banking/${accountId}`);" in post
     assert "BankingPage._focusPayee();" in post
-    focus = js[js.index("_focusPayee(tries = 20) {") :][:600]
+    focus = js[js.index("_focusPayee(tries = 20) {") :][:800]
     assert "document.activeElement !== next" in focus
     assert "setTimeout(() => BankingPage._focusPayee(tries - 1), 50);" in focus
     # navigate is what draws the page: an async that awaits the render

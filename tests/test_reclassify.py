@@ -59,13 +59,18 @@ def _bank_entry(client, accounts, category_no, amount, text, day="2026-03-12"):
     )
 
 
-def _bill(client, accounts, account_no, amount, number="B-1", day="2026-03-14"):
-    vendor = _ok(client.post("/api/vendors", json={"name": f"Vendor {number}"}))
+def _bill(
+    client, accounts, account_no, amount, number="B-1", day="2026-03-14", vendor_id=None
+):
+    if vendor_id is None:
+        vendor_id = _ok(client.post("/api/vendors", json={"name": f"Vendor {number}"}))[
+            "id"
+        ]
     return _ok(
         client.post(
             "/api/bills",
             json={
-                "vendor_id": vendor["id"],
+                "vendor_id": vendor_id,
                 "bill_number": number,
                 "date": day,
                 "lines": [
@@ -367,6 +372,174 @@ def test_the_accountant_may_move_lines_and_read_only_may_not(
     assert rows[0]["username"] == "cpa"
 
 
+def test_one_payees_lines_are_listed_and_moved_alone(client, db_session, seed_accounts):
+    """#394: a vendor's lines picked out of everything else parked on the
+    account, by vendor or by the payee's name, and moved on their own."""
+    accounts = seed_accounts
+    acme_vendor = _ok(client.post("/api/vendors", json={"name": "Acme Supply"}))["id"]
+    acme = _bill(client, accounts, "6900", 120, number="ACME-1", vendor_id=acme_vendor)
+    _bill(client, accounts, "6900", 80, number="ACME-2", vendor_id=acme_vendor)
+    _bill(client, accounts, "6900", 55, number="OTHER-1")
+    _bank_entry(client, accounts, "6900", "-75.00", "Card swipe, unknown")
+    _journal(client, accounts, "6900", "2000", "40.00", "Unknown charge")
+
+    # every row names its payee as its document records it
+    parked = _lines(client, accounts, "6900")
+    assert parked["count"] == 5 and parked["vendor"] is None
+    by_doc = {ln["document"] or ln["source_label"]: ln for ln in parked["lines"]}
+    assert by_doc["Bill ACME-1"]["payee"] == "Acme Supply"
+    assert by_doc["Bill OTHER-1"]["payee"] == "Vendor OTHER-1"
+    assert by_doc["Bill ACME-1"]["vendor_id"] == acme_vendor
+    assert by_doc["Bank entry"]["payee"] == "Corner Hardware"
+    assert by_doc["Bank entry"]["vendor_id"] is None
+    assert by_doc["Journal entry"]["payee"] == ""
+
+    # the vendor filter: that vendor's lines, nobody else's
+    mine = _ok(
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&vendor_id={acme_vendor}"
+        )
+    )
+    assert mine["vendor"] == {"id": acme_vendor, "name": "Acme Supply"}
+    assert sorted(ln["document"] for ln in mine["lines"]) == [
+        "Bill ACME-1",
+        "Bill ACME-2",
+    ]
+    assert mine["count"] == 2 and mine["movable_total"] == "200.00"
+    # ...and a payee name, case aside, finds the typed payee on a register entry
+    corner = _ok(
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&payee=corner%20hard"
+        )
+    )
+    assert [ln["source_label"] for ln in corner["lines"]] == ["Bank entry"]
+    assert corner["payee"] == "corner hard"
+    # a vendor nobody has is refused, not an empty list
+    assert (
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&vendor_id=99999"
+        ).status_code
+        == 404
+    )
+
+    # moving the listed lines moves only them
+    moved = _ok(
+        client.post(
+            "/api/reclassify",
+            json={
+                "line_ids": [ln["id"] for ln in mine["lines"]],
+                "account_id": accounts["6400"].id,
+                "dry_run": False,
+            },
+        )
+    )
+    assert moved["count"] == 2 and moved["skipped"] == []
+    left = _lines(client, accounts, "6900")
+    assert left["count"] == 3
+    assert {ln["document"] or ln["source_label"] for ln in left["lines"]} == {
+        "Bill OTHER-1",
+        "Bank entry",
+        "Journal entry",
+    }
+    gone = _lines(client, accounts, "6400")
+    assert gone["count"] == 2 and {ln["payee"] for ln in gone["lines"]} == {
+        "Acme Supply"
+    }
+    bill_line = db_session.query(BillLine).filter(BillLine.bill_id == acme["id"]).one()
+    assert bill_line.account_id == accounts["6400"].id
+
+
+def _bank_entry_payee(client, accounts, category_no, amount, payee, day="2026-03-12"):
+    """A register entry whose payee is `payee` (the register stores it as the
+    transaction's description); used to stand in for the varied spellings a
+    vendor's name takes on real lines."""
+    return _ok(
+        client.post(
+            "/api/banking/transactions",
+            json={
+                "account_id": accounts["1000"].id,
+                "date": day,
+                "amount": amount,
+                "category_account_id": accounts[category_no].id,
+                "payee": payee,
+                "description": "memo",
+            },
+        )
+    )
+
+
+def test_a_vendors_lines_come_along_in_every_spelling(
+    client, db_session, seed_accounts
+):
+    """#394 review: the filter matched the exact name only, so bank-feed and
+    check spellings of a vendor stayed behind. A contains match on the
+    resolved payee brings them along. Six Home Depot lines on 6900 — three
+    off-spelling, three exact — all six list under vendor "Home Depot"."""
+    accounts = seed_accounts
+    hd = _ok(client.post("/api/vendors", json={"name": "Home Depot"}))["id"]
+    # the three spellings the review names: a bank-feed payee, an IIF check
+    # memo, a QB report check — none equal to "Home Depot"
+    _bank_entry_payee(client, accounts, "6900", "-11.00", "HOME DEPOT #4521 JOLIET IL")
+    _bank_entry_payee(client, accounts, "6900", "-12.00", "Home Depot — lumber")
+    _bank_entry_payee(client, accounts, "6900", "-13.00", "Check 1042 - Home Depot")
+    # and three that match exactly
+    _bank_entry_payee(client, accounts, "6900", "-14.00", "Home Depot")
+    _bank_entry_payee(client, accounts, "6900", "-15.00", "Home Depot")
+    _bank_entry_payee(client, accounts, "6900", "-16.00", "Home Depot")
+
+    found = _ok(
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&vendor_id={hd}"
+        )
+    )
+    assert found["count"] == 6  # exact-name matching would list only the 3
+    payees = sorted(ln["payee"] for ln in found["lines"])
+    assert payees == [
+        "Check 1042 - Home Depot",
+        "HOME DEPOT #4521 JOLIET IL",
+        "Home Depot",
+        "Home Depot",
+        "Home Depot",
+        "Home Depot — lumber",
+    ]
+
+
+def test_an_iif_card_charge_reads_the_payee_the_register_does(
+    client, db_session, seed_accounts
+):
+    """#394 review: an IIF card charge has no "CC Charge: " prefix, so the
+    Payee column went blank where the register showed the name. Reusing
+    payees_for keeps the two the same."""
+    from datetime import date
+
+    from app.models.transactions import Transaction, TransactionLine
+    from app.services.bank_register import payees_for
+
+    accounts = seed_accounts
+    # a card charge imported without the API's "CC Charge: " prefix
+    txn = Transaction(
+        date=date(2026, 3, 12),
+        description="Home Depot — lumber",
+        source_type="cc_charge",
+    )
+    txn.lines = [
+        TransactionLine(account_id=accounts["6900"].id, debit=20, credit=0),
+        TransactionLine(account_id=accounts["2000"].id, debit=0, credit=20),
+    ]
+    db_session.add(txn)
+    db_session.commit()
+
+    listed = _lines(client, accounts, "6900")
+    row = next(ln for ln in listed["lines"] if ln["source_label"] == "Card charge")
+    assert row["payee"] == "Home Depot — lumber"  # not "" as before
+    # exactly what the register reads for the same transaction
+    assert payees_for(db_session, [txn])[txn.id] == row["payee"]
+
+
 def test_the_report_center_offers_the_tool_and_the_page_keeps_it_open_to_the_accountant():
     from pathlib import Path
 
@@ -378,3 +551,35 @@ def test_the_report_center_offers_the_tool_and_the_page_keeps_it_open_to_the_acc
     assert 'id="rc-move" data-accountant-ok' in src
     assert 'data-write onclick="ReportsPage.rcPreview()"' in src
     assert 'data-write onclick="ReportsPage.rcMove()"' in src
+    # the payee filter (#394) beside the account, riding on the address,
+    # and a Payee column on the rows
+    assert 'id="rc-vendor"' in src and "All payees" in src
+    assert "ReportsPage.setParam('vendor_id', this.value)" in src
+    assert "params.vendor_id = p.vendor_id" in src
+    assert "&vendor_id=${vendorId}" in src
+    assert '<th scope="col">Payee</th>' in src
+    # the free-text Payee box drives the same contains filter, also riding
+    # on the address
+    assert 'id="rc-payee"' in src
+    assert "ReportsPage.setParam('payee', this.value.trim())" in src
+    assert "params.payee = p.payee" in src
+    assert "&payee=${encodeURIComponent(payeeText)}" in src
+
+
+def test_a_vendor_name_inside_another_word_does_not_match(
+    client, db_session, seed_accounts
+):
+    """The spelling match is whole words: vendor "Ace" must not take the
+    lines of "Space Coast Supply" or "Acer" into a move."""
+    accounts = seed_accounts
+    ace = _ok(client.post("/api/vendors", json={"name": "Ace"}))["id"]
+    _bank_entry_payee(client, accounts, "6900", "-21.00", "ACE HARDWARE #12")
+    _bank_entry_payee(client, accounts, "6900", "-22.00", "Space Coast Supply")
+    _bank_entry_payee(client, accounts, "6900", "-23.00", "Acer Store")
+    found = _ok(
+        client.get(
+            f"/api/reclassify/lines?account_id={accounts['6900'].id}"
+            f"&start_date=2026-01-01&end_date=2026-12-31&vendor_id={ace}"
+        )
+    )
+    assert [ln["payee"] for ln in found["lines"]] == ["ACE HARDWARE #12"]

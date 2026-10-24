@@ -157,6 +157,13 @@ const ItemsPage = {
                             <input name="quantity_on_hand" type="number" step="1" min="0"
                                    value="${item.quantity_on_hand || 0}"
                                    data-original="${item.quantity_on_hand || 0}"></div>
+                        ${id ? '' : `<div class="form-group"><label>Opening as of
+                            <span style="font-size:10px;color:var(--text-muted)">(blank = today)</span></label>
+                            <input name="opening_as_of" type="date"></div>
+                        <div class="form-group full-width" style="font-size:10px; color:var(--gray-500);">
+                            Posts the starting stock at cost (DR Inventory / CR Opening Balance Equity).
+                            If your opening trial balance already includes this stock in 1300 Inventory,
+                            leave the quantity at 0 so it isn't counted twice.</div>`}
                         <div class="form-group"><label>Reorder Point</label>
                             <input name="reorder_point" type="number" step="1" min="0" value="${item.reorder_point || 0}"></div>
                         <div class="form-group"><label>Asset Account ${id ? '' : '<span style="font-size:10px;color:var(--text-muted)">(blank = Inventory 1300)</span>'}</label>
@@ -216,6 +223,11 @@ const ItemsPage = {
         // it from inventory_movements after that, so PUT silently ignores it.
         if (!id && trackInv && form.quantity_on_hand) {
             data.quantity_on_hand = parseFloat(form.quantity_on_hand.value) || 0;
+            // Date the opening entry (books set up as of a prior year-end);
+            // the backend defaults to today when this is blank.
+            if (form.opening_as_of && form.opening_as_of.value) {
+                data.as_of = form.opening_as_of.value;
+            }
         }
 
         // For an existing item, detect a manual qty edit and convert it to

@@ -1,5 +1,5 @@
 from datetime import date as dt_date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator, field_serializer
 
@@ -14,6 +14,18 @@ from app.schemas.invoices import RateOut
 
 
 class BillLineCreate(StrictModel):
+    """One line of a bill: a quantity and a rate, or an amount alone (#391).
+
+    A utility bill or a pest-control bill has an amount and no quantity or
+    rate, so a line may send ``amount`` by itself. The row is stored as
+    quantity 1 x rate = amount, which is what the bill says and what every
+    reader of the line (the journal, job costing, the PDF, the exports)
+    already works from; nothing downstream learns a new shape. A line that
+    sends a quantity or a rate is priced from them as before, and an amount
+    sent with them must agree to the cent or the line is refused: a client
+    that sends both and means the amount would otherwise be told nothing.
+    """
+
     item_id: Optional[int] = None
     account_id: Optional[int] = None
     job_id: Optional[int] = None
@@ -22,14 +34,39 @@ class BillLineCreate(StrictModel):
     function: Optional[str] = None
     is_billable: bool = False
     description: Optional[str] = None
-    quantity: float = 1
-    rate: float = 0
+    quantity: Optional[float] = None
+    rate: Optional[float] = None
+    amount: Optional[float] = None
     line_order: int = 0
 
     @model_validator(mode="after")
-    def _check_non_negative(self):
+    def _price_the_line(self):
+        sent = None if self.amount is None else _cents(Decimal(str(self.amount)))
+        if sent is not None and sent < 0:
+            raise ValueError(
+                "amount must be non-negative; use a vendor credit for refunds"
+            )
+        if sent and not self.quantity and not self.rate:
+            # No quantity and no rate (absent, null or 0): the amount is the line.
+            self.quantity, self.rate = 1, float(sent)
+        else:
+            # Priced from the quantity and rate; with neither and no amount
+            # it is a description-only line, as before.
+            self.quantity = 1 if self.quantity is None else self.quantity
+            self.rate = self.rate or 0
         validate_non_negative_line(self.quantity, self.rate)
+        priced = _cents(Decimal(str(self.quantity)) * Decimal(str(self.rate)))
+        if sent is not None and abs(sent - priced) > Decimal("0.01"):
+            raise ValueError(
+                f"amount {sent:.2f} is not quantity x rate ({priced:.2f}); "
+                "send the quantity and rate, or the amount alone"
+            )
+        self.amount = float(priced)
         return self
+
+
+def _cents(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 class BillLineResponse(BaseModel):

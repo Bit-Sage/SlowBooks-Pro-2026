@@ -26,7 +26,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.items import Item, InventoryMovement, MovementType
+from app.models.items import (
+    TRACKABLE_ITEM_TYPES,
+    InventoryMovement,
+    Item,
+    MovementType,
+)
 from app.models.accounts import Account, AccountType
 from app.services.accounting import _q, create_journal_entry, quantize_to
 
@@ -178,6 +183,85 @@ def record_purchase(
         source_id=source_id,
         transaction_id=txn_id,
         memo=memo,
+    )
+
+
+def record_opening_quantity(
+    db: Session,
+    item: Item,
+    quantity: Decimal,
+    unit_cost: Decimal,
+    as_of=None,
+) -> Optional[InventoryMovement]:
+    """The stock an item starts with, as QuickBooks books it: one movement
+    of `quantity` at `unit_cost`, and DR Inventory (the item's asset
+    account, else 1300) / CR 3900 Opening Balance Equity for qty x cost,
+    dated `as_of` (today when not given), source_type "item_opening" (its
+    own type, so a fixed asset with the same id is not mistaken for it).
+
+    A zero cost moves the stock with no journal entry: there is no value
+    to carry. An item that already has movements gets nothing, so the
+    opening quantity cannot post twice. Only a stock item posts (a service
+    or labor item with the flag forced on does not). The closing date is
+    enforced by create_journal_entry. Returns the movement, or None when
+    nothing posted.
+    """
+    if not item.track_inventory or item.item_type not in TRACKABLE_ITEM_TYPES:
+        return None
+    quantity = Decimal(str(quantity or 0))
+    unit_cost = Decimal(str(unit_cost or 0))
+    if quantity <= 0:
+        return None
+    if item.id is not None and (
+        db.query(InventoryMovement.id)
+        .filter(InventoryMovement.item_id == item.id)
+        .first()
+        is not None
+    ):
+        return None
+
+    from datetime import date as _date
+
+    from app.services import control_accounts
+    from app.services.accounting import get_opening_balance_equity_id
+
+    txn_id = None
+    amount = _q(quantity * unit_cost)
+    if amount > 0:
+        asset_id = item.asset_account_id or control_accounts.resolve(db, "1300")
+        txn = create_journal_entry(
+            db,
+            as_of or _date.today(),
+            f"Opening quantity — {item.name}",
+            [
+                {
+                    "account_id": asset_id,
+                    "debit": amount,
+                    "credit": Decimal("0"),
+                    "description": f"Inventory: {item.name}",
+                },
+                {
+                    "account_id": get_opening_balance_equity_id(db),
+                    "debit": Decimal("0"),
+                    "credit": amount,
+                    "description": f"Opening quantity: {item.name}",
+                },
+            ],
+            source_type="item_opening",
+            source_id=item.id,
+        )
+        txn_id = txn.id
+
+    return _append_movement(
+        db,
+        item,
+        MovementType.ADJUSTMENT,
+        quantity=quantity,
+        unit_cost=unit_cost,
+        source_type="item_opening",
+        source_id=item.id,
+        transaction_id=txn_id,
+        memo="Opening quantity",
     )
 
 

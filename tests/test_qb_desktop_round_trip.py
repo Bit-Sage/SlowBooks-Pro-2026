@@ -198,6 +198,7 @@ def test_the_round_trip_gives_a_fresh_company_the_same_trial_balance(
                     name=data["name"],
                     account_type=AccountType(data["account_type"]),
                     bank_kind=data.get("bank_kind"),
+                    detail_type=data.get("detail_type"),
                     is_system=True,
                     balance=Decimal("0"),
                 )

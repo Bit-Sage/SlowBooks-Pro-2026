@@ -450,6 +450,47 @@ def _notarize(target: Path, profile: str, report_dir: Path, label: str) -> None:
         raise RuntimeError(f"notarization was not accepted; see {log_path}")
 
 
+# Right after notarization is Accepted, Apple's CDN may not serve the ticket
+# yet. Either `stapler staple` fails with one of these markers, or (the 2.26.0
+# sign jobs: three of four) it exits 0 and `stapler validate` fails a second
+# later. Staple + validate are retried as one unit, ~5 minutes in total; any
+# other staple error fails on the first try.
+STAPLE_TICKET_MISSING = ("Could not find base64 encoded ticket", "Record not found")
+STAPLE_ATTEMPTS = 6
+STAPLE_BACKOFF_SECONDS = (20, 40, 60, 90, 90)
+
+
+def _is_ticket_missing(output: str) -> bool:
+    return any(marker in output for marker in STAPLE_TICKET_MISSING)
+
+
+def _staple_and_validate(target: Path, staple_evidence: Path) -> tuple[bool, str]:
+    """One staple + validate pass: (done, what the stapler said when not).
+
+    Any failure is retried, not only the "no ticket" messages: this runs
+    only after notarytool has seen the submission Accepted, and the v2.27.0
+    tag's sign job failed with a stapler error that matched neither known
+    message, then passed on a rerun (#459). A bundle that is really broken
+    still fails, after the bounded retries, with the stapler's last words.
+    """
+    result = _record_run(
+        staple_evidence, "xcrun", "stapler", "staple", "-v", str(target), check=False
+    )
+    if result.returncode:
+        said = f"{result.stdout or ''}{result.stderr or ''}".strip()
+        kind = (
+            "ticket not available yet" if _is_ticket_missing(said) else "staple failed"
+        )
+        return False, f"{kind} (exit {result.returncode}): {said[-400:]}"
+    validated = _record_run(
+        staple_evidence, "xcrun", "stapler", "validate", "-v", str(target), check=False
+    )
+    if validated.returncode:
+        said = f"{validated.stdout or ''}{validated.stderr or ''}".strip()
+        return False, f"validate failed (exit {validated.returncode}): {said[-400:]}"
+    return True, ""
+
+
 def _staple(target: Path, report_dir: Path) -> None:
     """Attach the notarization ticket to ``target`` and prove it is there.
 
@@ -463,14 +504,22 @@ def _staple(target: Path, report_dir: Path) -> None:
     with `stapler validate`, which only reads the local ticket.
     """
     staple_evidence = report_dir / "stapler.txt"
-    _record_run(staple_evidence, "xcrun", "stapler", "staple", "-v", str(target))
-    validated = _record_run(
-        staple_evidence, "xcrun", "stapler", "validate", "-v", str(target), check=False
-    )
-    if validated.returncode:
-        raise RuntimeError(
-            f"no notarization ticket on {target.name}; see {staple_evidence}"
+    for attempt in range(1, STAPLE_ATTEMPTS + 1):
+        done, said = _staple_and_validate(target, staple_evidence)
+        if done:
+            return
+        if attempt == STAPLE_ATTEMPTS:
+            raise RuntimeError(
+                f"no notarization ticket on {target.name} after {STAPLE_ATTEMPTS} "
+                f"stapling attempts; the last: {said}; see {staple_evidence}"
+            )
+        delay = STAPLE_BACKOFF_SECONDS[min(attempt, len(STAPLE_BACKOFF_SECONDS)) - 1]
+        print(
+            f"! {said.splitlines()[0] if said else 'staple failed'} (attempt "
+            f"{attempt} of {STAPLE_ATTEMPTS}); retrying in {delay}s",
+            flush=True,
         )
+        _sleep(delay)
 
 
 def _verify_dmg_contents_stapled(
