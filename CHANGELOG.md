@@ -640,6 +640,17 @@ the stock. The choice applies to every check print path — a bill payment,
 Pay Bills, a register check and an expense paid from a bank account — through
 one helper, so none of them drift (`check_stock`, `check_nudge_x_in`,
 `check_nudge_y_in`; `GET /api/checks/test-print`).
+### Unreleased
+
+**An optional sound when a transaction posts** (#476, asked for by a
+QuickBooks Desktop user). QuickBooks Desktop played a short beep when a
+transaction saved, and the toast is easy to miss when you're keying a stack.
+Settings → Sounds now has a per-user toggle, "Play a sound when a transaction
+posts" — off by default, kept per sign-in so it follows you to another
+machine. When it's on, a short original chime plays on a successful save,
+post, payment, or finished reconciliation; an error or warning stays silent.
+The sound is generated in the browser (Web Audio, no asset) and guarded, so a
+browser or desktop WebView without it carries on quietly.
 
 ### v2.28.0 — Account types and sub-accounts
 
