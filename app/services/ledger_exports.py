@@ -339,9 +339,14 @@ def _cmp_cells(cur, before, prior, show_changes: bool) -> list:
 
 
 def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) -> str:
-    """The P&L as a spreadsheet. With a prior-year comparison (`prior` on
-    the data) each row also carries Prior year, and $ Change and % Change
-    unless show_changes is off."""
+    """The P&L as a spreadsheet, laid out as the screen prints it (#489):
+    a parent's sub-accounts beneath it, indented two spaces a level, its
+    own postings as "Direct postings to …" and a "Total …" row for the
+    family (#416), so the file adds up the way the screen does. Section,
+    Account number, Account name and the figures keep the columns the flat
+    export had; an account is still named by its full path. With a
+    prior-year comparison (`prior` on the data) each row also carries Prior
+    year, and $ Change and % Change unless show_changes is off."""
     prior = data.get("prior")
     p_tot = prior or {}
     out = io.StringIO()
@@ -354,20 +359,25 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     def figures(cur, before):
         return _cmp_cells(cur, before, prior, show_changes)
 
-    w.writerow(
-        ["Section", "Account number", "Account name"] + _cmp_header(prior, show_changes)
-    )
+    header = _cmp_header(prior, show_changes)
+    w.writerow(["Section", "Account number", "Account name"] + header)
+    tree = data.get("tree") or {}
 
     def section(label, key, total_key):
-        for i in data.get(key, []):
-            w.writerow(
-                [
-                    label,
-                    i.get("account_number") or "",
-                    i.get("account_path") or i["account_name"],  # W-8
-                ]
-                + figures(i["amount"], i.get("prior_amount", 0))
+        rows = tree.get(key)
+        if rows is None:
+            # a reply with no tree (a caller that built its own): flat lines
+            rows = [
+                {**i, "kind": "account", "depth": 0, "label": i.get("account_label")}
+                for i in data.get(key, [])
+            ]
+        for r in rows:
+            cells = (
+                [""] * len(header)
+                if r["kind"] == "heading"
+                else figures(r["amount"], r.get("prior_amount", 0))
             )
+            w.writerow(tree_csv_row(label, r, cells))
         w.writerow(
             [label, "", f"Total {label}"]
             + figures(data[total_key], p_tot.get(total_key, 0))
