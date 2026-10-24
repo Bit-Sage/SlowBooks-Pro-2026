@@ -75,8 +75,23 @@ const API = {
                 err.body = errBody;
                 throw err;
             }
-            return res.json();
+            const out = await res.json();
+            if (method !== 'GET') API.changed(path);
+            return out;
         }
+    },
+    // A write went through: a report open on this page, or in another
+    // window or tab of the same books, can run again (#482). Preferences
+    // and signing in change nothing in the books.
+    changed(path) {
+        if (/^\/(preferences|auth)(\/|$)/.test(path)) return;
+        try { window.dispatchEvent(new CustomEvent('slowbooks:books-changed', { detail: { path } })); } catch (e) { /* old browser */ }
+        try {
+            if (typeof BroadcastChannel === 'function') {
+                if (!API._channel) API._channel = new BroadcastChannel('slowbooks-books');
+                API._channel.postMessage({ company: localStorage.getItem('slowbooks_company') || '', path });
+            }
+        } catch (e) { /* no channel: this window still hears its own */ }
     },
     // One dialog at a time: a second refused change waits for the first.
     _closingPromptChain: Promise.resolve(),

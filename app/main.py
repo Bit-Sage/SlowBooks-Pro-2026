@@ -1163,7 +1163,17 @@ async def _require_session(request: Request, call_next):
         # make, list and download this company's backups on top of the role.
         backup_grant = allow_backups and _is_token_backup_route(request.method, path)
 
-    if not backup_grant and not _role_allows(role, request.method, path):
+    # A signed-in person's own preferences (#480: Enter moves between
+    # fields, the decimal point; the dashboard's order) are theirs to set
+    # whatever the role: they change nothing in the books, and the row is
+    # the person's own (app.routes.preferences). Not a token's: a token has
+    # no screen and no row of its own.
+    own_preference = token_principal is None and path.startswith("/api/preferences/")
+    if (
+        not backup_grant
+        and not own_preference
+        and not _role_allows(role, request.method, path)
+    ):
         return JSONResponse(
             status_code=403,
             content={"detail": _role_refusal(role)},

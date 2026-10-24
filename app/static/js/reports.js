@@ -1124,7 +1124,10 @@ const ReportsPage = {
                 <div style="font-size:11px; color:var(--gray-500);">Loading report...</div>
             </div>
             <div class="form-actions">
+                <span id="report-refreshed" role="status" aria-live="polite" style="margin-right:auto; align-self:center; font-size:11px; color:var(--text-muted);"></span>
                 ${opts.actions || ''}
+                <button type="button" class="btn btn-secondary" id="report-refresh-btn" onclick="ReportsPage.refresh()"
+                    title="Run the report again on the books as they are now">Refresh</button>
                 ${saveBtn}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`, { wide: !!opts.wide });
@@ -1157,7 +1160,16 @@ const ReportsPage = {
         // already filtered to the customer has no one row to pick out.
         let first = true;
 
-        const render = async () => {
+        // how.again: the same report run again on the books as they are now
+        // (Refresh, or after a change, #482): the figures change in place,
+        // with no "Loading" in between; the dialog keeps its scroll, and
+        // focus on a link in the report comes back to the same link.
+        const render = async (how = {}) => {
+            const again = !first && how && how.again === true;
+            const modal = document.getElementById('modal');
+            const scroll = modal ? modal.scrollTop : 0;
+            const stops = () => [...content.querySelectorAll('a[href], button, input, select, [tabindex]')];
+            const focusAt = again && content.contains(document.activeElement) ? stops().indexOf(document.activeElement) : -1;
             ReportsPage.toggleCustomRange();
             const custom = select.value === 'custom';
             if (!useAsOfOnly && custom) {
@@ -1168,7 +1180,8 @@ const ReportsPage = {
                     if (lastRange) return;  // the report on it is already showing
                 }
             }
-            content.innerHTML = `<div style="font-size:11px; color:var(--gray-500);">Loading report...</div>`;
+            if (again) content.setAttribute('aria-busy', 'true');
+            else content.innerHTML = `<div style="font-size:11px; color:var(--gray-500);">Loading report...</div>`;
             try {
                 if (useAsOfOnly) {
                     const asOfDate = ReportsPage.getAsOfDate(select.value, endInput.value || todayISO());
@@ -1189,10 +1202,19 @@ const ReportsPage = {
                     content.innerHTML = await loadContent(select.value, range, params());
                 }
                 const restored = ReportsPage._refocusRow(content);
-                if (opts.spotlight !== false) ReportsPage._spotlight(content, params(), first && !restored);
+                if (opts.spotlight !== false && !again) ReportsPage._spotlight(content, params(), first && !restored);
                 if (typeof opts.afterRender === 'function') opts.afterRender(content, first);
+                if (again) {
+                    if (modal) modal.scrollTop = scroll;
+                    const back = focusAt >= 0 ? stops()[focusAt] : null;
+                    if (back) { try { back.focus({ preventScroll: true }); } catch (e) { /* gone */ } }
+                    const said = document.getElementById('report-refreshed');
+                    if (said) said.textContent = `Refreshed ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+                }
             } catch (err) {
                 content.innerHTML = `<div class="empty-state"><p>${escapeHtml(err.message)}</p></div>`;
+            } finally {
+                content.removeAttribute('aria-busy');
             }
             first = false;
         };
@@ -1227,7 +1249,7 @@ const ReportsPage = {
         };
         // The open report, for its toolbar's controls (ReportsPage.setParam,
         // ReportsPage.refresh): one period dialog is open at a time.
-        ReportsPage._live = { view, params: paramsObj, render, select, step };
+        ReportsPage._live = { view, params: paramsObj, render, select, step, content };
 
         select.addEventListener("change", () => { stepUnit = null; render(); });
         startInput.addEventListener("change", () => { stepUnit = null; if (select.value === "custom" && !useAsOfOnly) render(); });
@@ -1243,10 +1265,40 @@ const ReportsPage = {
         await render();
     },
 
-    // Redraw the open report on its current period and params: what a
-    // toolbar control does after changing something.
+    // Run the open report again on its current period and params, on the
+    // books as they are now: the Refresh button, an action from the report
+    // (a void, a dismissal), and Refresh reports automatically (#482).
     refresh() {
-        if (ReportsPage._live) ReportsPage._live.render();
+        clearTimeout(ReportsPage._refreshSoon);
+        if (ReportsPage._live) return ReportsPage._live.render({ again: true });
+    },
+
+    // The open report, when it is the dialog showing (not one closed, or
+    // left under another dialog).
+    _liveShown() {
+        const live = ReportsPage._live;
+        const overlay = document.getElementById('modal-overlay');
+        return !!live && !!live.content && live.content.isConnected
+            && !!overlay && !overlay.classList.contains('hidden');
+    },
+
+    // "Refresh reports automatically" (#482): a per-user preference, on
+    // unless turned off (the preference reports, auto_refresh false).
+    // App.init reads it once (setAutoRefresh); Settings keeps it current.
+    autoRefresh: true,
+    setAutoRefresh(value) {
+        ReportsPage.autoRefresh = !(value && value.auto_refresh === false);
+    },
+
+    // Something in the books changed (a save on this page, or in another
+    // window or tab of these books): the open report runs again, once,
+    // when it is showing and the preference is on.
+    _changed() {
+        if (!ReportsPage.autoRefresh || !ReportsPage._liveShown()) return;
+        clearTimeout(ReportsPage._refreshSoon);
+        ReportsPage._refreshSoon = setTimeout(() => {
+            if (ReportsPage._liveShown()) ReportsPage.refresh();
+        }, 150);
     },
 
     // Set one of the open report's params (a class, a job, a column
@@ -3614,3 +3666,32 @@ ReportsPage.functionalExpenses = async function (prefill) {
             </table></div>${programs}`;
     }, "Dates", false, { reportType: 'functional_expenses', view: 'functional-expenses', prefill });
 };
+
+// Refresh reports automatically (#482): the open report runs again after a
+// change in the books made here, after one made in another window or tab of
+// the same books (the API client's message, slowbooks-books), and when the
+// window comes back to the front after a while away (another program, or
+// another device, may have changed them). ReportsPage._changed asks the
+// preference and whether a report is showing.
+(function () {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    window.addEventListener('slowbooks:books-changed', () => ReportsPage._changed());
+    try {
+        if (typeof BroadcastChannel === 'function') {
+            const channel = new BroadcastChannel('slowbooks-books');
+            channel.onmessage = (e) => {
+                const mine = (() => { try { return localStorage.getItem('slowbooks_company') || ''; } catch (err) { return ''; } })();
+                if (!e.data || (e.data.company || '') === mine) ReportsPage._changed();
+            };
+        }
+    } catch (e) { /* no channel */ }
+    let away = 0;
+    const left = () => { away = Date.now(); };
+    const back = () => {
+        if (away && Date.now() - away > 1000) ReportsPage._changed();
+        away = 0;
+    };
+    window.addEventListener('blur', left);
+    window.addEventListener('focus', back);
+    document.addEventListener('visibilitychange', () => (document.hidden ? left() : back()));
+})();

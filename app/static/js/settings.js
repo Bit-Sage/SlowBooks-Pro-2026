@@ -82,6 +82,53 @@ const SettingsPage = {
         return text ? `<div id="company-logo-note" style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">${escapeHtml(text)}</div>` : '';
     },
 
+    // My Preferences: what each person sets for themselves, kept per
+    // sign-in in the preferences store, so it follows them to another
+    // computer and a second user keeps their own. Outside the
+    // company-settings form: no administrator's Save, and every role sets
+    // its own. Each checkbox saves itself.
+    _myPreferencesHtml() {
+        return '<div class="settings-section" id="settings-my-preferences" data-own-preference role="group" aria-labelledby="settings-h-my-preferences">'
+            + '<h3 id="settings-h-my-preferences">My Preferences</h3>'
+            + '<p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Yours alone: kept with your sign-in, saved as soon as you change one.</p>'
+            + '<div class="form-group full-width" style="margin-bottom:6px;">'
+            + '<label for="pref-report-refresh" style="font-weight:normal;">'
+            + '<input type="checkbox" id="pref-report-refresh" data-readonly-ok aria-describedby="pref-report-refresh-hint"'
+            + ' style="width:auto; vertical-align:middle; margin-right:6px;" onchange="SettingsPage.saveReportRefresh(this)">'
+            + 'Refresh reports automatically</label>'
+            + '<div id="pref-report-refresh-hint" style="font-size:11px; color:var(--text-muted); margin:2px 0 0 22px;">'
+            + 'An open report runs again after a change to the books, here or in another window, and when you come back to the window. '
+            + 'Off: use the report&rsquo;s Refresh button.</div></div>'
+            + '</div>';
+    },
+
+    loadMyPreferences() {
+        // (the probes that draw this page without reports.js have no copy)
+        if (typeof ReportsPage === 'undefined' || typeof document.getElementById !== 'function') return;
+        const box = document.getElementById('pref-report-refresh');
+        if (!box) return;
+        box.checked = ReportsPage.autoRefresh !== false;
+        API.get('/preferences/reports')
+            .then(pref => {
+                ReportsPage.setAutoRefresh(pref && pref.value);
+                box.checked = ReportsPage.autoRefresh;
+            })
+            .catch(() => { /* the copy App.init read stands */ });
+    },
+
+    async saveReportRefresh(el) {
+        const before = ReportsPage.autoRefresh;
+        ReportsPage.autoRefresh = !!el.checked;
+        try {
+            await API.put('/preferences/reports', { value: { auto_refresh: !!el.checked } });
+            toast('Preference saved');
+        } catch (err) {
+            ReportsPage.autoRefresh = before;
+            el.checked = before;
+            toast(err.message, 'error');
+        }
+    },
+
     async render() {
         const s = await API.get('/settings');
         const logo = s.company_logo_path ? await API.get('/uploads/logo').catch(() => null) : null;
@@ -104,6 +151,7 @@ const SettingsPage = {
             SettingsPage.loadSignInPref();
             SettingsPage.loadOcrStatus();
             SettingsPage.loadOcrEnginePref();
+            SettingsPage.loadMyPreferences();
             SettingsPage.loadUnreadableSecrets();
             SettingsPage.scrollToFocus();
             SettingsPage._installLeaveGuard();
@@ -114,6 +162,7 @@ const SettingsPage = {
                 <h2>Company Settings</h2>
             </div>
             <div id="settings-unreadable" class="hint hint--locked" role="status" style="margin-bottom:12px;" data-admin hidden></div>
+            ${SettingsPage._myPreferencesHtml()}
             <!-- data-admin-fields: the fields this form saves (PUT /api/settings)
                  are the administrator's. Any other sign-in sees them locked, with
                  the sentence below (App.adminPass). AI Insights and the lists

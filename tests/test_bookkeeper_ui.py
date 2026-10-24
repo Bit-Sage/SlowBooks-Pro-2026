@@ -119,6 +119,11 @@ SETTINGS_KEPT = {
     "Equipment › Deactivate": [
         ("PUT", "/api/equipment/{equipment}", {"is_active": False}, 200)
     ],
+    # My Preferences (#482) are each person's own, not company settings:
+    # a bookkeeper keeps them and sets their own.
+    "My Preferences › #pref-report-refresh": [
+        ("PUT", "/api/preferences/reports", {"value": {"auto_refresh": False}}, 200)
+    ],
 }
 # The page's own reads: what it shows loads for a bookkeeper
 SETTINGS_READS = [
