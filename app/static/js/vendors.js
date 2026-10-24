@@ -74,14 +74,16 @@ const VendorsPage = {
     // default account, 1099, NOTES (editable inline), what's owed, the last
     // 10 bills, the last 10 payments, and credits not applied yet.
     async showDetails(id) {
-        let vendor, bills, payments, credits, accounts;
+        let vendor, bills, payments, credits, accounts, entries;
         try {
-            [vendor, bills, payments, credits, accounts] = await Promise.all([
+            [vendor, bills, payments, credits, accounts, entries] = await Promise.all([
                 API.get(`/vendors/${id}`),
                 fetchAllPages(`/bills?vendor_id=${id}`).catch(() => []),
                 API.get(`/bill-payments?vendor_id=${id}`).catch(() => []),
                 API.get(`/vendor-credits?vendor_id=${id}`).catch(() => []),
                 API.get('/accounts').catch(() => []),
+                // lines added from a bank feed that name this vendor (#491)
+                API.get(`/vendors/${id}/bank-entries`).catch(() => []),
             ]);
         } catch (err) {
             toast(err.message, 'error');
@@ -122,10 +124,28 @@ const VendorsPage = {
 
         // -- Credits the vendor owes us, not yet applied to a bill --
         // paid to date (#335): this year and all time, voided payments aside
+        // bill payments and bank-feed entries both: what was paid to them
         const thisYear = String(new Date().getFullYear());
-        const live = payments.filter(p => !p.is_voided);
+        const live = payments.filter(p => !p.is_voided).concat(entries.filter(e => !e.is_voided));
         const paidAllTime = live.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
         const paidThisYear = live.filter(p => String(p.date || '').startsWith(thisYear)).reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+        const entryRows = entries.slice(0, 10).map(e => {
+            const href = (e.link || '').replace(/^\/(?=#)/, '');
+            return `<tr style="cursor:pointer" onclick="${hop(href)}">
+                <td>${rowLink(href, `bank-entry:${e.transaction_id}`, formatDate(e.date))}</td>
+                <td>${escapeHtml(e.account_name || '')}${e.is_voided ? ' <span style="color:var(--text-danger)">(void)</span>' : ''}</td>
+                <td>${escapeHtml(e.memo || '')}</td>
+                <td class="amount">${formatCurrency(e.amount)}</td>
+            </tr>`;
+        }).join('');
+        const entriesHtml = entries.length === 0 ? '' : `
+            <div style="margin-top:14px">
+                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Bank and card entries (${entries.length})</h4>
+                <table class="data-table" style="font-size:12px">
+                    <thead><tr><th scope="col">Date</th><th scope="col">Account</th><th scope="col">Memo</th><th scope="col" class="amount">Amount</th></tr></thead>
+                    <tbody>${entryRows}</tbody>
+                </table>
+            </div>`;
         const open = credits.filter(c => c.status !== 'void' && parseFloat(c.balance_remaining) > 0);
         const creditsHtml = open.length === 0 ? '' : `
             <div style="margin-bottom:14px">
@@ -219,7 +239,8 @@ const VendorsPage = {
                         <thead><tr><th scope="col">Date</th><th scope="col">Method</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
                         <tbody>${payRows}</tbody>
                     </table>`}
-            </div>`;
+            </div>
+            ${entriesHtml}`;
 
         // The page's own address (#/vendors/3, App.routes): Back from a
         // report opened below returns here, a reload keeps the page.

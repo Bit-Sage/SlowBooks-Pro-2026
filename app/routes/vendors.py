@@ -108,6 +108,64 @@ def delete_vendor(vendor_id: int, db: Session = Depends(get_db)):
     return {"message": "Vendor deactivated"}
 
 
+def bank_entries_for(
+    db: Session,
+    vendor_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict]:
+    """The register entries that name this vendor (#491) — lines added
+    from a bank feed — oldest first. `amount` is what was paid: money out
+    of the bank or onto the card is positive, a refund back negative."""
+    from app.models.transactions import Transaction
+    from app.services.bank_register import source_link, voided_transaction_ids
+
+    q = db.query(Transaction).filter(
+        Transaction.vendor_id == vendor_id, Transaction.source_type == "bank_entry"
+    )
+    if start_date:
+        q = q.filter(Transaction.date >= start_date)
+    if end_date:
+        q = q.filter(Transaction.date <= end_date)
+    txns = q.order_by(Transaction.date, Transaction.id).all()
+    voided = voided_transaction_ids(db, [t.id for t in txns])
+    out = []
+    for t in txns:
+        bank = next((ln for ln in t.lines if ln.account and ln.account.bank_kind), None)
+        if bank is None:
+            continue
+        memo = next((ln.description for ln in t.lines if ln.description), "") or ""
+        out.append(
+            {
+                "transaction_id": t.id,
+                "date": t.date.isoformat(),
+                "reference": t.reference or "",
+                "memo": memo,
+                "account_id": bank.account_id,
+                "account_name": bank.account.name,
+                "amount": str(
+                    Decimal(str(bank.credit or 0)) - Decimal(str(bank.debit or 0))
+                ),
+                "is_voided": t.id in voided,
+                "link": source_link(t),
+            }
+        )
+    return out
+
+
+@router.get("/{vendor_id}/bank-entries")
+def vendor_bank_entries(
+    vendor_id: int,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """What was paid to this vendor straight from a bank or card account
+    — lines added from a bank feed (#491) — newest first."""
+    get_or_404(db, Vendor, vendor_id)
+    return list(reversed(bank_entries_for(db, vendor_id, start_date, end_date)))
+
+
 @router.get("/{vendor_id}/payments/csv")
 def vendor_payments_csv(
     request: Request,
@@ -132,6 +190,12 @@ def vendor_payments_csv(
     if end_date:
         q = q.filter(BillPayment.date <= end_date)
     payments = q.order_by(BillPayment.date, BillPayment.id).all()
+    # bill payments and the bank-feed entries naming the vendor (#491), by date
+    rows = [(p.date.isoformat(), 0, p.id, p) for p in payments] + [
+        (e["date"], 1, e["transaction_id"], e)
+        for e in bank_entries_for(db, vendor_id, start_date, end_date)
+    ]
+    rows.sort(key=lambda r: r[:3])
     out = io.StringIO()
     w = _SafeWriter(out)  # formula guard; amounts stay numbers
     w.writerow(["Vendor", vendor.name])
@@ -139,7 +203,23 @@ def vendor_payments_csv(
     w.writerow([])
     w.writerow(["Date", "Method", "Check #", "Amount", "Paid from", "Notes", "Voided"])
     total = Decimal("0")
-    for p in payments:
+    for _, kind, _, p in rows:
+        if kind == 1:
+            amount = Decimal(p["amount"])
+            if not p["is_voided"]:
+                total += amount
+            w.writerow(
+                [
+                    p["date"],
+                    "Bank entry",
+                    p["reference"],
+                    _money_cell(amount),
+                    p["account_name"],
+                    p["memo"].replace("\n", " "),
+                    "yes" if p["is_voided"] else "",
+                ]
+            )
+            continue
         amount = Decimal(str(p.amount or 0))
         if not p.is_voided:
             total += amount

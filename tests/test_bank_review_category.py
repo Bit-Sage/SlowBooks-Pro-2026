@@ -95,7 +95,7 @@ def test_a_picked_category_is_saved_and_add_all_posts_it(
     }
 
     out = client.post(f"/api/banking/accounts/{feed['id']}/feed/add-all").json()
-    assert out == {"added": 2, "skipped": []}
+    assert out["added"] == 2 and out["skipped"] == []
     reg = client.get(
         f"/api/banking/check-register?account_id={seed_accounts['1000'].id}"
     ).json()

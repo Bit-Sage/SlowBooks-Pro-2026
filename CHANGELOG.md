@@ -95,6 +95,18 @@ before the invoice's job changed never credits the job's A/R.
   the screen does. The columns are where they were (Section, Account number,
   Account name, then the figures). One class's P&L exports the same way; P&L by
   Class and P&L by Job have no families on the screen and stay as they were.
+**A payee from the bank feed reaches the vendor list** (#491). Adding a line
+from To review (Add, or Add all categorised) posted a bank entry that carried
+the payee as text only: no vendor was made or found, and the "Add X as a
+vendor?" offer the register's quick row and + Entry form make never came, so
+after adding "NT Suites" from the feed the vendor list was empty. Now the entry
+names the vendor whose name is the payee (capitals and surrounding spaces
+ignored), and a money-out payee no vendor has gets the register's toast — one
+toast for all of them after Add all — which makes the vendor and names it on
+the entry. The entry stores its vendor (`transactions.vendor_id`, migration
+`d7e8f9a0b1c2`), so the vendor's page lists its bank and card entries, its paid
+this year and all time count them, and its payments CSV has them as "Bank
+entry" rows. A transfer names no vendor.
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 

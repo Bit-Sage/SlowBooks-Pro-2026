@@ -841,9 +841,36 @@ const BankingPage = {
         const body = {};
         if (sel && sel.value) body.category_account_id = parseInt(sel.value, 10);
         try {
-            await API.post(`/banking/transactions/${lineId}/add`, body);
-            toast('Added to the books');
+            const added = await API.post(`/banking/transactions/${lineId}/add`, body);
+            toast(added.vendor_name ? `Added to the books for ${added.vendor_name}` : 'Added to the books');
             BankingPage.go(`#/banking/${accountId}`);
+            BankingPage._offerFeedVendors([added]);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // A feed line added with a payee no vendor has (#491): the entry
+    // posted with the payee as text, and a toast offers to make it a
+    // vendor and name it on the entry, as the register's quick row does
+    // (payeeTyped). Money out only; a name is asked once a session.
+    _offerFeedVendors(lines) {
+        const want = lines.filter(t => t && !t.vendor_id && parseFloat(t.amount) < 0 && (t.payee || '').trim()
+            && !BankingPage._payeesAsked.has(t.payee.trim().toLowerCase()));
+        if (!want.length) return;
+        want.forEach(t => BankingPage._payeesAsked.add(t.payee.trim().toLowerCase()));
+        const names = [...new Set(want.map(t => t.payee.trim()))];
+        const ms = (typeof window !== 'undefined' && window.__payeeToastMs) || 15000;
+        const text = names.length === 1 ? `Add "${names[0]}" as a vendor?`
+            : `${names.length} payees are not on the vendor list. Add them as vendors?`;
+        toastAction(text, 'Add', () => BankingPage.feedVendors(want.map(t => t.id)), ms, 'Not now', { focusOnShow: true });
+    },
+
+    async feedVendors(lineIds) {
+        try {
+            const r = await API.post('/banking/transactions/vendors', { line_ids: lineIds });
+            const made = r.created.map(v => v.name);
+            if (BankingPage._vendorNames) made.forEach(n => BankingPage._vendorNames.add(n.toLowerCase()));
+            toast(made.length === 1 ? `${made[0]} added to Vendors`
+                : made.length ? `${made.length} vendors added` : `Linked to ${r.linked} vendor${r.linked === 1 ? '' : 's'}`);
         } catch (err) { toast(err.message, 'error'); }
     },
 
@@ -912,9 +939,11 @@ const BankingPage = {
         try {
             // A pick made a moment ago may still be on its way.
             await Promise.allSettled([...BankingPage._pendingCategories]);
+            const lines = BankingPage._reviewLines || {};
             const r = await API.post(`/banking/accounts/${feedId}/feed/add-all`);
             toast(`Added ${r.added}${r.skipped.length ? `, skipped ${r.skipped.length}: ${r.skipped[0].reason}` : ''}`);
             BankingPage.go(`#/banking/${accountId}`);
+            BankingPage._offerFeedVendors((r.without_vendor || []).map(id => lines[id]).filter(Boolean));
         } catch (err) { toast(err.message, 'error'); }
     },
 
