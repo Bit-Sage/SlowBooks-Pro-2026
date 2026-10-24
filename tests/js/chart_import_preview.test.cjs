@@ -36,9 +36,6 @@ function page() {
         $: sel => (els[sel] = els[sel] || el()),
         $$: () => [],
         fetch: async () => ({ ok: true, json: async () => plan }),
-        escapeHtml: value => String(value ?? '').replace(/[&<>"']/g, character => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-        })[character]),
         toast: () => {}, openModal: () => {}, closeModal: () => {},
         T: s => s,
         Terms: { init() {}, text: s => s, isNonprofit: () => false },
@@ -47,11 +44,16 @@ function page() {
     };
     context.window = {};
     vm.createContext(context);
+    // the page's own escapeHtml, so the test escapes as the app does
+    const utils = fs.readFileSync(path.join(__dirname, '../../app/static/js/utils.js'), 'utf8');
+    const escapeHtml = utils.match(/^function escapeHtml\(str\) \{[\s\S]*?^\}/m);
+    assert.ok(escapeHtml, 'escapeHtml found in utils.js');
+    vm.runInContext(escapeHtml[0], context);
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../app/static/js/app.js'), 'utf8') + '\nthis.App = App;', context);
     return { App: context.App, els };
 }
 
-const text = html => html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+const text = html => html.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
 
 async function render() {
     const f = page();

@@ -17,7 +17,14 @@ be written with (the file's, the parent's for a sub-account, the number and
 name rule for an account given none, the chart's own for a control account)
 and the parent's number and name, in their own "Detail type" and "Parent"
 columns; the notes column is titled "Notes". The preview and the import read
-the same plan, so what the preview shows is what the import writes.
+the same plan, so what the preview shows is what the import writes. An
+account the file retypes is written with the detail type the preview shows
+(a "Truck Loan" moved to liability is a Long Term Liability, and so are its
+sub-accounts), an account the file marks as a bank shows Bank, the import's
+answer reads every row back from the chart, and a replace shows a kept
+account's parent under the name the file gives it. A sub-account the file
+lists unchanged keeps its own detail type; when the Balance Sheet prints it
+in its parent's group (2.28.0, display only) its row says so.
 
 ### v2.28.0 — Account types and sub-accounts
 
