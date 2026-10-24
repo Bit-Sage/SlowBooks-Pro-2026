@@ -172,3 +172,66 @@ def test_a_bookkeeper_syncs_with_the_saved_mapping(client, db_session, bank, tra
             assert errors == []
         finally:
             browser.close()
+
+
+def test_a_bookkeeper_on_an_unconnected_card_is_told_who_connects(client, db_session):
+    """Mercury not connected: a bookkeeper's card says an administrator
+    connects the bank feed, as SimpleFIN's does, and offers no connect form
+    (W-34: it said "connect here" with nothing to connect with)."""
+    from tests.test_rbac_users import _login_as, _mk_user
+
+    _mk_user(db_session, "keeper", "a-test-password-123", "bookkeeper")
+    _login_as(client, "keeper", "a-test-password-123")
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+        page = browser.new_page(viewport={"width": 1280, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def serve(route):
+            url = urlsplit(route.request.url)
+            if url.hostname != "testserver":
+                return route.abort()
+            response = client.request(
+                route.request.method,
+                url.path + ("?" + url.query if url.query else ""),
+                content=route.request.post_data_buffer,
+                headers={
+                    "Content-Type": route.request.headers.get(
+                        "content-type", "application/json"
+                    )
+                },
+            )
+            route.fulfill(
+                status=response.status_code,
+                body=response.content,
+                content_type=response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            )
+
+        page.route("**/*", serve)
+        try:
+            page.goto("http://testserver/#/banking")
+            page.locator("#splash-dismiss").click()
+            card = page.locator(".card", has_text="Bank Feed (Mercury)")
+            card.wait_for()
+            note = card.locator("[data-admin-note]")
+            note.wait_for()
+            assert note.inner_text() == "An administrator connects the bank feed."
+            assert "then connect here" in card.inner_text()
+            assert note.is_visible()
+            # the connect form is an administrator's: drawn, but not shown
+            assert card.locator("form[data-admin]").is_visible() is False
+            assert (
+                card.get_by_label("Mercury read-only API token").is_visible() is False
+            )
+            assert (
+                card.get_by_role("button", name="Connect Mercury").is_visible() is False
+            )
+            assert errors == []
+        finally:
+            browser.close()

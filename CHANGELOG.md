@@ -258,8 +258,9 @@ into the account's *To review* list, deduplicated by Mercury's transaction id
 and matched like any other feed. Optional signed balance webhooks keep the
 displayed balances current. The token and the webhook secret are encrypted at
 rest; connecting, disconnecting, mapping and webhook settings are an
-administrator's; disconnecting keeps imported transactions. SlowBooks Pro is
-not affiliated with Mercury; see `docs/setup-mercury.md`.
+administrator's; disconnecting keeps imported transactions. A bookkeeper's
+card, connected or not, says an administrator does those, as SimpleFIN's does.
+SlowBooks Pro is not affiliated with Mercury; see `docs/setup-mercury.md`.
 
 **A Recent dropdown instead of the Open list** (#462). Since 2.24.0 every
 screen opened added a line with an × at the top of the sidebar, up to

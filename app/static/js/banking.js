@@ -87,6 +87,7 @@ const BankingPage = {
                 <a href="https://app.mercury.com/settings/tokens" target="_blank" rel="noopener">Mercury’s API token settings</a>,
                 then connect here. Your token is stored encrypted on this server.</p>
                 <p class="form-hint">SlowBooks Pro is not affiliated with, endorsed by, or sponsored by Mercury; Mercury is a trademark of Mercury Technologies, Inc.</p>
+                <p class="form-hint hidden" data-admin-note>An administrator connects the bank feed.</p>
                 <form onsubmit="BankingPage.connectMercury(event)" data-admin>
                     <div class="form-group">
                         <label for="mercury-token">Mercury read-only API token</label>
