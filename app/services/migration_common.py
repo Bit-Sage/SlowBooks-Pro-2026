@@ -203,7 +203,10 @@ def _effective_detail(spec: dict, number, parent, link: bool, inherited):
         return declared
     if link and fits(_value(parent.detail_type)):
         return _value(parent.detail_type)
-    return default_detail_type(spec["type"], spec.get("bank_kind"), number).value
+    # a new account's default: 2.27.0's number and name rule (2.28.0)
+    return default_detail_type(
+        spec["type"], spec.get("bank_kind"), number, name=spec.get("name") or ""
+    ).value
 
 
 def _plan_accounts(db: Session, accounts: list[dict]) -> list[dict]:

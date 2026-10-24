@@ -43,8 +43,9 @@ financing:
    kept current that way, keeps its own and is named in the migration log;
    the user can line it up on the chart page.
 
-The name rules are copied here, not imported, so this revision does the
-same thing however cash_flow.py changes later.
+The number and name rules are 2.27.0's, in app/services/legacy_placement.py:
+the one copy, which new accounts created without a detail type read too
+(2.28.0). That module is frozen; it does not follow cash_flow.py.
 
 Revision ID: 4ac01efbd72a
 Revises: b7d2e9a41c63
@@ -52,11 +53,12 @@ Create Date: 2026-10-23
 """
 
 import logging
-import re
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+
+from app.services import legacy_placement as rules
 
 revision: str = "4ac01efbd72a"
 down_revision: Union[str, None] = "b7d2e9a41c63"
@@ -65,18 +67,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 log = logging.getLogger("alembic.runtime.migration")
 
-# cash_flow.py, 2.26.0
-_ACCUMULATED = re.compile(r"\baccum(ulated|\.)?\s*(depr|amort)", re.I)
-_FIXED_ASSET = re.compile(
-    r"\b(equipment|vehicles?|furniture|fixtures?|buildings?|land|machinery|"
-    r"leasehold|property|computers?|fixed assets?|intangible|goodwill)\b",
-    re.I,
-)
-_LONG_TERM_DEBT = re.compile(
-    r"\b(loans?|notes? payable|mortgages?|long[- ]term|line of credit|"
-    r"lease liabilit(y|ies)|bonds? payable)\b",
-    re.I,
-)
+# cash_flow.py, 2.26.0 / 2.27.0 (the shared, frozen copy)
+_ACCUMULATED = rules.ACCUMULATED
+_FIXED_ASSET = rules.FIXED_ASSET
+_LONG_TERM_DEBT = rules.LONG_TERM_DEBT
 
 # The control accounts the posting code finds by number
 # (app/services/control_accounts.py, 2.26.0): never re-parented here.
@@ -165,21 +159,19 @@ def infer(row: dict, fixed_ids: set, accumulated_ids: set) -> tuple[str, bool]:
     if atype == "ASSET":
         if kind == "bank":
             return "bank", True
-        if row["id"] in accumulated_ids or _ACCUMULATED.search(name):
+        # the fixed-asset register's accounts (asset and accumulated
+        # depreciation), then the number and name rule
+        if row["id"] in accumulated_ids or row["id"] in fixed_ids:
             return "fixed_asset", True
-        if row["id"] in fixed_ids:
-            return "fixed_asset", True
-        if number.isdigit() and len(number) == 4 and number.startswith("1"):
-            if number < "1500":
-                return "other_current_asset", True
-            return ("fixed_asset" if _FIXED_ASSET.search(name) else "other_asset"), True
-        if _FIXED_ASSET.search(name):
-            return "fixed_asset", True
+        ruled = rules.backfill_detail_type(atype, name, number, kind)
+        if ruled:
+            return ruled, True
     elif atype == "LIABILITY":
         if kind == "credit_card":
             return "credit_card", True
-        if _LONG_TERM_DEBT.search(name):
-            return "long_term_liability", True
+        ruled = rules.backfill_detail_type(atype, name, number, kind)
+        if ruled:
+            return ruled, True
     elif named and _BASE[named] == atype:
         return named, True
     return _DEFAULT.get(atype, "other_current_asset"), False

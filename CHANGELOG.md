@@ -80,7 +80,12 @@ financing; the fixed-asset register's accounts stay investing and
 accumulated depreciation an adjustment. The upgrade's detail types put
 every account where the old rules did, so an upgraded company's statement
 is unchanged.
-An account made without a detail type is current, however it is named.
+An account created without a detail type (the register's Add account panel,
+the API, the chart import, the QuickBooks and other imports) takes it from 2.27.0's
+number and name rule: an asset numbered 1500–1999 or named like equipment
+is a Fixed Asset, a liability named like a loan, note or mortgage a Long
+Term Liability, so a new Truck Loan is financing as before; a sub-account
+still shares its parent's, and a type given always wins.
 The QuickBooks Online report import brings Cost of Goods Sold in as cost of
 goods sold, above Gross Profit; it came in as an expense.
 

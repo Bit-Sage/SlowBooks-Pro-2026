@@ -29,7 +29,6 @@ card is a current liability. Opening balances (source_type
 they are in the beginning cash and nowhere else.
 """
 
-import re
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -40,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account, AccountType, DetailType
 from app.models.fixed_assets import FixedAssetType
 from app.models.transactions import Transaction, TransactionLine
+from app.services import legacy_placement
 from app.services.accounting import _q
 
 CARRIED_IN = ("opening_balance", "item_opening")
@@ -49,7 +49,7 @@ _PL_TYPES = (AccountType.INCOME, AccountType.EXPENSE, AccountType.COGS)
 # Accumulated depreciation is a Fixed Asset in QuickBooks too (#390), so the
 # detail type cannot tell it from the asset it wears down; the register and
 # this name rule find it, and it is an adjustment, not investing.
-_ACCUMULATED = re.compile(r"\baccum(ulated|\.)?\s*(depr|amort)", re.I)
+_ACCUMULATED = legacy_placement.ACCUMULATED
 # Where the detail type puts a balance-sheet account's change (#390). The
 # account detail types migration (4ac01efbd72a) gave every account the
 # detail type that reproduces where the number ranges and name rules of

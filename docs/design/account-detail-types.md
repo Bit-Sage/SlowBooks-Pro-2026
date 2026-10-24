@@ -584,8 +584,19 @@ because both change how the statements present accounts.
   asset, imported equipment, mortgage, 2400, and default-typed
   sub-accounts of 1500 and 2400). No account moves: the backfill no longer
   hands a non-current parent's type to a default-typed child.
-  An account created after the upgrade without a detail type is current
-  whatever its name: the detail type, not the name, decides now.
+  The detail type, not the name, decides the placement. **New accounts
+  (2.28.0, owner's call):** one CREATED with no detail type (POST, the
+  chart import, the importers, the model hook on insert) gets its default
+  from 2.27.0's number and name rule, `app/services/legacy_placement.py`,
+  the one copy the migration's backfill also reads: an asset the rule calls
+  non-current (1500-1999, named like equipment, accumulated depreciation)
+  is a Fixed Asset, a liability named like long-term debt (not a card) a
+  Long Term Liability; otherwise the type's default. Precedence: a detail
+  type given wins; a sub-account of a parent other than 1100, 2000, a bank
+  or a card takes its parent's (#428 / #430, the family stays together);
+  a top-level account, or one under a pinned parent, takes the rule. A
+  control account keeps its control default; an update (rename, retype)
+  never runs the rule, and existing accounts are not retyped.
 - **QBO report import**: "Cost of Goods Sold" → `cogs` (the open item
   below, settled with PR 2).
 - **Sub-accounts (#416)**: `family_rows(lines, chart, belongs, keys,

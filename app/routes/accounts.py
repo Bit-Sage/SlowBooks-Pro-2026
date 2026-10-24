@@ -296,9 +296,13 @@ def _shares_parent(parent: Account | None) -> bool:
 
 def _create_detail_type(db: Session, data: AccountCreate) -> str:
     """The detail type a new account gets (#390): the one sent, else its
-    parent's, else the default for its type and bank kind. A sub-account
-    shares its parent's detail type; the pair with the type, the bank kind
-    and the control numbers is checked in detail_type_problem."""
+    parent's, else the default for its type and bank kind — by 2.27.0's
+    number and name rule, so a new "Truck Loan" is a Long Term Liability
+    and a "1650 Delivery Van" a Fixed Asset (2.28.0; default_detail_type
+    has the precedence). A sub-account of a parent other than 1100, 2000,
+    a bank or a card shares its parent's detail type; the pair with the
+    type, the bank kind and the control numbers is checked in
+    detail_type_problem."""
     parent = db.get(Account, data.parent_id) if data.parent_id else None
     if _shares_parent(parent):
         if data.detail_type is not None and data.detail_type.value != (
@@ -312,7 +316,7 @@ def _create_detail_type(db: Session, data: AccountCreate) -> str:
             raise _sub_account_refusal(parent, why)
         return parent.detail_type
     detail = data.detail_type or default_detail_type(
-        data.account_type, data.bank_kind, data.account_number
+        data.account_type, data.bank_kind, data.account_number, name=data.name
     )
     why = detail_type_problem(
         detail, data.account_type, data.bank_kind, data.account_number
