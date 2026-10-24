@@ -5,7 +5,14 @@ staying in the register), reverses the burden Job Cost Entry when the run
 wrote one, backs the amounts out of each employee's YTD and BenefitYTD, puts
 the time entries the run paid back to approved-unpaid, and marks the stubs
 void. A closed period refuses the void; a run whose NACHA file was already
-made is voided with a warning, since the void does not stop the money.
+made is voided only with confirm=true, since the void does not stop the money.
+
+The follow-up (#439 review): the run's posting is never reversed twice (the
+Journal page refuses a payroll entry, the run void refuses an entry already
+reversed), a reconciled posting refuses the void and matched bank-feed lines
+go back to review, paid liabilities and generated tax forms need confirm=true
+like the NACHA file, and a loan's balance goes back to the enrollment the run
+took it from.
 """
 
 from decimal import Decimal
@@ -365,7 +372,16 @@ def test_void_warns_when_a_direct_deposit_file_was_made(
     # make the ACH file (records an EXPORT audit row).
     assert client.get(f"/api/payroll/{run['id']}/nacha").status_code == 200
 
-    r = client.post(f"/api/payroll/{run['id']}/void")
+    # without confirm: 409 with the warning, and nothing changes.
+    first = client.post(f"/api/payroll/{run['id']}/void")
+    assert first.status_code == 409, first.text
+    detail = first.json()["detail"]
+    assert detail["code"] == "confirm_void"
+    assert "direct deposit file" in detail["warnings"][0]
+    assert client.get(f"/api/payroll/{run['id']}").json()["status"] == "processed"
+    assert _void_txn(db_session, run["id"]) is None
+
+    r = client.post(f"/api/payroll/{run['id']}/void?confirm=true")
     assert r.status_code == 200, r.text
     warnings = r.json()["warnings"]
     assert warnings, r.json()
@@ -417,3 +433,349 @@ def test_void_button_renders_only_for_processed_and_calls_void():
     assert "r.status === 'processed' ?" in PAYROLL_JS
     assert "async void(id)" in PAYROLL_JS
     assert "Pay run voided" in PAYROLL_JS
+
+
+# ---------------------------------------------------------------------------
+# Never reversed twice (#439 review, 1)
+# ---------------------------------------------------------------------------
+def _reversals_of(db, run_id, txn_id):
+    """Every entry reversing this run's posting, whichever page made it."""
+    return (
+        db.query(Transaction)
+        .filter(
+            (
+                (Transaction.source_type == "payroll_void")
+                & (Transaction.source_id == run_id)
+            )
+            | (
+                Transaction.source_type.like("%_void")
+                & (Transaction.source_type != "payroll_void")
+                & (Transaction.source_id == txn_id)
+            )
+        )
+        .all()
+    )
+
+
+def test_journal_refuses_a_payroll_entry_before_the_run_is_voided(
+    client, db_session, seed_accounts
+):
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    txn_id = _process(client, run["id"])["transaction_id"]
+
+    r = client.post(f"/api/journal/{txn_id}/void")
+    assert r.status_code == 400, r.text
+    assert "Void the pay run instead" in r.json()["detail"]
+    assert _reversals_of(db_session, run["id"], txn_id) == []
+
+    # the run void is the way, and it reverses once.
+    assert client.post(f"/api/payroll/{run['id']}/void").status_code == 200
+    assert len(_reversals_of(db_session, run["id"], txn_id)) == 1
+
+
+def test_journal_refuses_a_payroll_entry_after_the_run_is_voided(
+    client, db_session, seed_accounts
+):
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    txn_id = _process(client, run["id"])["transaction_id"]
+    before = None
+    assert client.post(f"/api/payroll/{run['id']}/void").status_code == 200
+    db_session.expire_all()
+    before = _balances(db_session)
+
+    r = client.post(f"/api/journal/{txn_id}/void")
+    assert r.status_code == 400, r.text
+    assert "Void the pay run instead" in r.json()["detail"]
+    db_session.expire_all()
+    assert _balances(db_session) == before
+    assert len(_reversals_of(db_session, run["id"], txn_id)) == 1
+
+
+def test_run_void_refuses_a_posting_already_reversed_from_the_journal(
+    client, db_session, seed_accounts
+):
+    """A company file from before the Journal refusal may already hold a
+    manual_void of a run's posting; the run void must not add a second."""
+    from app.services.accounting import create_journal_entry, reversing_lines
+
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    txn_id = _process(client, run["id"])["transaction_id"]
+    txn = db_session.get(Transaction, txn_id)
+    old = create_journal_entry(
+        db_session,
+        txn.date,
+        "VOID: payroll",
+        reversing_lines(txn.lines),
+        source_type="manual_void",
+        source_id=txn.id,
+    )
+    db_session.commit()
+    before = _balances(db_session)
+
+    r = client.post(f"/api/payroll/{run['id']}/void")
+    assert r.status_code == 400, r.text
+    assert "already reversed" in r.json()["detail"]
+    assert f"#{old.id}" in r.json()["detail"]
+    db_session.expire_all()
+    assert _balances(db_session) == before
+    assert _void_txn(db_session, run["id"]) is None
+    assert client.get(f"/api/payroll/{run['id']}").json()["status"] == "processed"
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation and the bank feed (#439 review, 2)
+# ---------------------------------------------------------------------------
+def _net_pay_line(db, txn_id, seed_accounts):
+    return next(
+        ln
+        for ln in _lines(db, txn_id)
+        if ln.account_id == seed_accounts["1000"].id and ln.credit
+    )
+
+
+def test_a_reconciled_net_pay_line_refuses_the_void(client, db_session, seed_accounts):
+    from datetime import date
+
+    from app.models.banking import Reconciliation, ReconciliationStatus
+
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    txn_id = _process(client, run["id"])["transaction_id"]
+    rec = Reconciliation(
+        account_id=seed_accounts["1000"].id,
+        statement_date=date(2026, 4, 30),
+        statement_balance=Decimal("0"),
+        status=ReconciliationStatus.COMPLETED,
+    )
+    db_session.add(rec)
+    db_session.flush()
+    _net_pay_line(db_session, txn_id, seed_accounts).reconciliation_id = rec.id
+    db_session.commit()
+    before = _balances(db_session)
+
+    r = client.post(f"/api/payroll/{run['id']}/void?confirm=true")
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "completed reconciliation" in detail
+    assert "2026-04-30" in detail and "Undo that reconciliation" in detail
+    db_session.expire_all()
+    assert _balances(db_session) == before
+    assert client.get(f"/api/payroll/{run['id']}").json()["status"] == "processed"
+
+
+def test_void_releases_the_matched_bank_feed_line(client, db_session, seed_accounts):
+    from datetime import date
+
+    from app.models.banking import BankAccount, BankTransaction
+
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    txn_id = _process(client, run["id"])["transaction_id"]
+    line = _net_pay_line(db_session, txn_id, seed_accounts)
+    line.cleared = True
+    feed = BankAccount(name="Checking feed", account_id=seed_accounts["1000"].id)
+    db_session.add(feed)
+    db_session.flush()
+    bt = BankTransaction(
+        bank_account_id=feed.id,
+        date=date(2026, 4, 20),
+        amount=-Decimal(str(line.credit)),
+        payee="Payroll",
+        transaction_id=txn_id,
+        transaction_line_id=line.id,
+        match_status="matched",
+    )
+    db_session.add(bt)
+    db_session.commit()
+    bt_id, line_id = bt.id, line.id
+
+    assert client.post(f"/api/payroll/{run['id']}/void").status_code == 200
+    db_session.expire_all()
+    bt = db_session.get(BankTransaction, bt_id)
+    assert bt.transaction_id is None and bt.transaction_line_id is None
+    assert bt.match_status == "unmatched"
+    assert db_session.get(TransactionLine, line_id).cleared is False
+
+
+# ---------------------------------------------------------------------------
+# Paid liabilities and generated tax forms need confirm (#439 review, 3)
+# ---------------------------------------------------------------------------
+def test_a_paid_941_deposit_needs_confirm(client, db_session, seed_accounts):
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    _process(client, run["id"])
+    stub = run["stubs"][0]
+    fed = stub["federal_tax"]
+    # the 941 deposit for the run's federal withholding, paid from checking.
+    dep = client.post(
+        "/api/journal",
+        json={
+            "date": "2026-05-15",
+            "description": "EFTPS 941 deposit",
+            "lines": [
+                {"account_id": seed_accounts["2310"].id, "debit": fed, "credit": 0},
+                {"account_id": seed_accounts["1000"].id, "debit": 0, "credit": fed},
+            ],
+        },
+    )
+    assert dep.status_code in (200, 201), dep.text
+
+    first = client.post(f"/api/payroll/{run['id']}/void")
+    assert first.status_code == 409, first.text
+    (w,) = first.json()["detail"]["warnings"]
+    assert w.startswith("2310 ")
+    assert f"${fed:,.2f} paid out" in w and "2026-05-15" in w
+    assert client.get(f"/api/payroll/{run['id']}").json()["status"] == "processed"
+
+    r = client.post(f"/api/payroll/{run['id']}/void?confirm=true")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "void"
+    assert r.json()["warnings"] == [w]
+
+
+def test_a_payment_before_the_pay_date_is_not_this_runs(
+    client, db_session, seed_accounts
+):
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    _process(client, run["id"])
+    client.post(
+        "/api/journal",
+        json={
+            "date": "2026-04-15",
+            "description": "March 941 deposit",
+            "lines": [
+                {"account_id": seed_accounts["2310"].id, "debit": 50, "credit": 0},
+                {"account_id": seed_accounts["1000"].id, "debit": 0, "credit": 50},
+            ],
+        },
+    )
+    r = client.post(f"/api/payroll/{run['id']}/void")
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+
+
+def test_a_generated_941_and_w2_need_confirm(
+    client, db_session, seed_accounts, monkeypatch
+):
+    from app.routes.payroll import tax_forms
+
+    monkeypatch.setattr(tax_forms, "generate_941_pdf", lambda *a, **k: b"%PDF-1.4")
+    monkeypatch.setattr(tax_forms, "generate_w2_pdf", lambda *a, **k: b"%PDF-1.4")
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    _process(client, run["id"])
+    assert client.get("/api/payroll/forms/941/2026/2/pdf").status_code == 200
+    assert (
+        client.get(f"/api/payroll/forms/w2/{emp['id']}/pdf?year=2026").status_code
+        == 200
+    )
+    # another quarter's 941 is not this run's.
+    assert client.get("/api/payroll/forms/941/2026/1/pdf").status_code == 200
+
+    first = client.post(f"/api/payroll/{run['id']}/void")
+    assert first.status_code == 409, first.text
+    warnings = first.json()["detail"]["warnings"]
+    assert len(warnings) == 2, warnings
+    assert "Form 941 for Q2 2026" in warnings[0] and "941-X" in warnings[0]
+    assert "W-2s" in warnings[1] and "Pat Worker" in warnings[1]
+    assert "W-2c" in warnings[1]
+
+    r = client.post(f"/api/payroll/{run['id']}/void?confirm=true")
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == warnings
+
+
+def test_a_form_generated_before_the_run_posted_is_not_a_warning(
+    client, db_session, seed_accounts
+):
+    from datetime import datetime, timezone
+
+    from app.models.document_audit import DocumentAudit
+
+    db_session.add(
+        DocumentAudit(
+            doc_type="941",
+            doc_key="yr2026-q2",
+            content_hash="0" * 64,
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    db_session.commit()
+    emp = _employee(client)
+    run = _run(client, emp["id"])
+    _process(client, run["id"])
+    r = client.post(f"/api/payroll/{run['id']}/void")
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Loan balance goes back to the enrollment it came from (#439 review, 4)
+# ---------------------------------------------------------------------------
+def test_loan_restore_goes_to_the_enrollment_the_run_deducted_from(
+    client, db_session, seed_accounts
+):
+    from app.models.benefits import EmployeeBenefit
+
+    emp = _employee(client)
+    loan = client.post(
+        "/api/benefits/codes",
+        json={
+            "code": "LOAN",
+            "name": "Employee loan",
+            "kind": "deduction",
+            "category": "posttax",
+            "calc_method": "fixed_amount",
+            "tracks_balance": True,
+            "sequence": 100,
+            "rate": {"employee_rate": 300},
+        },
+    )
+    assert loan.status_code in (200, 201), loan.text
+    code_id = loan.json()["id"]
+
+    def enroll(balance):
+        r = client.post(
+            "/api/benefits/enrollments",
+            json={
+                "employee_id": emp["id"],
+                "benefit_code_id": code_id,
+                "balance_remaining": balance,
+            },
+        )
+        assert r.status_code in (200, 201), r.text
+        return r.json()["id"]
+
+    # an old loan, ended with a balance still on it, then a new one.
+    old_id = enroll(500)
+    assert (
+        client.delete(
+            f"/api/benefits/enrollments/{old_id}?end_date=2026-03-31"
+        ).status_code
+        == 200
+    )
+    new_id = enroll(1000)
+
+    run = _run(client, emp["id"])
+    _process(client, run["id"])
+    db_session.expire_all()
+    assert Decimal(
+        str(db_session.get(EmployeeBenefit, new_id).balance_remaining)
+    ) == Decimal("700")
+    assert Decimal(
+        str(db_session.get(EmployeeBenefit, old_id).balance_remaining)
+    ) == Decimal("500")
+
+    r = client.post(f"/api/payroll/{run['id']}/void")
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert Decimal(
+        str(db_session.get(EmployeeBenefit, new_id).balance_remaining)
+    ) == Decimal("1000")
+    assert Decimal(
+        str(db_session.get(EmployeeBenefit, old_id).balance_remaining)
+    ) == Decimal("500")
