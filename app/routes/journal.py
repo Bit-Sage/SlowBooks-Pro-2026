@@ -29,6 +29,8 @@ from app.services.bank_posting import (
     reconciled_on,
     release_statement_links,
     replace_journal_lines,
+    uncleared_note,
+    uncleared_rows,
 )
 from app.services.bank_register import date_text
 from app.services.closing_date import check_closing_date
@@ -133,11 +135,39 @@ def _line_dict(line, acct) -> dict:
     }
 
 
-def _journal_lines(db: Session, data) -> list[dict]:
+def _line_dims_offered(db: Session) -> dict:
+    """Which line dimensions the journal form has a picker for, as
+    journal.js decides it: a line class where the company is nonprofit or
+    has a class of its own (Nonprofit.lineClassShown), a cost code where
+    there is one (CostCodes.any)."""
+    from app.models.classes import TxnClass
+    from app.models.cost_codes import CostCode
+    from app.services.settings_service import is_nonprofit
+
+    classes = is_nonprofit(db) or (
+        db.query(TxnClass.id)
+        .filter(TxnClass.is_system_default.is_(False), TxnClass.is_archived.is_(False))
+        .first()
+        is not None
+    )
+    codes = db.query(CostCode.id).filter(CostCode.is_active.is_(True)).first()
+    return {"class_id": classes, "cost_code_id": codes is not None}
+
+
+def _journal_lines(db: Session, data, edit: bool = False) -> list[dict]:
     """The posted lines from the form's fields, the same for a new entry
     and an edit: a zero line dropped, an account checked to exist, each
     line's own description, job, class, cost code, billable flag and
     (nonprofit) function carried through."""
+    # On an edit, a null class or cost code for a dimension the form has no
+    # picker for is not a choice the client made: the line keeps what it
+    # has (replace_journal_lines' carry-over), so a business company's memo
+    # fix does not strip an imported line's class (#388 review).
+    unmanaged = (
+        {key for key, shown in _line_dims_offered(db).items() if not shown}
+        if edit
+        else set()
+    )
     lines = []
     for line in data.lines:
         if line.debit == 0 and line.credit == 0:
@@ -152,16 +182,18 @@ def _journal_lines(db: Session, data) -> list[dict]:
             "debit": Decimal(str(line.debit)),
             "credit": Decimal(str(line.credit)),
             "description": line.description or "",
-            "cost_code_id": line.cost_code_id,
         }
-        # class, job and the billable flag are carried only when the request
-        # names them (the `function` trick): on an edit, a field the body
-        # leaves out keeps what the line has, so a memo fix from a client
-        # that sends bare lines doesn't clear a line's class, job or
-        # billable mark (#388 review).
-        for key in ("class_id", "job_id", "is_billable", "function"):
+        # class, job, cost code and the billable flag are carried only when
+        # the request names them (the `function` trick): on an edit, a field
+        # the body leaves out keeps what the line has, so a memo fix from a
+        # client that sends bare lines doesn't clear a line's class, job,
+        # cost code or billable mark (#388 review).
+        for key in ("class_id", "job_id", "cost_code_id", "is_billable", "function"):
             if key in line.model_fields_set:
-                row[key] = getattr(line, key)
+                value = getattr(line, key)
+                if value is None and key in unmanaged:
+                    continue
+                row[key] = value
         lines.append(row)
     return lines
 
@@ -260,6 +292,8 @@ def get_journal_entry(
     lines_data = []
     for line in txn.lines:
         lines_data.append(_line_dict(line, accounts.get(line.account_id)))
+    voided = reversed_already(db, txn)
+    recon = reconciled_on(db, txn)
     # A bank entry is edited in its register, not here: the page says so
     # and links back to the bank or card account it was posted from (the
     # line on an account with a bank kind; the entry's other lines are its
@@ -274,8 +308,6 @@ def get_journal_entry(
         ),
         None,
     )
-    voided = reversed_already(db, txn)
-    recon = reconciled_on(db, txn)
     return JournalEntryResponse(
         id=txn.id,
         date=txn.date,
@@ -407,7 +439,7 @@ def update_journal_entry(
     # only POST /api/journal and the void on this router, so PUT is 403'd
     # before the route (#340). Its GET and the register say editable is
     # false for the accountant, so no Edit is offered in the first place.
-    lines = _journal_lines(db, data)
+    lines = _journal_lines(db, data, edit=True)
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="At least 2 lines required")
     check_closing_date(db, txn.date)
@@ -491,22 +523,8 @@ def update_journal_entry(
     db.commit()
     db.refresh(txn)
     out = get_journal_entry(txn.id, db, request)
-    out.uncleared = [
-        {
-            "account_id": o["account_id"],
-            "account_name": o["account_name"],
-            "amount": str(o["debit"] - o["credit"]),
-        }
-        for o in uncleared
-    ]
-    if uncleared:
-        names = ", ".join(o["account_name"] or "line" for o in uncleared)
-        one = len(uncleared) == 1
-        out.note = (
-            f"The {names} {'line' if one else 'lines'} changed, so "
-            f"{'it is' if one else 'they are'} no longer marked cleared; tick "
-            f"{'it' if one else 'them'} again on the next reconciliation."
-        )
+    out.uncleared = uncleared_rows(uncleared)
+    out.note = uncleared_note(uncleared)
     return out
 
 

@@ -98,7 +98,14 @@ still waiting, so Save can swap which ones it includes — the dropped
 payments go back on the Make Deposits list. Both keep their amount and date
 when a completed reconciliation holds them, as a register entry does; a
 journal entry asks first before moving an amount to a different account in
-that period, and its reconciled line keeps its own account. An accountant's
+that period, and its reconciled line keeps its own account. A deposit an
+IIF or QuickBooks-report import posted with its own splits (straight to
+income, with classes and memos, not via Undeposited Funds) keeps every line:
+its date, reference, class and job can be fixed, and a change to the payments
+it takes is refused with the reason (void it and deposit again). An edit on
+a journal entry keeps each line's class and cost code unless the form has a
+picker for them. A deposit whose new total takes a cleared mark off its bank
+line says so, as the journal entry's edit does. An accountant's
 sign-in posts and voids journal entries but does not edit them, so it is
 offered no Edit on these rows.
 

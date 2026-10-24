@@ -224,8 +224,8 @@ const DepositsPage = {
         };
         if (!form.date.disabled) body.date = form.date.value;
         try {
-            await API.put(`/deposits/${id}`, body);
-            toast('Deposit saved');
+            const saved = await API.put(`/deposits/${id}`, body);
+            toast(saved && saved.note ? `Deposit saved. ${saved.note}` : 'Deposit saved');
             closeModal();
             App.navigate(location.hash.startsWith('#/banking') ? location.hash : '#/deposits');
         } catch (err) { toast(err.message, 'error'); }

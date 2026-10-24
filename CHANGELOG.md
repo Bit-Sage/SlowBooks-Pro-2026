@@ -271,6 +271,28 @@ Shown as a placeholder; type a new value only to change it." The placeholder
 stays eight characters so no password length leaks; the same new user had read
 it as a truncated password.
 
+Both follow the rules the bank-entry edit set. An entry a completed
+reconciliation holds keeps its amount and date — a change is refused with
+the same sentence ("…so its amount and date cannot be changed, just as it
+cannot be voided. Correct the difference with a new entry.") — while its
+memo, reference, class and job can still be corrected. For a journal entry,
+a change that moves an amount to a different account in a reconciled period
+warns first, with **Change it anyway** in the form, and the audit log
+records that the edit moved past that reconciliation. A line whose account
+and amount did not change keeps its cleared mark; one that changed loses
+it. A void entry is not edited, and only a hand-entered journal entry opens
+this way (an imported one keeps to its own correction path).
+
+A deposit imported from IIF or a QuickBooks report, posted with its own
+splits to income or other accounts (with their classes and memos), keeps
+every line when its date or reference is fixed; changing the payments it
+takes is refused with a reason, since reposting it as bank / Undeposited
+Funds would take its income off the books. A journal entry edited from a
+company with no line classes or cost codes keeps each line's own class and
+cost code (the form sends them only where it shows a picker for them). A
+deposit whose new total takes the cleared mark off its bank line returns the
+same note a journal entry's edit does.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).

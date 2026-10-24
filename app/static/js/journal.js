@@ -360,14 +360,20 @@ const JournalPage = {
             const debit = parseFloat(row.querySelector('.je-debit')?.value) || 0;
             const credit = parseFloat(row.querySelector('.je-credit')?.value) || 0;
             if (account_id && (debit > 0 || credit > 0)) {
-                lines.push({
+                const line = {
                     account_id: parseInt(account_id),
                     debit, credit,
                     description: row.querySelector('.je-desc')?.value || '',
-                    cost_code_id: CostCodes.fromRow(row, 'je-cost-code'),
-                    class_id: Nonprofit.fundFromRow(row, 'je-function'),
                     ...Nonprofit.linePayload(row, 'je-function'),
-                });
+                };
+                // A line's cost code and class go only when the form shows
+                // a picker for them: a business company with no classes has
+                // no class cell, and a null sent for it cleared an imported
+                // line's class on every edit (#388 review). Left out, the
+                // server keeps what the line has.
+                if (row.querySelector('.je-cost-code')) line.cost_code_id = CostCodes.fromRow(row, 'je-cost-code');
+                if (row.querySelector('.je-function-fund')) line.class_id = Nonprofit.fundFromRow(row, 'je-function');
+                lines.push(line);
             }
         });
         if (lines.length < 2) { toast('At least 2 lines required', 'error'); return; }
