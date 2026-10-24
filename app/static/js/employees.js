@@ -523,9 +523,14 @@ const EmployeesPage = {
         ['medicare_wages', 'Medicare wages'], ['medicare_tax', 'Medicare tax'],
         ['employer_medicare_tax', 'Employer Medicare tax'],
         ['futa_wages', 'FUTA wages'], ['futa_tax', 'FUTA tax'],
-        ['suta_wages', 'SUTA wages'], ['suta_tax', 'SUTA tax'],
         ['pretax_deductions', 'Pre-tax deductions'], ['posttax_deductions', 'Post-tax deductions'],
         ['garnishments', 'Garnishments'], ['net', 'Net'],
+    ],
+    // Per state, per quarter: SUTA is a state's own wage base.
+    OPENING_STATE_FIELDS: [
+        ['wages', 'Wages'], ['withholding', 'Withholding'],
+        ['suta_wages', 'SUTA wages'], ['suta_tax', 'SUTA tax'],
+        ['other_employee', 'Other (employee)'], ['other_employer', 'Other (employer)'],
     ],
 
     async _loadOpening(id, year) {
@@ -545,12 +550,13 @@ const EmployeesPage = {
         }
     },
 
-    _openingStateRow(st) {
+    _openingStateRow(st, n) {
         st = st || {};
-        const num = (k) => `<input type="number" step="0.01" min="0" data-k="${k}" value="${st[k] ?? ''}" style="width:90px">`;
+        const q = n ? `Q${n} ` : '';
+        const num = (k, label) => `<input type="number" step="0.01" min="0" data-k="${k}" value="${st[k] ?? ''}" style="width:90px" aria-label="${escapeHtml(q + (st.state ? st.state + ' ' : '') + label)}">`;
         return `<tr data-opening-state>
-            <td><input data-k="state" maxlength="2" value="${escapeHtml(st.state || '')}" style="width:40px;text-transform:uppercase" aria-label="State"></td>
-            <td>${num('wages')}</td><td>${num('withholding')}</td><td>${num('other_employee')}</td><td>${num('other_employer')}</td>
+            <td><input data-k="state" maxlength="2" value="${escapeHtml(st.state || '')}" style="width:40px;text-transform:uppercase" aria-label="${q}State"></td>
+            ${EmployeesPage.OPENING_STATE_FIELDS.map(([k, label]) => `<td>${num(k, label)}</td>`).join('')}
             <td><button type="button" class="btn btn-sm btn-secondary" onclick="this.closest('tr').remove()">Remove</button></td>
         </tr>`;
     },
@@ -567,29 +573,53 @@ const EmployeesPage = {
         </tr>`;
     },
 
-    _addOpeningRow(id, kind) {
-        const body = document.getElementById(`emp-opening-${kind}-${id}`);
+    _addOpeningRow(id, kind, quarter) {
+        const body = document.getElementById(kind === 'states'
+            ? `emp-opening-states-${id}-q${quarter}` : `emp-opening-${kind}-${id}`);
         if (!body) return;
         if (kind === 'benefits' && !(EmployeesPage._openingCodes || []).length) {
             toast('No benefit codes yet: add them under Benefits first.', 'error');
             return;
         }
         body.insertAdjacentHTML('beforeend', kind === 'states'
-            ? EmployeesPage._openingStateRow() : EmployeesPage._openingBenefitRow());
+            ? EmployeesPage._openingStateRow(null, quarter) : EmployeesPage._openingBenefitRow());
+    },
+
+    // One quarter of the old system's figures, the way QuickBooks takes
+    // YTD adjustments: the 941 for the quarter carries only these.
+    _openingQuarter(id, n, q) {
+        q = q || {};
+        const months = ['Jan–Mar', 'Apr–Jun', 'Jul–Sep', 'Oct–Dec'][n - 1];
+        const hidden = `<span class="visually-hidden">Q${n} </span>`;
+        const fields = EmployeesPage.OPENING_FIELDS.map(([k, label]) => `
+            <div class="form-group"><label for="emp-opening-${id}-q${n}-${k}">${hidden}${escapeHtml(label)}</label>
+                <input id="emp-opening-${id}-q${n}-${k}" type="number" step="0.01" min="0" data-k="${k}" value="${q[k] ?? ''}"></div>`).join('');
+        const heads = EmployeesPage.OPENING_STATE_FIELDS.map(([, label]) => `<th scope="col">${escapeHtml(label)}</th>`).join('');
+        return `<fieldset data-opening-quarter="${n}" style="margin:6px 0;border:1px solid var(--panel-border);border-radius:4px;padding:6px 10px">
+            <legend style="font-size:12px;font-weight:600">Q${n} (${months})</legend>
+            <div class="form-grid">${fields}</div>
+            <table class="data-table" style="font-size:12px">
+                <thead><tr><th scope="col">State</th>${heads}<th scope="col"></th></tr></thead>
+                <tbody id="emp-opening-states-${id}-q${n}">${(q.states || []).map(st => EmployeesPage._openingStateRow(st, n)).join('')}</tbody>
+            </table>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="EmployeesPage._addOpeningRow(${id}, 'states', ${n})">Add state<span class="visually-hidden"> to Q${n}</span></button>
+        </fieldset>`;
     },
 
     _renderOpening(id, year, data) {
         const o = data.opening || {};
-        const fields = EmployeesPage.OPENING_FIELDS.map(([k, label]) => `
-            <div class="form-group"><label>${escapeHtml(label)}</label>
-                <input type="number" step="0.01" min="0" name="${k}" value="${o[k] ?? ''}"></div>`).join('');
+        const byQ = {};
+        (o.quarters || []).forEach(q => { byQ[q.quarter] = q; });
+        const quarters = [1, 2, 3, 4].map(n => EmployeesPage._openingQuarter(id, n, byQ[n])).join('');
         const lock = data.locked
-            ? `<p id="emp-opening-lock-${id}" style="color:var(--text-warning);font-size:12px;margin:0 0 6px 0">Locked: a pay run dated ${escapeHtml(data.first_pay_date)} is processed; changes are corrections with a reason.</p>`
+            ? `<p id="emp-opening-lock-${id}" style="color:var(--text-warning);font-size:12px;margin:0 0 6px 0">Locked: a pay run dated ${escapeHtml(data.first_pay_date)} is processed; changes are corrections with a reason, and As of stays before that run.</p>`
             : '';
         return `
             <form onsubmit="EmployeesPage.saveOpening(event, ${id})" data-opening-form="${id}">
                 <p style="font-size:12px;color:var(--text-muted);margin:0 0 6px 0">
-                    What the old payroll paid this year before the first SlowBooks pay run, dated the day before it.
+                    What the old payroll paid this year before the first SlowBooks pay run, quarter by quarter,
+                    through the day before it (a May switch fills Q1 and Q2 to date). Enter the old system's
+                    taxable wages too: the Social Security, Medicare, FUTA and SUTA wage bases start from them.
                     No journal entry is made: the old system booked that payroll.
                 </p>
                 ${lock}
@@ -599,15 +629,10 @@ const EmployeesPage = {
                             onchange="EmployeesPage._loadOpening(${id}, this.value)"></div>
                     <div class="form-group"><label>As of *</label>
                         <input type="date" name="as_of" value="${escapeHtml(o.as_of || '')}" required></div>
-                    ${fields}
                 </div>
-                <h5 style="margin:8px 0 4px">States</h5>
-                <table class="data-table" style="font-size:12px">
-                    <thead><tr><th scope="col">State</th><th scope="col">Wages</th><th scope="col">Withholding</th><th scope="col">Other (employee)</th><th scope="col">Other (employer)</th><th scope="col"></th></tr></thead>
-                    <tbody id="emp-opening-states-${id}">${(o.states || []).map(st => EmployeesPage._openingStateRow(st)).join('')}</tbody>
-                </table>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="EmployeesPage._addOpeningRow(${id}, 'states')">Add state</button>
-                <h5 style="margin:8px 0 4px">Benefits</h5>
+                <h5 style="margin:8px 0 4px">Quarters</h5>
+                <div id="emp-opening-quarters-${id}">${quarters}</div>
+                <h5 style="margin:8px 0 4px">Benefits (for the year)</h5>
                 <table class="data-table" style="font-size:12px">
                     <thead><tr><th scope="col">Code</th><th scope="col">Employee</th><th scope="col">Employer</th><th scope="col"></th></tr></thead>
                     <tbody id="emp-opening-benefits-${id}">${(o.benefits || []).map(b => EmployeesPage._openingBenefitRow(b)).join('')}</tbody>
@@ -648,14 +673,24 @@ const EmployeesPage = {
         const f = e.target;
         const r = EmployeesPage._openingReason(id);
         if (!r.ok) return;
-        const body = { year: parseInt(f.year.value), as_of: f.as_of.value, states: [], benefits: [] };
-        for (const [k] of EmployeesPage.OPENING_FIELDS) body[k] = parseFloat(f[k].value) || 0;
-        f.querySelectorAll('[data-opening-state]').forEach(tr => {
-            const row = {};
-            tr.querySelectorAll('[data-k]').forEach(inp => {
-                row[inp.dataset.k] = inp.dataset.k === 'state' ? inp.value.trim().toUpperCase() : (parseFloat(inp.value) || 0);
+        const body = { year: parseInt(f.year.value), as_of: f.as_of.value, quarters: [], benefits: [] };
+        // a quarter with nothing typed in it is not sent (a May switch
+        // leaves Q3 and Q4 blank)
+        f.querySelectorAll('[data-opening-quarter]').forEach(box => {
+            const q = { quarter: parseInt(box.dataset.openingQuarter), states: [] };
+            let typed = false;
+            box.querySelectorAll('.form-grid [data-k]').forEach(inp => {
+                if (inp.value !== '') typed = true;
+                q[inp.dataset.k] = parseFloat(inp.value) || 0;
             });
-            if (row.state) body.states.push(row);
+            box.querySelectorAll('[data-opening-state]').forEach(tr => {
+                const row = {};
+                tr.querySelectorAll('[data-k]').forEach(inp => {
+                    row[inp.dataset.k] = inp.dataset.k === 'state' ? inp.value.trim().toUpperCase() : (parseFloat(inp.value) || 0);
+                });
+                if (row.state) q.states.push(row);
+            });
+            if (typed || q.states.length) body.quarters.push(q);
         });
         f.querySelectorAll('[data-opening-benefit]').forEach(tr => {
             const row = {};
@@ -666,8 +701,11 @@ const EmployeesPage = {
         });
         if (r.reason) body.reason = r.reason;
         try {
-            await API.put(`/employees/${id}/opening-ytd`, body);
-            toast('Opening balance saved');
+            const saved = await API.put(`/employees/${id}/opening-ytd`, body);
+            // a year SlowBooks has no Social Security wage base for is
+            // saved, and said (checked against the nearest year's)
+            const warn = (saved && saved.warnings) || [];
+            toast(warn.length ? `Opening balance saved. ${warn.join(' ')}` : 'Opening balance saved', warn.length ? 'warning' : undefined);
             EmployeesPage._loadOpening(id, body.year);
             EmployeesPage._loadYTD(id);
         } catch (err) {

@@ -84,6 +84,7 @@ from app.models.benefits import (
 from app.models.payroll_opening import (  # noqa: F401 — registers the tables
     PayrollOpeningBalance,
     PayrollOpeningBenefit,
+    PayrollOpeningQuarter,
     PayrollOpeningStateBalance,
 )
 
