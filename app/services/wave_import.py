@@ -16,7 +16,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.services.migration_common import (
     dry_run_bundle,
     skip_report_preamble,
@@ -65,6 +65,17 @@ _WAVE_TYPE_MAP = {
     "payroll expense": AccountType.EXPENSE,
     "uncategorized expense": AccountType.EXPENSE,
     "loss on foreign exchange": AccountType.EXPENSE,
+}
+
+# Wave's types that say more than the base type (#390).
+_WAVE_DETAIL = {
+    "property, plant, equipment": DetailType.FIXED_ASSET,
+    # accumulated depreciation nets inside Fixed Assets, as QuickBooks files it
+    "depreciation and amortization": DetailType.FIXED_ASSET,
+    "other long-term asset": DetailType.OTHER_ASSET,
+    "loan and line of credit": DetailType.LONG_TERM_LIABILITY,
+    "other long-term liability": DetailType.LONG_TERM_LIABILITY,
+    "other income": DetailType.OTHER_INCOME,
 }
 
 # Keyword fallback for Wave type strings we haven't enumerated — their
@@ -123,6 +134,7 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
                 "code": field(row, "account id", "account code") or None,
                 "name": name,
                 "type": acct_type,
+                "detail_type": _WAVE_DETAIL.get(raw_type.lower().strip()),
                 "description": field(row, "description") or None,
             }
         )

@@ -248,7 +248,7 @@ def test_balance_sheet_exports_with_prior_year(
     assert "Current,Prior year,$ Change,% Change" in text
     assert "As of 2026-06-30 compared with 2025-06-30" in text
     line = next(l for l in text.splitlines() if l.startswith("Assets,,Total Assets"))
-    assert line.endswith("500.00,200.00,300.00,150.0%")
+    assert line.endswith("500.00,200.00,300.00,150.0%,Assets")
 
     short = client.get(f"/api/reports/balance-sheet/csv?{qs}&hide_changes=1").text
     assert "$ Change" not in short

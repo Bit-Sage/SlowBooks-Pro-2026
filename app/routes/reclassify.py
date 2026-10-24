@@ -1,7 +1,8 @@
 """Reclassify (#337): the lines on an account, and the move.
 
 GET  /api/reclassify/lines   an account's lines in a period, each with
-                             whether it can move and why not
+                             whether it can move and why not; vendor_id
+                             or payee narrows them to one payee's (#394)
 POST /api/reclassify         move the ticked lines to an account and/or a
                              class; dry_run (the default) answers with the
                              plan and changes nothing
@@ -38,9 +39,13 @@ def lines(
     account_id: int = Query(...),
     start_date: date = Query(...),
     end_date: date = Query(...),
+    vendor_id: Optional[int] = Query(None),
+    payee: Optional[str] = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ):
-    return svc.lines_on_account(db, account_id, start_date, end_date)
+    return svc.lines_on_account(
+        db, account_id, start_date, end_date, vendor_id=vendor_id, payee=payee
+    )
 
 
 @router.post("")

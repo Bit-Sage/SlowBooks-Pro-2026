@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.accounts import AccountType
+from app.models.accounts import AccountType, DetailType
 from app.services.migration_common import (
     dry_run_bundle,
     field,
@@ -58,6 +58,17 @@ _ZOHO_TYPE_MAP = {
     "output tax": AccountType.LIABILITY,
 }
 
+# Zoho's types that say more than the base type (#390), one to one.
+_ZOHO_DETAIL = {
+    "fixed asset": DetailType.FIXED_ASSET,
+    "other asset": DetailType.OTHER_ASSET,
+    "accounts receivable": DetailType.ACCOUNTS_RECEIVABLE,
+    "long term liability": DetailType.LONG_TERM_LIABILITY,
+    "accounts payable": DetailType.ACCOUNTS_PAYABLE,
+    "other income": DetailType.OTHER_INCOME,
+    "other expense": DetailType.OTHER_EXPENSE,
+}
+
 classify_filename = make_classifier()
 
 
@@ -77,6 +88,7 @@ def parse_coa(csv_text: str) -> tuple[list[dict], list[str]]:
                 "code": field(row, "account code", "account number") or None,
                 "name": name,
                 "type": acct_type,
+                "detail_type": _ZOHO_DETAIL.get(zoho_type),
                 "description": field(row, "description") or None,
             }
         )

@@ -126,6 +126,7 @@ SETTINGS_READS = [
     "/api/uploads/logo",
     "/api/backups",
     "/api/email-templates",
+    "/api/invoice-messages",
     "/api/analytics/ai-config",
     "/api/classes?include_archived=true",
     "/api/cost-codes?include_inactive=true",
@@ -202,6 +203,23 @@ SETTINGS_TAKEN = {
         "/api/analytics/ai-config",
         {"provider": "anthropic", "api_key": ""},
     ),
+    # the saved invoice messages (#392) are company settings by another name
+    "Invoice Messages › + Add Message": (
+        "POST",
+        "/api/invoice-messages",
+        {"name": "Card", "body": "To pay by card, ask for a link."},
+    ),
+    "Invoice Messages › Edit": (
+        "PUT",
+        "/api/invoice-messages/{message}",
+        {"body": "To pay by Zelle use pay@example.com."},
+    ),
+    "Invoice Messages › .msg-default": (
+        "PUT",
+        "/api/invoice-messages/{message}",
+        {"is_default": True},
+    ),
+    "Invoice Messages › Delete": ("DELETE", "/api/invoice-messages/{message}", None),
 }
 # Users and API tokens refuse every API token whatever its role, so these are
 # asked with a bookkeeper's own sign-in. Settings shows the two sections to
@@ -442,6 +460,11 @@ def made(client, db_session, seed_accounts, seed_customer):
     return {
         "invoice": invoice.id,
         "template": ok(client.get("/api/email-templates"))[0]["id"],
+        "message": ok(
+            client.post(
+                "/api/invoice-messages", json={"name": "Zelle", "body": "Pay by Zelle."}
+            )
+        )["id"],
         "klass": ok(client.post("/api/classes", json={"name": "Retail"}))["id"],
         "cost_type": ok(
             client.post("/api/cost-types", json={"code": "bonding", "name": "Bond"})

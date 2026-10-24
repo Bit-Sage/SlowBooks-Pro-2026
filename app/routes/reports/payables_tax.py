@@ -3,7 +3,7 @@ from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from app.schemas.common import StrictModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
@@ -354,6 +354,26 @@ def ap_aging_report(db: Session, as_of_date: date) -> dict:
 def ap_aging(as_of_date: date = Query(default=None), db: Session = Depends(get_db)):
     """AP Aging report — mirrors AR aging but for bills."""
     return ap_aging_report(db, as_of_date or date.today())
+
+
+@router.get("/ap-aging/csv")
+def ap_aging_csv_route(
+    request: Request,
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """The A/P Aging as a spreadsheet (#393): the file the Accountant's
+    Package carries, on its own. Always the whole company, as the screen
+    is (opened from a vendor's page it only highlights their row)."""
+    from app.routes.csv import _csv_response
+    from app.routes.reports.financial import _company_name
+    from app.services.ledger_exports import aging_csv
+
+    data = ap_aging_report(db, as_of_date or date.today())
+    name = f"ap-aging_{data['as_of_date']}"
+    return _csv_response(
+        aging_csv(data, _company_name(db), "ap"), f"{name}.csv", request
+    )
 
 
 @router.get("/1099-summary")

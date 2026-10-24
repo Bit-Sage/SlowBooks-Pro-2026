@@ -34,6 +34,12 @@ class ItemType(str, enum.Enum):
     LABOR = "labor"  # itOtherCharge — labor/hourly billing
 
 
+# The item types that can hold stock, matching the form's Inventory Tracking
+# fieldset. A service or labor item with track_inventory forced on via the API
+# is not one of these, so it never posts an opening movement or value.
+TRACKABLE_ITEM_TYPES = (ItemType.PRODUCT, ItemType.MATERIAL)
+
+
 class MovementType(str, enum.Enum):
     """Reason for an inventory movement row."""
 

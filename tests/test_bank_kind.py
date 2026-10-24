@@ -42,21 +42,28 @@ def test_bank_kind_must_match_the_account_type(client, seed_accounts):
     assert r.status_code == 400
     # flipping an existing account: the kind must still fit the type
     r = client.put(
-        f"/api/accounts/{seed_accounts['1100'].id}", json={"bank_kind": "credit_card"}
+        f"/api/accounts/{seed_accounts['1400'].id}", json={"bank_kind": "credit_card"}
     )
     assert r.status_code == 400
     r = client.put(
-        f"/api/accounts/{seed_accounts['1100'].id}", json={"bank_kind": "bank"}
+        f"/api/accounts/{seed_accounts['1400'].id}", json={"bank_kind": "bank"}
     )
     assert r.status_code == 200 and r.json()["bank_kind"] == "bank"
+    assert r.json()["detail_type"] == "bank"  # #390: the detail type follows
+    # 1100 is a control account: its detail type, Accounts Receivable, is
+    # locked (#390), so it cannot become a bank account
+    r = client.put(
+        f"/api/accounts/{seed_accounts['1100'].id}", json={"bank_kind": "bank"}
+    )
+    assert r.status_code == 400 and "control account" in r.json()["detail"]
     names = sorted(
         a["name"] for a in client.get("/api/accounts?bank=1&active_only=true").json()
     )
     assert names == [
-        "Accounts Receivable",
         "Checking",
         "Credit Card",
         "Petty Cash",
+        "Prepaid Expenses",
         "Savings",
     ], names
 

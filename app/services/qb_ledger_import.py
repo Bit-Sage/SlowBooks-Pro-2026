@@ -249,6 +249,7 @@ def group_journals(lines: list[dict]) -> tuple[list[list[dict]], list[str]]:
         else:
             loose.append(group)
     errors: list[str] = []
+    journals.extend(_combine_split_numbers(loose, off))
     while loose:
         group = loose.pop(0)
         first = group[0]
@@ -275,6 +276,61 @@ def group_journals(lines: list[dict]) -> tuple[list[list[dict]], list[str]]:
         )
     journals.sort(key=lambda j: (j[0]["date"], j[0]["row"]))
     return journals, errors
+
+
+# How many same-day numbered halves one unnumbered half is tried against.
+# A deposit of a dozen customer checks is common; past this the search
+# (every subset) would grow too large, and the halves are named instead.
+_SPLIT_SEARCH_LIMIT = 12
+
+
+def _combine_split_numbers(loose: list[list[dict]], off) -> list[list[dict]]:
+    """One transaction QuickBooks printed under several numbers: a bank
+    deposit of two customer checks shows its bank line with no number and
+    each income line with that check's own number, so grouping by number
+    splits it into an unnumbered half and two numbered halves that only
+    balance together (a real 2013 deposit of 182.86 = 137.82 + 45.04, on
+    discussion #349). An unnumbered half and the same-day, same-type
+    numbered halves that add up to it are one journal. Removes what it joins
+    from ``loose`` and returns the joined journals."""
+    from itertools import combinations
+
+    joined: list[list[dict]] = []
+    for group in [g for g in loose if not g[0]["num"]]:
+        if group not in loose:
+            continue
+        first = group[0]
+        target = -off(group)
+        candidates = [
+            other
+            for other in loose
+            if other is not group
+            and other[0]["num"]
+            and other[0]["type"] == first["type"]
+            and other[0]["date"] == first["date"]
+        ]
+        if len(candidates) < 2 or len(candidates) > _SPLIT_SEARCH_LIMIT:
+            continue
+        match = None
+        for size in range(2, len(candidates) + 1):
+            match = next(
+                (
+                    combo
+                    for combo in combinations(candidates, size)
+                    if sum((off(part) for part in combo), Decimal("0")) == target
+                ),
+                None,
+            )
+            if match:
+                break
+        if not match:
+            continue
+        journal = [ln for part in match for ln in part] + group
+        for part in match:
+            loose.remove(part)
+        loose.remove(group)
+        joined.append(journal)
+    return joined
 
 
 def _reference(journal: list[dict], seen: dict) -> str:

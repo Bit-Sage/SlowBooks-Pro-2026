@@ -2,6 +2,10 @@
 # Default Chart of Accounts — the entries QuickBooks 2003 Pro created when
 # you ran the "EasyStep Interview" for a new company file. Account numbers
 # match its "Contractor" industry template.
+#
+# "detail_type" (#390) is given where the type's default is wrong for the
+# account; every other account takes the default (Bank for a bank_kind,
+# AR / AP on 1100 / 2000, else Other Current Asset, Expense, ...).
 # ============================================================================
 
 CHART_OF_ACCOUNTS = [
@@ -22,14 +26,30 @@ CHART_OF_ACCOUNTS = [
     {"account_number": "1200", "name": "Undeposited Funds", "account_type": "asset"},
     {"account_number": "1300", "name": "Inventory", "account_type": "asset"},
     {"account_number": "1400", "name": "Prepaid Expenses", "account_type": "asset"},
-    {"account_number": "1500", "name": "Equipment", "account_type": "asset"},
+    {
+        "account_number": "1500",
+        "name": "Equipment",
+        "account_type": "asset",
+        "detail_type": "fixed_asset",
+    },
     {
         "account_number": "1510",
         "name": "Accumulated Depreciation",
         "account_type": "asset",
+        "detail_type": "fixed_asset",
     },
-    {"account_number": "1600", "name": "Vehicles", "account_type": "asset"},
-    {"account_number": "1700", "name": "Other Assets", "account_type": "asset"},
+    {
+        "account_number": "1600",
+        "name": "Vehicles",
+        "account_type": "asset",
+        "detail_type": "fixed_asset",
+    },
+    {
+        "account_number": "1700",
+        "name": "Other Assets",
+        "account_type": "asset",
+        "detail_type": "other_asset",
+    },
     # Liabilities (2000s)
     {"account_number": "2000", "name": "Accounts Payable", "account_type": "liability"},
     {
@@ -85,7 +105,12 @@ CHART_OF_ACCOUNTS = [
         "name": "Accrued PTO Liability",
         "account_type": "liability",
     },
-    {"account_number": "2400", "name": "Loan Payable", "account_type": "liability"},
+    {
+        "account_number": "2400",
+        "name": "Loan Payable",
+        "account_type": "liability",
+        "detail_type": "long_term_liability",
+    },
     {
         "account_number": "2500",
         "name": "Other Current Liabilities",
@@ -104,7 +129,12 @@ CHART_OF_ACCOUNTS = [
     # account: it is created when the company switches to nonprofit, or by
     # the first in-kind gift (accounting.ensure_nonprofit_accounts), never
     # seeded into a business chart.
-    {"account_number": "4900", "name": "Other Income", "account_type": "income"},
+    {
+        "account_number": "4900",
+        "name": "Other Income",
+        "account_type": "income",
+        "detail_type": "other_income",
+    },
     # COGS (5000s)
     {"account_number": "5000", "name": "Cost of Goods Sold", "account_type": "cogs"},
     {"account_number": "5100", "name": "Materials Cost", "account_type": "cogs"},
