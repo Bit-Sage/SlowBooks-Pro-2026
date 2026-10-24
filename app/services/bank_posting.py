@@ -515,6 +515,109 @@ def replace_bank_entry(
     ]
 
 
+def replace_journal_lines(
+    db: Session,
+    txn: Transaction,
+    txn_date: date,
+    description: str,
+    lines: list[dict],
+    *,
+    source_type: str,
+    reference: str | None = None,
+    class_id: int | None = None,
+    job_id: int | None = None,
+    is_adjusting: bool = False,
+    posted_by: str | None = None,
+) -> list[dict]:
+    """Rewrite a journal entry in place (#388), the way `replace_bank_entry`
+    rewrites a register entry — for a manual journal entry or a deposit
+    opened from the register. The Transaction keeps its id (so its links,
+    attachments, statement matches and audit trail stay on the one record);
+    its lines are replaced the way a bill's are on edit (#289): balances
+    reversed, each old line a DELETE in the audit log, each new line an
+    INSERT, the header an UPDATE. A line whose account and amount did not
+    change keeps its cleared mark and its reconciliation, and the statement
+    line matched to it follows to the new row; one that changed loses them,
+    its statement line going back to review. `lines` are the new line dicts
+    (account_id, debit, credit, and any description/class/job the caller
+    sets). Returns the old lines that lost a cleared or reconciled mark."""
+    from app.models.transactions import TransactionLine
+    from app.routes.invoices.helpers import _reverse_and_delete_journal
+
+    old_lines = list(txn.lines)
+    pairs = _pair_lines(old_lines, lines)
+    old = [
+        {
+            "id": o.id,
+            "account_id": o.account_id,
+            "account_name": o.account.name if o.account else "",
+            "debit": _q(o.debit or 0),
+            "credit": _q(o.credit or 0),
+            "cleared": bool(o.cleared),
+            "reconciliation_id": o.reconciliation_id,
+        }
+        for o in old_lines
+    ]
+    keep = {
+        i: next(x for x in old if x["id"] == o.id)
+        for i, (o, n) in enumerate(zip(pairs, lines))
+        if _same_money(o, n)
+    }
+    # Detach the statement lines matched to this entry before the old lines
+    # go (a referenced row cannot be deleted), and relink the kept ones.
+    links = {
+        bt.transaction_line_id: bt
+        for bt in db.query(BankTransaction).filter(
+            BankTransaction.transaction_line_id.in_([o["id"] for o in old])
+        )
+    }
+    for bt in links.values():
+        bt.transaction_line_id = None
+    db.flush()
+    _reverse_and_delete_journal(db, txn.id)
+    db.expire(txn, ["lines"])
+    create_journal_entry(
+        db,
+        txn_date,
+        description,
+        lines,
+        source_type=source_type,
+        source_id=txn.source_id,
+        reference=reference or "",
+        class_id=class_id,
+        job_id=job_id,
+        existing_transaction=txn,
+        is_adjusting=bool(is_adjusting),
+        posted_by=posted_by if posted_by is not None else txn.posted_by,
+    )
+    db.flush()
+    new_rows = (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == txn.id)
+        .order_by(TransactionLine.id)
+        .all()
+    )
+    for i, same in keep.items():
+        ln = new_rows[i]
+        ln.cleared = same["cleared"]
+        ln.reconciliation_id = same["reconciliation_id"]
+        bt = links.pop(same["id"], None)
+        if bt is not None:
+            bt.transaction_line_id = ln.id
+    for bt in links.values():
+        bt.transaction_id = None
+        bt.match_status = "unmatched"
+        bt.category_account_id = None
+    db.flush()
+    db.refresh(txn)
+    kept = {v["id"] for v in keep.values()}
+    return [
+        o
+        for o in old
+        if o["id"] not in kept and (o["cleared"] or o["reconciliation_id"])
+    ]
+
+
 def assert_not_reconciled(txn: Transaction) -> None:
     if any(ln.reconciliation_id for ln in txn.lines):
         raise HTTPException(

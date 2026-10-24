@@ -1096,9 +1096,13 @@ def check_register(
             and not e["voided"]
             and e["reconciliation_id"] is None
         )
-        # a register entry opens for editing (#388), a reconciled one too
-        # (its amount and date stay as they are); a void one does not
-        row["editable"] = e["source_type"] == "bank_entry" and not e["voided"]
+        # a register entry, a hand-entered journal entry and a deposit open
+        # for editing (#388), a reconciled one too (its amount and date stay
+        # as they are); a void one does not. The row's editor follows its
+        # source: the + Entry form, the journal form, the deposit form.
+        row["editable"] = (
+            e["source_type"] in ("bank_entry", "manual", "deposit") and not e["voided"]
+        )
         # a check written here or as an expense prints (discussion #354):
         # money out of a bank account, not a card, not void
         row["printable"] = (
