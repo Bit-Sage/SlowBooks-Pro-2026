@@ -580,6 +580,14 @@ payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
 
+### Unreleased
+
+Starting a reconciliation while one is already open for the account no longer
+quietly throws away the statement date and ending balance you just typed
+(#497). The server still answers that only one session can be open at a time,
+but the screen now says which statement is open and offers to move it onto the
+date and balance you just entered; confirm and it does, cancel and the open
+session is reopened unchanged.
 
 ### v2.28.0 — Account types and sub-accounts
 
