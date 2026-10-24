@@ -72,3 +72,31 @@ def test_no_recipient_falls_back_to_customer_email(
     r = client.post(f"/api/invoices/{inv_id}/email", json={})
     assert r.status_code == 200, r.text
     assert captured["to_email"] == "billing@acme.test"
+
+
+def test_preview_shows_the_address_the_send_would_use(
+    client, db_session, seed_accounts
+):
+    """The preview used to echo the typed recipient (null) while the send
+    fell back to the customer's email; both now settle it the same way."""
+    cust = _customer(db_session, email="billing@acme.test")
+    inv_id = _invoice(client, cust.id)
+
+    r = client.post(f"/api/invoices/{inv_id}/email-preview", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient"] == "billing@acme.test"
+
+    r = client.post(
+        f"/api/invoices/{inv_id}/email-preview",
+        json={"recipient": " owner@acme.test "},
+    )
+    assert r.json()["recipient"] == "owner@acme.test"
+
+
+def test_preview_with_no_address_anywhere_is_null(client, db_session, seed_accounts):
+    cust = _customer(db_session, email=None)
+    inv_id = _invoice(client, cust.id)
+    r = client.post(f"/api/invoices/{inv_id}/email-preview", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient"] is None
+    assert db_session.query(EmailLog).count() == 0

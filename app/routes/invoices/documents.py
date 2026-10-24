@@ -65,6 +65,13 @@ def invoice_print_preview(invoice_id: int, db: Session = Depends(get_db)):
     return HTMLResponse(content=html_str)
 
 
+def _email_recipient(inv: Invoice, data: _EmailInvoiceRequest) -> str:
+    """The typed address, else the customer's email on file, else ""."""
+    return (data.recipient or "").strip() or (
+        (inv.customer.email or "").strip() if inv.customer else ""
+    )
+
+
 @router.post("/{invoice_id}/email-preview")
 def email_invoice_preview(
     invoice_id: int,
@@ -94,7 +101,9 @@ def email_invoice_preview(
     subject, html_body = render_invoice_email_parts(
         inv, company, pay_url=pay_url, note=data.message, db=db, subject=data.subject
     )
-    return {"recipient": data.recipient, "subject": subject, "html_body": html_body}
+    # The address the send would use: typed, else the customer's (#496).
+    recipient = _email_recipient(inv, data) or None
+    return {"recipient": recipient, "subject": subject, "html_body": html_body}
 
 
 @router.post("/{invoice_id}/email")
@@ -113,9 +122,7 @@ def email_invoice(
     # empty recipient would crash send_email() on its own log row — and the
     # outer except would crash again logging the same None — instead of a
     # clean bounce (#496).
-    recipient = (data.recipient or "").strip() or (
-        (inv.customer.email or "").strip() if inv.customer else ""
-    )
+    recipient = _email_recipient(inv, data)
     if not recipient:
         raise HTTPException(
             status_code=400,

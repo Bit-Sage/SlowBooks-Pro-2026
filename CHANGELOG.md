@@ -15,7 +15,9 @@ address — leaving the operator an unhandled 500. The route now settles the
 recipient first (the typed address, else the customer's email on file) and,
 with neither, answers 400 asking for one before anything is logged. The
 statement and collection-letter sends already skipped a customer with no
-email, so they were left as they were.
+email, so they were left as they were. The email preview now shows the same
+address the send will use (it showed the typed one, empty, while the send
+went to the customer's email on file).
 
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
