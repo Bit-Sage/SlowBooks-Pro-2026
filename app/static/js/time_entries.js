@@ -188,7 +188,7 @@ const TimeEntriesPage = {
     async postToJob(id) {
         try {
             const r = await API.post(`/time-entries/${id}/post-to-job`, {});
-            toast(`${r.number} posted: ${formatCurrency(r.total)}`);
+            toastPosted(`${r.number} posted: ${formatCurrency(r.total)}`);
             App.navigate('#/hr/time-entries');
         } catch (err) { toast(err.message, 'error'); }
     },

@@ -422,7 +422,7 @@ const SalesReceiptsPage = {
         try {
             const result = await API.post('/sales-receipts', data);
             await ScanHelper.attachAfterSave('invoice', result.invoice.id);
-            toast(`${T('Sales Receipt')} #${result.invoice.invoice_number} recorded`);
+            toastPosted(`${T('Sales Receipt')} #${result.invoice.invoice_number} recorded`);
             App.refresh();
         } catch (err) { toast(err.message, 'error'); }
     },

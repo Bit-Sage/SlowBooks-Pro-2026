@@ -170,7 +170,7 @@ const JobCostsPage = {
         if (!lines.length) { toast('Add at least one line with a quantity and rate', 'error'); return; }
         try {
             const jc = await API.post('/job-costs', { date: form.date.value, job_id: parseInt(form.job_id.value), memo: form.memo.value || null, lines });
-            toast(`${jc.number} posted: ${formatCurrency(jc.total)}`);
+            toastPosted(`${jc.number} posted: ${formatCurrency(jc.total)}`);
             closeModal();
             JobCostsPage._afterChange();
         } catch (err) { toast(err.message, 'error'); }

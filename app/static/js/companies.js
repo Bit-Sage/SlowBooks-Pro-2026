@@ -234,7 +234,7 @@ const CompaniesPage = {
             document.getElementById('ac-preview').innerHTML = CompaniesPage._previewHtml(done);
             const apply = document.getElementById('ac-apply-btn');
             if (apply) apply.classList.add('hidden');
-            toast(`${done.counts.posted} entr${done.counts.posted === 1 ? 'y' : 'ies'} posted as adjusting entries`);
+            toastPosted(`${done.counts.posted} entr${done.counts.posted === 1 ? 'y' : 'ies'} posted as adjusting entries`);
         } catch (err) { toast(err.message, 'error'); }
     },
 

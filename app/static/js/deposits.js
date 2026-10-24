@@ -205,7 +205,7 @@ const DepositsPage = {
                 class_id: $('#deposit-class')?.value ? parseInt($('#deposit-class').value) : null,
                 line_ids: lineIds,
             });
-            toast(`Deposited ${formatCurrency(total)}`);
+            toastPosted(`Deposited ${formatCurrency(total)}`);
             App.navigate('#/deposits');
         } catch (err) { toast(err.message, 'error'); }
     },

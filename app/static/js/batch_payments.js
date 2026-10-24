@@ -120,7 +120,7 @@ const BatchPaymentsPage = {
                 reference: form.reference.value || null,
                 allocations,
             });
-            toast(`${result.payments_created} payment(s) created`);
+            toastPosted(`${result.payments_created} payment(s) created`);
             App.navigate('#/batch-payments');
         } catch (err) { toast(err.message, 'error'); }
     },

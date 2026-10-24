@@ -767,7 +767,9 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
   forecast, open POs, receipts to review, jobs budget vs actual), reset to
   standard.
 - Optional post sound: a short chime when a transaction posts, off by default,
-  a per-user toggle in Settings → Sounds that follows you across machines (#476).
+  a per-user toggle in Settings → Sounds that follows you across machines (#476);
+  postings only (not deletes, voids or settings), hidden for read-only and
+  accountant sign-ins.
 - Export parity: IIF export covers classes (list + CLASS column), Customer:Job
   rows, bills, deposits and sales receipts; CSV export adds bills, deposits,
   sales receipts, classes and jobs. Full export re-imports cleanly.

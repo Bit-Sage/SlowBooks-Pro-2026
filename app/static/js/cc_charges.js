@@ -91,7 +91,7 @@ const CCChargesPage = {
                 ...Nonprofit.formPayload(form),
                 job_id: jobIdFromForm(form),
             });
-            toast('Credit card charge recorded');
+            toastPosted('Credit card charge recorded');
             closeModal();
             App.navigate('#/cc-charges');
         } catch (err) { toast(err.message, 'error'); }

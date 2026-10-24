@@ -235,7 +235,7 @@ const CreditMemosPage = {
             const saved = await SalesLines.sendAllowingZero(flags =>
                 API.post('/credit-memos', { ...data, ...flags }));
             if (!saved) return;
-            toast('Credit memo created');
+            toastPosted('Credit memo created');
             closeModal();
             App.navigate('#/credit-memos');
         } catch (err) { toast(err.message, 'error'); }

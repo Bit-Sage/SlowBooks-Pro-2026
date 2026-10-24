@@ -210,7 +210,7 @@ const FixedAssetsPage = {
                 description: form.description.value || null,
                 acquisition,
             });
-            toast(acquisition.method === 'in_books' ? 'Asset registered' : 'Asset registered and its purchase posted');
+            toastPosted(acquisition.method === 'in_books' ? 'Asset registered' : 'Asset registered and its purchase posted');
             closeModal();
             App.navigate('#/fixed-assets');
         } catch (err) { toast(err.message, 'error'); }
@@ -238,7 +238,7 @@ const FixedAssetsPage = {
         if (!acquisition) { toast('Choose the bill or expense the asset was bought on.', 'error'); return; }
         try {
             await API.post(`/fixed-assets/${assetId}/post-purchase`, acquisition);
-            toast('Purchase posted');
+            toastPosted('Purchase posted');
             closeModal();
             App.navigate('#/fixed-assets');
         } catch (err) { toast(err.message, 'error'); }
@@ -267,7 +267,7 @@ const FixedAssetsPage = {
             const result = await API.post('/fixed-assets/run-depreciation', {
                 run_date: e.target.run_date.value,
             });
-            toast(`Depreciation posted for ${result.posted} assets (${formatCurrency(result.total)}); ${result.skipped} skipped`);
+            toastPosted(`Depreciation posted for ${result.posted} assets (${formatCurrency(result.total)}); ${result.skipped} skipped`);
             closeModal();
             App.navigate('#/fixed-assets');
         } catch (err) { toast(err.message, 'error'); }
