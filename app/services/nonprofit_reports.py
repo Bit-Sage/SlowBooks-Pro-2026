@@ -58,6 +58,8 @@ from app.services.statement_layout import (
     account_path,
     bs_group_totals,
     bs_groups,
+    bs_print_details,
+    mark_bs_lines,
     family_rows,
 )
 
@@ -214,8 +216,13 @@ def _net_releases(db: Session, start: Optional[date], end: Optional[date]) -> De
 def statement_of_financial_position(db: Session, as_of: date) -> dict:
     with_id = get_net_assets_with_restriction_id(db)
     without_id = get_net_assets_without_restriction_id(db)
-    assets = _account_totals(db, AccountType.ASSET, None, as_of)
-    liabilities = _account_totals(db, AccountType.LIABILITY, None, as_of)
+    # a default-typed sub-account prints in its parent's group, as on the
+    # Balance Sheet (2.28.0): display only
+    placed = bs_print_details(db)
+    assets = mark_bs_lines(_account_totals(db, AccountType.ASSET, None, as_of), placed)
+    liabilities = mark_bs_lines(
+        _account_totals(db, AccountType.LIABILITY, None, as_of), placed
+    )
     equity = _account_totals(db, AccountType.EQUITY, None, as_of)
 
     real = {r["account_id"]: Decimal(str(r["amount"])) for r in equity}

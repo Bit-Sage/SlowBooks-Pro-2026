@@ -17,6 +17,8 @@ from app.services.statement_layout import (
     account_chart,
     bs_group_totals,
     bs_groups,
+    bs_print_details,
+    mark_bs_lines,
     family_rows,
 )
 from app.services.terminology import Terms, terms_from_db
@@ -285,12 +287,14 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
     # The rows are floats: totals rounded to the cent, or 777.40 of sales
     # less cost answers 777.4000000000001 and stops matching the by-class
     # grid, which sums in Decimal (#413). The Other sections (#390) the same.
-    total_income = round(sum(i["amount"] for i in income), 2)
+    total_operating_income = round(sum(i["amount"] for i in income), 2)
     total_cogs = round(sum(c["amount"] for c in cogs), 2)
-    total_expenses = round(sum(e["amount"] for e in expenses), 2)
+    total_operating_expenses = round(sum(e["amount"] for e in expenses), 2)
     total_other_income = round(sum(i["amount"] for i in other_income), 2)
     total_other_expense = round(sum(e["amount"] for e in other_expense), 2)
-    net_operating_income = round(total_income - total_cogs - total_expenses, 2)
+    net_operating_income = round(
+        total_operating_income - total_cogs - total_operating_expenses, 2
+    )
     net_other_income = round(total_other_income - total_other_expense, 2)
 
     return {
@@ -305,10 +309,15 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
         "expenses": expenses,
         "other_income": other_income,
         "other_expense": other_expense,
-        "total_income": total_income,
+        # total_income / total_expenses keep their 2.27.0 meaning for API
+        # clients: every income / expense account, Other included. The
+        # statement prints the operating sections' own totals (#390).
+        "total_income": round(total_operating_income + total_other_income, 2),
+        "total_operating_income": total_operating_income,
         "total_cogs": total_cogs,
-        "gross_profit": round(total_income - total_cogs, 2),
-        "total_expenses": total_expenses,
+        "gross_profit": round(total_operating_income - total_cogs, 2),
+        "total_expenses": round(total_operating_expenses + total_other_expense, 2),
+        "total_operating_expenses": total_operating_expenses,
         "net_operating_income": net_operating_income,
         "total_other_income": total_other_income,
         "total_other_expense": total_other_expense,
@@ -394,6 +403,8 @@ _PL_TOTALS = (
     "total_other_income",
     "total_other_expense",
     "net_other_income",
+    "total_operating_income",
+    "total_operating_expenses",
 )
 # the P&L's account sections, in print order
 _PL_SECTIONS = ("income", "cogs", "expenses", "other_income", "other_expense")
@@ -549,8 +560,11 @@ def _bs_period(db, as_of_date, sort, t, chart) -> dict:
             db, acct_type, date_end=as_of_date, sort=order, chart=chart
         )
 
-    assets = totals(AccountType.ASSET, sort)
-    liabilities = totals(AccountType.LIABILITY, sort)
+    # a default-typed sub-account prints in its parent's group (2.28.0):
+    # display only, its detail type and figures stay its own
+    placed = bs_print_details(index=chart)
+    assets = mark_bs_lines(totals(AccountType.ASSET, sort), placed)
+    liabilities = mark_bs_lines(totals(AccountType.LIABILITY, sort), placed)
     equity = totals(AccountType.EQUITY, sort)
 
     # Round the totals to the cent as the P&L does (profit_loss above), so a
@@ -1064,11 +1078,15 @@ def _pl_pivot(
                     t[f] += b[f]
         operating = t["income"] - t["cogs"] - t["expenses"]
         other = t["other_income"] - t["other_expense"]
+        # income / expenses as in 2.27.0 (Other included); the operating
+        # sections' totals beside them, for the rows the grid prints (#390)
         return {
-            "income": float(t["income"]),
+            "income": float(t["income"] + t["other_income"]),
+            "operating_income": float(t["income"]),
             "cogs": float(t["cogs"]),
             "gross_profit": float(t["income"] - t["cogs"]),
-            "expenses": float(t["expenses"]),
+            "expenses": float(t["expenses"] + t["other_expense"]),
+            "operating_expenses": float(t["expenses"]),
             "net_operating_income": float(operating),
             "other_income": float(t["other_income"]),
             "other_expense": float(t["other_expense"]),
@@ -1123,9 +1141,11 @@ def _pl_pivot(
         "columns": columns,
         "accounts": accounts,
         "total_income": shown["income"],
+        "total_operating_income": shown["operating_income"],
         "total_cogs": shown["cogs"],
         "total_gross_profit": shown["gross_profit"],
         "total_expenses": shown["expenses"],
+        "total_operating_expenses": shown["operating_expenses"],
         "total_net_operating_income": shown["net_operating_income"],
         "total_other_income": shown["other_income"],
         "total_other_expense": shown["other_expense"],
@@ -1208,9 +1228,11 @@ def profit_loss_by_class(
             "archived": c["inactive"],
             "empty": c["empty"],
             "income": c["income"],
+            "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
             "expenses": c["expenses"],
+            "operating_expenses": c["operating_expenses"],
             "net_operating_income": c["net_operating_income"],
             "other_income": c["other_income"],
             "other_expense": c["other_expense"],
@@ -1308,9 +1330,11 @@ def profit_loss_by_job(
             "inactive": c["inactive"],
             "empty": c["empty"],
             "income": c["income"],
+            "operating_income": c["operating_income"],
             "cogs": c["cogs"],
             "gross_profit": c["gross_profit"],
             "expenses": c["expenses"],
+            "operating_expenses": c["operating_expenses"],
             "net_operating_income": c["net_operating_income"],
             "other_income": c["other_income"],
             "other_expense": c["other_expense"],
@@ -1507,10 +1531,10 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
         rows.append(total(f"Total {label}", total_key))
 
     rows = []
-    section(t("Income"), "income", "total_income")
+    section(t("Income"), "income", "total_operating_income")
     section("Cost of Goods Sold", "cogs", "total_cogs")
     rows.append(total("Gross Profit", "gross_profit"))
-    section("Expenses", "expenses", "total_expenses")
+    section("Expenses", "expenses", "total_operating_expenses")
     if data.get("has_other"):
         # below Net Operating Income, only when there is something (#390)
         rows.append(total(t("Net Operating Income"), "net_operating_income"))
@@ -1546,7 +1570,13 @@ def _grid_layout(data: dict, t) -> list[tuple]:
     total key). Other Income / Other Expense below Net Operating Income
     when the grid has either (#390), as the P&L prints them."""
     out = [
-        (t("Income"), "income", t("Total Income"), "income", "total_income"),
+        (
+            t("Income"),
+            "income",
+            t("Total Income"),
+            "operating_income",
+            "total_operating_income",
+        ),
         (
             "Cost of Goods Sold",
             "cogs",
@@ -1554,7 +1584,13 @@ def _grid_layout(data: dict, t) -> list[tuple]:
             "gross_profit",
             "total_gross_profit",
         ),
-        ("Expenses", "expenses", "Total Expenses", "expenses", "total_expenses"),
+        (
+            "Expenses",
+            "expenses",
+            "Total Expenses",
+            "operating_expenses",
+            "total_operating_expenses",
+        ),
     ]
     if data.get("has_other"):
         out.append(

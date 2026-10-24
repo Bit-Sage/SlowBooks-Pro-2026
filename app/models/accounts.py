@@ -119,9 +119,27 @@ def detail_label(detail) -> str:
     return DETAIL_TYPES[d][0] if d else ""
 
 
-def default_detail_type(account_type, bank_kind=None, number=None) -> DetailType:
+def default_detail_type(
+    account_type, bank_kind=None, number=None, name=None
+) -> DetailType:
     """The detail type an account gets when nobody chose one: Bank / Credit
-    Card for a bank kind, AR / AP on 1100 / 2000, else the type's default."""
+    Card for a bank kind, AR / AP on 1100 / 2000, else the type's default.
+
+    With `name` — an account being CREATED with no detail type given (the
+    API's POST, the importers, the model hook on insert) — 2.27.0's number
+    and name rule picks it first (the owner's call for 2.28.0, in
+    app/services/legacy_placement.py): an asset it calls non-current
+    (1500-1999, named like equipment, accumulated depreciation) is a Fixed
+    Asset, a liability named like long-term debt (not a card) a Long Term
+    Liability, so a new "Truck Loan" is financing as 2.27.0 had it. A
+    control account keeps its control default. Without `name` (a retype, a
+    report asking what the plain default is) the rule is not read.
+
+    Precedence on create, everywhere: a detail type given wins; a
+    sub-account under a parent other than 1100, 2000, a bank or a card
+    takes its parent's (#428 / #430: the family stays together); otherwise
+    — a top-level account, or one under a pinned parent, which stands
+    alone — this rule, then the type's default."""
     atype = _enum(AccountType, account_type)
     if (
         bank_kind in _BANK_KIND_DETAIL
@@ -131,6 +149,15 @@ def default_detail_type(account_type, bank_kind=None, number=None) -> DetailType
     for detail, (num, base) in _SUBLEDGER_NUMBER.items():
         if str(number or "") == num and atype == base:
             return detail
+    if name is not None:
+        from app.services import control_accounts, legacy_placement
+
+        if not control_accounts.is_control(number, atype):
+            ruled = legacy_placement.new_account_detail_type(
+                atype, name, number, bank_kind
+            )
+            if ruled:
+                return DetailType(ruled)
     return _TYPE_DEFAULT[atype]
 
 
@@ -261,13 +288,17 @@ def _fits(detail, target) -> bool:
     return problem is None
 
 
-def _settle_detail_type(connection, target, parent_changed: bool) -> None:
+def _settle_detail_type(
+    connection, target, parent_changed: bool, creating: bool = False
+) -> None:
     """Keep detail_type set and consistent on every ORM write: the API has
     already checked and refused, so this only acts on the paths that build
     or change an Account directly (importers, late fees, FX, job costing,
     benefits). A detail type the row declares wins while it fits; a row
     built with none (or one that no longer fits) takes its parent's when
-    that fits (QuickBooks' own rule), else the default for its type."""
+    that fits (QuickBooks' own rule), else the default — on insert
+    (`creating`) the default by 2.27.0's number and name rule (see
+    default_detail_type), on an update the type's plain default."""
     if target.account_type is None:
         return
     own = target.detail_type
@@ -281,7 +312,10 @@ def _settle_detail_type(connection, target, parent_changed: bool) -> None:
         target.detail_type = parent
     elif not own:
         target.detail_type = default_detail_type(
-            target.account_type, target.bank_kind, target.account_number
+            target.account_type,
+            target.bank_kind,
+            target.account_number,
+            name=(target.name or "") if creating else None,
         )
 
 
@@ -291,7 +325,10 @@ def _detail_type_on_insert(_mapper, connection, target):
     # parent linked in a later flush of the same session (chart import).
     built_without = not target.detail_type
     _settle_detail_type(
-        connection, target, bool(target.parent_id or target.__dict__.get("parent"))
+        connection,
+        target,
+        bool(target.parent_id or target.__dict__.get("parent")),
+        creating=True,
     )
     if built_without:
         target.__dict__["_detail_type_defaulted"] = True

@@ -286,14 +286,25 @@ def _migration():
 
 
 def test_the_backfill_and_the_cash_flow_share_the_accumulated_rule():
-    """The migration keeps its own copy of the name rules so it never
-    changes. The cash flow statement reads the detail type now (#390), and
+    """The number and name rules live once, frozen, in legacy_placement:
+    the migration's backfill reads them, and so does a new account's default
+    (2.28.0). The cash flow statement reads the detail type now (#390), and
     keeps one of them: accumulated depreciation, which is a Fixed Asset like
     the asset it wears down, is found by the register and by name."""
-    from app.services import cash_flow
+    from app.services import cash_flow, legacy_placement
 
     mod = _migration()
-    assert mod._ACCUMULATED.pattern == cash_flow._ACCUMULATED.pattern
+    assert mod._ACCUMULATED is legacy_placement.ACCUMULATED
+    assert mod._FIXED_ASSET is legacy_placement.FIXED_ASSET
+    assert mod._LONG_TERM_DEBT is legacy_placement.LONG_TERM_DEBT
+    assert cash_flow._ACCUMULATED is legacy_placement.ACCUMULATED
+    # 2.27.0's patterns, unchanged
+    assert legacy_placement.FIXED_ASSET.pattern.startswith(
+        r"\b(equipment|vehicles?|furniture"
+    )
+    assert legacy_placement.LONG_TERM_DEBT.pattern.startswith(
+        r"\b(loans?|notes? payable|mortgages?"
+    )
     assert not hasattr(cash_flow, "_FIXED_ASSET")
     assert not hasattr(cash_flow, "_LONG_TERM_DEBT")
 

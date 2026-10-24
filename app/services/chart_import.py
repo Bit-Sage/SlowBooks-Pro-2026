@@ -760,10 +760,16 @@ def _planned_detail(r: Row, target: Account | None, entry: dict) -> str:
         )
         if problem is None:
             return r.detail_type
-        fell_back = default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+        fell_back = default_detail_type(
+            r.type, r.bank_kind, entry.get("number"), name=r.name
+        ).value
         _note_detail_fallback(entry, r.detail_type, fell_back)
         return fell_back
-    return default_detail_type(r.type, r.bank_kind, entry.get("number")).value
+    # none in the file: the default a new account gets, by 2.27.0's number
+    # and name rule (default_detail_type), as the model gives it on apply
+    return default_detail_type(
+        r.type, r.bank_kind, entry.get("number"), name=r.name
+    ).value
 
 
 def _flag_parent_types(db: Session, plan: Plan) -> None:

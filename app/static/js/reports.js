@@ -1168,13 +1168,13 @@ const ReportsPage = {
                     <tbody>
                         ${head(T('Income'))}
                         ${section(data.income, 'income')}
-                        ${total(T('Total Income'), 'total_income', sub)}
+                        ${total(T('Total Income'), 'total_operating_income', sub)}
                         ${head('Cost of Goods Sold')}
                         ${section(data.cogs, 'cogs')}
                         ${total('Gross Profit', 'gross_profit', sub)}
                         ${head('Expenses')}
                         ${section(data.expenses, 'expenses')}
-                        ${total('Total Expenses', 'total_expenses', sub)}
+                        ${total('Total Expenses', 'total_operating_expenses', sub)}
                         ${ReportsPage._plOther(data, head, section, (label, key) => total(label, key, sub))}
                         ${total(T('Net Income'), 'net_income', 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                     </tbody>
@@ -2139,6 +2139,7 @@ ReportsPage._gridTotals = function (data) {
     return {
         income: data.total_income, cogs: data.total_cogs, gross_profit: data.total_gross_profit,
         expenses: data.total_expenses, net_operating_income: data.total_net_operating_income,
+        operating_income: data.total_operating_income, operating_expenses: data.total_operating_expenses,
         other_income: data.total_other_income, other_expense: data.total_other_expense,
         net_other_income: data.total_net_other_income, net_income: data.total_net_income,
     };
@@ -2188,11 +2189,11 @@ ReportsPage._pivotGrid = function (spec) {
                 <thead><tr><th scope="col">Account</th>${heads}<th scope="col" class="amount">${escapeHtml(spec.totalLabel || 'Total')}</th></tr></thead>
                 <tbody>
                     ${section(T('Income'), spec.accounts.income)}
-                    ${sum(T('Total Income'), 'income', subtotal)}
+                    ${sum(T('Total Income'), 'operating_income', subtotal)}
                     ${section('Cost of Goods Sold', spec.accounts.cogs)}
                     ${sum('Gross Profit', 'gross_profit', subtotal)}
                     ${section('Expenses', spec.accounts.expenses)}
-                    ${sum('Total Expenses', 'expenses', subtotal)}
+                    ${sum('Total Expenses', 'operating_expenses', subtotal)}
                     ${spec.hasOther ? sum(T('Net Operating Income'), 'net_operating_income', subtotal)
                         + ((spec.accounts.other_income || []).length ? section(T('Other Income'), spec.accounts.other_income) + sum(T('Total Other Income'), 'other_income', subtotal) : '')
                         + ((spec.accounts.other_expense || []).length ? section('Other Expense', spec.accounts.other_expense) + sum('Total Other Expense', 'other_expense', subtotal) : '')
@@ -2608,13 +2609,13 @@ ReportsPage.profitLossOfClass = async function (classId, className, prefill, fro
                 <tbody>
                     <tr><td><strong>${T('Income')}</strong></td><td></td></tr>
                     ${section(data.income, 'income')}
-                    ${subtotal(T('Total Income'), data.total_income)}
+                    ${subtotal(T('Total Income'), data.total_operating_income)}
                     <tr><td><strong>Cost of Goods Sold</strong></td><td></td></tr>
                     ${section(data.cogs, 'cogs')}
                     ${subtotal('Gross Profit', data.gross_profit)}
                     <tr><td><strong>Expenses</strong></td><td></td></tr>
                     ${section(data.expenses, 'expenses')}
-                    ${subtotal('Total Expenses', data.total_expenses)}
+                    ${subtotal('Total Expenses', data.total_operating_expenses)}
                     ${ReportsPage._plOther(data, (label) => `<tr><td><strong>${label}</strong></td><td></td></tr>`, section, (label, key) => subtotal(label, data[key]))}
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>${T('Net Income')}</td><td class="amount">${formatCurrency(data.net_income)}</td></tr>
                 </tbody>

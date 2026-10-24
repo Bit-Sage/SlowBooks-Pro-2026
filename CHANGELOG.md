@@ -60,14 +60,23 @@ Current / Long Term Liabilities, each with its subtotal, on the screen, in
 the PDF (and the accountant's package) and in the CSV, whose Section column
 is now the group, with the side in a new last column, Type. A group with no
 account is left out; accumulated depreciation is a Fixed Asset and nets
-inside its group; the prior-year columns carry the subtotals. The nonprofit
+inside its group; the prior-year columns carry the subtotals. A
+sub-account still at its default detail type prints in its parent's group,
+with its family (1520 Trucks under 1500 Equipment among the Fixed Assets,
+Accrued Interest under a loan among the Long Term Liabilities); its detail
+type, its cash flow line and every figure stay its own, and one given
+another detail type keeps its group. The nonprofit
 Statement of Financial Position groups the same way. The Profit & Loss
 prints Other Income and Other Expense below Net Operating Income, with Net
 Other Income; Net Income is the same figure, and a company with nothing in
 them sees the P&L it saw, Net Operating Income included only when there is
-something below it. Total Income and Total Expenses no longer include the
-Other Income / Other Expense accounts (4900 Other Income, 6999 and 7999
-among them): the two together are the old figures. P&L by Class and by Job
+something below it. The printed Total Income and Total Expenses no longer
+include the Other Income / Other Expense accounts (4900 Other Income, 6999
+and 7999 among them): the two together are the old figures. The API keeps
+`total_income` and `total_expenses` as they were (every income / expense
+account, Other included) and adds `total_operating_income` and
+`total_operating_expenses` for the printed figures (on the grids, also
+`operating_income` / `operating_expenses` per column). P&L by Class and by Job
 get the same rows, so the three reports tie line for line; the Classes list
 counts other income and expense with income and expenses, as before. The
 cash flow statement reads the detail type instead of guessing from numbers
@@ -76,7 +85,12 @@ financing; the fixed-asset register's accounts stay investing and
 accumulated depreciation an adjustment. The upgrade's detail types put
 every account where the old rules did, so an upgraded company's statement
 is unchanged.
-An account made without a detail type is current, however it is named.
+An account created without a detail type (the register's Add account panel,
+the API, the chart import, the QuickBooks and other imports) takes it from 2.27.0's
+number and name rule: an asset numbered 1500–1999 or named like equipment
+is a Fixed Asset, a liability named like a loan, note or mortgage a Long
+Term Liability, so a new Truck Loan is financing as before; a sub-account
+still shares its parent's, and a type given always wins.
 The QuickBooks Online report import brings Cost of Goods Sold in as cost of
 goods sold, above Gross Profit; it came in as an expense.
 

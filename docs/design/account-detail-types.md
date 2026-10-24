@@ -550,6 +550,13 @@ because both change how the statements present accounts.
   heading the new `group` style. The CSV's new Type column is the last one,
   so a sheet reading Account name and Amount by position still lines up.
   SoFP: assets and liabilities grouped, Net Assets untouched, as proposed.
+  **Default-typed sub-accounts (2.28.0, owner's call):** a sub-account whose
+  detail type is still a default — the type's for its number, the number
+  and name rule's for a new account, or the backfill's — prints in its
+  parent's group on both statements (`statement_layout.bs_print_details`,
+  the line's `group_detail_type`), unless the parent is Bank, Credit Card,
+  AR or AP or of another base type. Display only: `detail_type`, the cash
+  flow and the figures stay; a group total moves by that line's amount.
 - **P&L**: `other_income`, `other_expense` and the four totals as
   proposed; one flag, `has_other`, decides the block and Net Operating
   Income for every writer (decision 4). Inside the block, Other Income and
@@ -559,10 +566,15 @@ because both change how the statements present accounts.
 - **Grids** (decision 3): `_pl_pivot` buckets by `_pl_section_of` (type,
   then detail type for Other Income / Other Expense); every column and the
   Total carry the new totals; `_grid_layout` lists the rows once for the
-  PDF and the CSV. `/api/classes/activity` carries the grid's figures
-  (operating income and expenses, `other_income`, `other_expense`); the
-  Classes list and a class page's stat cards add the other two back for
-  display, so their four figures still add to net. `has_other` needs an
+  PDF and the CSV. **API totals (2.28.0, owner's call):** `total_income` /
+  `total_expenses` (and a grid column's `income` / `expenses`) keep their
+  2.27.0 meaning, every income / expense account with Other included;
+  the operating-only figures the statements print are
+  `total_operating_income` / `total_operating_expenses` (a column's
+  `operating_income` / `operating_expenses`). `/api/classes/activity`
+  carries the grid's figures (income and expenses with Other included,
+  `other_income`, `other_expense` beside them), so the Classes list's
+  four figures add to net; a class page's stat cards are operating. `has_other` needs an
   Other line with a figure on the P&L and the grids alike.
 - **One chart read per statement**: `_chart_index` (number, name, parent,
   type, detail type) is built once in `profit_loss` / `balance_sheet` and
@@ -579,8 +591,19 @@ because both change how the statements present accounts.
   asset, imported equipment, mortgage, 2400, and default-typed
   sub-accounts of 1500 and 2400). No account moves: the backfill no longer
   hands a non-current parent's type to a default-typed child.
-  An account created after the upgrade without a detail type is current
-  whatever its name: the detail type, not the name, decides now.
+  The detail type, not the name, decides the placement. **New accounts
+  (2.28.0, owner's call):** one CREATED with no detail type (POST, the
+  chart import, the importers, the model hook on insert) gets its default
+  from 2.27.0's number and name rule, `app/services/legacy_placement.py`,
+  the one copy the migration's backfill also reads: an asset the rule calls
+  non-current (1500-1999, named like equipment, accumulated depreciation)
+  is a Fixed Asset, a liability named like long-term debt (not a card) a
+  Long Term Liability; otherwise the type's default. Precedence: a detail
+  type given wins; a sub-account of a parent other than 1100, 2000, a bank
+  or a card takes its parent's (#428 / #430, the family stays together);
+  a top-level account, or one under a pinned parent, takes the rule. A
+  control account keeps its control default; an update (rename, retype)
+  never runs the rule, and existing accounts are not retyped.
 - **QBO report import**: "Cost of Goods Sold" → `cogs` (the open item
   below, settled with PR 2).
 - **Sub-accounts (#416)**: `family_rows(lines, chart, belongs, keys,
