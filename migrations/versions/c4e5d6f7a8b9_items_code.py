@@ -10,7 +10,7 @@ cannot see.
 Existing rows take no code; nothing changes for them.
 
 Revision ID: c4e5d6f7a8b9
-Revises: 4ac01efbd72a
+Revises: c5e8a1d47b20
 Create Date: 2026-10-23
 """
 
@@ -20,7 +20,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "c4e5d6f7a8b9"
-down_revision: Union[str, None] = "4ac01efbd72a"
+down_revision: Union[str, None] = "c5e8a1d47b20"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -8,7 +8,7 @@ Restoring one stays with a signed-in administrator. Every token that
 exists today starts without it.
 
 Revision ID: c5e8a1d47b20
-Revises: 4ac01efbd72a
+Revises: a4330b1c2d3e
 Create Date: 2026-10-24
 """
 
@@ -18,7 +18,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "c5e8a1d47b20"
-down_revision: Union[str, None] = "4ac01efbd72a"
+down_revision: Union[str, None] = "a4330b1c2d3e"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

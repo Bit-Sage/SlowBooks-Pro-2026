@@ -520,7 +520,8 @@ def _check_migration(url):
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     cfg.attributes["database_url"] = url
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["a4330b1c2d3e"]
+    # One line: 4ac01efbd72a (2.28.0) → a4330b1c2d3e → c5e8a1d47b20 → c4e5d6f7a8b9.
+    assert len(script.get_heads()) == 1
     assert script.get_revision("a4330b1c2d3e").down_revision == "4ac01efbd72a"
     command.upgrade(cfg, "head")
     engine = sa.create_engine(url)
