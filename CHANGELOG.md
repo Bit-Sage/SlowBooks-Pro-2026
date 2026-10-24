@@ -5,6 +5,16 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Invoice Quick Entry can add a customer** (#484). Its customer picker has the
+New Invoice form's "+ New Customer": type a name the books don't have and the
+quick add opens with it filled in, Save adds the customer and picks it, and the
+date, terms, PO number and lines you already typed stay as they were. The
+focus goes back to the customer picker. Before, the only way was the top bar's
+New Customer, which cleared the half-entered screen and left nobody picked.
+Read-only and accountant sign-ins are not offered it.
+
 ### v2.29.0 — A mid-year payroll switch, the fiscal year, and reports by item
 
 **A company whose fiscal year does not start in January can say so** (#444, @ContractorKeith).
