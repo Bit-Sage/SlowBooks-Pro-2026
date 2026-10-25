@@ -1,7 +1,7 @@
 """The estimate PDF in construction mode (#551): lines grouped by package
 with the section code, then the allowances, alternates and unit-price blocks,
-then the bid total — and proof that an ordinary company's estimate PDF is
-untouched by the feature (byte-for-byte stable).
+and the bid footing as any estimate does — Subtotal / Tax / Total over the
+priced lines. Markups are the contractor's own and are not itemised here.
 
 These render the PDF template (app/templates/estimate_pdf.html) through the
 same renderer the PDF endpoint uses. The HTML stage is deterministic and
@@ -9,7 +9,11 @@ needs no native graphics stack, so the template's logic is pinned here even
 where WeasyPrint itself is not installed.
 """
 
+import re
+from decimal import Decimal
+
 from app.models.estimates import Estimate
+from app.services.estimating import included_lines, line_price
 from app.services.pdf_service import _render
 
 
@@ -38,7 +42,9 @@ def _html(db_session, est_id, company_type):
     )
 
 
-def test_construction_pdf_shows_groups_and_blocks(client, db_session, seed_customer):
+def test_construction_pdf_groups_blocks_and_foots_with_tax(
+    client, db_session, seed_customer
+):
     conc = _section(client, "03 30 00", "Cast-in-Place Concrete")
     pkg = client.post(
         "/api/trade-packages", json={"name": "Concrete", "section_ids": [conc["id"]]}
@@ -76,6 +82,7 @@ def test_construction_pdf_shows_groups_and_blocks(client, db_session, seed_custo
                 "line_kind": "unit_price",
             },
         ],
+        tax_rate=0.07,
         gc_pct=10,
         fee_pct=5,
     )
@@ -85,21 +92,35 @@ def test_construction_pdf_shows_groups_and_blocks(client, db_session, seed_custo
     assert "Allowances" in html and "Flooring allowance" in html
     assert "Alternates" in html and "Skylight alternate" in html
     assert "Unit prices" in html and "Rock excavation" in html
-    assert "Bid Total" in html
+    # the bid foots like a plain estimate: Subtotal / Tax / Total, no Bid Total
+    assert "Subtotal" in html and "Total" in html and "Bid Total" not in html
+    assert re.search(r"Tax \(7", html)  # tax is charged on the bid
+
+    # the priced lines (base + allowance; unit price + pending alt excluded)
+    # sum to the stored subtotal the PDF prints
+    full = client.get(f"/api/estimates/{est['id']}").json()
+    db_est = db_session.get(Estimate, est["id"])
+    printed = sum((line_price(ln) for ln in included_lines(db_est)), Decimal("0"))
+    assert printed == Decimal(str(full["subtotal"]))
 
 
-def test_business_estimate_pdf_is_byte_stable(client, db_session, seed_customer):
-    # a plain estimate with none of the new fields: the feature must not
-    # change the business PDF at all
+def test_a_pre_551_estimate_has_no_construction_blocks(
+    client, db_session, seed_customer
+):
+    # an estimate shaped as it was before #551 — all base lines, no package,
+    # no markups, no allowances/alternates/unit prices — renders in
+    # construction mode with the plain totals and none of the new blocks
     est = _estimate(
         client,
         seed_customer.id,
         [{"description": "Logo design", "quantity": 1, "rate": 500}],
         tax_rate=0,
     )
-    first = _html(db_session, est["id"], "business")
-    second = _html(db_session, est["id"], "business")
-    assert first == second  # deterministic
-    assert "Subtotal" in first and "Total" in first
-    assert "Bid Total" not in first  # no construction surface leaks in
-    assert "Package" not in first and "Alternates" not in first
+    html = _html(db_session, est["id"], "construction")
+    assert "Allowances" not in html
+    assert "Alternates" not in html
+    assert "Unit prices" not in html
+    assert "Bid Total" not in html
+    # the plain totals block is present and foots the one line
+    assert "Subtotal" in html and "Total" in html
+    assert "$500.00" in html

@@ -171,26 +171,34 @@ is a follow-up. See [docs/contractor-mode.md](docs/contractor-mode.md).
 estimate becomes a real bid. Its lines now belong to the trade packages (#550)
 a general contractor awards, each line is a plain base line, an **allowance**,
 an add/deduct **alternate**, or a **unit price** (a rate card, not part of the
-total), and each carries a unit of measure. Four markups ride the bid and
+total), and each carries a unit of measure. The bid is the sum of the included
+line prices — base lines, accepted alternates and allowances — and foots
+Subtotal / Tax / Total like any estimate (unit prices and un-accepted
+alternates are in no total and aren't taxed). Beside it, four markups
 **compound in order** — general conditions, then insurance, then fee, then
-bond — each figured on the running total before it: on a $100,000 base cost at
-8 / 1.5 / 5 / 1 percent that is $8,000 GC, $1,620 insurance, $5,481 fee and
-$1,151.01 bond, a $116,252.01 bid. Allowances are added after markup and carry
-none; unit prices and un-accepted alternates sit in no total. **Price from
+bond — each figured on the running total before it, to a cost-based target: on
+a $100,000 base cost at 8 / 1.5 / 5 / 1 percent that is $8,000 GC, $1,620
+insurance, $5,481 fee and $1,151.01 bond, a $116,252.01 target. The totals
+panel shows the **drift** between the priced bid and that target; **Price from
 cost** sets every cost-based line's rate from its unit cost and the markup
-factor in one click. The customer PDF groups the lines by package with the
-section code, then the allowances, alternates and unit prices in their own
-blocks and the bid total — the markups are the contractor's to keep, so they
-are not itemised there (they are in the app's totals panel).
+factor in one click, closing it to the rounding. The customer PDF groups the
+lines by package with the section code, then the allowances, alternates and
+unit prices in their own blocks, and foots Subtotal / Tax / Total — the markups
+are the contractor's to keep, so they are not itemised there (they are in the
+app's totals panel).
 
 Accepting an estimate **locks the job budget to it**: the estimate seeds the
-budget as before (a row you edited by hand still wins), and those rows are then
-locked — only a change order (a later issue) will move them, and a budget
-locked by one estimate refuses a second. Converting an accepted estimate to an
-invoice drops the unit-price lines and any un-accepted alternate, and now
-carries each line's cost type and unit cost onto the invoice so the cost basis
-isn't lost. A Business or Nonprofit company's estimate form and PDF are exactly
-as they were. See [docs/contractor-mode.md](docs/contractor-mode.md).
+budget from the bought scope (a row you edited by hand still wins), and those
+rows are then locked — the lock is per row, so a manual budget row on a code
+the estimate never touched still saves afterward, but a locked row's own key,
+or re-seeding the whole budget from another estimate, is refused. There is no
+unlock: a new estimate or, later, a change order moves a locked budget, and a
+settled estimate refuses edits to its lines, markups, customer, job and tax.
+Converting an accepted estimate to an invoice drops the unit-price lines and
+any un-accepted alternate, and now carries each line's cost type and unit cost
+onto the invoice so the cost basis isn't lost. A Business or Nonprofit
+company's estimate form and PDF are exactly as they were. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 

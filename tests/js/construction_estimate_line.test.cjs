@@ -82,3 +82,48 @@ test('Accept and Price-from-cost are registered write actions (hidden for read-o
     assert.match(block, /'EstimatesPage\.accept'/);
     assert.match(block, /'EstimatesPage\.repriceFromCost'/);
 });
+
+// bidTotals()/toggleAlternate use the stable data-eline index, so removing a
+// row never shifts which alternate an Accept checkbox toggles.
+function makeRow(eline, { kind, qty, uc, rate, accepted, desc, unit }) {
+    const cells = {
+        '.line-kind': { value: kind },
+        '.line-qty': { value: String(qty) },
+        '.line-unit-cost': { value: uc == null ? '' : String(uc) },
+        '.line-rate': { value: String(rate) },
+        '.line-alt-accepted': { checked: !!accepted },
+        '.line-desc': { value: desc || '' },
+        '.line-unit': { value: unit || '' },
+    };
+    return { dataset: { eline: String(eline) }, querySelector: (s) => cells[s] || null };
+}
+
+function withFakeDom(ctx, rows) {
+    const form = { gc_pct: { value: '10' }, insurance_pct: { value: '0' }, fee_pct: { value: '0' }, bond_pct: { value: '0' } };
+    ctx.$ = (sel) => {
+        if (sel === '#est-form') return form;
+        const m = String(sel).match(/\[data-eline="(\d+)"\]/);
+        if (m) return rows.find(r => r.dataset.eline === m[1]) || null;
+        return null; // #est-bid-totals etc. absent — we call bidTotals directly
+    };
+    ctx.$$ = (sel) => (sel === '#est-lines tr' ? rows : []);
+    ctx.EstimatesPage.recalc = () => {}; // toggleAlternate calls it; no DOM to touch
+}
+
+test('bidTotals and toggleAlternate ride the stable data-eline, not the row position', () => {
+    const ctx = estimatesContext(true);
+    // rows 0 (base), 1 (alternate) then REMOVE row 1, leaving 0 and 2 (alternate)
+    const rows = [
+        makeRow(0, { kind: 'base', qty: 1, uc: 100, rate: 110, accepted: false }),
+        makeRow(2, { kind: 'alternate', qty: 1, uc: 50, rate: 55, accepted: false, desc: 'Skylight' }),
+    ];
+    withFakeDom(ctx, rows);
+
+    const t = ctx.EstimatesPage.bidTotals();
+    assert.equal(t.alternates.length, 1);
+    assert.equal(t.alternates[0].idx, 2); // the data-eline, not positional 1
+
+    ctx.EstimatesPage.toggleAlternate(t.alternates[0].idx, true);
+    assert.equal(rows[1].querySelector('.line-alt-accepted').checked, true); // row with data-eline 2
+    assert.equal(rows[0].querySelector('.line-alt-accepted').checked, false); // base row untouched
+});

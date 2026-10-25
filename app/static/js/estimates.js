@@ -77,43 +77,48 @@ const EstimatesPage = {
     // prices broken out and the marked-up bid total (#551).
     constructionViewHtml(est) {
         const t = est.totals;
-        const nameFor = l => l.trade_package_name || 'Unassigned';
-        const included = l => {
+        // group the bought-scope lines (minus allowances) by package ID, in
+        // the totals' package order; a null ID is the Unassigned bucket, so a
+        // package literally named "Unassigned" never collides with it
+        const scopeLine = l => {
             const k = l.line_kind || 'base';
-            if (k === 'unit_price') return false;
+            if (k === 'allowance' || k === 'unit_price') return false;
             if (k === 'alternate' && !l.alternate_accepted) return false;
             return true;
         };
-        // group the included lines by package, in the totals' package order
         const groups = t.by_package.map(p => ({
             name: p.package_name,
-            lines: est.lines.filter(l => included(l) && nameFor(l) === p.package_name),
+            lines: est.lines.filter(l => scopeLine(l) && (l.trade_package_id ?? null) === (p.package_id ?? null)),
         })).filter(g => g.lines.length);
-        const lineRow = l => `<tr><td>${l.line_kind === 'allowance' ? '<em>Allowance:</em> ' : ''}${escapeHtml(l.description || '')}</td>
+        const lineRow = l => `<tr><td>${escapeHtml(l.description || '')}</td>
             <td class="amount">${l.quantity}${l.unit ? ' ' + escapeHtml(l.unit) : ''}</td>
             <td class="amount">${SalesLines.rate(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`;
         const groupsHtml = groups.map(g =>
             `<tr><td colspan="4" style="background:var(--gray-100); font-weight:700;">${escapeHtml(g.name)}</td></tr>${g.lines.map(lineRow).join('')}`).join('');
+        const allowances = est.lines.filter(l => (l.line_kind || 'base') === 'allowance');
+        const allowBlock = allowances.length
+            ? `<div class="table-container" style="margin-top:12px;"><table>
+                <thead><tr><th scope="col">Allowances</th><th scope="col" class="amount">Amount</th></tr></thead>
+                <tbody>${allowances.map(l => `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`).join('')}</tbody>
+            </table></div>` : '';
         const altBlock = t.alternates.length
-            ? `<div style="margin-top:12px;"><strong>Alternates</strong>${t.alternates.map(a =>
+            ? `<div style="margin-top:12px;"><strong>Alternates</strong> <span style="color:var(--gray-500);">(add / deduct)</span>${t.alternates.map(a =>
                 `<div>${escapeHtml(a.description || '(alternate)')} — ${formatCurrency(a.amount)}${a.accepted ? ' <em>(accepted)</em>' : ''}</div>`).join('')}</div>` : '';
         const upBlock = t.unit_prices.length
             ? `<div style="margin-top:12px;"><strong>Unit prices</strong>${t.unit_prices.map(u =>
                 `<div>${escapeHtml(u.description || '(unit price)')} — ${SalesLines.rate(u.rate)}${u.unit ? ' / ' + escapeHtml(u.unit) : ''}</div>`).join('')}</div>` : '';
-        const markupRow = (label, v) => `<div class="total-row"><span class="label">${label}</span><span class="value">${formatCurrency(v)}</span></div>`;
+        // The customer sees the bid foot like any estimate: Subtotal / Tax /
+        // Total over the priced lines. The markups are the contractor's own
+        // and live in the edit form's totals panel, not here.
         return `<div class="table-container"><table>
                 <thead><tr><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${groupsHtml}</tbody>
             </table></div>
-            ${altBlock}${upBlock}
+            ${allowBlock}${altBlock}${upBlock}
             <div class="invoice-totals">
-                ${markupRow('Base cost', t.cost_subtotal)}
-                ${markupRow('General conditions', t.gc)}
-                ${markupRow('Insurance', t.insurance)}
-                ${markupRow('Fee', t.fee)}
-                ${markupRow('Bond', t.bond)}
-                ${markupRow('Allowances', t.allowance_total)}
-                <div class="total-row grand-total"><span class="label">Bid total</span><span class="value">${formatCurrency(t.bid_total)}</span></div>
+                <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatCurrency(est.subtotal)}</span></div>
+                <div class="total-row"><span class="label">Tax</span><span class="value">${formatCurrency(est.tax_amount)}</span></div>
+                <div class="total-row grand-total"><span class="label">Total</span><span class="value">${formatCurrency(est.total)}</span></div>
             </div>`;
     },
 
@@ -309,7 +314,10 @@ const EstimatesPage = {
             ${row('Insurance', 'est-bid-ins')}
             ${row('Fee', 'est-bid-fee')}
             ${row('Bond', 'est-bid-bond')}
+            ${row('Markup target', 'est-bid-target')}
+            ${row('Priced direct', 'est-bid-direct')}
             ${row('Allowances', 'est-bid-allow')}
+            ${row('Drift', 'est-bid-drift')}
             <div class="total-row grand-total"><span class="label">Bid total</span><span class="value" id="est-bid-total">$0.00</span></div>
             <div id="est-bid-alternates" style="margin-top:8px; font-size:11px;"></div>
             <div id="est-bid-unitprices" style="margin-top:4px; font-size:11px;"></div>
@@ -319,34 +327,43 @@ const EstimatesPage = {
     _r(x) { return Math.round((Number(x) + Number.EPSILON) * 100) / 100; },
 
     // The bid math the server computes (app/services/estimating.py), mirrored
-    // for the live form panel. Reads the current rows and markup inputs.
+    // for the live form panel. Reads the current rows and markup inputs. The
+    // bid is the sum of line prices; cost / markups / target / drift are the
+    // contractor's cost view beside it.
     bidTotals() {
         const pct = v => (Number(v) || 0) / 100;
         const form = $('#est-form');
         const m = n => pct(form && form[n] ? form[n].value : 0);
-        let costSubtotal = 0, allowanceTotal = 0;
+        let costSubtotal = 0, allowanceTotal = 0, pricedDirect = 0, bid = 0;
         const alternates = [], unitPrices = [];
-        $$('#est-lines tr').forEach((row, idx) => {
+        $$('#est-lines tr').forEach(row => {
+            // the stable line index is the data attribute, not the row's
+            // position — a removed row must not shift an alternate's handle
+            const eline = Number(row.dataset ? row.dataset.eline : row.getAttribute('data-eline'));
             const kind = row.querySelector('.line-kind')?.value || 'base';
             const qty = Number(row.querySelector('.line-qty')?.value) || 0;
             const ucRaw = row.querySelector('.line-unit-cost')?.value;
-            const cost = (ucRaw !== '' && ucRaw != null) ? EstimatesPage._r(qty * Number(ucRaw)) : 0;
+            const hasCost = ucRaw !== '' && ucRaw != null;
+            const cost = hasCost ? EstimatesPage._r(qty * Number(ucRaw)) : 0;
             const rate = Number(row.querySelector('.line-rate')?.value) || 0;
             const amount = EstimatesPage._r(qty * rate);
             const accepted = row.querySelector('.line-alt-accepted')?.checked || false;
             const desc = row.querySelector('.line-desc')?.value || '';
             const unit = row.querySelector('.line-unit')?.value || '';
-            if (kind === 'unit_price') { unitPrices.push({ desc, unit, rate }); return; }
-            if (kind === 'alternate') { alternates.push({ idx, desc, amount, accepted }); if (!accepted) return; }
+            if (kind === 'unit_price') { unitPrices.push({ idx: eline, desc, unit, rate }); return; }
+            if (kind === 'alternate') { alternates.push({ idx: eline, desc, amount, accepted }); if (!accepted) return; }
+            bid += amount;
             if (kind === 'allowance') allowanceTotal += amount;
-            else costSubtotal += cost;
+            else if (hasCost) costSubtotal += cost;
+            else pricedDirect += amount;
         });
         const gc = EstimatesPage._r(costSubtotal * m('gc_pct'));
         const insurance = EstimatesPage._r((costSubtotal + gc) * m('insurance_pct'));
         const fee = EstimatesPage._r((costSubtotal + gc + insurance) * m('fee_pct'));
         const bond = EstimatesPage._r((costSubtotal + gc + insurance + fee) * m('bond_pct'));
-        const bid = costSubtotal + gc + insurance + fee + bond + allowanceTotal;
-        return { costSubtotal, gc, insurance, fee, bond, allowanceTotal, bid, alternates, unitPrices };
+        const markupTarget = costSubtotal + gc + insurance + fee + bond;
+        const drift = EstimatesPage._r(bid - allowanceTotal - pricedDirect - markupTarget);
+        return { costSubtotal, gc, insurance, fee, bond, markupTarget, pricedDirect, allowanceTotal, drift, bid, alternates, unitPrices };
     },
 
     renderBidTotals() {
@@ -354,11 +371,12 @@ const EstimatesPage = {
         const t = EstimatesPage.bidTotals();
         const set = (id, v) => { const el = $(`#${id}`); if (el) el.textContent = formatCurrency(v); };
         set('est-bid-cost', t.costSubtotal); set('est-bid-gc', t.gc); set('est-bid-ins', t.insurance);
-        set('est-bid-fee', t.fee); set('est-bid-bond', t.bond); set('est-bid-allow', t.allowanceTotal);
-        set('est-bid-total', t.bid);
+        set('est-bid-fee', t.fee); set('est-bid-bond', t.bond); set('est-bid-target', t.markupTarget);
+        set('est-bid-direct', t.pricedDirect); set('est-bid-allow', t.allowanceTotal);
+        set('est-bid-drift', t.drift); set('est-bid-total', t.bid);
         const alt = $('#est-bid-alternates');
         if (alt) alt.innerHTML = t.alternates.length
-            ? '<strong>Alternates</strong>' + t.alternates.map(a =>
+            ? '<strong>Alternates</strong> <span style="color:var(--gray-500)">(add / deduct)</span>' + t.alternates.map(a =>
                 `<div><label><input type="checkbox" ${a.accepted ? 'checked' : ''} onchange="EstimatesPage.toggleAlternate(${a.idx}, this.checked)"> ${escapeHtml(a.desc || '(alternate)')} — ${formatCurrency(a.amount)}</label></div>`).join('')
             : '';
         const up = $('#est-bid-unitprices');

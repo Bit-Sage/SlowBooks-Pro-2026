@@ -123,7 +123,8 @@ percent values, 5.5 = 5.5%) and `accepted_at` (DateTime, nullable).
 accepted estimate owns — only a change order moves them. `invoice_lines` gains
 `cost_type` (String(20)) and `unit_cost` (Numeric(12,4)), both nullable, so a
 converted estimate carries its cost basis onto the invoice. The bid math
-(cost subtotal, the four markups, allowance total, bid total, the package and
+(the bid total as the sum of included line prices; the cost subtotal, the four
+compounding markups and their target; priced-direct and drift; the package,
 alternate and unit-price breakdowns) is computed, not stored —
 `app/services/estimating.py`. Migration
 `d9f6b2c4e7a1_construction_estimating` (additive and nullable/defaulted;

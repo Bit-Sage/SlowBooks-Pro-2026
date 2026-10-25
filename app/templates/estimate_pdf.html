@@ -78,8 +78,11 @@
     {% if terms.is_construction %}
     {# Construction bid (#551): lines grouped by package with the section code
        in the description column, then allowances, alternates and unit prices
-       in their own blocks, then the bid total. Markups are not itemised for
-       the customer — the contract step decides that. #}
+       in their own blocks. The bid foots as any estimate does — Subtotal /
+       Tax / Total over the priced lines; the markups are the contractor's own
+       and are not itemised for the customer. Grouping is by package id, so a
+       package literally named "Unassigned" never merges with the no-package
+       bucket. #}
     {% set totals = estimate_totals(est) %}
     <table class="line-items">
         <thead><tr><th>Description</th><th class="r" style="width:60px;">Qty</th><th class="r" style="width:80px;">Rate</th><th class="r" style="width:80px;">Amount</th></tr></thead>
@@ -88,8 +91,7 @@
             {% set pkg_lines = [] %}
             {% for line in est.lines %}
                 {% set kind = line.line_kind or 'base' %}
-                {% set pkg_name = line.trade_package.name if line.trade_package else 'Unassigned' %}
-                {% if pkg_name == pkg.package_name and (kind == 'base' or (kind == 'alternate' and line.alternate_accepted)) %}
+                {% if line.trade_package_id == pkg.package_id and (kind == 'base' or (kind == 'alternate' and line.alternate_accepted)) %}
                     {% set _ = pkg_lines.append(line) %}
                 {% endif %}
             {% endfor %}
@@ -145,7 +147,11 @@
 
     <div class="totals">
         <table>
-            <tr><td class="label grand">Bid Total</td><td class="r grand">{{ totals.bid_total | currency }}</td></tr>
+            <tr><td class="label">Subtotal</td><td class="r">{{ est.subtotal | currency }}</td></tr>
+            {% if est.tax_amount and est.tax_amount != 0 %}
+            <tr><td class="label">Tax ({{ est.tax_rate | tax_percent }}%)</td><td class="r">{{ est.tax_amount | currency }}</td></tr>
+            {% endif %}
+            <tr><td class="label grand">Total</td><td class="r grand">{{ est.total | currency }}</td></tr>
         </table>
     </div>
     {% else %}
