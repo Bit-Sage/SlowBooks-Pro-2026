@@ -204,10 +204,11 @@ the unit-price lines and any un-accepted alternate, carries each line's cost
 type and unit cost onto the invoice, and adds one invoice line per non-zero
 markup (on the job) so the invoice foots to the bid.
 
-**Change orders come later.** A change order (a later issue) will be how a
-locked budget moves — a numbered document that revises the contract amount and
-the budget with an audit trail. Until it lands, the lock simply holds: the
-budget stays as the accepted estimate left it.
+**Change orders move the locked budget.** A **change order** (#554, see
+*Change orders* below) is how a locked budget moves — a numbered document that
+revises the contract amount and the budget with an audit trail. Until one is
+approved, the lock simply holds: the budget stays as the accepted estimate
+left it.
 
 ## The contract on the job
 
@@ -272,9 +273,10 @@ show at the foot of the grid, and the balance stays highlighted until it is
 zero. When the contract sum came from the estimate (the pre-tax bid, plus any
 contingency), a freshly built schedule already balances.
 
-**What comes next.** Change orders (#554) will revise the contract amount, the
-budget and the sub commitments together, with the rule that work paid for out
-of an allowance carries no markup. Progress billing (#555) will turn the SOV
+**What comes next.** Change orders (#554, see *Change orders* below) revise the
+contract amount, the budget and the sub commitments together, with the rule
+that work paid for out of an allowance carries no markup. Progress billing
+(#555) will turn the SOV
 into an owner pay application — previous / this period / stored / retainage /
 balance per line — holding retainage back and releasing it at the end. Job
 reports (#556) will add the WIP schedule with over- and under-billing. This
@@ -356,11 +358,85 @@ shown on the bill's payments and the payment's own view. Through the API,
 `coi_override: true`. The lien waiver is only a status: saving it works on a
 bill in a closed period, since it posts nothing.
 
-**What comes next.** Sub **change orders** (#554) will revise a commitment the
-way owner change orders revise the contract. **Progress billing** (#555) will
-turn a commitment's schedule of values into a sub pay application and release
-retainage on both sides. **Reports** (#556) will add the buyout report and job
-cost by vendor. This issue sets the commitments and leaves those seams open.
+**What comes next.** Sub **change orders** (#554, see *Change orders* below)
+revise a commitment the way owner change orders revise the contract.
+**Progress billing** (#555) will turn a commitment's schedule of values into a
+sub pay application and release retainage on both sides. **Reports** (#556)
+will add the buyout report and job cost by vendor. This issue sets the
+commitments and leaves those seams open.
+
+## Change orders
+
+A **change order** is how a locked budget, its contract and its commitments
+move, with an audit trail (#554). It comes in three kinds and prices material
+and labor separately, each carrying its own markup — except work an allowance
+pays for, which carries none.
+
+**The three kinds.**
+
+- A **potential change order (PCO)** prices a change the owner has not yet
+  approved. It has no effect on the books; when the owner says yes you
+  **promote** it to an owner change order (copying its lines), and the PCO is
+  marked *promoted*.
+- An **owner change order** revises the owner's contract. On approve it moves
+  the contract amount, adds a schedule-of-values line and writes the budget.
+- A **sub change order** revises a commitment (a purchase order) — it appends
+  lines to the sub's scope. A sub change order moves a commitment by **cost**;
+  it carries no markup, because the markup is the contractor's and lives on the
+  owner side.
+
+**Material and labor priced separately, with markup.** Each line is a cost
+type (labor, material, subcontract, equipment, other), a quantity and a unit
+cost; its cost is quantity × unit cost. The **markup** that turns cost into the
+sell price is the line's own percent, else the change order's, else the job's
+**Markup on change orders** contract term, else zero. Labor and material each
+carry their own markup, so the two price independently. Worked example — an
+owner change order with 10 labor hours at $50 marked up 15% and $1,000 of
+material marked up 10%: labor sells at 500 × 1.15 = **$575.00**, material at
+1,000 × 1.10 = **$1,100.00**, a change order total of **$1,675.00** on
+**$1,500.00** of cost (**$175.00** of markup).
+
+**No markup when an allowance pays.** An owner change order has a **funding**:
+*contract* (it adds to the contract sum), *contingency* (it draws the owner's
+contingency down) or *allowance* (it spends an allowance line). Work an
+allowance pays for carries **no markup** — the sell equals the cost — because
+the allowance already held the money. The same $1,500 of cost funded by an
+allowance sells at $1,500.
+
+**What approve does.** Every effect lands on **approve**, in one transaction,
+and reverses on **void**:
+
+- *Owner CO, contract-funded* — adds the sell total to the **contract amount**
+  (the original sum is never touched, so the Contract tab reads original +
+  changes = revised), appends a read-only **change_order** line to the
+  schedule of values for the sell total, and writes locked budget rows
+  (`source = change`) with the cost on the cost side and the sell on the
+  revenue side. The job-cost tree shows these in its **Changes** column.
+- *Owner CO, contingency-funded* — the contract is unchanged; the budget rows
+  are written as above; the draw counts against the contract's contingency
+  (refused 409 `contingency_exceeded` when it would pass the contingency
+  amount).
+- *Owner CO, allowance-funded* — the contract is unchanged and no SOV line is
+  added; the budget rows carry the cost with revenue equal to cost (no
+  markup); the draw counts against the allowance line (refused 409
+  `allowance_exceeded` when it would pass the allowance). The Contract tab
+  shows each allowance's used and remaining.
+- *Sub CO* — appends the lines to its commitment (never touching what is
+  already billed), recomputes the commitment's total and reopens a closed
+  commitment to *partial*; the buyout table's *bought* grows automatically.
+  The budget rows carry the cost with no revenue.
+
+**Void** reverses each of these — the contract and SOV line, the budget rows,
+and the appended commitment lines — except that a commitment line already
+billed against cannot be pulled (409 `co_billed`). The lifecycle is draft →
+submitted (*pending*) → approved, with reject and void beside it; a PCO runs
+draft → pending → promoted (asking to *promote* rather than approve).
+
+**What comes next.** Progress billing (#555) will bill the revised schedule of
+values — a pay application against the contract sum the change orders moved,
+holding and releasing retainage. The change-order **log report** (#556) will
+list every change order and its effect. This issue writes the change orders
+and leaves those seams open.
 
 ## The words
 
@@ -403,15 +479,17 @@ appear. Every other report stays where it is.
   new company file; Construction is chosen in Settings afterward, as
   Nonprofit is. A "what kind of company is this?" step at creation is a
   later issue.
-- **No new accounting.** No change orders, draws (pay applications) or
-  progress-billing screens; the accounts are there to post to by hand until
-  those land.
+- **No draws yet.** No pay applications or progress-billing screens
+  (#555); change orders (#554) are in, but the accounts are there to post to
+  by hand until progress billing lands.
+>>>>>>> 11696f97 (docs: change orders (#554))
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
   rest.
-- **The estimate references trade packages** (#551) and **the contract on the
-  job** (#552, see *The contract on the job* above) is set with its schedule
-  of values; change orders (#554), progress billing / owner pay applications
-  with retainage (#555), WIP reports (#556), and sub commitments against a
-  package (#553) are still later steps.
+- **The estimate references trade packages** (#551), **the contract on the
+  job** (#552) is set with its schedule of values, sub commitments bill
+  against a package (#553), and **change orders** (#554, see *Change orders*
+  above) revise the contract, budget and commitments; progress billing / owner
+  pay applications with retainage (#555) and WIP reports (#556) are still later
+  steps.

@@ -412,6 +412,36 @@ Nonprofit company sees none of it. One behaviour change for everyone: a $0
 the converted bill carries only the lines with money on them. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**Change orders** (#554, @ContractorKeith). A change order is how a locked
+construction budget, its contract and its commitments move, with an audit
+trail. It comes in three kinds: a **potential change order** prices a change
+the owner hasn't approved yet (and **promotes** to an owner change order,
+copying its lines, when they say yes); an **owner change order** revises the
+contract; a **sub change order** appends scope to a commitment. Material and
+labor are priced separately, each line carrying its own markup — the line's,
+else the change order's, else the job's new **Markup on change orders**
+contract term — and work an allowance pays for carries **none** (the allowance
+already held the money). An owner change order's **funding** decides the
+effect on approve: *contract* adds its sell total to the contract amount,
+appends a read-only `change_order` line to the schedule of values and writes
+locked `source=change` budget rows (the job-cost tree's Changes column);
+*contingency* draws the owner's contingency down (409 `contingency_exceeded`
+over the limit); *allowance* spends an allowance line at cost (409
+`allowance_exceeded`). A sub change order appends cost-only lines to its
+commitment, reopening a closed one to partial, and the Buyout tab's *bought*
+grows. Every effect lands on **approve** in one transaction and reverses on
+**void** — except a commitment line already billed against, which refuses the
+void (409 `co_billed`). A **Change orders** tab (construction only, after
+Buyout) holds the log with filters, the line form with live cost and sell per
+cost type, and Submit / Approve / Reject / Void / Promote / Make sub order /
+PDF; the Contract tab's Changes tile goes live, its terms gain **Markup on
+change orders**, and the schedule of values shows change-order lines read-only
+with each allowance's used and remaining. An owner CO / PCO prints as a
+document (`GET /api/change-orders/{id}/pdf`). Progress billing against the
+revised schedule (#555) and the change-order log report (#556) build on this;
+a Business or Nonprofit company sees none of it. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every
