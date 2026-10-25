@@ -392,7 +392,9 @@ report also has a Refresh button beside Close.
 
 Running reports again by itself is a personal preference, "Refresh reports
 automatically", under Settings → My Preferences. It is on unless you turn it
-off; with it off, the report changes only when you press Refresh.
+off; with it off, the report changes only when you press Refresh. The
+Financial Statements Pack, which only opens its PDF, is made again only when
+you change its dates or press Refresh, never on coming back to the window.
 
 Two schema changes, run in every company file one after the other:
 `transactions.vendor_id` (`d7e8f9a0b1c2`) and one bill per vendor invoice

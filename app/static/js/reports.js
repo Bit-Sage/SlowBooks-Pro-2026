@@ -1225,7 +1225,10 @@ const ReportsPage = {
         // loadContent(period, range, params) on every change.
         // opts.actions (html) — buttons ahead of Save and Close (a
         // "Back to …"). opts.wide — the wide dialog (openModal's), for a
-        // grid with a column per class or job.
+        // grid with a column per class or job. opts.fileOnly — the render
+        // only opens a file (a PDF the desktop app saves and shows in a
+        // viewer): it runs when asked, never by Refresh reports
+        // automatically, or each return to the window made another copy.
         const reportType = opts.reportType || null;
         // The dates of the address or the saved report: a date that is not
         // one, or From after To (NEW-35), is said so and ignored — the view
@@ -1390,7 +1393,7 @@ const ReportsPage = {
         };
         // The open report, for its toolbar's controls (ReportsPage.setParam,
         // ReportsPage.refresh): one period dialog is open at a time.
-        ReportsPage._live = { view, params: paramsObj, render, select, step, content };
+        ReportsPage._live = { view, params: paramsObj, render, select, step, content, fileOnly: !!opts.fileOnly };
 
         select.addEventListener("change", () => { stepUnit = null; render(); });
         startInput.addEventListener("change", () => { stepUnit = null; if (select.value === "custom" && !useAsOfOnly) render(); });
@@ -1436,6 +1439,7 @@ const ReportsPage = {
     // when it is showing and the preference is on.
     _changed() {
         if (!ReportsPage.autoRefresh || !ReportsPage._liveShown()) return;
+        if (ReportsPage._live.fileOnly) return;  // a file is made when asked
         clearTimeout(ReportsPage._refreshSoon);
         ReportsPage._refreshSoon = setTimeout(() => {
             if (ReportsPage._liveShown()) ReportsPage.refresh();
@@ -3545,7 +3549,7 @@ ReportsPage.financialStatementsPdf = async function (prefill) {
             ${T('P&L')} and Trial Balance for ${escapeHtml(range.start)} — ${escapeHtml(range.end)},
             ${T('Balance Sheet')} as of ${escapeHtml(range.end)}. Paper size follows
             Settings → Report PDF Paper Size.</div>`;
-    }, "Dates", false, { view: 'financial-statements', prefill });
+    }, "Dates", false, { view: 'financial-statements', prefill, fileOnly: true });
 };
 
 // With customer_id (from the customer's page, #238) the API keeps that

@@ -210,3 +210,38 @@ def test_my_preferences_has_the_checkbox_on_by_default(browser, company, books):
         assert below_threshold(swept) == []
     finally:
         page.close()
+
+
+def test_a_report_that_only_opens_a_file_is_not_run_again(browser, company, books):
+    """The Financial Statements Pack's render opens its PDF (window.open):
+    the desktop app saves it and opens a viewer, and closing the viewer
+    brings the window back. Run again on that focus, or after a write, it
+    saved another copy and opened another viewer, round and round. A
+    file-only report runs again only when asked (its dates, Refresh)."""
+    page, handled = _open_at(browser, company, "#/")
+    try:
+        page.evaluate(
+            "() => { window._opened = []; window.open = (u) => { window._opened.push(u); return null; }; }"
+        )
+        page.evaluate("() => ReportsPage.financialStatementsPdf()")
+        page.wait_for_function("() => window._opened.length === 1")
+        settle(page, handled)
+        # the viewer closed: a while away, then back to the window
+        page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        page.wait_for_timeout(1100)
+        page.evaluate("() => window.dispatchEvent(new Event('focus'))")
+        # a write in this window, and one from another window
+        page.evaluate("(b) => API.post('/journal', b)", _journal(company, "5.00"))
+        page.evaluate(
+            "() => new BroadcastChannel('slowbooks-books').postMessage({ company: localStorage.getItem('slowbooks_company') || '', path: '/journal' })"
+        )
+        page.wait_for_timeout(600)
+        settle(page, handled)
+        opened = page.evaluate("() => window._opened.length")
+        # Refresh, pressed, still makes it again
+        page.click("#report-refresh-btn")
+        page.wait_for_function(f"() => window._opened.length > {opened}")
+    finally:
+        page.close()
+
+    assert opened == 1
