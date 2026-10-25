@@ -311,6 +311,40 @@ def generate_change_order_pdf(co, totals: dict, company_settings: dict) -> bytes
     return render_pdf(render_change_order_html(co, totals, company_settings))
 
 
+def render_pay_application_html(app, pa, job, company_settings: dict) -> str:
+    """The owner pay application (#555): the header certificate (contract
+    sum, net change by change orders, completed to date, retainage, total
+    earned less retainage, previous certificates, current payment due,
+    deposit applied, balance to finish) and the continuation sheet (the line
+    table). `pa` is the PayApplicationOut; `job` carries the owner."""
+
+    def f(v):
+        return float(v) if v is not None else 0.0
+
+    original = f(job.original_contract_amount if job else 0)
+    current = f(job.contract_amount if job else 0)
+    header = {
+        "owner": (job.customer.name if job and job.customer else ""),
+        "job_name": (job.full_name if job else ""),
+        "net_change": current - original,
+        "contract_sum_original": original,
+        "contract_sum_to_date": current,
+    }
+    return _render(
+        "pay_application_pdf.html",
+        company_settings,
+        app=app,
+        pa=pa,
+        job=job,
+        header=header,
+        totals=pa.totals,
+    )
+
+
+def generate_pay_application_pdf(app, pa, job, company_settings: dict) -> bytes:
+    return render_pdf(render_pay_application_html(app, pa, job, company_settings))
+
+
 def generate_statement_pdf(
     customer, activity: dict, company_settings: dict, as_of_date=None
 ) -> bytes:

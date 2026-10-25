@@ -31,7 +31,8 @@ const PurchaseOrdersPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.view(${po.id})">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.showForm(${po.id})">Edit</button>
-                        ${po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : ''}
+                        ${con && po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.subPayApp(${po.id})">Sub pay app</button>` : (po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : '')}
+                        ${con && (po.retainage_pct || Number(po.retainage_released)) ? `<button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.releaseRetainage(${po.id})">Release retainage</button>` : ''}
                     </td>
                 </tr>`,
         });
@@ -80,7 +81,8 @@ const PurchaseOrdersPage = {
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="window.open('/api/purchase-orders/${po.id}/pdf','_blank')">Save PDF</button>
                 <button class="btn btn-secondary" onclick="window.open('/api/purchase-orders/${po.id}/print-preview','_blank')">Print</button>
-                ${po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : ''}
+                ${con && po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.subPayApp(${po.id})">Sub pay app</button>` : (po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : '')}
+                ${con && (po.retainage_pct || Number(po.retainage_released)) ? `<button class="btn btn-secondary" onclick="PurchaseOrdersPage.releaseRetainage(${po.id})">Release retainage</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
     },
@@ -300,6 +302,36 @@ const PurchaseOrdersPage = {
             else { await API.post('/purchase-orders', data); toast('PO created'); }
             closeModal();
             App.navigate('#/purchase-orders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Sub pay app (#555): the commitment's schedule — previous / this period /
+    // remaining / retainage — billed a period at a time through the existing
+    // convert. Reads the pay-app schedule, then opens the To Bill dialog
+    // (which carries the amount-this-period column and the retainage note).
+    async subPayApp(id) {
+        try {
+            await API.get(`/purchase-orders/${id}/pay-app`);  // the schedule read
+        } catch (err) { toast(err.message, 'error'); return; }
+        return PurchaseOrdersPage.convertToBill(id);
+    },
+
+    // Release retainage (#555): a prompt for the amount (default the whole
+    // outstanding) → a bill DR Retainage Payable / CR A/P, payable in Pay Bills.
+    async releaseRetainage(id) {
+        let sched;
+        try { sched = await API.get(`/purchase-orders/${id}/pay-app`); }
+        catch (err) { toast(err.message, 'error'); return; }
+        const outstanding = sched.retainage_outstanding || 0;
+        if (outstanding <= 0) { toast('No retainage outstanding to release.'); return; }
+        const raw = prompt(`Retainage outstanding is ${formatCurrency(outstanding)}. Amount to release:`, outstanding.toFixed(2));
+        if (raw === null) return;
+        const amount = parseFloat(raw);
+        if (isNaN(amount) || amount <= 0) { toast('Enter an amount to release.', 'error'); return; }
+        try {
+            const r = await API.post(`/purchase-orders/${id}/release-retainage`, { amount });
+            toast(r.message);
+            if (location.hash === '#/bills') App.navigate('#/bills'); else location.hash = '#/bills';
         } catch (err) { toast(err.message, 'error'); }
     },
 

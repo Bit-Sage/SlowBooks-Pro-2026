@@ -43,7 +43,7 @@ const JobsPage = {
         const { overview, costs, budget, ...rest } = JobsPage.TAB_LABELS;
         // Contract (the owner's side), Buyout (the sub/supplier side, #553),
         // then Change orders (#554).
-        return { overview, costs, budget, contract: 'Contract', buyout: 'Buyout', changeorders: 'Change orders', ...rest };
+        return { overview, costs, budget, contract: 'Contract', buyout: 'Buyout', changeorders: 'Change orders', payapps: 'Pay apps', ...rest };
     },
 
     // =====================================================================
@@ -287,6 +287,7 @@ const JobsPage = {
                 case 'contract': return await JobsPage.contractHtml();
                 case 'buyout': return await JobsPage.buyoutHtml();
                 case 'changeorders': return await JobsPage.changeOrdersHtml();
+                case 'payapps': return await JobsPage.payAppsHtml();
                 case 'transactions': return await JobsPage.transactionsHtml();
                 case 'time': return await JobsPage.timeHtml();
                 default: return await JobsPage.overviewHtml();
@@ -1206,6 +1207,336 @@ const JobsPage = {
             toast('Sub change order created');
             closeModal();
             await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Pay apps (construction mode only, #555) -------------------------------
+    // Owner progress billing from the schedule of values: previous / this
+    // period / stored / retainage, with a release and a deposit applied.
+    // Approving an application creates the invoice; voiding reverses it.
+    PA_STATUS_LABELS: { draft: 'Draft', submitted: 'Submitted', approved: 'Approved', void: 'Void' },
+    LIEN_WAIVERS: { not_required: 'Not required', pending: 'Pending', conditional: 'Conditional', unconditional: 'Unconditional' },
+
+    async payAppsHtml() {
+        const job = JobsPage._job;
+        const [list, deposits] = await Promise.all([
+            API.get(`/pay-applications?job_id=${job.id}`),
+            API.get(`/jobs/${job.id}/deposits`).catch(() => ({ deposits: [], received: 0, applied: 0, unapplied: 0 })),
+        ]);
+        JobsPage._paList = list;
+        JobsPage._paDeposits = deposits;
+        return JobsPage.paLogHtml(list)
+            + `<div id="pa-form-area" style="margin-top:16px"></div>`
+            + JobsPage.depositsBlockHtml(deposits);
+    },
+
+    paLogHtml(list) {
+        list = list || [];
+        const m = JobsPage.money;
+        const body = list.map(a => {
+            const t = a.totals || {};
+            const inv = a.invoice_id
+                ? `<a href="#/invoices/${a.invoice_id}">${escapeHtml(a.invoice_number || '#' + a.invoice_id)}</a>` : '';
+            return `<tr>
+                <td>${escapeHtml(a.number)}</td>
+                <td>${escapeHtml(a.period_to || '')}</td>
+                <td><span class="badge">${escapeHtml(JobsPage.PA_STATUS_LABELS[a.status] || a.status)}</span></td>
+                <td class="amount">${m(t.this_period_total)}</td>
+                <td class="amount">${m(t.retainage_this_period)}</td>
+                <td class="amount">${m(t.current_due)}</td>
+                <td class="amount">${m(t.net_due)}</td>
+                <td>${inv}</td>
+                <td style="white-space:nowrap">${JobsPage.paRowActions(a)}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
+                <button class="btn btn-primary" onclick="JobsPage.paNew()">+ New pay application</button>
+            </div>
+            <div class="table-container"><table class="data-table" id="pa-log" style="font-size:12px">
+                <thead><tr>
+                    <th scope="col">No</th><th scope="col">Period</th><th scope="col">Status</th>
+                    <th scope="col" class="amount">This period</th><th scope="col" class="amount">Retainage</th>
+                    <th scope="col" class="amount">Current due</th><th scope="col" class="amount">Net due</th>
+                    <th scope="col">${T('Invoice')}</th><th scope="col"></th>
+                </tr></thead>
+                <tbody>${body || '<tr><td colspan="9" style="color:var(--text-muted)">No pay applications yet.</td></tr>'}</tbody>
+            </table></div>`;
+    },
+
+    paRowActions(a) {
+        const id = a.id;
+        const open = a.status === 'draft' || a.status === 'submitted';
+        const parts = [`<button class="btn btn-sm btn-secondary" onclick="JobsPage.paEdit(${id})">${open ? 'Edit' : 'View'}</button>`];
+        if (a.status === 'draft') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paSubmit(${id})">Submit</button>`);
+        if (open) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paApprove(${id})">Approve</button>`);
+        if (a.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paVoid(${id})">Void</button>`);
+        parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/pay-applications/${id}/pdf','_blank')">PDF</button>`);
+        return parts.join(' ');
+    },
+
+    async paNew() {
+        try {
+            const a = await API.post('/pay-applications', { job_id: JobsPage._job.id, date: todayISO() });
+            await JobsPage.setTab('payapps');
+            JobsPage.paEdit(a.id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paEdit(id) {
+        const a = await API.get(`/pay-applications/${id}`);
+        JobsPage._paEditing = a;
+        const area = $('#pa-form-area');
+        if (area) { area.innerHTML = JobsPage.paFormHtml(a); JobsPage.paRecalc(); }
+    },
+
+    // Pure line math (#555): completed = previous + this period + stored;
+    // retainage = completed × pct/100; balance = scheduled − completed.
+    paLineMath(scheduled, previous, thisPeriod, stored, pct) {
+        const s = Number(scheduled || 0), p = Number(previous || 0);
+        const tp = Number(thisPeriod || 0), st = Number(stored || 0);
+        const completed = Math.round((p + tp + st) * 100) / 100;
+        const retainage = Math.round(completed * Number(pct || 0) / 100 * 100) / 100;
+        return {
+            completed,
+            pct_complete: s ? Math.round(completed / s * 1000) / 10 : 0,
+            balance: Math.round((s - completed) * 100) / 100,
+            retainage,
+        };
+    },
+
+    paFormHtml(a) {
+        const ro = !(a.status === 'draft' || a.status === 'submitted');
+        const d = ro ? 'disabled' : '';
+        return `<form id="pa-form" data-write onsubmit="JobsPage.paSave(event, ${a.id})">
+            <h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:4px 0 6px 0">Pay application ${escapeHtml(a.number)}</h4>
+            ${JobsPage.paGridHtml(a.lines, a.totals, { pct: a.retainage_pct, disabled: ro })}
+            <div class="form-grid" style="margin-top:10px">
+                <div class="form-group"><label>Period to</label><input id="pa-period" ${d} type="date" value="${a.period_to || ''}"></div>
+                <div class="form-group"><label>Retainage %</label><input id="pa-pct" ${d} type="number" step="0.01" min="0" max="100" value="${a.retainage_pct ?? ''}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Release retainage</label><input id="pa-release" ${d} type="number" step="0.01" min="0" value="${a.release_retainage ?? 0}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Deposit applied <span style="color:var(--text-muted)">(${formatCurrency(a.unapplied_deposits)} unapplied)</span></label>
+                    <input id="pa-deposit" ${d} type="number" step="0.01" min="0" value="${a.deposit_applied ?? 0}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Lien waiver</label><select id="pa-lien" ${d}>
+                    <option value="">—</option>
+                    ${Object.entries(JobsPage.LIEN_WAIVERS).map(([k, v]) => `<option value="${k}" ${a.lien_waiver_status === k ? 'selected' : ''}>${v}</option>`).join('')}
+                </select></div>
+            </div>
+            ${JobsPage.paWaiverWarning(a.sub_waivers)}
+            ${ro ? '' : `<div class="form-actions" data-write style="justify-content:flex-start;gap:8px">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.paSubmit(${a.id})">Submit</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.paApprove(${a.id})">Approve</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.setTab('payapps')">Cancel</button>
+            </div>`}
+        </form>`;
+    },
+
+    // The grid: one row per SOV line, the totals block mirroring the pay
+    // application header. Pure, so a node probe can drive it.
+    paGridHtml(lines, totals, opts) {
+        lines = lines || [];
+        totals = totals || {};
+        opts = opts || {};
+        const d = opts.disabled ? 'disabled' : '';
+        const pct = opts.pct || 0;
+        const rows = lines.map(l => {
+            const r = JobsPage.paLineMath(l.scheduled_value, l.previous, l.this_period, l.stored, pct);
+            return `<tr class="pa-line" data-sov="${l.sov_line_id}" data-scheduled="${l.scheduled_value}" data-previous="${l.previous}">
+                <td>${escapeHtml(l.item_no || '')}</td>
+                <td>${escapeHtml(l.description || '')}</td>
+                <td class="amount">${formatCurrency(l.scheduled_value)}</td>
+                <td class="amount">${formatCurrency(l.previous)}</td>
+                <td><input class="pa-tp" ${d} type="number" step="0.01" min="0" value="${l.this_period ?? 0}" style="width:96px;text-align:right" oninput="JobsPage.paRecalc()"></td>
+                <td><input class="pa-st" ${d} type="number" step="0.01" min="0" value="${l.stored ?? 0}" style="width:90px;text-align:right" oninput="JobsPage.paRecalc()"></td>
+                <td class="amount pa-completed">${formatCurrency(r.completed)}</td>
+                <td class="amount pa-pct">${r.pct_complete}%</td>
+                <td class="amount pa-balance">${formatCurrency(r.balance)}</td>
+                <td class="amount pa-retainage">${formatCurrency(r.retainage)}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="table-container"><table class="data-table" id="pa-grid" style="font-size:12px">
+            <thead><tr>
+                <th scope="col">Item</th><th scope="col">Description</th>
+                <th scope="col" class="amount">Scheduled</th><th scope="col" class="amount">Previous</th>
+                <th scope="col" class="amount">This period</th><th scope="col" class="amount">Stored</th>
+                <th scope="col" class="amount">Completed</th><th scope="col" class="amount">%</th>
+                <th scope="col" class="amount">Balance</th><th scope="col" class="amount">Retainage</th>
+            </tr></thead>
+            <tbody id="pa-body">${rows}</tbody>
+        </table></div>
+        <div id="pa-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 0">
+            ${JobsPage.paTotalsHtml(totals)}
+        </div>`;
+    },
+
+    paTotalsHtml(t) {
+        t = t || {};
+        const m = JobsPage.money;
+        const tile = (label, v) => `<div style="min-width:130px"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">${label}</div><div style="font-size:15px;font-weight:700">${m(v)}</div></div>`;
+        return tile('Completed to date', t.completed_to_date)
+            + tile('Retainage to date', t.retainage_to_date)
+            + tile('Total earned less retainage', t.total_earned_less_retainage)
+            + tile('Less previous certificates', t.previous_certificates)
+            + tile('Current payment due', t.current_due)
+            + tile('Net due', t.net_due);
+    },
+
+    paWaiverWarning(sw) {
+        if (!sw || !sw.missing) return '';
+        const names = (sw.bills || []).map(b => `${escapeHtml(b.bill_number)} (${escapeHtml(b.vendor_name || '')})`).join(', ');
+        return `<div class="form-hint" style="color:var(--text-warning,#8a6d3b)">${sw.missing} sub bill(s) without a lien waiver for this period: ${names}. Collect them before submitting.</div>`;
+    },
+
+    paRecalc() {
+        const pct = Number(($('#pa-pct') ? $('#pa-pct').value : 0) || 0);
+        let completed = 0, retainage = 0;
+        $$('#pa-body .pa-line').forEach(tr => {
+            const scheduled = tr.dataset.scheduled, previous = tr.dataset.previous;
+            const tp = tr.querySelector('.pa-tp').value, st = tr.querySelector('.pa-st').value;
+            const r = JobsPage.paLineMath(scheduled, previous, tp, st, pct);
+            tr.querySelector('.pa-completed').textContent = formatCurrency(r.completed);
+            tr.querySelector('.pa-pct').textContent = r.pct_complete + '%';
+            tr.querySelector('.pa-balance').textContent = formatCurrency(r.balance);
+            tr.querySelector('.pa-retainage').textContent = formatCurrency(r.retainage);
+            completed += r.completed; retainage += r.retainage;
+        });
+        const prevRet = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_retainage) || 0;
+        const prevCert = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_certificates) || 0;
+        const release = Number(($('#pa-release') ? $('#pa-release').value : 0) || 0);
+        const deposit = Number(($('#pa-deposit') ? $('#pa-deposit').value : 0) || 0);
+        const earnedLess = completed - retainage;
+        const currentDue = Math.round((earnedLess - prevCert + release) * 100) / 100;
+        const totals = {
+            completed_to_date: completed,
+            retainage_to_date: retainage,
+            total_earned_less_retainage: earnedLess,
+            previous_certificates: prevCert,
+            current_due: currentDue,
+            net_due: Math.round((currentDue - deposit) * 100) / 100,
+        };
+        const el = $('#pa-totals');
+        if (el) el.innerHTML = JobsPage.paTotalsHtml(totals);
+    },
+
+    paReadForm() {
+        const num = sel => { const el = $(sel); const v = el && el.value !== '' ? parseFloat(el.value) : null; return (v === null || isNaN(v)) ? null : v; };
+        return {
+            period_to: ($('#pa-period') && $('#pa-period').value) || null,
+            retainage_pct: num('#pa-pct'),
+            release_retainage: num('#pa-release') || 0,
+            deposit_applied: num('#pa-deposit') || 0,
+            lien_waiver_status: ($('#pa-lien') && $('#pa-lien').value) || null,
+            lines: $$('#pa-body .pa-line').map(tr => ({
+                sov_line_id: parseInt(tr.dataset.sov),
+                this_period: parseFloat(tr.querySelector('.pa-tp').value) || 0,
+                stored: parseFloat(tr.querySelector('.pa-st').value) || 0,
+            })),
+        };
+    },
+
+    async paSave(e, id) {
+        if (e) e.preventDefault();
+        try {
+            await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            toast('Pay application saved');
+            await JobsPage.setTab('payapps');
+            JobsPage.paEdit(id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paSubmit(id) {
+        try {
+            if ($('#pa-form')) await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            await API.post(`/pay-applications/${id}/submit`, {});
+            toast('Pay application submitted');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paApprove(id) {
+        if (!confirm('Approve this pay application? Creates the invoice for the job\'s customer.')) return;
+        try {
+            if ($('#pa-form')) await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            await API.post(`/pay-applications/${id}/approve`, {});
+            toast('Pay application approved — invoice created');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paVoid(id) {
+        if (!confirm('Void this pay application? The invoice is voided and any deposit restored.')) return;
+        try {
+            await API.post(`/pay-applications/${id}/void`, {});
+            toast('Pay application voided');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Owner deposits (same tab) --------------------------------------------
+    depositsBlockHtml(data) {
+        data = data || { deposits: [], received: 0, applied: 0, unapplied: 0 };
+        const m = JobsPage.money;
+        const rows = (data.deposits || []).map(dp => `<tr>
+            <td>${escapeHtml(dp.date || '')}</td>
+            <td class="amount">${m(dp.amount)}</td>
+            <td>${escapeHtml(dp.memo || '')}</td>
+            <td>${dp.voided_at ? '<span class="badge">Void</span>' : `<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paVoidDeposit(${dp.id})">Void</button>`}</td>
+        </tr>`).join('');
+        return `<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:22px 0 6px 0">Owner deposits</h4>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+                <div><div style="font-size:11px;color:var(--text-muted)">Received</div><div style="font-weight:700">${m(data.received)}</div></div>
+                <div><div style="font-size:11px;color:var(--text-muted)">Applied</div><div style="font-weight:700">${m(data.applied)}</div></div>
+                <div><div style="font-size:11px;color:var(--text-muted)">Unapplied</div><div style="font-weight:700">${m(data.unapplied)}</div></div>
+            </div>
+            <div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
+                <button class="btn btn-sm btn-secondary" onclick="JobsPage.paAddDeposit()">+ Record deposit</button>
+            </div>
+            <div class="table-container"><table class="data-table" id="pa-deposits" style="font-size:12px">
+                <thead><tr><th scope="col">Date</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="4" style="color:var(--text-muted)">No deposits recorded.</td></tr>'}</tbody>
+            </table></div>`;
+    },
+
+    async paAddDeposit() {
+        const accounts = await API.get('/accounts?active_only=true').catch(() => []);
+        const banks = accounts.filter(a => (a.account_type === 'asset') && (a.bank_kind || /bank|checking|cash/i.test(a.name || '')));
+        const bankOpts = (banks.length ? banks : accounts.filter(a => a.account_type === 'asset'))
+            .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`).join('');
+        openModal('Record deposit', `
+            <form id="pa-dep-form" data-write onsubmit="JobsPage.paSaveDeposit(event)">
+                <div class="form-group"><label>Date</label><input name="date" type="date" value="${todayISO()}" required></div>
+                <div class="form-group"><label>Amount</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+                <div class="form-group"><label>Deposit to</label><select name="account" required>${bankOpts}</select></div>
+                <div class="form-group"><label>Memo</label><input name="memo" maxlength="200"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Record</button>
+                </div>
+            </form>`);
+    },
+
+    async paSaveDeposit(e) {
+        if (e) e.preventDefault();
+        const f = e.target;
+        try {
+            await API.post(`/jobs/${JobsPage._job.id}/deposits`, {
+                date: f.date.value,
+                amount: parseFloat(f.amount.value),
+                deposit_to_account_id: parseInt(f.account.value),
+                memo: f.memo.value || null,
+            });
+            toast('Deposit recorded');
+            closeModal();
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paVoidDeposit(id) {
+        if (!confirm('Void this deposit?')) return;
+        try {
+            await API.post(`/jobs/${JobsPage._job.id}/deposits/${id}/void`, {});
+            toast('Deposit voided');
+            await JobsPage.setTab('payapps');
         } catch (err) { toast(err.message, 'error'); }
     },
 
