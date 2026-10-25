@@ -7,15 +7,43 @@
 # insurance, fee, bond). This module turns an estimate into the figures the
 # route, the PDF and the tests all read, with no database of its own — it
 # reads only the estimate's own lines and markup percents.
+#
+# The bid the customer sees is the sum of the LINE PRICES — what they pay.
+# The markups are the contractor's own view of how a cost-based price was
+# built; "Price from cost" writes them into the rates, and the totals panel
+# shows cost → markups → target against the priced total so any drift is
+# visible. Tax applies to the bid like any estimate.
 # ============================================================================
 
 from decimal import Decimal
 
 from app.services.accounting import _q
 
+# A package with no id groups here; a real package named "Unassigned" keeps
+# its own id, so grouping is by id, never by this label.
+UNASSIGNED = -1
 
-# A line's cost is quantity × unit cost (the budget side); a line with no
-# unit cost carries no cost. Rounded to the cent, as the budget seeder does.
+
+def is_included_line(line) -> bool:
+    """A line that is part of the bought scope: a base line, an allowance, or
+    an ACCEPTED alternate. Unit-price lines (a rate card) and un-accepted
+    alternates are not — they convert, seed and total as if absent."""
+    kind = getattr(line, "line_kind", None) or "base"
+    if kind == "unit_price":
+        return False
+    if kind == "alternate" and not getattr(line, "alternate_accepted", False):
+        return False
+    return True
+
+
+def included_lines(estimate):
+    """The bought-scope lines, in order (convert, accept and totals share
+    this one predicate)."""
+    return [ln for ln in estimate.lines if is_included_line(ln)]
+
+
+# A line's cost is quantity × unit cost (the budget side); a line with no unit
+# cost carries no cost. Rounded to the cent, as the budget seeder does.
 def line_cost(line) -> Decimal:
     if line.unit_cost is None:
         return Decimal("0")
@@ -33,9 +61,9 @@ def _pct(value) -> Decimal:
     return Decimal(str(value or 0)) / Decimal("100")
 
 
-# An accepted alternate folds into the base scope; a plain base line always
-# does. Allowances, unit prices and un-accepted alternates do not.
-def _counts_as_base(line) -> bool:
+# A base line or an accepted alternate is markup-able scope; allowances and
+# everything excluded are not.
+def _markupable(line) -> bool:
     kind = line.line_kind or "base"
     return kind == "base" or (kind == "alternate" and line.alternate_accepted)
 
@@ -55,22 +83,32 @@ def reprice_factor(estimate) -> Decimal:
 def estimate_totals(estimate) -> dict:
     """Every bid figure for an estimate, from its own lines and markups.
 
-    - cost_subtotal — the base cost the markups compound on (base lines plus
-      accepted alternates).
-    - the four markups, each rounded to the cent, compounding in order:
-      gc on the base cost, insurance on base+gc, fee on base+gc+ins, bond on
-      base+gc+ins+fee. Allowances carry no markup.
-    - allowance_total — the allowance lines, added to the bid after markup.
-    - bid_total — base cost + the four markups + allowances.
-    - by_package — cost, price and line count per bid package (lines with no
-      package group under "Unassigned"), for the base-scope lines.
-    - alternates / unit_prices — the lines held out of the totals, listed so
-      the customer can choose them.
+    The bid the customer pays is the sum of the included line PRICES:
 
-    Unit-price lines and un-accepted alternates are in no total.
+        bid_total = Σ amount of base lines + accepted alternates + allowances
+
+    The contractor's cost view sits beside it:
+
+    - cost_subtotal — Σ qty×unit_cost over the markup-able lines (base +
+      accepted alternates) that HAVE a unit cost; allowances never count.
+    - the four markups compound in order on cost_subtotal (gc on it,
+      insurance on cost+gc, fee on cost+gc+ins, bond on cost+gc+ins+fee).
+    - markup_target — cost_subtotal + the four markups (what a cost-based
+      price should foot to).
+    - priced_direct — Σ amount of base / accepted-alternate lines priced with
+      NO unit cost (a flat price, never marked up).
+    - drift — bid_total − allowance_total − priced_direct − markup_target:
+      the gap between the priced bid and the cost-built target, which
+      "Price from cost" closes to the rounding.
+
+    by_package carries price and cost per package (allowances contribute
+    price only, never a unit cost); alternates and unit_prices list the lines
+    held out of the bid so the customer can choose them.
     """
-    cost_subtotal = Decimal("0")
+    bid_total = Decimal("0")
     allowance_total = Decimal("0")
+    cost_subtotal = Decimal("0")
+    priced_direct = Decimal("0")
     by_package: dict = {}
     alternates: list = []
     unit_prices: list = []
@@ -104,17 +142,21 @@ def estimate_totals(estimate) -> dict:
             if not line.alternate_accepted:
                 continue
 
+        # From here the line is included (base, allowance, or accepted alt).
+        bid_total += price
         if kind == "allowance":
             allowance_total += price
-        elif _counts_as_base(line):
-            cost_subtotal += cost
+        else:  # base or accepted alternate
+            if line.unit_cost is None:
+                priced_direct += price
+            else:
+                cost_subtotal += cost
 
-        # by_package covers the lines that count toward the bid.
-        key = line.trade_package_id
+        key = line.trade_package_id if line.trade_package_id is not None else UNASSIGNED
         bucket = by_package.get(key)
         if bucket is None:
             bucket = {
-                "package_id": key,
+                "package_id": line.trade_package_id,
                 "package_name": (
                     line.trade_package.name
                     if line.trade_package is not None
@@ -125,7 +167,8 @@ def estimate_totals(estimate) -> dict:
                 "line_count": 0,
             }
             by_package[key] = bucket
-        bucket["cost"] += cost
+        # An allowance's unit cost (if any was typed) is not a bid cost.
+        bucket["cost"] += Decimal("0") if kind == "allowance" else cost
         bucket["price"] += price
         bucket["line_count"] += 1
 
@@ -133,9 +176,10 @@ def estimate_totals(estimate) -> dict:
     insurance = _q((cost_subtotal + gc) * _pct(estimate.insurance_pct))
     fee = _q((cost_subtotal + gc + insurance) * _pct(estimate.fee_pct))
     bond = _q((cost_subtotal + gc + insurance + fee) * _pct(estimate.bond_pct))
-    bid_total = cost_subtotal + gc + insurance + fee + bond + allowance_total
+    markup_target = cost_subtotal + gc + insurance + fee + bond
+    drift = bid_total - allowance_total - priced_direct - markup_target
 
-    # Named packages by name, Unassigned last.
+    # Named packages by name, the unassigned bucket last.
     packages = sorted(
         by_package.values(),
         key=lambda b: (b["package_id"] is None, b["package_name"].lower()),
@@ -151,8 +195,17 @@ def estimate_totals(estimate) -> dict:
         "insurance": insurance,
         "fee": fee,
         "bond": bond,
+        "markup_target": markup_target,
+        "priced_direct": priced_direct,
         "allowance_total": allowance_total,
+        "drift": drift,
+        # The contract sum and schedule of values (#552) are PRE-TAX, so
+        # bid_total is the pre-tax price sum; tax is added on each invoice.
+        # bid_tax / bid_total_with_tax mirror the estimate's stored tax and
+        # total (what the recompute put there over the included lines).
         "bid_total": bid_total,
+        "bid_tax": _q(getattr(estimate, "tax_amount", 0) or 0),
+        "bid_total_with_tax": _q(getattr(estimate, "total", 0) or 0),
         "by_package": packages,
         "alternates": alternates,
         "unit_prices": unit_prices,

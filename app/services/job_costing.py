@@ -789,9 +789,13 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
     into a whole-job row. Re-seeding replaces the estimate rows; a row the
     operator edited by hand (source "manual") wins and is left alone."""
     # Key on (cost_code_id, cost_type): a line carries its own type (#550), and
-    # the budget's unique key allows both a code and a type on one row.
+    # the budget's unique key allows both a code and a type on one row. Only
+    # the bought scope seeds a budget — a unit-price line is a rate card and an
+    # un-accepted alternate is not scope yet (#551).
+    from app.services.estimating import included_lines
+
     totals: dict[tuple, list[Decimal]] = {}
-    for ln in estimate.lines:
+    for ln in included_lines(estimate):
         qty = Decimal(str(ln.quantity or 0))
         cost = (
             _q(qty * Decimal(str(ln.unit_cost)))

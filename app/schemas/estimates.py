@@ -49,7 +49,10 @@ class EstimateLineCreate(StrictModel):
 
     @model_validator(mode="after")
     def _check_non_negative(self):
-        validate_non_negative_line(self.quantity, self.rate)
+        # A deduct alternate carries a negative amount (its rate is a credit),
+        # so the non-negative rule skips alternates; every other kind keeps it.
+        if self.line_kind != "alternate":
+            validate_non_negative_line(self.quantity, self.rate)
         return self
 
 
@@ -156,8 +159,13 @@ class EstimateTotals(BaseModel):
     insurance: Decimal
     fee: Decimal
     bond: Decimal
+    markup_target: Decimal
+    priced_direct: Decimal
     allowance_total: Decimal
+    drift: Decimal
     bid_total: Decimal
+    bid_tax: Decimal
+    bid_total_with_tax: Decimal
     by_package: list[EstimatePackageTotal] = []
     alternates: list[EstimateAlternateOut] = []
     unit_prices: list[EstimateUnitPriceOut] = []
@@ -165,6 +173,13 @@ class EstimateTotals(BaseModel):
 
 class EstimateAccept(StrictModel):
     job_id: Optional[int] = None
+
+
+def totals_from_dict(data: dict) -> EstimateTotals:
+    """Build the totals model from estimate_totals()'s dict, so the response
+    carries a real EstimateTotals (not a raw dict Pydantic would re-serialize
+    with a warning)."""
+    return EstimateTotals.model_validate(data)
 
 
 class EstimateResponse(BaseModel):

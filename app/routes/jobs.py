@@ -178,17 +178,11 @@ def _budget_response(row: JobBudget) -> JobBudgetResponse:
     return data
 
 
-def _refuse_locked_budget(db: Session, job_id: int) -> None:
-    """A budget locked by an accepted estimate (#551) is the contract — only
-    a change order moves it, so editing or re-seeding it is a 409."""
-    locked = (
-        db.query(JobBudget)
-        .filter(JobBudget.job_id == job_id, JobBudget.locked.is_(True))
-        .first()
-    )
-    if locked is None:
-        return
-    est = db.get(Estimate, locked.estimate_id) if locked.estimate_id else None
+def _locked_budget_409(db: Session, row: JobBudget):
+    """The 409 a locked budget row gives. There is no unlock: a row an
+    accepted estimate owns is the contract budget, moved only by a new
+    estimate or, later, a change order (#551)."""
+    est = db.get(Estimate, row.estimate_id) if row.estimate_id else None
     number = est.estimate_number if est else "an accepted estimate"
     raise HTTPException(
         status_code=409,
@@ -197,6 +191,18 @@ def _refuse_locked_budget(db: Session, job_id: int) -> None:
             "message": f"Locked by estimate {number}; change it with a change order",
         },
     )
+
+
+def _refuse_locked_budget(db: Session, job_id: int) -> None:
+    """Job-wide refusal: re-seeding from an estimate replaces the whole
+    estimate budget, so any locked row blocks it (#551)."""
+    locked = (
+        db.query(JobBudget)
+        .filter(JobBudget.job_id == job_id, JobBudget.locked.is_(True))
+        .first()
+    )
+    if locked is not None:
+        _locked_budget_409(db, locked)
 
 
 @router.get("/{job_id}/budgets", response_model=list[JobBudgetResponse])
@@ -215,23 +221,29 @@ def get_job_budgets(job_id: int, db: Session = Depends(get_db)):
 def save_job_budgets(job_id: int, data: JobBudgetSave, db: Session = Depends(get_db)):
     """Replace the job's MANUAL budget rows with the given set (estimate-
     seeded rows are kept unless the same key is supplied, which then takes
-    over as manual). Zero-amount rows are dropped."""
+    over as manual). Zero-amount rows are dropped. A row an accepted estimate
+    locked (#551) can't be overwritten — only that row's key is refused, so
+    manual rows on other codes still save after acceptance."""
     _get(db, job_id)
-    _refuse_locked_budget(db, job_id)
     types = cost_type_map(db)
     existing = {
         (r.cost_code_id, r.cost_type): r
         for r in db.query(JobBudget).filter(JobBudget.job_id == job_id).all()
     }
+    locked_keys = {k: r for k, r in existing.items() if r.locked}
     keep: set = set()
     for row in data.rows:
+        key = (row.cost_code_id, row.cost_type)
+        # a locked row's key is refused before anything else — it is the
+        # contract budget, moved only by a change order (#551)
+        if key in locked_keys:
+            _locked_budget_409(db, locked_keys[key])
         if row.cost_type and row.cost_type not in types:
             raise HTTPException(
                 status_code=422, detail=f"Unknown cost type '{row.cost_type}'"
             )
         if row.cost_code_id and not db.get(CostCode, row.cost_code_id):
             raise HTTPException(status_code=404, detail="Cost code not found")
-        key = (row.cost_code_id, row.cost_type)
         if row.amount == 0 and row.revenue_amount == 0:
             continue
         keep.add(key)

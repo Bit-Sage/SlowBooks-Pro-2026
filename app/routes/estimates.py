@@ -25,7 +25,11 @@ from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.routes.invoice_messages import default_message_body
 from app.services.audit import audited_bulk_delete
 from app.services.job_costing import line_cost_type, budgets_from_estimate
-from app.services.estimating import estimate_totals, reprice_factor
+from app.services.estimating import (
+    estimate_totals,
+    reprice_factor,
+    is_included_line,
+)
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.contacts import Customer
@@ -36,6 +40,7 @@ from app.schemas.estimates import (
     EstimateUpdate,
     EstimateResponse,
     EstimateAccept,
+    totals_from_dict,
 )
 from app.schemas.invoices import InvoiceResponse, ZeroTotalConfirmation
 from app.services.pdf_service import generate_estimate_pdf
@@ -57,6 +62,21 @@ router = APIRouter(prefix="/api/estimates", tags=["estimates"])
 
 _ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
 
+# The one message a settled (accepted/converted) estimate gives when something
+# tries to re-price or re-scope it; reprice and the edit guard share it (#551).
+_SETTLED_MSG = "A settled estimate can't be repriced or re-scoped; make a new one or a change order."
+
+# Fields frozen once an estimate is settled (notes/expiration stay editable).
+_FROZEN_ON_SETTLE = {
+    "customer_id",
+    "job_id",
+    "tax_rate",
+    "gc_pct",
+    "insurance_pct",
+    "fee_pct",
+    "bond_pct",
+}
+
 
 def _customer_bill_to(customer) -> dict:
     return {f"bill_{k}": getattr(customer, f"bill_{k}", None) for k in _ADDRESS_PARTS}
@@ -73,7 +93,7 @@ def _estimate_response(est: Estimate) -> EstimateResponse:
         line = by_line.get(line_resp.id)
         if line is not None and line.trade_package is not None:
             line_resp.trade_package_name = line.trade_package.name
-    resp.totals = estimate_totals(est)
+    resp.totals = totals_from_dict(estimate_totals(est))
     return resp
 
 
@@ -165,7 +185,17 @@ def list_estimates(
 
 @router.get("/{estimate_id}", response_model=EstimateResponse)
 def get_estimate(estimate_id: int, db: Session = Depends(get_db)):
-    est = db.query(Estimate).filter(Estimate.id == estimate_id).first()
+    est = (
+        db.query(Estimate)
+        .options(
+            joinedload(Estimate.customer),
+            # the lines' package feeds both trade_package_name and the bid
+            # math's by_package grouping, so load it in one go (#551)
+            selectinload(Estimate.lines).joinedload(EstimateLine.trade_package),
+        )
+        .filter(Estimate.id == estimate_id)
+        .first()
+    )
     if not est:
         raise HTTPException(status_code=404, detail="Estimate not found")
     return _estimate_response(est)
@@ -184,7 +214,12 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
     # never filled, so its PDF and the invoice it became had no address.
     bill_to = _customer_bill_to(customer)
     resolve_line_taxable(db, data.lines, customer)
-    subtotal, tax_amount, total = compute_line_totals(data.lines, data.tax_rate)
+    # The document totals (and its tax) cover the bought scope only: a
+    # unit-price line is a rate card and an un-accepted alternate is not in
+    # the bid, so neither is taxed (#551).
+    subtotal, tax_amount, total = compute_line_totals(
+        [ln for ln in data.lines if is_included_line(ln)], data.tax_rate
+    )
 
     estimate = None
     estimate_number = None
@@ -279,6 +314,19 @@ def update_estimate(
     accepting = changes.get("status") == EstimateStatus.ACCEPTED
     if accepting:
         changes.pop("status")
+
+    # A settled estimate (accepted or converted) is the basis of the job's
+    # locked budget, so its scope and price are frozen: lines, markups,
+    # customer, job and tax are refused (notes and the expiration date still
+    # edit, and re-setting status=accepted is a no-op) — change it with a new
+    # estimate or, later, a change order (#551).
+    if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
+        touched = set(changes) & _FROZEN_ON_SETTLE
+        if data.lines is not None:
+            touched.add("lines")
+        if touched:
+            raise HTTPException(status_code=409, detail=_SETTLED_MSG)
+
     if changes.get("customer_id") not in (None, estimate.customer_id):
         customer = db.get(Customer, changes["customer_id"])
         if not customer:
@@ -332,7 +380,9 @@ def update_estimate(
             db.add(line)
 
         tax_rate = data.tax_rate if data.tax_rate is not None else estimate.tax_rate
-        subtotal, tax_amount, total = compute_line_totals(data.lines, tax_rate)
+        subtotal, tax_amount, total = compute_line_totals(
+            [ln for ln in data.lines if is_included_line(ln)], tax_rate
+        )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
@@ -343,14 +393,22 @@ def update_estimate(
         stored = list(estimate.lines)
         if "customer_id" in changes:
             resolve_line_taxable(db, stored, db.get(Customer, estimate.customer_id))
-        subtotal, tax_amount, total = compute_line_totals(stored, estimate.tax_rate)
+        subtotal, tax_amount, total = compute_line_totals(
+            [ln for ln in stored if is_included_line(ln)], estimate.tax_rate
+        )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
 
     if accepting:
         db.flush()
-        _accept_estimate(db, estimate, estimate.job_id)
+        # Lock the job budget only when a job resolves and this is the first
+        # acceptance; without a job it is a plain status change (a business
+        # company has no job), and re-setting accepted is a no-op (#551).
+        if estimate.job_id is not None and estimate.status != EstimateStatus.ACCEPTED:
+            _accept_estimate(db, estimate, estimate.job_id)
+        else:
+            estimate.status = EstimateStatus.ACCEPTED
 
     db.commit()
     db.refresh(estimate)
@@ -369,22 +427,21 @@ def reprice_from_cost(estimate_id: int, db: Session = Depends(get_db)):
     if not estimate:
         raise HTTPException(status_code=404, detail="Estimate not found")
     if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
-        raise HTTPException(
-            status_code=409,
-            detail="A settled estimate can't be repriced; make a new one or a change order.",
-        )
+        raise HTTPException(status_code=409, detail=_SETTLED_MSG)
 
     factor = reprice_factor(estimate)
     for line in estimate.lines:
         kind = line.line_kind or "base"
-        base_scope = kind == "base" or (kind == "alternate" and line.alternate_accepted)
-        if not base_scope or line.unit_cost is None:
+        # Base lines and every alternate (an alternate is priced before the
+        # customer decides it) reprice; allowances and unit-price lines never
+        # do, and a line with no unit cost keeps its rate.
+        if kind in ("allowance", "unit_price") or line.unit_cost is None:
             continue
         line.rate = _q(Decimal(str(line.unit_cost)) * factor)
         line.amount = _q(Decimal(str(line.quantity or 0)) * Decimal(str(line.rate)))
 
     subtotal, tax_amount, total = compute_line_totals(
-        list(estimate.lines), estimate.tax_rate
+        [ln for ln in estimate.lines if is_included_line(ln)], estimate.tax_rate
     )
     estimate.subtotal = subtotal
     estimate.tax_amount = tax_amount
@@ -478,15 +535,7 @@ def convert_to_invoice(
 
     # The bid's own lines only: unit prices are a rate card and an alternate
     # becomes scope only once accepted, so neither converts (#551).
-    def _converts(line) -> bool:
-        kind = line.line_kind or "base"
-        if kind == "unit_price":
-            return False
-        if kind == "alternate" and not line.alternate_accepted:
-            return False
-        return True
-
-    kept = [ln for ln in estimate.lines if _converts(ln)]
+    kept = [ln for ln in estimate.lines if is_included_line(ln)]
     copied = taxed_copy_lines(kept, estimate.customer)
     subtotal, tax_amount, total = compute_line_totals(copied, estimate.tax_rate)
     confirm_zero_total(
