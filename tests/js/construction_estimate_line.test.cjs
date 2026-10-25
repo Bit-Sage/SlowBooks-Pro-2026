@@ -63,6 +63,26 @@ test('a business line row carries none of the construction cells', () => {
     assert.match(row, /class="line-unit-cost money"/);
 });
 
+test('a construction alternate line lifts the rate min so a deduct can be keyed', () => {
+    const ctx = estimatesContext(true);
+    const base = ctx.EstimatesPage.lineRowHtml(0, { line_kind: 'base' }, []);
+    const alt = ctx.EstimatesPage.lineRowHtml(1, { line_kind: 'alternate' }, []);
+    assert.match(base, /class="line-rate money"[^>]*min="0"/); // base keeps min=0
+    assert.doesNotMatch(alt, /class="line-rate money"[^>]*min="0"/); // alternate lifts it
+});
+
+test('switching the kind to Alternate and back toggles the rate min', () => {
+    const ctx = estimatesContext(true);
+    ctx.EstimatesPage.recalc = () => {};
+    let min = '0';
+    const rate = { setAttribute: (k, v) => { min = v; }, removeAttribute: () => { min = null; } };
+    const row = { querySelector: (s) => (s === '.line-rate' ? rate : null) };
+    ctx.EstimatesPage.kindChanged({ value: 'alternate', closest: () => row });
+    assert.equal(min, null); // lifted — a deduct's negative amount is allowed
+    ctx.EstimatesPage.kindChanged({ value: 'base', closest: () => row });
+    assert.equal(min, '0'); // restored
+});
+
 test('the markups block shows only in construction mode', () => {
     assert.match(estimatesContext(true).EstimatesPage.markupsBlockHtml({}), /Markups/);
     assert.match(estimatesContext(true).EstimatesPage.markupsBlockHtml({}), /name="gc_pct"/);

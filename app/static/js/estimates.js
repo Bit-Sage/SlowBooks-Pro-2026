@@ -279,8 +279,19 @@ const EstimatesPage = {
         const o = (v, label) => `<option value="${v}" ${k === v ? 'selected' : ''}>${label}</option>`;
         // the hidden accept flag rides with the line so a save carries it; the
         // Accept checkbox lives in the bid totals panel and toggles it
-        return `<td><select class="line-kind" onchange="EstimatesPage.recalc()">${o('base', 'Base')}${o('allowance', 'Allowance')}${o('alternate', 'Alternate')}${o('unit_price', 'Unit price')}</select>` +
+        return `<td><select class="line-kind" onchange="EstimatesPage.kindChanged(this)">${o('base', 'Base')}${o('allowance', 'Allowance')}${o('alternate', 'Alternate')}${o('unit_price', 'Unit price')}</select>` +
             `<input type="checkbox" class="line-alt-accepted" style="display:none" ${line.alternate_accepted ? 'checked' : ''}></td>`;
+    },
+    // Switching a line to Alternate lifts the rate's min=0 so a deduct can be
+    // keyed (a deduct is a negative amount); switching back restores it.
+    kindChanged(sel) {
+        const row = sel.closest('tr');
+        const rate = row && row.querySelector('.line-rate');
+        if (rate) {
+            if (sel.value === 'alternate') rate.removeAttribute('min');
+            else rate.setAttribute('min', '0');
+        }
+        EstimatesPage.recalc();
     },
     unitCell(line) {
         if (!Terms.isConstruction()) return '';
@@ -424,7 +435,7 @@ const EstimatesPage = {
             ${EstimatesPage.pkgCell(line)}${EstimatesPage.kindCell(line)}${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
             <td><input class="line-unit-cost money" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
             ${EstimatesPage.unitCell(line)}<td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
-            <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
+            <td><input class="line-rate money" type="number" step="0.0001" ${(Terms.isConstruction() && (line.line_kind === 'alternate')) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked(line)} onchange="EstimatesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="EstimatesPage.removeLine(${idx})">X</button></td>
