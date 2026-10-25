@@ -132,6 +132,39 @@ breakdowns) is computed, not stored — `app/services/estimating.py`. Migration
 `d9f6b2c4e7a1_construction_estimating` (additive and nullable/defaulted;
 downgrade reverses).
 
+## The contract on the job (#552)
+
+`jobs` gains the contract terms, all nullable (a job with no `contract_type`
+behaves exactly as before): `contract_type` (String(12) — `lump_sum` · `gmp` ·
+`cost_plus`), `original_contract_amount` (Numeric(15,2) — the sum when the
+contract was first set, stamped once; `contract_amount` stays the current /
+revised sum so #554 shows original + changes = revised), `fee_pct`
+(Numeric(7,4)) and `fee_amount` (Numeric(15,2) — a fixed fee, which wins when
+both are set), `cap_amount` (Numeric(15,2) — the GMP maximum or a cost-plus
+not-to-exceed), `contingency_amount` (Numeric(15,2) — owner contingency inside
+the sum), `retainage_pct` (Numeric(5,2) — held per pay application, used by
+#555), `contract_date` (Date) and `contract_estimate_id` (FK estimates, SET
+NULL).
+
+New table `sov_lines` — the owner's schedule of values:
+
+| column | notes |
+|---|---|
+| id, job_id (FK jobs, CASCADE) | the job this schedule belongs to |
+| line_no (Integer), item_no (String(10)) | 1-based order; printed number ("01"…), editable |
+| description (String(200)) | |
+| trade_package_id (FK, SET NULL), cost_code_id (FK, SET NULL) | optional links |
+| kind (String(16), NOT NULL default `work`) | `work` · `allowance` · `contingency` · `fee` · `general_conditions` |
+| scheduled_value (Numeric(15,2), NOT NULL default 0) | |
+| source_estimate_id (FK estimates, SET NULL) | set when built from an estimate |
+
+Unique `(job_id, line_no)`. No billed / stored / retainage columns yet — #555
+adds them when progress billing bills the SOV. The contract summary (changes,
+fee, cap remaining, contingency remaining, SOV total and balance, billed to
+date) is computed, not stored — `app/services/contracts.py`. Migration
+`e2a4c6d8f0b1_construction_contract` (additive and nullable/defaulted;
+downgrade reverses).
+
 ## Job cost model (milestone 3)
 
 | table | purpose |

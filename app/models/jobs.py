@@ -23,6 +23,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -30,6 +31,17 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 JOB_STATUSES = ("pending", "awarded", "in_progress", "closed", "not_awarded")
+
+# The contract on the job (#552). A construction job can carry a contract — a
+# lump sum, a GMP (guaranteed maximum price) or cost-plus — with a fee, a cap,
+# contingency and retainage. NULL contract_type is today's behaviour: a job
+# with a plain contract amount and no construction terms.
+CONTRACT_TYPES = ("lump_sum", "gmp", "cost_plus")
+
+# A schedule-of-values line kind. "work" is the ordinary scope line (one per
+# trade package); allowance / contingency / fee / general_conditions are the
+# carried items an owner reads on a pay application.
+SOV_KINDS = ("work", "allowance", "contingency", "fee", "general_conditions")
 
 
 class Job(Base):
@@ -52,15 +64,75 @@ class Job(Base):
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
 
+    # The contract on the job (#552). All nullable: a job with no contract
+    # type behaves exactly as before. contract_amount (above) stays the
+    # current/revised sum; original_contract_amount is the sum when the
+    # contract was first set, so #554 can show original + changes = revised.
+    contract_type = Column(String(12), nullable=True)
+    original_contract_amount = Column(Numeric(15, 2), nullable=True)
+    fee_pct = Column(Numeric(7, 4), nullable=True)
+    fee_amount = Column(Numeric(15, 2), nullable=True)  # fixed fee; wins over pct
+    cap_amount = Column(Numeric(15, 2), nullable=True)  # GMP max / cost-plus NTE
+    contingency_amount = Column(Numeric(15, 2), nullable=True)  # owner contingency
+    retainage_pct = Column(Numeric(5, 2), nullable=True)  # held per pay app (#555)
+    contract_date = Column(Date, nullable=True)
+    contract_estimate_id = Column(
+        Integer, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     customer = relationship("Customer", backref="jobs")
+    sov_lines = relationship(
+        "SovLine",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="SovLine.line_no",
+    )
 
     @property
     def full_name(self) -> str:
         """ "Customer: Job" — how QuickBooks migrants expect to see it."""
         cust = self.customer.name if self.customer else ""
         return f"{cust}: {self.name}" if cust else self.name
+
+
+class SovLine(Base):
+    """A line of the owner's schedule of values (#552) — what the contract
+    sum is broken into for billing. #555 adds the billed/stored/retainage
+    columns a pay application fills; for now a line is just a scheduled
+    value with a kind."""
+
+    __tablename__ = "sov_lines"
+    __table_args__ = (UniqueConstraint("job_id", "line_no", name="uq_sov_line_no"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(
+        Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    line_no = Column(Integer, nullable=False)  # 1-based order
+    item_no = Column(String(10), nullable=True)  # printed number, editable
+    description = Column(String(200), nullable=True)
+    trade_package_id = Column(
+        Integer, ForeignKey("trade_packages.id", ondelete="SET NULL"), nullable=True
+    )
+    cost_code_id = Column(
+        Integer, ForeignKey("cost_codes.id", ondelete="SET NULL"), nullable=True
+    )
+    kind = Column(String(16), nullable=False, default="work")
+    scheduled_value = Column(Numeric(15, 2), nullable=False, default=0)
+    source_estimate_id = Column(
+        Integer, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    job = relationship("Job", back_populates="sov_lines")
+    trade_package = relationship("TradePackage")
+    cost_code = relationship("CostCode")

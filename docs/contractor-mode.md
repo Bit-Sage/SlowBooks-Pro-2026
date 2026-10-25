@@ -207,6 +207,61 @@ locked budget moves — a numbered document that revises the contract amount and
 the budget with an audit trail. Until it lands, the lock simply holds: the
 budget stays as the accepted estimate left it.
 
+## The contract on the job
+
+An accepted estimate prices the work; the **contract** is the deal with the
+owner. A construction job grows a **Contract** tab (construction mode only;
+every other company sees the job pages exactly as before) that holds the
+terms, a few summary tiles and the owner's schedule of values. A job with no
+contract type set behaves the way it always has — the plain Contract amount on
+the job form still works for everyone.
+
+**The three types.** A job's contract is a **lump sum** (one fixed price), a
+**GMP** — guaranteed maximum price (cost-plus up to a ceiling the owner is
+protected by), or **cost-plus** (actual cost plus a fee, optionally with a
+not-to-exceed). The type decides how the fee and the cap read:
+
+- **Fee** — the contractor's fee. A **fixed fee** (a dollar amount) wins when
+  it is set; otherwise a **fee percent** applies to actual cost on a cost-plus
+  or GMP job. A lump-sum job earns no separate fee (it is inside the price).
+- **Cap** — the guaranteed maximum on a GMP (normally the contract sum, and
+  defaulted to it), or an optional not-to-exceed on cost-plus. *Cap remaining*
+  is the cap less cost-to-date and fee.
+- **Contingency** — the owner's contingency carried inside the contract sum,
+  drawn down as change orders use it (#554 tracks the draw-down).
+- **Retainage %** — the portion of each billing the owner holds back until the
+  job is accepted. It is stored now and used when progress billing lands.
+- **Contract date** and the **source estimate**, shown when the contract was
+  built from one.
+
+The summary stamps the **original contract amount** once, the first time a sum
+is set with a type; the Contract amount itself is the current, revised sum, so
+when change orders arrive (#554) the tab can show original + changes = revised.
+
+**The schedule of values.** The SOV is the contract sum broken into the lines
+an owner pay application bills against — each with an item number, a
+description, an optional package and section, a kind (work, allowance,
+contingency, fee or general conditions) and a scheduled value. **Build from
+accepted estimate** lays it out automatically: one **work** line per trade
+package (its base lines plus any accepted alternates, whose prices already
+carry the bid's markups — the SOV never itemises the markups, they live inside
+the work values), an **allowance** line for each allowance, and a
+**contingency** line when the job carries one. Lines with no package roll into
+one "Unassigned" work line. You can add, remove and reorder rows by hand and
+edit any value. The SOV must **balance to the contract sum**: a running total
+and the balance show at the foot of the grid, and the balance stays
+highlighted until it is zero. When the contract sum came from the estimate's
+bid total, a freshly built schedule already balances.
+
+**What comes next.** Change orders (#554) will revise the contract amount, the
+budget and the sub commitments together, with the rule that work paid for out
+of an allowance carries no markup. Progress billing (#555) will turn the SOV
+into an owner pay application — previous / this period / stored / retainage /
+balance per line — holding retainage back and releasing it at the end. Job
+reports (#556) will add the WIP schedule with over- and under-billing. This
+issue sets the contract and builds the schedule; it leaves those seams open
+rather than filling them.
+
 ## The words
 
 A contractor keeps almost every business word — Customer, Invoice, Estimate,
@@ -256,7 +311,8 @@ appear. Every other report stays where it is.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
   rest.
-- **The estimate references trade packages** (#551, see *Estimating* above);
-  the contract on the job (lump sum / GMP / cost-plus, fee, cap, contingency,
-  retainage, schedule of values), change orders, and sub commitments against a
-  package are still later steps.
+- **The estimate references trade packages** (#551) and **the contract on the
+  job** (#552, see *The contract on the job* above) is set with its schedule
+  of values; change orders (#554), progress billing / owner pay applications
+  with retainage (#555), WIP reports (#556), and sub commitments against a
+  package (#553) are still later steps.

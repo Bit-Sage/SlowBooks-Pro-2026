@@ -1,11 +1,11 @@
 from datetime import date as dt_date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, field_validator
 from app.schemas.common import StrictModel
 
-from app.models.jobs import JOB_STATUSES
+from app.models.jobs import CONTRACT_TYPES, JOB_STATUSES, SOV_KINDS
 
 
 def _clean_name(v):
@@ -109,5 +109,134 @@ class JobSummary(BaseModel):
     committed_cost: float = 0.0
 
 
+def _check_contract_type(v):
+    if v is None:
+        return v
+    v = v.strip().lower().replace(" ", "_").replace("-", "_")
+    if v not in CONTRACT_TYPES:
+        raise ValueError(f"contract_type must be one of {', '.join(CONTRACT_TYPES)}")
+    return v
+
+
+def _non_negative(name):
+    def _check(v):
+        if v is not None and v < 0:
+            raise ValueError(f"{name} cannot be negative")
+        return v
+
+    return _check
+
+
+class ContractTerms(StrictModel):
+    """The PUT body for a job's contract terms. Every field is optional —
+    a field left out is unchanged; a field sent as null clears it."""
+
+    contract_type: Optional[str] = None
+    contract_amount: Optional[Decimal] = None
+    fee_pct: Optional[Decimal] = None
+    fee_amount: Optional[Decimal] = None
+    cap_amount: Optional[Decimal] = None
+    contingency_amount: Optional[Decimal] = None
+    retainage_pct: Optional[Decimal] = None
+    contract_date: Optional[dt_date] = None
+
+    _type = field_validator("contract_type")(_check_contract_type)
+    _amt = field_validator("contract_amount")(_non_negative("contract_amount"))
+    _fee = field_validator("fee_amount")(_non_negative("fee_amount"))
+    _cap = field_validator("cap_amount")(_non_negative("cap_amount"))
+    _cont = field_validator("contingency_amount")(_non_negative("contingency_amount"))
+
+    @field_validator("fee_pct")
+    @classmethod
+    def _fee_pct(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("fee_pct cannot be negative")
+        return v
+
+    @field_validator("retainage_pct")
+    @classmethod
+    def _retainage(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("retainage_pct must be between 0 and 100")
+        return v
+
+
+class SovLineIn(StrictModel):
+    item_no: Optional[str] = None
+    description: Optional[str] = None
+    trade_package_id: Optional[int] = None
+    cost_code_id: Optional[int] = None
+    kind: str = "work"
+    scheduled_value: Decimal = Decimal("0")
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v):
+        v = (v or "work").strip().lower()
+        if v not in SOV_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(SOV_KINDS)}")
+        return v
+
+    @field_validator("scheduled_value")
+    @classmethod
+    def _value(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("scheduled_value cannot be negative")
+        return v
+
+
+class SovSave(StrictModel):
+    lines: List[SovLineIn] = []
+
+
+class SovLineOut(BaseModel):
+    id: int
+    line_no: int
+    item_no: Optional[str] = None
+    description: Optional[str] = None
+    trade_package_id: Optional[int] = None
+    trade_package_name: Optional[str] = None
+    cost_code_id: Optional[int] = None
+    cost_code_label: Optional[str] = None
+    kind: str
+    scheduled_value: Decimal
+    source_estimate_id: Optional[int] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ContractSummary(BaseModel):
+    """The contract roll-up for one job — figures the Contract tab's tiles
+    read. Additive; a job with no contract type still answers (the money
+    fields fall back to the plain contract_amount)."""
+
+    contract_type: Optional[str] = None
+    contract_amount: Optional[float] = None
+    original_contract_amount: Optional[float] = None
+    changes: float = 0.0
+    fee: float = 0.0
+    fee_pct: Optional[float] = None
+    fee_amount: Optional[float] = None
+    cost_to_date: float = 0.0
+    cap_amount: Optional[float] = None
+    cap_remaining: Optional[float] = None
+    contingency_amount: Optional[float] = None
+    contingency_used: float = 0.0
+    contingency_remaining: Optional[float] = None
+    retainage_pct: Optional[float] = None
+    contract_date: Optional[dt_date] = None
+    contract_estimate_id: Optional[int] = None
+    sov_total: float = 0.0
+    sov_balance: float = 0.0
+    billed_to_date: float = 0.0
+    billed_pct: Optional[float] = None
+
+
+class ContractResponse(BaseModel):
+    contract: ContractSummary
+    sov: List[SovLineOut] = []
+
+
 class JobDetailResponse(JobResponse):
     summary: JobSummary
+    contract: Optional[ContractSummary] = None

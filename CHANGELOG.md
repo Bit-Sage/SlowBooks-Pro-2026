@@ -210,6 +210,30 @@ onto the invoice so the cost basis isn't lost. A Business or Nonprofit
 company's estimate form and PDF are exactly as they were. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**The contract on the job** (#552, @ContractorKeith). A construction job can
+now carry a contract — a **lump sum**, a **GMP** (guaranteed maximum price) or
+**cost-plus** — with a fee (a percent of cost or a fixed amount, the fixed fee
+winning), a cap (the GMP maximum, or a cost-plus not-to-exceed), owner
+contingency and a retainage percent held on each billing. A new **Contract**
+tab on the job (construction mode only) shows the terms, summary tiles
+(contract sum, changes, fee, cost to date, cap remaining, contingency
+remaining, billed to date and %) and the owner's **schedule of values** — the
+contract sum broken into billable lines (item no, description, package,
+section, kind, scheduled value), which must balance to the contract sum; the
+balance stays highlighted until it does. **Build from accepted estimate**
+(`POST /api/jobs/{id}/contract/from-estimate/{estimate_id}`) lays the schedule
+out from the estimate — one work line per trade package (base plus any
+accepted alternates, the markups already inside the values), an allowance line
+per allowance and a contingency line when one is set — and defaults the
+contract sum to the bid total. `GET`/`PUT /api/jobs/{id}/contract` read and set
+the terms, `PUT /api/jobs/{id}/sov` edits the schedule, and the Job
+Profitability report gains the contract type and, for cost-plus/GMP, the
+computed fee. The original contract amount is stamped once and kept while the
+current sum moves. Later issues move the contract with change orders (#554)
+and bill it as owner pay applications with retainage held and released (#555).
+A Business or Nonprofit job is exactly as it was. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

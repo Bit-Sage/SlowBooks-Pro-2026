@@ -17,17 +17,26 @@ from app.database import get_db
 from app.routes._helpers import reject_null_updates
 from app.models.contacts import Customer
 from app.models.cost_codes import CostCode
-from app.models.jobs import Job
+from app.models.trade_packages import TradePackage
+from app.models.jobs import Job, SovLine
 from app.models.transactions import Transaction, TransactionLine
 from app.schemas.job_costing import JobBudgetResponse, JobBudgetSave
 from app.schemas.jobs import (
+    ContractResponse,
+    ContractSummary,
+    ContractTerms,
     JobCreate,
     JobDetailResponse,
     JobResponse,
     JobSummary,
     JobUpdate,
+    SovLineOut,
+    SovSave,
 )
 from app.models.estimates import Estimate
+from app.services.contracts import build_sov, contract_summary
+from app.services.estimating import estimate_totals
+from app.services.accounting import _q
 from app.models.job_costing import JobBudget
 from app.services.job_costing import (
     budget_vs_actual_all_jobs,
@@ -145,7 +154,12 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     )
     summary["committed_cost"] = committed_cost(db, [job_id]).get(job_id, 0.0)
     base = _to_response(job)
-    return JobDetailResponse(**base.model_dump(), summary=JobSummary(**summary))
+    # The contract roll-up rides along, additive (#552); the SPA shows it in
+    # construction mode only, but the summary is harmless for anyone.
+    contract = ContractSummary(**contract_summary(db, job))
+    return JobDetailResponse(
+        **base.model_dump(), summary=JobSummary(**summary), contract=contract
+    )
 
 
 @router.get("/{job_id}/transactions")
@@ -293,6 +307,146 @@ def seed_budget_from_estimate(
     budgets_from_estimate(db, job, est)
     db.commit()
     return get_job_budgets(job_id, db)
+
+
+# ---------------------------------------------------------------------------
+# The contract on the job (#552) — terms, the summary and the schedule of
+# values. Bookkeeper-writable, like the rest of jobs; nothing here is locked
+# (change-order revisions are #554).
+# ---------------------------------------------------------------------------
+
+
+def _sov_responses(job: Job) -> list[SovLineOut]:
+    out = []
+    for r in job.sov_lines:
+        data = SovLineOut.model_validate(r)
+        data.trade_package_name = r.trade_package.name if r.trade_package else None
+        data.cost_code_label = r.cost_code.label if r.cost_code else None
+        out.append(data)
+    return out
+
+
+def _contract_response(db: Session, job: Job) -> ContractResponse:
+    return ContractResponse(
+        contract=ContractSummary(**contract_summary(db, job)),
+        sov=_sov_responses(job),
+    )
+
+
+@router.get("/{job_id}/contract", response_model=ContractResponse)
+def get_contract(job_id: int, db: Session = Depends(get_db)):
+    job = _get(db, job_id)
+    return _contract_response(db, job)
+
+
+@router.put("/{job_id}/contract", response_model=ContractResponse)
+def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)):
+    """Set the job's contract terms. A field left out is unchanged; a field
+    sent as null clears it. A GMP needs a cap (its guaranteed maximum),
+    defaulted to the contract amount. original_contract_amount is stamped
+    the first time a contract amount is set with a type, and never
+    overwritten after that — #554's revisions move contract_amount, not the
+    original."""
+    job = _get(db, job_id)
+    changes = data.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(job, key, value)
+    if job.contract_type == "gmp" and job.cap_amount is None:
+        if job.contract_amount is None:
+            raise HTTPException(
+                status_code=422,
+                detail="A GMP needs a contract amount — its guaranteed maximum.",
+            )
+        job.cap_amount = job.contract_amount
+    if (
+        job.original_contract_amount is None
+        and job.contract_amount is not None
+        and job.contract_type is not None
+    ):
+        job.original_contract_amount = job.contract_amount
+    db.commit()
+    db.refresh(job)
+    return _contract_response(db, job)
+
+
+@router.post(
+    "/{job_id}/contract/from-estimate/{estimate_id}",
+    response_model=ContractResponse,
+)
+def contract_from_estimate(
+    job_id: int, estimate_id: int, db: Session = Depends(get_db)
+):
+    """Set the contract from an accepted estimate and build its schedule of
+    values. Defaults the type to lump sum when unset, and the contract sum
+    (and the original) to the estimate's bid total when the job has none
+    yet. Replaces any existing SOV lines."""
+    job = _get(db, job_id)
+    est = db.get(Estimate, estimate_id)
+    if not est:
+        raise HTTPException(status_code=404, detail="Estimate not found")
+    # build_sov re-checks these, but check first so a bad request mutates
+    # nothing on the job. Accepted is checked before the job match, so an
+    # estimate not yet on any job reads as "accept it first".
+    from app.models.estimates import EstimateStatus
+
+    if est.status != EstimateStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "estimate_not_accepted",
+                "message": "Accept the estimate before building the schedule of values.",
+            },
+        )
+    if est.job_id != job.id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "estimate_job_mismatch",
+                "message": "That estimate is not on this job.",
+            },
+        )
+    job.contract_estimate_id = est.id
+    if job.contract_type is None:
+        job.contract_type = "lump_sum"
+    if job.contract_amount is None:
+        job.contract_amount = _q(estimate_totals(est)["bid_total"])
+        job.original_contract_amount = job.contract_amount
+    build_sov(db, job, est, replace=True)
+    db.commit()
+    db.refresh(job)
+    return _contract_response(db, job)
+
+
+@router.put("/{job_id}/sov", response_model=ContractSummary)
+def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
+    """Replace the schedule of values with the given lines, renumbered 1..n
+    in the order sent. Returns the contract summary (whose sov_balance
+    shows whether the SOV balances to the contract sum)."""
+    job = _get(db, job_id)
+    for line in data.lines:
+        if line.trade_package_id and not db.get(TradePackage, line.trade_package_id):
+            raise HTTPException(status_code=404, detail="Trade package not found")
+        if line.cost_code_id and not db.get(CostCode, line.cost_code_id):
+            raise HTTPException(status_code=404, detail="Cost code not found")
+    db.query(SovLine).filter(SovLine.job_id == job.id).delete()
+    db.flush()
+    for n, line in enumerate(data.lines, start=1):
+        item_no = (line.item_no or "").strip() or f"{n:02d}"
+        db.add(
+            SovLine(
+                job_id=job.id,
+                line_no=n,
+                item_no=item_no,
+                description=line.description,
+                trade_package_id=line.trade_package_id,
+                cost_code_id=line.cost_code_id,
+                kind=line.kind,
+                scheduled_value=line.scheduled_value,
+            )
+        )
+    db.commit()
+    db.refresh(job)
+    return ContractSummary(**contract_summary(db, job))
 
 
 @router.post("", response_model=JobResponse, status_code=201)
