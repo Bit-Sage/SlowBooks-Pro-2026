@@ -62,9 +62,11 @@ def test_reveal_log_is_404_when_not_native(client, monkeypatch):
     assert client.post("/api/support/reveal-log").status_code == 404
 
 
-def test_reveal_log_opens_the_folder_on_native(client, monkeypatch):
+def test_reveal_log_opens_the_folder_on_native(client, tmp_path, monkeypatch):
     monkeypatch.setenv("SLOWBOOKS_DESKTOP", "1")
     monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
+    monkeypatch.setenv("SLOWBOOKS_DATA_DIR", str(tmp_path))
+    (tmp_path / "launcher.log").write_text("x\n", encoding="utf-8")
     calls = []
     monkeypatch.setattr(
         support_routes.subprocess, "run", lambda *a, **k: calls.append(a)
@@ -72,3 +74,34 @@ def test_reveal_log_opens_the_folder_on_native(client, monkeypatch):
     r = client.post("/api/support/reveal-log")
     assert r.status_code == 200 and r.json()["revealed"] is True
     assert calls  # a file manager was invoked
+
+
+def test_reveal_log_reports_a_missing_file_on_native(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("SLOWBOOKS_DESKTOP", "1")
+    monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
+    monkeypatch.setenv("SLOWBOOKS_DATA_DIR", str(tmp_path))  # no launcher.log
+    calls = []
+    monkeypatch.setattr(
+        support_routes.subprocess, "run", lambda *a, **k: calls.append(a)
+    )
+    body = client.post("/api/support/reveal-log").json()
+    assert body["revealed"] is False and body["reason"]
+    assert not calls  # nothing to open, so no file manager launched
+
+
+def test_diagnostics_note_points_to_the_console_on_a_server_deployment(
+    client, tmp_path, monkeypatch
+):
+    # Docker / Server Edition: neither desktop flag, no launcher.log file.
+    monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
+    monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
+    monkeypatch.setenv("SLOWBOOKS_DATA_DIR", str(tmp_path))
+    body = client.get("/api/support/diagnostics").json()
+    assert body["deployment"] == "Docker"
+    assert body["log_available"] is False
+    assert "console" in body["log_note"].lower()
+
+
+def test_both_endpoints_require_a_signed_in_session(unauthed_client):
+    assert unauthed_client.get("/api/support/diagnostics").status_code == 401
+    assert unauthed_client.post("/api/support/reveal-log").status_code == 401

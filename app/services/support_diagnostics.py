@@ -7,19 +7,23 @@
 # packages may not be importable, and the redaction has to be reviewable on
 # its own. Nothing here touches the network — the no-telemetry promise holds;
 # the browser opens the user's own mail client with the text we built.
+#
+# Redaction is BEST-EFFORT: it catches the common shapes of private data, not
+# every possible one. The form tells the user to read the body before sending.
 # ============================================================================
 
 import os
 import platform
 import re
 import sys
+from urllib.parse import quote
 
 SUPPORT_EMAIL = "support@slowbookspro.com"
 
-# The mailto body is kept under this many characters: some mail clients
-# silently truncate a long mailto body, so the log tail is trimmed to fit and
-# the form tells the user to use "Copy diagnostics" for the whole block.
-MAX_BODY_CHARS = 1800
+# The mailto body is kept under this many characters AFTER URL-encoding:
+# encodeURIComponent inflates log text (~1.4x), and ShellExecute / Outlook
+# mailto limits sit near 2048. The subject takes the rest of that budget.
+MAX_ENCODED_BODY = 1500
 
 
 # ---------------------------------------------------------------------------
@@ -33,18 +37,31 @@ _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
 # Social Security number (ddd-dd-dddd) and EIN (dd-ddddddd): both are tax IDs.
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 _EIN_RE = re.compile(r"\b\d{2}-\d{7}\b")
-# North American phone: optional +1, area code (parens optional), separators
-# required so a bare run of digits is left to the account/routing rules.
-_PHONE_RE = re.compile(r"\b(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")
-# Dollar amounts, with or without thousands separators and cents.
-_AMOUNT_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?")
-# Bank routing numbers are exactly nine digits; handled before the broader
-# account-number run so a routing number reads as one.
-_ROUTING_RE = re.compile(r"\b\d{9}\b")
-# Account / card numbers: a run of 6-17 digits (nine-digit runs are already
-# gone). Catches most bank and card numbers without eating ports (<=5 digits),
-# line numbers or ISO timestamp fields (which carry separators).
-_ACCOUNT_RE = re.compile(r"\b\d{6,17}\b")
+# North American phone. No leading \b (it can't anchor before "(" or "+"), so
+# a not-word lookbehind; separators required so a bare digit run is left to
+# the number rules. Starts at "(" (parens area code) and "+1 ..." forms.
+_PHONE_RE = re.compile(
+    r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]\d{4}(?!\d)"
+)
+# Amounts: $-prefixed, accounting-negative "(1,234.56)", and bare two-decimal
+# numbers. The lookarounds keep version strings ("3.45.0") and timestamp
+# fractions ("09:15:01.123") out of it — a two-decimal number is only an
+# amount when no digit, dot or colon sits on either side.
+_AMOUNT_RE = re.compile(
+    r"""
+      \$\s?\d[\d,]*(?:\.\d+)?                               # $-prefixed
+    | \(\s?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}\s?\)           # accounting negative
+    | (?<![\d.:])(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}(?![\d.:])  # bare 2-decimal
+    """,
+    re.VERBOSE,
+)
+# A line carries an account/card/routing number only when it says so — these
+# keywords, or a "#"-prefixed number. Keeps PIDs, ports, epoch seconds and row
+# ids (bare 6-11 digit runs with no such context) readable.
+_ACCOUNT_CONTEXT_RE = re.compile(r"account|acct|routing|aba|iban|card|swift|#\d", re.I)
+_LONG_DIGITS_RE = re.compile(r"(?<!\d)\d{12,17}(?!\d)")  # unconditional
+_ROUTING_RE = re.compile(r"(?<!\d)\d{9}(?!\d)")  # contextual: exactly nine
+_ACCOUNT_RE = re.compile(r"(?<!\d)\d{6,11}(?!\d)")  # contextual: the rest
 # Street address: a number then a few words then a street-type word.
 _STREET_WORDS = (
     r"Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|"
@@ -56,14 +73,59 @@ _ADDRESS_RE = re.compile(
 )
 
 
-def redact(text, names=None):
-    """Replace sensitive values in ``text`` with bracketed tokens.
+def _name_regexes(names):
+    """Two compiled alternations for the name list, longest first:
 
-    ``names`` is the list of personal and company names from the company file
-    (customers, vendors, employees, the company itself); each is matched as a
-    whole word, case-insensitively. The function is pure — it reads nothing
-    and calls nothing external.
+    - multi-word names match case-insensitively ("acme supply co" == DB value);
+    - single-word names must be >= 4 chars and match case-SENSITIVELY, so a
+      company called "Log", "App" or "Main" can't blank a log line, and
+      "Summit" is redacted while the English word "summit" is not.
+
+    Interior whitespace in a name becomes ``\\s+`` (a DB "Jane  Doe" matches
+    "Jane Doe"), and the whole name is wrapped in not-word lookarounds so a
+    name that starts or ends in punctuation ("#1 Fence Co", "Smith & Sons,
+    Inc.") is still matched.
     """
+    multi, single = [], []
+    for raw in names or []:
+        if not raw:
+            continue
+        name = " ".join(str(raw).split())  # trim + collapse interior whitespace
+        if not name:
+            continue
+        tokens = name.split(" ")
+        if len(tokens) >= 2:
+            multi.append(name)
+        elif len(name) >= 4:
+            single.append(name)
+
+    def build(group, flags):
+        if not group:
+            return None
+        group = sorted(set(group), key=len, reverse=True)
+        alt = "|".join(r"\s+".join(re.escape(t) for t in n.split(" ")) for n in group)
+        return re.compile(r"(?<!\w)(?:" + alt + r")(?!\w)", flags)
+
+    return build(multi, re.IGNORECASE), build(single, 0)
+
+
+def _redact_numbers(text):
+    """Account / routing numbers, line by line. 12-17 digit runs are always
+    redacted; 6-11 digit runs (routing is nine) only on a line whose words
+    show it is an account number."""
+    out = []
+    for line in text.split("\n"):
+        line = _LONG_DIGITS_RE.sub("[account]", line)
+        if _ACCOUNT_CONTEXT_RE.search(line):
+            line = _ROUTING_RE.sub("[routing]", line)
+            line = _ACCOUNT_RE.sub("[account]", line)
+        out.append(line)
+    return "\n".join(out)
+
+
+def redact(text, names=None):
+    """Replace sensitive values in ``text`` with bracketed tokens. Pure — reads
+    nothing and calls nothing external. Best-effort by design (see header)."""
     if not text:
         return text or ""
     out = text
@@ -73,18 +135,13 @@ def redact(text, names=None):
     out = _PHONE_RE.sub("[phone]", out)
     out = _ADDRESS_RE.sub("[address]", out)
     out = _AMOUNT_RE.sub("[amount]", out)
-    out = _ROUTING_RE.sub("[routing]", out)
-    out = _ACCOUNT_RE.sub("[account]", out)
+    out = _redact_numbers(out)
     # Names last, so a name that looks like nothing else is still caught.
-    # Longest first: "Acme Supply Co" before "Acme", so the whole name goes.
-    for name in sorted(
-        {n.strip() for n in (names or []) if n and len(n.strip()) >= 3},
-        key=len,
-        reverse=True,
-    ):
-        out = re.sub(
-            r"\b" + re.escape(name) + r"\b", "[name]", out, flags=re.IGNORECASE
-        )
+    multi_re, single_re = _name_regexes(names)
+    if multi_re:
+        out = multi_re.sub("[name]", out)
+    if single_re:
+        out = single_re.sub("[name]", out)
     return out
 
 
@@ -108,9 +165,11 @@ def detect_platform():
 def detect_deployment():
     """native / Server Edition / Docker.
 
-    The launcher sets SLOWBOOKS_DESKTOP=1 for every server it starts and
-    SLOWBOOKS_SERVER_MODE=1 only when it serves beyond loopback (--serve-lan).
-    A browser install with neither flag is a Docker / self-managed server.
+    The server process sets SLOWBOOKS_DESKTOP=1 for every server the launcher
+    starts and SLOWBOOKS_SERVER_MODE=1 only when it serves beyond loopback
+    (--serve-lan). A browser install with neither flag is Docker / self-managed.
+    NOTE: these flags live in the SERVER process; the launcher process itself
+    passes its deployment explicitly (see desktop_launcher._support_mailto).
     """
     desktop = os.environ.get("SLOWBOOKS_DESKTOP") == "1"
     server_mode = os.environ.get("SLOWBOOKS_SERVER_MODE") == "1"
@@ -141,7 +200,9 @@ def python_version():
 
 def environment_block(version, commit, platform_name, python, deployment, browser=None):
     """The fixed facts a support email needs, one per line. Carries no PII, so
-    it is placed as-is; the log tail below it is what gets redacted."""
+    it is placed as-is; the log tail below it is what gets redacted. The browser
+    / web-view UA is included whenever known — it matters most on the native
+    window, where the WebView2 / WKWebView version is the common culprit."""
     lines = [
         f"Version: v{version}" + (f" ({commit})" if commit else ""),
         f"Platform: {platform_name}",
@@ -197,6 +258,16 @@ def build_subject(version, platform_name, deployment, what_happened):
     )
 
 
+def _encoded_len(text):
+    """How long ``text`` is once mailto-encoded. quote with no safe set
+    over-counts slightly vs. encodeURIComponent, which keeps the budget on the
+    safe side."""
+    return len(quote(text, safe=""))
+
+
+_TRIM_FOOTER = "\n(log trimmed — use Copy diagnostics for the full block)"
+
+
 def build_body(
     what_happened,
     what_expected,
@@ -204,10 +275,13 @@ def build_body(
     env_block,
     log_tail,
     log_available=True,
-    max_chars=MAX_BODY_CHARS,
+    log_note="",
+    max_encoded=MAX_ENCODED_BODY,
 ):
-    """Assemble the email body, trimming the log tail so the whole body stays
-    under ``max_chars`` (long mailto bodies get truncated by some clients)."""
+    """Assemble the email body, trimming the LOG TAIL (never the user's own
+    text) until the URL-encoded body is within ``max_encoded``. When even the
+    header alone is over budget, the tail is dropped entirely; the user's text
+    is left intact and the subject carries the gist."""
     header_parts = [
         "What happened:",
         (what_happened or "").strip() or "(not described)",
@@ -218,21 +292,28 @@ def build_body(
     ]
     if reply_to:
         header_parts += [f"Reply to: {reply_to}", ""]
-    header_parts += [
-        "--- Environment ---",
-        env_block,
-        "",
-        "--- Recent log ---",
-    ]
+    header_parts += ["--- Environment ---", env_block, "", "--- Recent log ---"]
     header = "\n".join(header_parts) + "\n"
+
     if not log_available:
-        return header + "(log file not found)"
-    footer = "\n(log trimmed — use Copy diagnostics for the full block)"
-    room = max_chars - len(header)
+        return header + (log_note or "(log file not found)")
+
     tail = log_tail or "(log is empty)"
-    if room <= 0:
+    full = header + tail
+    if _encoded_len(full) <= max_encoded:
+        return full
+
+    # Need to trim. Reserve the footer, then binary-search the largest number
+    # of trailing log characters (the newest lines, where the error is) that
+    # still fits. If nothing fits, drop the tail and keep the user's text.
+    base = header + _TRIM_FOOTER + "\n"
+    if _encoded_len(base) > max_encoded:
         return header.rstrip()
-    if len(tail) <= room:
-        return header + tail
-    # Keep the END of the log (the newest lines, where the error is).
-    return header + footer + "\n" + tail[-(room - len(footer) - 1) :]
+    lo, hi = 0, len(tail)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _encoded_len(base + tail[-mid:]) <= max_encoded:
+            lo = mid
+        else:
+            hi = mid - 1
+    return base + tail[-lo:] if lo else header.rstrip()

@@ -48,3 +48,22 @@ def test_help_entry_opens_the_form_and_send_is_a_mailto_to_support(browser):
 
     assert "[SBP]" in unquote(subject)
     assert "The invoice PDF is blank" in unquote(subject)
+
+
+def test_a_read_only_sign_in_can_still_use_the_form(browser):
+    page = _open(browser, 1280, 900, "#/")
+    page.route("**/api/support/diagnostics", lambda r: r.fulfill(json=DIAG))
+    page.evaluate("() => App.setRole('readonly')")
+
+    page.click("#support-btn")
+    page.wait_for_selector("#support-send")
+
+    # data-readonly-ok: the textareas stay enabled and no lock banner appears —
+    # a read-only reviewer is exactly who may need to report a problem.
+    assert page.is_enabled("#support-what-happened")
+    assert page.is_enabled("#support-reply-to")
+    banner = page.evaluate(
+        "() => !!document.querySelector('#modal-body .readonly-note')"
+    )
+    page.close()
+    assert banner is False

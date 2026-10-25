@@ -1697,10 +1697,15 @@ def _show_error_box(message: str, mailto: str | None = None) -> None:
         pass
 
 
-def _support_mailto(log_path) -> str | None:
+def _support_mailto(log_path, deployment="native") -> str | None:
     """A mailto: to support for the fatal-error dialog, built with the same
     subject/body as the in-app form. No DB is open (the app never started), so
-    the log tail is redacted with no name list. Best-effort: None on failure."""
+    the log tail is redacted with no name list. Best-effort: None on failure.
+
+    ``deployment`` is passed EXPLICITLY: sd.detect_deployment() reads
+    SLOWBOOKS_DESKTOP / SLOWBOOKS_SERVER_MODE, which this launcher only ever
+    sets in the SERVER CHILD's env (see _server_env), never its own — so
+    detecting it here would mislabel every crashed native install as Docker."""
     try:
         from urllib.parse import quote
 
@@ -1708,7 +1713,6 @@ def _support_mailto(log_path) -> str | None:
         from app.services import support_diagnostics as sd
 
         platform_name = sd.detect_platform()
-        deployment = sd.detect_deployment()
         env = sd.environment_block(
             __version__, sd.app_commit(), platform_name, sd.python_version(), deployment
         )
@@ -2529,10 +2533,12 @@ def main() -> int:
         tb = traceback.format_exc()
         if log_fh:
             log_fh.write(tb + "\n")
+        # --serve-lan is Server Edition; every other path is the native app.
+        deployment = "Server Edition" if args.serve_lan else "native"
         _show_error_box(
             "SlowBooks Pro hit an unexpected error and could not start.\n\n"
             f"Details were written to:\n{log_path}",
-            mailto=_support_mailto(log_path),
+            mailto=_support_mailto(log_path, deployment),
         )
         return 1
 

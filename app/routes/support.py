@@ -80,8 +80,20 @@ def diagnostics(db: Session = Depends(get_db)):
         "environment": env_block,
         "log_tail": log_tail,
         "log_available": available,
-        "log_note": "" if available else "No launcher.log was found on this install.",
+        "log_note": "" if available else _no_log_note(deployment),
     }
+
+
+def _no_log_note(deployment: str) -> str:
+    """Why there's no log tail. A browser install (Server Edition's
+    --serve-lan from source, or Docker) logs to the console / container logs,
+    not to launcher.log, so there is no file to read — say exactly that."""
+    if deployment in ("Server Edition", "Docker"):
+        return (
+            "This deployment logs to the console (terminal or container logs), "
+            "not to a file — copy the recent server output into your email."
+        )
+    return "No launcher.log was found on this install."
 
 
 @router.post("/reveal-log")
@@ -93,6 +105,12 @@ def reveal_log():
         raise HTTPException(status_code=404, detail="Not available on this install.")
 
     path = _log_path()
+    if not path.exists():
+        return {
+            "revealed": False,
+            "reason": "No launcher.log exists yet on this install.",
+            "path": str(path),
+        }
     try:
         if sys.platform == "darwin":
             # -R reveals (selects) the file in its folder.

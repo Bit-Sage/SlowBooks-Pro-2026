@@ -26,12 +26,20 @@ The body carries your text plus:
 - an **environment block** — version and commit, platform, Python version,
   deployment kind (native / Server Edition / Docker), and the browser when
   relevant; and
-- the **last ~50 lines of the log** (`launcher.log`, or the server log on
-  Server Edition), **redacted before it is placed**: emails, personal and
-  company names, dollar amounts, account and routing numbers, street
-  addresses, phone numbers and tax IDs become bracketed tokens like
-  `[email]`, `[name]` and `[amount]`. Timestamps, log levels and stack traces
-  stay readable.
+- the **last ~50 lines of the log** (`launcher.log` on a native desktop
+  install), **redacted before it is placed**: emails, personal and company
+  names, dollar amounts, account and routing numbers, street addresses, phone
+  numbers and tax IDs become bracketed tokens like `[email]`, `[name]` and
+  `[amount]`. Timestamps, log levels and stack traces stay readable.
+
+> Redaction is **best-effort** — it catches the common shapes of private data,
+> not every possible one. **Read the message before you send it** and remove
+> anything sensitive it missed.
+
+**Server Edition and Docker** log to the console (your terminal or the
+container logs), not to `launcher.log`, so there is no file for the form to
+read. On those deployments the form says so and asks you to copy the recent
+server output into your email yourself.
 
 Some mail clients truncate a long `mailto:` body, so the log tail is trimmed
 to keep the body short. Use **Copy diagnostics** to copy the full,
