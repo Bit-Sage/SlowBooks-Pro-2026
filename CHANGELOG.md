@@ -220,15 +220,19 @@ tab on the job (construction mode only) shows the terms, summary tiles
 remaining, billed to date and %) and the owner's **schedule of values** — the
 contract sum broken into billable lines (item no, description, package,
 section, kind, scheduled value), which must balance to the contract sum; the
-balance stays highlighted until it does. **Build from accepted estimate**
+balance stays highlighted until it does. The contract sum is **pre-tax** —
+tax is added on each invoice. **Build from accepted estimate**
 (`POST /api/jobs/{id}/contract/from-estimate/{estimate_id}`) lays the schedule
-out from the estimate — one work line per trade package (base plus any
-accepted alternates, the markups already inside the values), an allowance line
-per allowance and a contingency line when one is set — and defaults the
-contract sum to the bid total. `GET`/`PUT /api/jobs/{id}/contract` read and set
-the terms, `PUT /api/jobs/{id}/sov` edits the schedule, and the Job
-Profitability report gains the contract type and, for cost-plus/GMP, the
-computed fee. The original contract amount is stamped once and kept while the
+out from the estimate — one work line per trade package (its base lines plus
+any accepted alternates, at the prices as bid), an allowance line per
+allowance, and a contingency line when one is set — and defaults the contract
+sum to the estimate's pre-tax bid plus the contingency, so a freshly built
+schedule balances to zero. `GET`/`PUT /api/jobs/{id}/contract` read and set the
+terms, `PUT /api/jobs/{id}/sov` edits the schedule (a line may be negative — a
+deduct alternate nets the sum down), and the Job Profitability report gains the
+contract type and, for cost-plus/GMP, the period fee (`fee_period`, the fee on
+that period's cost — the job-to-date contract fee lives on the contract
+summary). The original contract amount is stamped once and kept while the
 current sum moves. Later issues move the contract with change orders (#554)
 and bill it as owner pay applications with retainage held and released (#555).
 A Business or Nonprofit job is exactly as it was. See

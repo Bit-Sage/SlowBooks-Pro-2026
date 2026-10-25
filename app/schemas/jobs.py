@@ -2,7 +2,7 @@ from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from app.schemas.common import StrictModel
 
 from app.models.jobs import CONTRACT_TYPES, JOB_STATUSES, SOV_KINDS
@@ -162,11 +162,13 @@ class ContractTerms(StrictModel):
 
 
 class SovLineIn(StrictModel):
-    item_no: Optional[str] = None
-    description: Optional[str] = None
+    item_no: Optional[str] = Field(default=None, max_length=10)
+    description: Optional[str] = Field(default=None, max_length=200)
     trade_package_id: Optional[int] = None
     cost_code_id: Optional[int] = None
     kind: str = "work"
+    # A scheduled value may be negative — a deduct alternate carried onto the
+    # schedule reduces the contract sum (#551 allows a deduct alternate).
     scheduled_value: Decimal = Decimal("0")
 
     @field_validator("kind")
@@ -175,13 +177,6 @@ class SovLineIn(StrictModel):
         v = (v or "work").strip().lower()
         if v not in SOV_KINDS:
             raise ValueError(f"kind must be one of {', '.join(SOV_KINDS)}")
-        return v
-
-    @field_validator("scheduled_value")
-    @classmethod
-    def _value(cls, v):
-        if v is not None and v < 0:
-            raise ValueError("scheduled_value cannot be negative")
         return v
 
 

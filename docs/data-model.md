@@ -158,12 +158,14 @@ New table `sov_lines` — the owner's schedule of values:
 | scheduled_value (Numeric(15,2), NOT NULL default 0) | |
 | source_estimate_id (FK estimates, SET NULL) | set when built from an estimate |
 
-Unique `(job_id, line_no)`. No billed / stored / retainage columns yet — #555
-adds them when progress billing bills the SOV. The contract summary (changes,
-fee, cap remaining, contingency remaining, SOV total and balance, billed to
-date) is computed, not stored — `app/services/contracts.py`. Migration
-`e2a4c6d8f0b1_construction_contract` (additive and nullable/defaulted;
-downgrade reverses).
+Unique `(job_id, line_no)`. A `scheduled_value` may be negative (a deduct
+alternate nets the sum down). No billed / stored / retainage columns yet —
+#555 adds them when progress billing bills the SOV. The contract sum and the
+schedule are **pre-tax** (tax is added per invoice). The contract summary
+(changes, fee, cap remaining, contingency remaining, SOV total and balance,
+billed to date) is computed, not stored — `app/services/contracts.py`.
+Migration `e2a4c6d8f0b1_construction_contract` (additive and
+nullable/defaulted; downgrade reverses).
 
 ## Job cost model (milestone 3)
 

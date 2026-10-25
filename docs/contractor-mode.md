@@ -227,8 +227,10 @@ not-to-exceed). The type decides how the fee and the cap read:
 - **Cap** — the guaranteed maximum on a GMP (normally the contract sum, and
   defaulted to it), or an optional not-to-exceed on cost-plus. *Cap remaining*
   is the cap less cost-to-date and fee.
-- **Contingency** — the owner's contingency carried inside the contract sum,
-  drawn down as change orders use it (#554 tracks the draw-down).
+- **Contingency** — the owner's contingency carried inside the contract sum
+  (it rides the schedule as its own line, and building from an estimate adds
+  it to the sum so the schedule still balances), drawn down as change orders
+  use it (#554 tracks the draw-down).
 - **Retainage %** — the portion of each billing the owner holds back until the
   job is accepted. It is stored now and used when progress billing lands.
 - **Contract date** and the **source estimate**, shown when the contract was
@@ -241,17 +243,20 @@ when change orders arrive (#554) the tab can show original + changes = revised.
 **The schedule of values.** The SOV is the contract sum broken into the lines
 an owner pay application bills against — each with an item number, a
 description, an optional package and section, a kind (work, allowance,
-contingency, fee or general conditions) and a scheduled value. **Build from
-accepted estimate** lays it out automatically: one **work** line per trade
-package (its base lines plus any accepted alternates, whose prices already
-carry the bid's markups — the SOV never itemises the markups, they live inside
-the work values), an **allowance** line for each allowance, and a
-**contingency** line when the job carries one. Lines with no package roll into
-one "Unassigned" work line. You can add, remove and reorder rows by hand and
-edit any value. The SOV must **balance to the contract sum**: a running total
-and the balance show at the foot of the grid, and the balance stays
-highlighted until it is zero. When the contract sum came from the estimate's
-bid total, a freshly built schedule already balances.
+contingency, fee or general conditions) and a scheduled value. The sum (and
+the schedule) is **pre-tax**: sales tax is added on each invoice, not carried
+in the contract. **Build from accepted estimate** lays it out automatically:
+one **work** line per trade package (its base lines plus any accepted
+alternates, at the prices as bid — the SOV never itemises the estimate's
+markups separately, it carries the line prices the customer sees), an
+**allowance** line for each allowance, and a **contingency** line when the job
+carries one. Lines with no package roll into one "Unassigned" work line. You
+can add, remove and reorder rows by hand and edit any value; a value may be
+**negative** — a deduct alternate carried onto the schedule nets the sum down.
+The SOV must **balance to the contract sum**: a running total and the balance
+show at the foot of the grid, and the balance stays highlighted until it is
+zero. When the contract sum came from the estimate (the pre-tax bid, plus any
+contingency), a freshly built schedule already balances.
 
 **What comes next.** Change orders (#554) will revise the contract amount, the
 budget and the sub commitments together, with the rule that work paid for out

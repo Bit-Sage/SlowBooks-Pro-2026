@@ -8,6 +8,7 @@
 # ============================================================================
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,7 +35,7 @@ from app.schemas.jobs import (
     SovSave,
 )
 from app.models.estimates import Estimate
-from app.services.contracts import build_sov, contract_summary
+from app.services.contracts import build_sov, contract_summary, sync_contingency_line
 from app.services.estimating import estimate_totals
 from app.services.accounting import _q
 from app.models.job_costing import JobBudget
@@ -155,8 +156,17 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     summary["committed_cost"] = committed_cost(db, [job_id]).get(job_id, 0.0)
     base = _to_response(job)
     # The contract roll-up rides along, additive (#552); the SPA shows it in
-    # construction mode only, but the summary is harmless for anyone.
-    contract = ContractSummary(**contract_summary(db, job))
+    # construction mode only, but the summary is harmless for anyone. The cost
+    # and billed figures are the ones profitability already computed, so a
+    # plain job fetch runs no extra cost-tree query.
+    contract = ContractSummary(
+        **contract_summary(
+            db,
+            job,
+            cost=Decimal(str(summary.get("total_costs", 0) or 0)),
+            billed=Decimal(str(summary.get("income", 0) or 0)),
+        )
+    )
     return JobDetailResponse(
         **base.model_dump(), summary=JobSummary(**summary), contract=contract
     )
@@ -339,24 +349,17 @@ def get_contract(job_id: int, db: Session = Depends(get_db)):
     return _contract_response(db, job)
 
 
-@router.put("/{job_id}/contract", response_model=ContractResponse)
-def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)):
-    """Set the job's contract terms. A field left out is unchanged; a field
-    sent as null clears it. A GMP needs a cap (its guaranteed maximum),
-    defaulted to the contract amount. original_contract_amount is stamped
-    the first time a contract amount is set with a type, and never
-    overwritten after that — #554's revisions move contract_amount, not the
-    original."""
-    job = _get(db, job_id)
-    changes = data.model_dump(exclude_unset=True)
-    for key, value in changes.items():
-        setattr(job, key, value)
-    if job.contract_type == "gmp" and job.cap_amount is None:
-        if job.contract_amount is None:
-            raise HTTPException(
-                status_code=422,
-                detail="A GMP needs a contract amount — its guaranteed maximum.",
-            )
+def _stamp_contract_defaults(job: Job) -> None:
+    """The one place the contract sum's derived fields are set, shared by the
+    contract PUT and the plain job form: a GMP's cap defaults to the contract
+    sum, and original_contract_amount is stamped the first time a sum is set
+    with a type and never overwritten after. #554's revisions move
+    contract_amount, not the original."""
+    if (
+        job.contract_type == "gmp"
+        and job.cap_amount is None
+        and job.contract_amount is not None
+    ):
         job.cap_amount = job.contract_amount
     if (
         job.original_contract_amount is None
@@ -364,6 +367,30 @@ def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)
         and job.contract_type is not None
     ):
         job.original_contract_amount = job.contract_amount
+
+
+@router.put("/{job_id}/contract", response_model=ContractResponse)
+def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)):
+    """Set the job's contract terms. A field left out is unchanged; a field
+    sent as null clears it. A GMP needs a contract amount (the guaranteed
+    maximum the cap defaults to). The SOV's contingency line is kept in step
+    with the contingency term."""
+    job = _get(db, job_id)
+    changes = data.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(job, key, value)
+    if (
+        job.contract_type == "gmp"
+        and job.cap_amount is None
+        and job.contract_amount is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="A GMP needs a contract amount — its guaranteed maximum.",
+        )
+    _stamp_contract_defaults(job)
+    if "contingency_amount" in changes:
+        sync_contingency_line(db, job)
     db.commit()
     db.refresh(job)
     return _contract_response(db, job)
@@ -408,8 +435,15 @@ def contract_from_estimate(
     job.contract_estimate_id = est.id
     if job.contract_type is None:
         job.contract_type = "lump_sum"
+    # The contract sum is the estimate's pre-tax bid plus the owner
+    # contingency carried inside it (the SOV adds a contingency line), so a
+    # freshly built schedule balances. An existing sum is left alone.
     if job.contract_amount is None:
-        job.contract_amount = _q(estimate_totals(est)["bid_total"])
+        bid = _q(estimate_totals(est)["bid_total"])
+        contingency = (
+            _q(job.contingency_amount) if job.contingency_amount else Decimal("0")
+        )
+        job.contract_amount = bid + contingency
         job.original_contract_amount = job.contract_amount
     build_sov(db, job, est, replace=True)
     db.commit()
@@ -477,6 +511,11 @@ def update_job(job_id: int, data: JobUpdate, db: Session = Depends(get_db)):
         _check_name_clash(db, customer_id, changes.get("name", job.name), job.id)
     for key, value in changes.items():
         setattr(job, key, value)
+    # The job form's plain contract amount runs through the same stamp as the
+    # Contract tab (#552): set the amount with a type already on the job and
+    # the original is stamped once here too.
+    if "contract_amount" in changes:
+        _stamp_contract_defaults(job)
     db.commit()
     db.refresh(job)
     return _to_response(_get(db, job.id))

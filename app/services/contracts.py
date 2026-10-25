@@ -7,13 +7,15 @@
 # a pay application bills against. This module builds the SOV from an accepted
 # estimate and rolls the contract up into the figures the Contract tab reads.
 #
-# The math here is pure where it can be (sov_from_estimate, the summary
-# arithmetic); build_sov is the one DB writer. Later steps plug in here:
-# #553 buyout/commitments, #554 change orders (fills "changes" and
-# "contingency_used"), #555 progress billing from the SOV, #556 WIP reports.
+# The contract sum is PRE-TAX — the SOV foots to the estimate's pre-tax bid
+# (tax is added on each invoice, #555). The math here is pure where it can be
+# (sov_from_estimate, the summary arithmetic); build_sov is the one DB writer.
+# Later steps plug in here: #553 buyout/commitments, #554 change orders (fills
+# "changes" and "contingency_used"), #555 progress billing, #556 WIP reports.
 # ============================================================================
 
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -21,26 +23,24 @@ from sqlalchemy.orm import Session
 from app.models.estimates import Estimate, EstimateStatus
 from app.models.jobs import Job, SovLine
 from app.services.accounting import _q
-from app.services.estimating import _counts_as_base, line_price
+from app.services.estimating import included_lines, line_price
 
 
-def sov_from_estimate(estimate: Estimate, totals: dict) -> list[dict]:
+def sov_from_estimate(estimate: Estimate) -> list[dict]:
     """The SOV lines an accepted estimate produces, in print order:
 
-    - one `work` line per trade package (description = package name;
-      scheduled value = Σ line_price of that package's base and
-      accepted-alternate lines, which after #551's reprice already carry
-      the markups), packages named first then "Unassigned";
-    - one `allowance` line per allowance line (its own amount);
-    - one `contingency` line when the job set a contingency amount — added
-      by build_sov, which knows the job, not here.
+    - one `work` line per trade package — the sum of that package's base and
+      accepted-alternate line PRICES (which carry whatever markup is in the
+      rates), packages named first then "Unassigned";
+    - one `allowance` line per allowance line (its own price).
 
-    The SOV never itemises the estimate's markups: they are inside the work
-    values. Returns plain dicts (no line_no / item_no yet).
-    """
+    The work lines plus the allowance lines sum, by construction, to the
+    estimate's pre-tax bid_total (Σ included line prices). The contingency
+    line is added by build_sov, which knows the job. Returns plain dicts
+    (no line_no / item_no yet)."""
     work: dict = {}  # package_id -> {"name", "value"}
     allowances: list[dict] = []
-    for line in estimate.lines:
+    for line in included_lines(estimate):
         kind = line.line_kind or "base"
         if kind == "allowance":
             allowances.append(
@@ -55,8 +55,7 @@ def sov_from_estimate(estimate: Estimate, totals: dict) -> list[dict]:
                 }
             )
             continue
-        if not _counts_as_base(line):
-            continue  # unit prices and un-accepted alternates are in no line
+        # a base line or an accepted alternate — work scope, grouped by package
         key = line.trade_package_id
         bucket = work.get(key)
         if bucket is None:
@@ -69,6 +68,7 @@ def sov_from_estimate(estimate: Estimate, totals: dict) -> list[dict]:
                 "value": Decimal("0"),
             }
             work[key] = bucket
+        # an accepted deduct alternate carries a negative price; it nets in here
         bucket["value"] += line_price(line)
 
     # Named packages by name, Unassigned (None key) last — the estimate's order.
@@ -121,9 +121,7 @@ def build_sov(db: Session, job: Job, estimate: Estimate, replace: bool = True) -
                 "message": "That estimate is not on this job.",
             },
         )
-    from app.services.estimating import estimate_totals
-
-    lines = sov_from_estimate(estimate, estimate_totals(estimate))
+    lines = sov_from_estimate(estimate)
     # The owner contingency carried inside the contract is its own SOV line.
     if job.contingency_amount is not None:
         lines.append(
@@ -139,6 +137,9 @@ def build_sov(db: Session, job: Job, estimate: Estimate, replace: bool = True) -
         )
     _numbered(lines)
     if replace:
+        # TODO (#555): refuse 409 sov_has_billings once a pay application has
+        # billed these lines — replacing a billed schedule would orphan the
+        # pay history. Nothing bills the SOV yet, so a plain replace is safe.
         db.query(SovLine).filter(SovLine.job_id == job.id).delete()
         db.flush()
     rows = []
@@ -150,15 +151,62 @@ def build_sov(db: Session, job: Job, estimate: Estimate, replace: bool = True) -
     return rows
 
 
-def contract_summary(db: Session, job: Job) -> dict:
-    """The contract roll-up for one job. Actual cost and billed-to-date come
-    from the same posted lines the job overview reads, so the Contract tab
-    always agrees with the rest of the job page."""
-    from app.services.job_costing import job_cost_tree
+def sync_contingency_line(db: Session, job: Job) -> None:
+    """Keep the SOV's contingency line in step with the contract term: update
+    its value, create it when a contingency is set and there is none, remove
+    it when the contingency is cleared. Renumbers the schedule afterwards."""
+    existing = [ln for ln in job.sov_lines if ln.kind == "contingency"]
+    if job.contingency_amount is None:
+        for ln in existing:
+            db.delete(ln)
+        remaining = [ln for ln in job.sov_lines if ln.kind != "contingency"]
+    else:
+        value = _q(job.contingency_amount)
+        if existing:
+            existing[0].scheduled_value = value
+            for extra in existing[1:]:  # never keep more than one
+                db.delete(extra)
+            remaining = [ln for ln in job.sov_lines if ln.kind != "contingency"]
+            remaining.append(existing[0])
+        else:
+            next_no = (max((ln.line_no for ln in job.sov_lines), default=0)) + 1
+            row = SovLine(
+                job_id=job.id,
+                line_no=next_no,
+                item_no=f"{next_no:02d}",
+                description="Contingency",
+                kind="contingency",
+                scheduled_value=value,
+            )
+            db.add(row)
+            remaining = list(job.sov_lines) + [row]
+    db.flush()
+    # Renumber 1..n in current order so a removal leaves no gap.
+    for n, ln in enumerate(sorted(remaining, key=lambda x: x.line_no), start=1):
+        ln.line_no = n
+    db.flush()
 
-    totals = job_cost_tree(db, job.id)["totals"]
-    cost = Decimal(str(totals["actual"]))
-    billed = Decimal(str(totals["act_revenue"]))
+
+def contract_summary(
+    db: Session,
+    job: Job,
+    cost: Optional[Decimal] = None,
+    billed: Optional[Decimal] = None,
+) -> dict:
+    """The contract roll-up for one job. `cost` (actual job-to-date cost) and
+    `billed` (posted revenue carrying the job) may be passed in by a caller
+    that already has them — the job detail hands over the profitability
+    figures it computed, so a plain job fetch costs no extra query. When they
+    are None the cost tree supplies them, so the Contract tab always agrees
+    with the rest of the job page."""
+    if cost is None or billed is None:
+        from app.services.job_costing import job_cost_tree
+
+        totals = job_cost_tree(db, job.id)["totals"]
+        cost = Decimal(str(totals["actual"])) if cost is None else cost
+        billed = Decimal(str(totals["act_revenue"])) if billed is None else billed
+    cost = Decimal(str(cost))
+    billed = Decimal(str(billed))
 
     ctype = job.contract_type
     amount = job.contract_amount
@@ -171,7 +219,7 @@ def contract_summary(db: Session, job: Job) -> dict:
 
     # Fee: a fixed fee wins; otherwise a percent of actual cost for cost-plus
     # and GMP; lump sum earns no separate fee.
-    if job.fee_amount is not None:
+    if ctype in ("cost_plus", "gmp") and job.fee_amount is not None:
         fee = _q(job.fee_amount)
     elif ctype in ("cost_plus", "gmp") and job.fee_pct is not None:
         fee = _q(cost * Decimal(str(job.fee_pct)) / Decimal("100"))
