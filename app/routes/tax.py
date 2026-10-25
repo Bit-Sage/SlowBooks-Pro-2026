@@ -5,16 +5,41 @@
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.tax import TaxCategoryMapping
 from app.models.accounts import Account
 from app.schemas.tax import TaxMappingCreate, TaxMappingResponse
+from app.services.settings_service import entity_info, get_all_settings
 from app.services.tax_export import get_schedule_c_data, export_schedule_c_csv
 
 router = APIRouter(prefix="/api/tax", tags=["tax"])
+
+
+def _require_schedule_c(db: Session) -> None:
+    """Schedule C is a sole-proprietor form (#488). A company that files
+    something else (a partnership, a corporation, or a nonprofit on Form 990)
+    is refused with 409 and the one sentence the page shows, so it never
+    exports a form it does not file. An unset entity type is left exactly as
+    before: an empty return_form is the signal to pass through."""
+    info = entity_info(get_all_settings(db))
+    if info["return_form"] and not info["schedule_c"]:
+        # A nonprofit's return follows the company type, not the entity type,
+        # so point it at the right control.
+        where = "company type" if info["nonprofit"] else "entity type"
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_schedule_c",
+                "message": (
+                    f"This company is {info['label']}; it files "
+                    f"{info['return_form']}, not Schedule C. Change the "
+                    f"{where} under Settings → Company if that is wrong."
+                ),
+            },
+        )
 
 
 @router.get("/schedule-c")
@@ -23,6 +48,7 @@ def schedule_c_report(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    _require_schedule_c(db)
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:
@@ -36,6 +62,7 @@ def schedule_c_csv(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    _require_schedule_c(db)
     if not start_date:
         start_date = date(date.today().year, 1, 1)
     if not end_date:

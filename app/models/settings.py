@@ -36,6 +36,17 @@ DEFAULT_SETTINGS = {
     # presets and default periods, the dashboard's profit card and nonprofit
     # FY-to-date; payroll forms (W-2, 941) stay on the calendar year by law.
     "fiscal_year_start_month": "1",
+    # Legal entity type (#488) — separate from company_type, and placed away
+    # from it so a sibling PR editing that line merges cleanly. Drives which
+    # federal return the company files (Schedule C only for a sole proprietor
+    # or a single-member LLC taxed as one). "" = unset, so existing companies
+    # see no change until they choose. llc_tax_election is only meaningful
+    # when entity_type == "llc". Books never change; this is tax form only.
+    # entity_type: sole_proprietor | general_partnership | limited_partnership
+    #              | llp | llc | c_corp | s_corp
+    # llc_tax_election: disregarded | partnership | s_corp | c_corp
+    "entity_type": "",
+    "llc_tax_election": "",
     "company_address1": "",
     "company_address2": "",
     "company_city": "",
