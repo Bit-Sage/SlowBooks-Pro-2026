@@ -144,3 +144,79 @@ def test_two_payments_with_prior_deposits(client, db_session, seed_accounts):
     assert "$50.00" in r.json()["detail"]
     assert _lump(client, bank_id, 50).status_code == 200
     assert _uf_balance(db_session) == 0
+
+
+def _line_id(client, payment):
+    return next(
+        row["transaction_line_id"]
+        for row in client.get("/api/deposits/pending").json()
+        if row["payment_id"] == payment["id"]
+    )
+
+
+def _tick(client, bank_id, *line_ids):
+    return client.post(
+        "/api/deposits",
+        json={
+            "deposit_to_account_id": bank_id,
+            "date": "2026-09-15",
+            "line_ids": list(line_ids),
+        },
+    )
+
+
+def test_ticked_payments_after_a_partial_lump_are_capped_too(
+    client, db_session, seed_accounts
+):
+    """$200 and $100 waiting, a typed $60 taken: the ticked path is capped by
+    the live balance as well. Ticking the $100 leaves $140; ticking the $200
+    is refused with what is left (it used to post, and UF read -$60)."""
+    cust = _customer(db_session)
+    p2 = _receive_payment(client, cust.id, 200)
+    p5 = _receive_payment(client, cust.id, 100, date="2026-09-11")
+    bank_id = _checking_account_id(seed_accounts)
+
+    assert _lump(client, bank_id, 350).status_code == 400
+    assert _lump(client, bank_id, 60).status_code == 200
+    assert _lump(client, bank_id, 240.01).status_code == 400
+
+    p2_line, p5_line = _line_id(client, p2), _line_id(client, p5)
+    # both at once are $300 against $240 waiting
+    r = _tick(client, bank_id, p2_line, p5_line)
+    assert r.status_code == 400, r.text
+    assert "$240.00" in r.json()["detail"]
+    assert _uf_balance(db_session) == 240
+
+    assert _tick(client, bank_id, p5_line).status_code == 200
+    assert _uf_balance(db_session) == 140
+    r = _tick(client, bank_id, p2_line)
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "$200.00" in detail and "$140.00" in detail, detail
+    assert _uf_balance(db_session) == 140
+
+    # the rest goes in as a typed amount, and UF ends at zero, never below
+    assert _lump(client, bank_id, 140).status_code == 200
+    assert _uf_balance(db_session) == 0
+
+
+def test_a_deposit_edited_to_take_more_is_capped_too(client, db_session, seed_accounts):
+    """The register's deposit edit adds waiting payments the same way: a
+    deposit of the $100 edited to take the $200 as well, after a typed $60,
+    is refused (it would have left UF at -$60)."""
+    cust = _customer(db_session)
+    p2 = _receive_payment(client, cust.id, 200)
+    p5 = _receive_payment(client, cust.id, 100, date="2026-09-11")
+    bank_id = _checking_account_id(seed_accounts)
+    p2_line, p5_line = _line_id(client, p2), _line_id(client, p5)
+
+    r = _tick(client, bank_id, p5_line)
+    assert r.status_code == 200, r.text
+    deposit_id = r.json()["transaction_id"]
+    assert _lump(client, bank_id, 60).status_code == 200
+    assert _uf_balance(db_session) == 140
+
+    r = client.put(f"/api/deposits/{deposit_id}", json={"line_ids": [p5_line, p2_line]})
+    assert r.status_code == 400, r.text
+    assert "$240.00" in r.json()["detail"]
+    assert _uf_balance(db_session) == 140

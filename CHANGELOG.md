@@ -265,7 +265,10 @@ Undeposited Funds balance the same way and answers 400 with what is actually
 waiting when it is asked for more. The cap is the live Undeposited Funds
 balance: after a partial typed deposit ($60 of a $100 payment) only the $40
 left can be deposited, where the payment used to count in full and a second
-$100 deposit drove Undeposited Funds to -$60.
+$100 deposit drove Undeposited Funds to -$60. Ticked payments, and a deposit
+edited from the register to take more of them, are held to the same live
+balance, so a payment an earlier typed deposit took part of can't be
+deposited in full on top of it.
 
 **The Payables card nets vendor credits** (#495, @ContractorKeith). The dashboard's Payables
 card summed open bill balances by itself, so a $100 bill with a $30 unapplied

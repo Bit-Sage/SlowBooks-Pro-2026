@@ -142,6 +142,18 @@ def _lock_taken(db: Session, chosen, allow_deposit_id: int = None) -> None:
         )
 
 
+def _over_waiting(total: Decimal, waiting_total: Decimal) -> str:
+    """The refusal when the payments ticked come to more than is left in
+    Undeposited Funds (an amount typed on an earlier deposit took part)."""
+    return (
+        f"The payments ticked add up to ${total:,.2f}, but only "
+        f"${waiting_total:,.2f} is still waiting in Undeposited Funds: an "
+        "earlier deposit typed as an amount took part of them. Deposit "
+        f"${waiting_total:,.2f} or less (tick fewer payments, or tick none "
+        "and type the amount)."
+    )
+
+
 @router.get("/pending", response_model=list[PendingDepositResponse])
 def list_pending_deposits(db: Session = Depends(get_db)):
     """Payments sitting in Undeposited Funds (1200), newest first."""
@@ -319,6 +331,15 @@ def create_deposit(data: DepositCreate, db: Session = Depends(get_db)):
                     f"${_q(data.total):,.2f}. Reload Make Deposits and try again."
                 ),
             )
+        # A typed (lump) deposit nets only against whole items, so after one
+        # took part of a payment that payment still lists in full. The ticked
+        # total is capped by the live balance too, or ticking it would take
+        # the part already deposited a second time.
+        waiting_total = _q(waiting_balance(db, uf_id))
+        if total > waiting_total:
+            raise HTTPException(
+                status_code=400, detail=_over_waiting(total, waiting_total)
+            )
     else:
         # No payments ticked: a typed lump sum. Cap it at what is actually
         # waiting in Undeposited Funds — the waiting items less what an
@@ -468,6 +489,13 @@ def update_deposit(deposit_id: int, data: DepositUpdate, db: Session = Depends(g
         if new_total <= 0:
             raise HTTPException(
                 status_code=400, detail="A deposit takes at least one payment"
+            )
+        # What this deposit may take: what is waiting now plus what it holds
+        # (released, those wait again) — never more than came in.
+        available = _q(waiting_balance(db, uf_id)) + old_total
+        if new_total > available:
+            raise HTTPException(
+                status_code=400, detail=_over_waiting(new_total, available)
             )
     else:
         chosen = held
