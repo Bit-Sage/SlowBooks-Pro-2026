@@ -19,8 +19,9 @@ to anything else sees one sentence on the Tax Reports page saying which return
 applies (Form 1065 for the partnerships and an LLC taxed as one, Form 1120-S
 for an S corp, Form 1120 for a C corp, Form 990 for a nonprofit), and the
 Schedule C API answers 409 with the same sentence. An unset entity type leaves
-Schedule C exactly as before. The books never change; this is a tax-form
-matter only.
+Schedule C exactly as before. A nonprofit no longer sees Schedule C; it files
+Form 990, whatever entity type it has chosen. The books never change; this is a
+tax-form matter only.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 

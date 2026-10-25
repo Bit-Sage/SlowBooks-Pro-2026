@@ -32,27 +32,30 @@ const GENERATE = /onclick="TaxPage\.generate\(\)"/;
 test('an S corp keeps Pay Sales Tax but loses the Schedule C controls', async () => {
     const html = await taxPage({
         entity_type: 's_corp', label: 'an S corporation',
-        return_form: 'Form 1120-S', schedule_c: false,
+        return_form: 'Form 1120-S', schedule_c: false, nonprofit: false,
     }).render();
     assert.match(html, PAY_SALES_TAX);          // the way into showPaySalesTax survives
     assert.doesNotMatch(html, GENERATE);        // the Schedule C report controls are gone
     assert.match(html, /files Form 1120-S, not Schedule C/);
+    assert.match(html, /Change the entity type/);  // an S corp is pointed at the entity type
 });
 
 test('a nonprofit is told Form 990, not Form 1120, and keeps Pay Sales Tax', async () => {
     const html = await taxPage({
         entity_type: 'c_corp', label: 'a nonprofit',
-        return_form: 'Form 990', schedule_c: false,
+        return_form: 'Form 990', schedule_c: false, nonprofit: true,
     }).render();
     assert.match(html, /files Form 990, not Schedule C/);
     assert.doesNotMatch(html, /Form 1120/);
+    assert.match(html, /Change the company type/);  // a nonprofit's return follows company type
+    assert.doesNotMatch(html, /Change the entity type/);
     assert.match(html, PAY_SALES_TAX);
 });
 
 test('a sole proprietor gets the full Schedule C page', async () => {
     const html = await taxPage({
         entity_type: 'sole_proprietor', label: 'a sole proprietor',
-        return_form: 'Schedule C', schedule_c: true,
+        return_form: 'Schedule C', schedule_c: true, nonprofit: false,
     }).render();
     assert.match(html, GENERATE);
     assert.match(html, PAY_SALES_TAX);

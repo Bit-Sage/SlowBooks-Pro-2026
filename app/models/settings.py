@@ -30,7 +30,14 @@ DEFAULT_SETTINGS = {
     # dashboard layout and the on-demand net-asset accounts. Data never
     # changes name; only what is rendered. business | nonprofit
     "company_type": "business",
-    # Legal entity type (#488) — separate from company_type. Drives which
+    "company_name": "My Company",
+    # First month of the fiscal year, "1"-"12" (#444). "1" = the calendar
+    # year (the default) and changes nothing. Moves reports' fiscal-year
+    # presets and default periods, the dashboard's profit card and nonprofit
+    # FY-to-date; payroll forms (W-2, 941) stay on the calendar year by law.
+    "fiscal_year_start_month": "1",
+    # Legal entity type (#488) — separate from company_type, and placed away
+    # from it so a sibling PR editing that line merges cleanly. Drives which
     # federal return the company files (Schedule C only for a sole proprietor
     # or a single-member LLC taxed as one). "" = unset, so existing companies
     # see no change until they choose. llc_tax_election is only meaningful
@@ -40,12 +47,6 @@ DEFAULT_SETTINGS = {
     # llc_tax_election: disregarded | partnership | s_corp | c_corp
     "entity_type": "",
     "llc_tax_election": "",
-    "company_name": "My Company",
-    # First month of the fiscal year, "1"-"12" (#444). "1" = the calendar
-    # year (the default) and changes nothing. Moves reports' fiscal-year
-    # presets and default periods, the dashboard's profit card and nonprofit
-    # FY-to-date; payroll forms (W-2, 941) stay on the calendar year by law.
-    "fiscal_year_start_month": "1",
     "company_address1": "",
     "company_address2": "",
     "company_city": "",

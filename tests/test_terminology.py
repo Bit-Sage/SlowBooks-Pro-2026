@@ -164,7 +164,11 @@ def test_entity_type_round_trips_and_rejects_unknown_values(client):
 
 def test_llc_tax_election_round_trips_and_rejects_unknown_values(client):
     assert client.get("/api/settings").json()["llc_tax_election"] == ""
-    r = client.put("/api/settings", json={"llc_tax_election": "disregarded"})
+    # the election is only meaningful for an LLC and is cleared otherwise (#488)
+    r = client.put(
+        "/api/settings",
+        json={"entity_type": "llc", "llc_tax_election": "disregarded"},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["llc_tax_election"] == "disregarded"
     assert client.put("/api/settings", json={"llc_tax_election": ""}).status_code == 200

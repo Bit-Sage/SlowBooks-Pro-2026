@@ -26,14 +26,17 @@ def _require_schedule_c(db: Session) -> None:
     before: an empty return_form is the signal to pass through."""
     info = entity_info(get_all_settings(db))
     if info["return_form"] and not info["schedule_c"]:
+        # A nonprofit's return follows the company type, not the entity type,
+        # so point it at the right control.
+        where = "company type" if info["nonprofit"] else "entity type"
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "not_schedule_c",
                 "message": (
                     f"This company is {info['label']}; it files "
-                    f"{info['return_form']}, not Schedule C. Change the entity "
-                    "type under Settings → Company if that is wrong."
+                    f"{info['return_form']}, not Schedule C. Change the "
+                    f"{where} under Settings → Company if that is wrong."
                 ),
             },
         )

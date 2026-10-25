@@ -14,7 +14,10 @@ const TaxPage = {
     // Schedule C exactly as it was.
     _entityInfo() {
         const s = (typeof App !== 'undefined' && App.settings) || {};
-        return s.entity || { entity_type: '', label: '', return_form: '', schedule_c: false };
+        // If the settings fetch failed there is no entity record: fall back to
+        // the unset record so the full Schedule C page shows; the server's 409
+        // still guards the report for an entity that does not file it.
+        return s.entity || { entity_type: '', label: '', return_form: '', schedule_c: false, nonprofit: false };
     },
 
     async render() {
@@ -33,7 +36,7 @@ const TaxPage = {
             <div class="toolbar">
                 <button class="btn btn-secondary" onclick="TaxPage.showPaySalesTax()">Pay Sales Tax</button>
             </div>
-            <p style="margin-top:12px;">This company is ${escapeHtml(info.label)}; it files ${escapeHtml(info.return_form)}, not Schedule C. Change the entity type under Settings → Company if that is wrong.</p>`;
+            <p style="margin-top:12px;">This company is ${escapeHtml(info.label)}; it files ${escapeHtml(info.return_form)}, not Schedule C. Change the ${info.nonprofit ? 'company' : 'entity'} type under Settings → Company if that is wrong.</p>`;
         }
         const sub = info.return_form
             ? `${escapeHtml(info.label)} &middot; files ${escapeHtml(info.return_form)}`

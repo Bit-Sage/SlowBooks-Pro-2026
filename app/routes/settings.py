@@ -20,6 +20,7 @@ from app.services.settings_service import (
     clean_setting_value,
     entity_info,
     get_all_settings,
+    get_setting_raw,
     redact_secrets,
     set_setting,
     unreadable_secret_keys,
@@ -49,8 +50,11 @@ _redact_secrets = redact_secrets
 # this is the server-side twin so an API token cannot store "banana".
 ENUM_SETTINGS = {
     "company_type": frozenset({"business", "nonprofit"}),
-    # Legal entity type (#488) — "" is unset and allowed (an existing company
-    # that has not chosen yet). llc_tax_election is only meaningful for an LLC.
+    "ocr_engine": frozenset({"auto", "tesseract"}),
+    # Legal entity type (#488) — kept away from company_type so a sibling PR
+    # that edits that line merges without a conflict. "" is unset and allowed
+    # (an existing company that has not chosen yet); llc_tax_election is only
+    # meaningful for an LLC.
     "entity_type": frozenset(
         {
             "",
@@ -66,7 +70,6 @@ ENUM_SETTINGS = {
     "llc_tax_election": frozenset(
         {"", "disregarded", "partnership", "s_corp", "c_corp"}
     ),
-    "ocr_engine": frozenset({"auto", "tesseract"}),
     "ask_password_on_start": frozenset({"true", "false"}),
     "invoice_show_logo": frozenset({"true", "false"}),
     "class_warn_blank": frozenset({"true", "false"}),
@@ -226,7 +229,10 @@ def update_settings(
         if allowed is not None and value not in allowed:
             raise HTTPException(
                 status_code=422,
-                detail=f"{key} must be one of: {', '.join(sorted(allowed))}",
+                detail=(
+                    f"{key} must be one of: "
+                    + ", ".join(sorted(x for x in allowed if x))
+                ),
             )
         if key in SECRET_KEYS and value == SECRET_PLACEHOLDER:
             continue
@@ -239,6 +245,14 @@ def update_settings(
             status_code=422,
             detail=" ".join(problems) + " Nothing was saved.",
         )
+    # The "Taxed as" select is hidden for a non-LLC but the form still submits
+    # its last value; drop a stale election so it never lingers (#488).
+    if "llc_tax_election" in cleaned:
+        effective_type = cleaned.get("entity_type")
+        if effective_type is None:
+            effective_type = get_setting_raw(db, "entity_type") or ""
+        if effective_type != "llc":
+            cleaned["llc_tax_election"] = ""
     for key, value in cleaned.items():
         set_setting(db, key, value)
     db.commit()

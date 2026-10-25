@@ -448,6 +448,7 @@ def entity_info(settings) -> dict:
             "label": "a nonprofit",
             "return_form": "Form 990",
             "schedule_c": False,
+            "nonprofit": nonprofit,
         }
     unset = {
         "entity_type": "",
@@ -455,6 +456,7 @@ def entity_info(settings) -> dict:
         "label": "",
         "return_form": "",
         "schedule_c": False,
+        "nonprofit": nonprofit,
     }
     if entity_type == "":
         return unset
@@ -467,6 +469,7 @@ def entity_info(settings) -> dict:
                 "label": label,
                 "return_form": return_form,
                 "schedule_c": schedule_c,
+                "nonprofit": nonprofit,
             }
         # LLC with no election chosen yet: we cannot say which return applies,
         # so Schedule C stays as it was (return_form left empty, no gate).
@@ -476,6 +479,7 @@ def entity_info(settings) -> dict:
             "label": "an LLC",
             "return_form": "",
             "schedule_c": False,
+            "nonprofit": nonprofit,
         }
     if entity_type not in _ENTITY_RETURNS:
         return unset
@@ -486,4 +490,5 @@ def entity_info(settings) -> dict:
         "label": _ENTITY_LABELS[entity_type],
         "return_form": return_form,
         "schedule_c": schedule_c,
+        "nonprofit": nonprofit,
     }

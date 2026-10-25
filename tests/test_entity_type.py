@@ -7,6 +7,8 @@ other entities answer 409 at the Schedule C routes, and an unset entity type
 leaves Schedule C exactly as before.
 """
 
+import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from app.services.settings_service import entity_info
@@ -125,6 +127,9 @@ def test_schedule_c_refuses_a_nonprofit_with_form_990(client):
     assert detail["code"] == "not_schedule_c"
     assert "Form 990" in detail["message"]
     assert "Form 1120" not in detail["message"]
+    # a nonprofit's return follows the company type, so point it there
+    assert "Change the company type" in detail["message"]
+    assert "entity type" not in detail["message"]
 
 
 def test_tax_mappings_still_work_for_an_s_corp(client):
@@ -132,6 +137,31 @@ def test_tax_mappings_still_work_for_an_s_corp(client):
     # (its own toolbar action) stays reachable for every entity.
     client.put("/api/settings", json={"entity_type": "s_corp"})
     assert client.get("/api/tax/mappings").status_code == 200
+
+
+def test_llc_election_is_cleared_when_entity_is_not_an_llc(client):
+    # The hidden "Taxed as" select still submits its last value; a non-LLC must
+    # not keep a stale election (#488).
+    client.put(
+        "/api/settings",
+        json={"entity_type": "llc", "llc_tax_election": "disregarded"},
+    )
+    client.put(
+        "/api/settings",
+        json={"entity_type": "s_corp", "llc_tax_election": "disregarded"},
+    )
+    assert client.get("/api/settings").json()["llc_tax_election"] == ""
+
+
+def test_bad_entity_type_422_does_not_list_the_empty_member(client):
+    # "" is a valid (unset) value but naming it reads "must be one of: ,
+    # c_corp, ..."; it is filtered out of the message (#488).
+    r = client.put("/api/settings", json={"entity_type": "banana"})
+    assert r.status_code == 422
+    message = r.json()["detail"]
+    assert "must be one of: " in message
+    assert "one of: ," not in message
+    assert ", ," not in message
 
 
 def test_settings_returns_the_computed_entity_object(client):
@@ -147,6 +177,49 @@ def test_settings_returns_the_computed_entity_object(client):
 # ---------------------------------------------------------------------------
 # The LLC "Taxed as" select only renders for an LLC (source assertions)
 # ---------------------------------------------------------------------------
+
+
+class _Nesting(HTMLParser):
+    """Record each id'd element's ancestor ids as the markup is parsed."""
+
+    _VOID = {"input", "img", "br", "hr", "meta", "link"}
+
+    def __init__(self):
+        super().__init__()
+        self._stack = []  # (tag, id)
+        self.ancestors = {}  # id -> set of ancestor ids
+
+    def handle_starttag(self, tag, attrs):
+        eid = dict(attrs).get("id")
+        if eid is not None:
+            self.ancestors[eid] = {i for _, i in self._stack if i}
+        if tag not in self._VOID:
+            self._stack.append((tag, eid))
+
+    def handle_endtag(self, tag):
+        for idx in range(len(self._stack) - 1, -1, -1):
+            if self._stack[idx][0] == tag:
+                del self._stack[idx:]
+                break
+
+
+def test_fiscal_year_field_is_not_inside_the_llc_group():
+    # The rebase put main's "First month of fiscal year" group next to this
+    # branch's LLC group; closing the LLC group too late would nest the fiscal
+    # field inside #llc-election-group and hide it for everyone who is not an
+    # LLC. Parse the Company Information markup and check the nesting for real.
+    js = SETTINGS_JS.read_text()
+    start = js.rindex(
+        "<div", 0, js.index('aria-labelledby="settings-h-company-information"')
+    )
+    end = js.index('<div class="settings-section"', start + 1)
+    markup = re.sub(r"\$\{[^}]*\}", "", js[start:end])
+    parser = _Nesting()
+    parser.feed(markup)
+    # the LLC "Taxed as" select belongs inside the LLC group ...
+    assert "llc-election-group" in parser.ancestors["llc-tax-election"]
+    # ... but the fiscal-year field must not, or it disappears for non-LLCs
+    assert "llc-election-group" not in parser.ancestors["fiscal-year-start-month"]
 
 
 def test_llc_election_select_is_hidden_unless_llc():
