@@ -39,9 +39,13 @@ const AccountQuickAdd = {
     TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'],
     // a purchase line's Account cell: operating expenses and cost of goods
     PURCHASE_TYPES: ['expense', 'cogs'],
-    TYPE_LABELS: {
-        expense: 'Expense', income: 'Income', cogs: 'Cost of Goods Sold',
-        asset: 'Asset', liability: 'Liability', equity: 'Equity',
+    // read when the panel is drawn, so a nonprofit's words (T) apply
+    typeLabel(t) {
+        const labels = {
+            expense: 'Expense', income: T('Income'), cogs: 'Cost of Goods Sold',
+            asset: 'Asset', liability: 'Liability', equity: T('Equity'),
+        };
+        return labels[t] || t;
     },
     _profiles: {},
     _seq: 0,
@@ -95,7 +99,7 @@ const AccountQuickAdd = {
         if (open) { focusFor(open.querySelector('.aqa-name'), true); return open; }
         const key = select.id ? `${select.id}-new` : `aqa-${++AccountQuickAdd._seq}`;
         const types = (cfg.types || AccountQuickAdd.TYPES).map(t =>
-            `<option value="${t}">${AccountQuickAdd.TYPE_LABELS[t] || t}</option>`).join('');
+            `<option value="${t}">${AccountQuickAdd.typeLabel(t)}</option>`).join('');
         const field = (part, label, control) => `<div class="form-group aqa-field"><label for="${key}-${part}">${label}</label>${control}</div>`;
         const fields = field('name', 'Account name *',
             `<input id="${key}-name" class="aqa-name" aria-required="true" maxlength="200">`)

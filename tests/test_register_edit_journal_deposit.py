@@ -797,7 +797,10 @@ def test_a_payment_in_another_deposit_cannot_be_added(
 def test_a_legacy_deposit_naming_no_payments_still_takes_a_date_fix(
     client, db_session, seed_accounts
 ):
-    # a deposit posted as an amount (no line_ids): the older API form
+    # a deposit posted as an amount (no line_ids): the older API form. A
+    # typed total is capped at what waits in Undeposited Funds (#494), so a
+    # payment of that amount is received first.
+    _receive(client, _customer(db_session), 250)
     r = client.post(
         "/api/deposits",
         json={
@@ -807,6 +810,7 @@ def test_a_legacy_deposit_naming_no_payments_still_takes_a_date_fix(
             "reference": "LEGACY",
         },
     )
+    assert r.status_code == 200, r.text
     dep = r.json()["transaction_id"]
     # the modal renders no held payments, so it omits line_ids
     r = client.put(

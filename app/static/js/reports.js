@@ -879,7 +879,7 @@ const ReportsPage = {
                     ${scope ? `&middot; ${scope}` : ''}
                     &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}
                     &middot; Total: <strong>${formatCurrency(data.period_net)}</strong>
-                    ${signed ? '<br>Income adds and costs subtract, so the running total ends on the statement\'s figure.' : ''}
+                    ${signed ? `<br>${T('Income')} adds and costs subtract, so the running total ends on the statement's figure.` : ''}
                 </p>
                 <div class="table-container"><table>
                     <caption class="visually-hidden">${escapeHtml(data.set.label)}, ${escapeHtml(data.start_date)} to ${escapeHtml(data.end_date)}</caption>
@@ -1554,7 +1554,7 @@ const ReportsPage = {
         delete params.hide_changes;
         ReportsPage._cmpSync(params);
         const box = $('#cmp-prior');
-        if (box) { box.checked = false; box.disabled = true; box.title = 'Off while the P&L has a column per month or quarter'; }
+        if (box) { box.checked = false; box.disabled = true; box.title = `Off while the ${T('P&L')} has a column per month or quarter`; }
         const modal = $('#modal');
         if (modal) modal.classList.add('modal--wide');
         const qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}&columns=${by}`;
