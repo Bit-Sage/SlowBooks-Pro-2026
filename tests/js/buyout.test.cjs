@@ -102,8 +102,8 @@ test('the buyout table carries its columns, variance and the compliance flag', (
                 variance: 1000, committed_remaining: 3000, billed_to_date: 10000,
                 commitments: [{
                     id: 3, number: 'PO-0003', vendor_name: 'Ace', type: 'subcontract',
-                    total: 13000, billed: 10000, status: 'partial',
-                    compliance: { is_sub: true, w9_on_file: false, coi_expired: true },
+                    subtotal: 13000, billed: 10000, status: 'partial',
+                    compliance: { is_sub: true, w9_on_file: false, coi_expires: '2020-01-01', coi_expired: true },
                 }],
             },
         ],
@@ -122,13 +122,34 @@ test('the buyout table is empty-stated with no rows', () => {
     assert.match(page.buyoutTableHtml({ rows: [], totals: {} }), /No commitments or bid yet/);
 });
 
+test('the Overview adds Committed total and Billed to date (subs) tiles in construction', async () => {
+    const con = jobsContext(true).JobsPage;
+    con._job = { id: 1, contract_amount: 0, customer_name: 'C', name: 'J', status: 'in_progress' };
+    con._tree = { types: [], totals: { committed_total: 15000, billed_to_date: 4000, committed: 11000, actual: 0, revised: 0, projected: 0, variance: 0, act_revenue: 0 } };
+    const html = await con.overviewHtml();
+    assert.match(html, /Committed total/);
+    assert.match(html, /Billed to date \(subs\)/);
+    // the subs tooltip distinguishes it from the Contract tab's owner billing
+    assert.match(html, /not the owner billing on the Contract tab/);
+
+    const biz = jobsContext(false).JobsPage;
+    biz._job = { id: 1, contract_amount: 0, customer_name: 'C', name: 'J', status: 'in_progress' };
+    biz._tree = { types: [], totals: { committed_total: 0, billed_to_date: 0, committed: 0, actual: 0, revised: 0, projected: 0, variance: 0, act_revenue: 0 } };
+    assert.doesNotMatch(await biz.overviewHtml(), /Billed to date \(subs\)/);
+});
+
 // ── Pay Bills flags + lien waiver ──────────────────────────────────────────
 
 test('Pay Bills flags a Sub with a missing W-9 or expired COI, warn-only', () => {
     const page = billsContext(true).BillsPage;
     assert.match(
-        page.complianceFlagHtml({ is_sub: true, w9_on_file: false, coi_expired: true }),
+        page.complianceFlagHtml({ is_sub: true, w9_on_file: false, coi_expires: '2020-01-01', coi_expired: true }),
         /W-9 missing, COI expired/,
+    );
+    // no expiry date on file reads as missing, not expired
+    assert.match(
+        page.complianceFlagHtml({ is_sub: true, w9_on_file: true, coi_expires: null, coi_expired: true }),
+        /COI missing/,
     );
     // a clean Sub, and a plain vendor, show nothing
     assert.equal(page.complianceFlagHtml({ is_sub: true, w9_on_file: true, coi_expired: false }), '');

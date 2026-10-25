@@ -295,20 +295,31 @@ prefilled with each line's remaining (scheduled value less what's already
 billed). Bill some or all of it: each line tallies its billed-to-date, the
 commitment reads **partial** while anything remains and **closed** once every
 line is fully billed. A business company's PO bills in one go exactly as before.
+A line with no price ($0) is not a bill line — the converted bill carries only
+the lines with money on them (a change from the earlier behaviour, where a
+description-only line rode along).
 
 **Retainage held.** When the commitment carries a retainage percent, that
-percent of each bill's subtotal is held back: the bill credits Accounts Payable
-for the net and **Retainage Payable** (2050) for the retainage, and its balance
-due is the net, so Pay Bills pays only what's owed now. A bill entered by hand
-can hold retainage the same way. Releasing retainage (a debit back to 2050) is
-progress billing's job (#555); for now the figure is the retainage held to date.
+percent of each bill's **pre-tax subtotal** is held back — tax is always
+payable in full — so the bill credits Accounts Payable for the net and
+**Retainage Payable** (2050) for the retainage, its balance due is the net, and
+the journal still balances with the gross debits. Pay Bills pays only what's
+owed now, and the A/P aging and vendor balances show the net (the held amount
+sits on 2050, not A/P). A bill entered by hand can hold retainage the same way.
+Releasing retainage (a debit back to 2050) is progress billing's job (#555);
+for now the figure is the retainage held to date.
 
 **What committed and billed mean now.** *Committed* cost is the **remaining**
 open commitment — the scheduled value of every issued, not-yet-closed
 commitment, less what has been billed — so it keeps meaning "ordered but not
 yet in the ledger". Beside it the job now carries **committed total** (the
 whole of every issued commitment) and **billed to date** (what has been billed
-against them), in the job overview and the cost tree totals.
+against them), shown as tiles on the job Overview (construction mode) and in the
+cost-tree totals; the Overview's "Billed to date (subs)" is the sub/supplier
+side and is distinct from the Contract tab's owner "Billed to date". Both are
+whole-commitment figures — a commitment has no period — so on a date-ranged
+cost tree they are all-time (the response flags this with
+`commitments_all_time`), unlike the period-scoped actuals beside them.
 
 **Bid vs buyout.** A **Buyout** tab on the job (after Contract, construction
 mode only) pairs each trade package's **bid** — the accepted estimate's cost

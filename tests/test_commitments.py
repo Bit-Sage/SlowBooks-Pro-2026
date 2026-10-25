@@ -17,6 +17,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from app.models.accounts import Account
 from app.models.bills import Bill, BillLine
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
@@ -90,7 +92,14 @@ SUB_LINES = [
 # ── PO create/update with the commitment fields ──────────────────────────
 
 
-def test_po_accepts_commitment_fields_in_both_company_types(client, seed_customer):
+@pytest.mark.parametrize("company_type", ["business", "construction"])
+def test_po_accepts_commitment_fields_in_both_company_types(
+    client, seed_customer, company_type
+):
+    assert (
+        client.put("/api/settings", json={"company_type": company_type}).status_code
+        == 200
+    )
     pkg = _package(client, "Concrete")
     v = _vendor(client, vendor_type="sub")
     r = _po(
@@ -174,8 +183,14 @@ def test_over_remaining_is_422_and_nothing_left_is_409(
     over = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 99999}])
     assert over.status_code == 422, over.text
 
-    zero = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 0}])
-    assert zero.status_code == 422, zero.text
+    # Every line zero (the construction dialog sends a zero per line) bills
+    # nothing → 409, not a 422.
+    zero = _convert(
+        client,
+        po["id"],
+        lines=[{"line_id": ids[0], "amount": 0}, {"line_id": ids[1], "amount": 0}],
+    )
+    assert zero.status_code == 409, zero.text
 
     # Bill it all, then a second convert finds nothing to bill.
     done = _convert(client, po["id"])
@@ -183,6 +198,88 @@ def test_over_remaining_is_422_and_nothing_left_is_409(
     again = _convert(client, po["id"])
     # a closed PO is refused up front; a partial with nothing left is the 409
     assert again.status_code in (400, 409), again.text
+
+
+def test_zeroed_convert_dialog_bills_nothing(
+    client, db_session, seed_accounts, seed_customer
+):
+    """The construction dialog sends {line_id, amount} for every line; an
+    all-zero submit is a partial request that bills nothing — 409, and the
+    commitment is untouched."""
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(client, v["id"], SUB_LINES).json()
+    ids = [ln["id"] for ln in po["lines"]]
+    r = _convert(
+        client,
+        po["id"],
+        lines=[{"line_id": i, "amount": 0} for i in ids],
+    )
+    assert r.status_code == 409, r.text
+    assert db_session.query(Bill).count() == 0
+
+
+def test_put_po_keeps_billed_and_refuses_removing_a_billed_line(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES, job_id=job["id"])
+    ids = [ln["id"] for ln in po["lines"]]
+    _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}])
+
+    # Edit the scope notes, resending both lines by id: billed-to-date and the
+    # committed figures survive.
+    up = client.put(
+        f"/api/purchase-orders/{po['id']}",
+        json={
+            "scope_notes": "revised",
+            "lines": [
+                {
+                    "id": ids[0],
+                    "description": "Foundations",
+                    "quantity": 1,
+                    "rate": 10000,
+                },
+                {"id": ids[1], "description": "Slab", "quantity": 1, "rate": 5000},
+            ],
+        },
+    )
+    assert up.status_code == 200, up.text
+    line0 = db_session.get(PurchaseOrderLine, ids[0])
+    db_session.refresh(line0)
+    assert Decimal(str(line0.billed_amount)) == Decimal("4000.00")
+    detail = client.get(f"/api/jobs/{job['id']}").json()["summary"]
+    assert detail["billed_to_date"] == 4000.0
+    assert detail["committed_cost"] == 11000.0
+
+    # Dropping the billed line is a sub-change-order move → 409.
+    drop = client.put(
+        f"/api/purchase-orders/{po['id']}",
+        json={
+            "lines": [
+                {"id": ids[1], "description": "Slab", "quantity": 1, "rate": 5000}
+            ]
+        },
+    )
+    assert drop.status_code == 409, drop.text
+    assert drop.json()["detail"]["code"] == "commitment_billed"
+
+    # Cutting a billed line below what's billed is also refused.
+    cut = client.put(
+        f"/api/purchase-orders/{po['id']}",
+        json={
+            "lines": [
+                {
+                    "id": ids[0],
+                    "description": "Foundations",
+                    "quantity": 1,
+                    "rate": 1000,
+                },
+                {"id": ids[1], "description": "Slab", "quantity": 1, "rate": 5000},
+            ]
+        },
+    )
+    assert cut.status_code == 409, cut.text
 
 
 # ── Retainage posting ─────────────────────────────────────────────────────
@@ -276,6 +373,7 @@ def test_committed_and_billed_figures_track_partial_billing(
     job = _job(client, seed_customer.id)
     v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
     po = _sent_po(client, v["id"], SUB_LINES, job_id=job["id"])
+    assert po["status"] == "sent"
     ids = [ln["id"] for ln in po["lines"]]
 
     # Before billing: committed is the whole $15,000 open, nothing billed.
@@ -466,6 +564,224 @@ def test_lien_waiver_put_round_trip(client, seed_accounts):
     # a bad value is refused
     bad = client.put(f"/api/bills/{bill['id']}", json={"lien_waiver_status": "nope"})
     assert bad.status_code == 422, bad.text
+
+
+# ── Edit / void / status edge cases ───────────────────────────────────────
+
+
+def test_edit_po_bill_then_void_restores_billed_amount(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A PO bill carries a currency + rate (so the edit doesn't 500), the edit
+    keeps the commitment back-links, and the later void hands the billed
+    dollars back to the commitment."""
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    ids = [ln["id"] for ln in po["lines"]]
+    conv = _convert(client, po["id"])
+    bill_id = conv.json()["bill_id"]
+
+    # Edit the tax rate — this re-posts the journal through create's path.
+    up = client.put(f"/api/bills/{bill_id}", json={"tax_rate": 0.05})
+    assert up.status_code == 200, up.text
+
+    vr = client.post(f"/api/bills/{bill_id}/void")
+    assert vr.status_code == 200, vr.text
+    line0 = db_session.get(PurchaseOrderLine, ids[0])
+    db_session.refresh(line0)
+    assert Decimal(str(line0.billed_amount)) == Decimal("0.00")
+
+
+def test_paying_a_retainage_bill_in_full_marks_paid_and_aging_nets_held(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(client, v["id"], SUB_LINES, retainage_pct=10).json()
+    bill_id = _convert(client, po["id"]).json()["bill_id"]
+    bill = db_session.get(Bill, bill_id)
+    net = Decimal(str(bill.balance_due))
+    assert net == Decimal("13500.00")
+
+    # A/P aging excludes the held retainage (it is on 2050, not A/P).
+    from app.routes.reports.payables_tax import ap_aging_report
+
+    aging = ap_aging_report(db_session, date(2026, 12, 31))
+    row = next(r for r in aging["items"] if r["vendor_id"] == v["id"])
+    assert Decimal(str(row["total"])) == float(net)
+
+    pay = client.post(
+        "/api/bill-payments",
+        json={
+            "vendor_id": v["id"],
+            "date": "2026-09-15",
+            "amount": float(net),
+            "allocations": [{"bill_id": bill_id, "amount": float(net)}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    got = client.get(f"/api/bills/{bill_id}").json()
+    assert got["status"] == "paid"
+
+
+def test_raising_retainage_on_a_paid_bill_is_422(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(client, v["id"], SUB_LINES).json()  # no retainage
+    bill_id = _convert(client, po["id"]).json()["bill_id"]
+    # pay it in full (15,000)
+    pay = client.post(
+        "/api/bill-payments",
+        json={
+            "vendor_id": v["id"],
+            "date": "2026-09-15",
+            "amount": 15000,
+            "allocations": [{"bill_id": bill_id, "amount": 15000}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    # now hold retainage that would leave less than is already paid
+    up = client.put(f"/api/bills/{bill_id}", json={"retainage_held": 1000})
+    assert up.status_code == 422, up.text
+
+
+def test_hand_entered_bill_rejects_a_po_line_link(client, seed_accounts):
+    v = _vendor(client)
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": v["id"],
+            "date": "2026-09-01",
+            "lines": [
+                {
+                    "description": "x",
+                    "amount": 100,
+                    "account_id": seed_accounts["5100"].id,
+                    "purchase_order_line_id": 1,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_void_keeps_a_received_commitment_received(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(client, v["id"], SUB_LINES).json()
+    client.put(f"/api/purchase-orders/{po['id']}", json={"status": "received"})
+    ids = [ln["id"] for ln in po["lines"]]
+    # partial bill — a received commitment stays received, not partial
+    _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}])
+    po_row = db_session.get(PurchaseOrder, po["id"])
+    db_session.refresh(po_row)
+    assert po_row.status.value == "received"
+    # void it — still received, never downgraded to sent
+    bill_id = db_session.query(Bill).filter(Bill.po_id == po["id"]).one().id
+    client.post(f"/api/bills/{bill_id}/void")
+    db_session.refresh(po_row)
+    assert po_row.status.value == "received"
+
+
+def test_full_billing_line_by_line_then_409_and_partial_after_void(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    ids = [ln["id"] for ln in po["lines"]]
+    # bill each line in full, one at a time
+    r1 = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 10000}])
+    assert r1.status_code == 200, r1.text
+    r2 = _convert(client, po["id"], lines=[{"line_id": ids[1], "amount": 5000}])
+    assert r2.status_code == 200, r2.text
+    po_row = db_session.get(PurchaseOrder, po["id"])
+    db_session.refresh(po_row)
+    assert po_row.status.value == "closed"
+    # nothing left — a closed PO is refused up front
+    nope = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 1}])
+    assert nope.status_code in (400, 409), nope.text
+
+    # void the second bill; the PO reopens to partial and can bill again
+    client.post(f"/api/bills/{r2.json()['bill_id']}/void")
+    db_session.refresh(po_row)
+    assert po_row.status.value == "partial"
+    again = _convert(client, po["id"], lines=[{"line_id": ids[1], "amount": 5000}])
+    assert again.status_code == 200, again.text
+
+
+def test_zero_dollar_line_is_skipped_on_convert(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A $0 (description-only) commitment line is not a bill line now; the
+    priced lines still convert."""
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(
+        client,
+        v["id"],
+        [
+            {"description": "Mobilization note", "quantity": 1, "rate": 0},
+            {"description": "Slab", "quantity": 1, "rate": 5000},
+        ],
+    ).json()
+    bill_id = _convert(client, po["id"]).json()["bill_id"]
+    lines = db_session.query(BillLine).filter_by(bill_id=bill_id).all()
+    assert len(lines) == 1
+    assert Decimal(str(lines[0].amount)) == Decimal("5000.00")
+
+
+def test_taxed_subcontract_holds_retainage_on_pretax_subtotal(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Retainage is a percent of the pre-tax subtotal; tax is payable in full,
+    and the journal balances with gross debits."""
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(
+        client,
+        v["id"],
+        [{"description": "Sub work", "quantity": 1, "rate": 10000}],
+        tax_rate=0.08,
+        retainage_pct=10,
+    ).json()
+    bill_id = _convert(client, po["id"]).json()["bill_id"]
+    bill = db_session.get(Bill, bill_id)
+    assert Decimal(str(bill.subtotal)) == Decimal("10000.00")
+    assert Decimal(str(bill.tax_amount)) == Decimal("800.00")
+    assert Decimal(str(bill.total)) == Decimal("10800.00")
+    # 10% of the pre-tax subtotal
+    assert Decimal(str(bill.retainage_held)) == Decimal("1000.00")
+    # net of the held amount, tax still payable in full
+    assert Decimal(str(bill.balance_due)) == Decimal("9800.00")
+    # the journal balances: gross debit 10,800 = A/P 9,800 + 2050 1,000
+    lines = (
+        db_session.query(TransactionLine)
+        .filter_by(transaction_id=bill.transaction_id)
+        .all()
+    )
+    debits = sum((Decimal(str(line.debit)) for line in lines), Decimal("0"))
+    credits = sum((Decimal(str(line.credit)) for line in lines), Decimal("0"))
+    assert debits == credits == Decimal("10800.00")
+
+
+def test_buyout_bought_is_the_pretax_subtotal(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    pkg_c, _ = _accepted_two_package_estimate(client, seed_customer.id, job["id"])
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    _sent_po(
+        client,
+        v["id"],
+        [{"description": "Concrete sub", "quantity": 1, "rate": 10000}],
+        job_id=job["id"],
+        commitment_type="subcontract",
+        trade_package_id=pkg_c["id"],
+        tax_rate=0.08,
+    )
+    data = client.get(f"/api/jobs/{job['id']}/buyout").json()
+    row = next(r for r in data["rows"] if r["package_name"] == "Concrete")
+    assert row["bought"] == 10000.0  # pre-tax, not 10,800
+    assert row["commitments"][0]["subtotal"] == 10000.0
 
 
 # ── Migration up/down incl. backfill ──────────────────────────────────────

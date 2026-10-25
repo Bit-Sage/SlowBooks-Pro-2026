@@ -188,7 +188,12 @@ A commitment is a purchase order — no new table. Additive columns:
 `committed_cost` is now Σ `(amount − billed_amount)` over non-draft, non-closed
 commitment lines (the remaining open value); `commitment_figures` adds
 `committed_total` (Σ amount of non-draft commitments) and `billed_to_date` (Σ
-billed) — `app/services/jobs_service.py`. The buyout table (bid vs bought per
+billed) — `app/services/jobs_service.py`. Those two are whole-commitment
+figures, so in a date-ranged `job_cost_tree` they are all-time; the totals
+carry `commitments_all_time: true` to say so. Retainage is computed on the
+pre-tax subtotal (tax is payable in full); the shared `vendor_compliance`
+helper (`app/services/compliance.py`) feeds both the bills responses and the
+buyout rows. The buyout table (bid vs bought per
 package) is computed in `app/services/buyout.py`; `vendor_compliance` (Sub
 W-9 / COI flags) is computed from the vendor. Migration
 `f3b5d7e9a2c4_construction_buyout` (additive; backfills a closed PO's billed

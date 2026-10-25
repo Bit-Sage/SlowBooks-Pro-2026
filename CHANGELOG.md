@@ -268,7 +268,9 @@ commitments behind it. Bills and Pay Bills carry each Sub vendor's compliance
 Bills offers a per-bill lien-waiver status saved through `PUT /api/bills/{id}`.
 Sub change orders (#554), progress billing with retainage released (#555) and
 the buyout report / job cost by vendor (#556) build on this. A Business or
-Nonprofit company sees none of it. See
+Nonprofit company sees none of it. One behaviour change for everyone: a $0
+(description-only) PO line is no longer copied onto the bill a PO becomes —
+the converted bill carries only the lines with money on them. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
