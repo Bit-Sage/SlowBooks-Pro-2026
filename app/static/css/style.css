@@ -1798,6 +1798,9 @@ tr.clickable { cursor: pointer; }
     margin-bottom: 16px;
     padding: 0 16px;
 }
+/* the Contact support link inherits the page link navy, which is the splash
+   background; white reads at 12:1 on it in both themes */
+.splash-legal a { color: #fff; font-weight: 600; text-decoration: underline; }
 
 .splash-btn {
     padding: 6px 28px;
