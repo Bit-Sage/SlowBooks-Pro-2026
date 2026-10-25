@@ -652,6 +652,366 @@ def test_sub_waivers_warning(client, db_session, seed_accounts, seed_customer):
     assert body["sub_waivers"]["bills"][0]["vendor_name"] == "Ace Concrete"
 
 
+# ── Review round: the fixes ─────────────────────────────────────────────
+
+
+def test_number_keys_on_job_id_not_job_number(client, seed_accounts, seed_customer):
+    # two jobs sharing a job_number get distinct application numbers
+    j1 = _job(client, seed_customer.id, name="Tower A", job_number="100")
+    _contract(client, j1["id"], contract_type="lump_sum", contract_amount=10000)
+    _sov(
+        client,
+        j1["id"],
+        [{"description": "x", "kind": "work", "scheduled_value": 10000}],
+    )
+    j2 = _job(client, seed_customer.id, name="Tower B", job_number="100")
+    _contract(client, j2["id"], contract_type="lump_sum", contract_amount=10000)
+    _sov(
+        client,
+        j2["id"],
+        [{"description": "y", "kind": "work", "scheduled_value": 10000}],
+    )
+    a1 = _new_app(client, j1["id"])
+    a2 = _new_app(client, j2["id"])
+    assert a1["number"] == f"PA-{j1['id']}-01"
+    assert a2["number"] == f"PA-{j2['id']}-01"
+    assert a1["number"] != a2["number"]
+    assert a1["job_number"] == "100"
+
+
+def _balanced(db_session, txn_id):
+    rows = db_session.query(TransactionLine).filter_by(transaction_id=txn_id).all()
+    dr = sum((Decimal(str(r.debit)) for r in rows), Decimal("0"))
+    cr = sum((Decimal(str(r.credit)) for r in rows), Decimal("0"))
+    return dr, cr
+
+
+def test_negative_retainage_this_period_balances(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id, retainage_pct=10)
+    a1 = _new_app(client, job["id"])
+    _edit(
+        client,
+        a1["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+    )
+    assert _approve(client, a1["id"]).status_code == 200
+    assert _gl(db_session, "1150") == Decimal("3000.00")
+    # app 2 drops the percent to 5% and bills 10,000 more: retainage to date is
+    # 40,000 × 5% = 2,000, below the 3,000 held, so this period is −1,000 and
+    # the 1150 leg flips to a credit.
+    a2 = _new_app(client, job["id"])
+    _edit(
+        client,
+        a2["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 10000, "stored": 0}],
+        retainage_pct=5,
+    )
+    r = _approve(client, a2["id"])
+    assert r.status_code == 200, r.text
+    assert r.json()["totals"]["retainage_this_period"] == -1000.0
+    inv = db_session.query(Invoice).filter_by(id=r.json()["invoice_id"]).first()
+    dr, cr = _balanced(db_session, inv.transaction_id)
+    assert dr == cr == Decimal("11000.00")  # A/R 11,000 = income 10,000 + 1150 1,000
+    assert _gl(db_session, "1150") == Decimal("2000.00")
+
+
+def test_many_applications_stay_linear(client, seed_accounts, seed_customer):
+    import time
+
+    job = _job(client, seed_customer.id)
+    _contract(
+        client,
+        job["id"],
+        contract_type="lump_sum",
+        contract_amount=1000000,
+        retainage_pct=10,
+    )
+    sov = _sov(
+        client,
+        job["id"],
+        [{"description": "Work", "kind": "work", "scheduled_value": 1000000}],
+    )
+    for _ in range(15):
+        a = _new_app(client, job["id"])
+        _edit(
+            client,
+            a["id"],
+            lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+        )
+        assert _approve(client, a["id"]).status_code == 200
+    t0 = time.perf_counter()
+    assert client.get(f"/api/pay-applications?job_id={job['id']}").status_code == 200
+    a = _new_app(client, job["id"])
+    _edit(
+        client,
+        a["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+    )
+    assert _approve(client, a["id"]).status_code == 200
+    assert time.perf_counter() - t0 < 1.0
+
+
+def _taxed_estimate_job(client, customer_id, rate="0.08"):
+    """A job whose SOV came from an accepted estimate carrying a tax rate."""
+    r = client.post(
+        "/api/estimates",
+        json={
+            "customer_id": customer_id,
+            "date": "2026-02-01",
+            "tax_rate": rate,
+            "lines": [
+                {"description": "Base", "quantity": 1, "rate": 10000, "unit_cost": 8000}
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    est = r.json()
+    job = _job(client, customer_id, name="Taxed")
+    acc = client.post(f"/api/estimates/{est['id']}/accept", json={"job_id": job["id"]})
+    assert acc.status_code == 200, acc.text
+    fe = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}")
+    assert fe.status_code == 200, fe.text
+    client.put(f"/api/jobs/{job['id']}/contract", json={"retainage_pct": 10})
+    sov = client.get(f"/api/jobs/{job['id']}/contract").json()["sov"]
+    return job, sov
+
+
+def test_tax_from_accepted_estimate(client, db_session, seed_accounts, seed_customer):
+    job, sov = _taxed_estimate_job(client, seed_customer.id, rate="0.08")
+    app = _new_app(client, job["id"])
+    assert float(app["tax_rate"]) == 0.08  # defaulted from the estimate
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 5000, "stored": 0}],
+    )
+    r = _approve(client, app["id"])
+    assert r.status_code == 200, r.text
+    inv = db_session.query(Invoice).filter_by(id=r.json()["invoice_id"]).first()
+    assert inv.tax_amount == Decimal("400.00")  # 5,000 × 8%
+    assert inv.total == Decimal("5400.00")
+    assert _gl(db_session, "2200") == Decimal("-400.00")  # sales tax payable
+    dr, cr = _balanced(db_session, inv.transaction_id)
+    assert dr == cr
+
+
+def test_deduct_sov_line_bills_down_and_balances(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    _contract(
+        client,
+        job["id"],
+        contract_type="lump_sum",
+        contract_amount=9000,
+        retainage_pct=0,
+    )
+    sov = _sov(
+        client,
+        job["id"],
+        [
+            {"description": "Work", "kind": "work", "scheduled_value": 10000},
+            {"description": "Deduct alt", "kind": "work", "scheduled_value": -1000},
+        ],
+    )
+    app = _new_app(client, job["id"])
+    r = _edit(
+        client,
+        app["id"],
+        lines=[
+            {"sov_line_id": sov[0]["id"], "this_period": 10000, "stored": 0},
+            {"sov_line_id": sov[1]["id"], "this_period": -1000, "stored": 0},
+        ],
+    )
+    assert r.status_code == 200, r.text
+    rr = _approve(client, app["id"])
+    assert rr.status_code == 200, rr.text
+    inv = db_session.query(Invoice).filter_by(id=rr.json()["invoice_id"]).first()
+    assert inv.subtotal == Decimal("9000.00")
+    # the deduct line debits income, so the journal's gross is 10,000 both
+    # sides — balanced, with A/R taking the 9,000 net.
+    dr, cr = _balanced(db_session, inv.transaction_id)
+    assert dr == cr
+    assert inv.balance_due == Decimal("9000.00")
+
+
+def test_deduct_line_cannot_bill_past_its_value(client, seed_accounts, seed_customer):
+    job = _job(client, seed_customer.id)
+    _contract(client, job["id"], contract_type="lump_sum", contract_amount=9000)
+    sov = _sov(
+        client,
+        job["id"],
+        [
+            {"description": "Work", "kind": "work", "scheduled_value": 10000},
+            {"description": "Deduct", "kind": "work", "scheduled_value": -1000},
+        ],
+    )
+    app = _new_app(client, job["id"])
+    r = _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[1]["id"], "this_period": -2000, "stored": 0}],
+    )
+    assert r.status_code == 422  # -2,000 is past the -1,000 deduct
+
+
+def test_approve_with_nothing_to_bill_422(client, seed_accounts, seed_customer):
+    job, sov = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])  # every line zero, no release, no deposit
+    r = _approve(client, app["id"])
+    assert r.status_code == 422
+
+
+def test_deposit_over_current_due_422(client, db_session, seed_accounts, seed_customer):
+    job, sov = _two_line_job(client, seed_customer.id)
+    bank = _acct(db_session, "1000")
+    _deposit(client, job["id"], 50000, bank.id)
+    app = _new_app(client, job["id"])
+    # bill 1,000 at 10% → current due 900; a 5,000 deposit is more than that
+    r = _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+        deposit_applied=5000,
+    )
+    assert r.status_code == 422
+
+
+def test_void_with_a_real_payment_409(client, db_session, seed_accounts, seed_customer):
+    job, sov = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+    )
+    inv_id = _approve(client, app["id"]).json()["invoice_id"]
+    # a real customer payment on the invoice
+    pay = client.post(
+        "/api/payments",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-06-05",
+            "amount": 1000,
+            "method": "Check",
+            "allocations": [{"invoice_id": inv_id, "amount": 1000}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    r = client.post(f"/api/pay-applications/{app['id']}/void")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "invoice_paid"
+
+
+def test_void_with_an_unrelated_deposit_method_payment_409(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])  # no deposit applied
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+    )
+    inv_id = _approve(client, app["id"]).json()["invoice_id"]
+    bank = _acct(db_session, "1000")
+    # an unrelated payment flagged method="deposit" — not this app's own
+    pay = client.post(
+        "/api/payments",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-06-05",
+            "amount": 500,
+            "method": "deposit",
+            "deposit_to_account_id": bank.id,
+            "allocations": [{"invoice_id": inv_id, "amount": 500}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    r = client.post(f"/api/pay-applications/{app['id']}/void")
+    assert r.status_code == 409
+
+
+def test_put_sov_dropping_a_billed_line_422(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+    )
+    _approve(client, app["id"])
+    # resend only line 2 — dropping the billed line 1 is refused
+    r = client.put(
+        f"/api/jobs/{job['id']}/sov",
+        json={
+            "lines": [
+                {
+                    "id": sov[1]["id"],
+                    "description": "Structure",
+                    "kind": "work",
+                    "scheduled_value": 40000,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_second_application_after_a_void(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    a1 = _new_app(client, job["id"])
+    _edit(
+        client,
+        a1["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+    )
+    _approve(client, a1["id"])
+    assert client.post(f"/api/pay-applications/{a1['id']}/void").status_code == 200
+    # a fresh application opens (the open-application guard let go on void)
+    a2 = _new_app(client, job["id"])
+    body = client.get(f"/api/pay-applications/{a2['id']}").json()
+    line = next(line for line in body["lines"] if line["sov_line_id"] == sov[0]["id"])
+    assert float(line["previous"]) == 0.0  # the only prior app is void
+
+
+def test_business_invoice_journal_unchanged_with_zero_retainage(
+    client, db_session, seed_accounts, seed_customer
+):
+    # a plain invoice (no retainage) posts the same two-account A/R + income set
+    r = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-01",
+            "tax_rate": "0",
+            "lines": [{"description": "Work", "quantity": 1, "rate": 100}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    inv = db_session.query(Invoice).filter_by(id=r.json()["id"]).first()
+    assert inv.retainage_held == Decimal("0")
+    assert inv.retainage_released == Decimal("0")
+    rows = (
+        db_session.query(TransactionLine)
+        .filter_by(transaction_id=inv.transaction_id)
+        .all()
+    )
+    # a plain invoice posts only A/R (1100) and income (4000) — no construction
+    # retainage accounts are even created on a business books.
+    assert _acct(db_session, "1150") is None
+    assert len(rows) == 2
+    assert {_acct(db_session, "1100").id, _acct(db_session, "4000").id} == {
+        row.account_id for row in rows
+    }
+
+
 # ── Migration ───────────────────────────────────────────────────────────
 
 
@@ -665,11 +1025,17 @@ def test_migration_up_down_reverses(tmp_path):
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     cfg.attributes["database_url"] = "sqlite:///" + db.as_posix()
     command.upgrade(cfg, "head")
-    insp = inspect(create_engine("sqlite:///" + db.as_posix()))
+    eng = create_engine("sqlite:///" + db.as_posix())
+    insp = inspect(eng)
     assert "pay_applications" in insp.get_table_names()
     assert "job_deposits" in insp.get_table_names()
+    pa_cols = {c["name"] for c in insp.get_columns("pay_applications")}
+    assert {"tax_rate", "deposit_payment_id"} <= pa_cols
     assert "retainage_held" in {c["name"] for c in insp.get_columns("invoices")}
+    eng.dispose()
     command.downgrade(cfg, "-1")
-    insp = inspect(create_engine("sqlite:///" + db.as_posix()))
+    eng = create_engine("sqlite:///" + db.as_posix())
+    insp = inspect(eng)
     assert "pay_applications" not in insp.get_table_names()
     assert "retainage_held" not in {c["name"] for c in insp.get_columns("invoices")}
+    eng.dispose()

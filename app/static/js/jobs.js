@@ -714,7 +714,7 @@ const JobsPage = {
         // An allowance line shows its change-order draw-down (used / remaining).
         const allowanceNote = (line.kind === 'allowance' && usage)
             ? `<div style="font-size:11px;color:var(--text-muted)">Used ${formatCurrency(usage.used)} · ${formatCurrency(usage.remaining)} left</div>` : '';
-        return `<tr class="sov-row">
+        return `<tr class="sov-row" data-id="${line.id || ''}">
             <td><input class="sov-item" data-write maxlength="10" value="${escapeHtml(line.item_no || '')}" style="width:46px"></td>
             <td><input class="sov-desc" data-write maxlength="200" value="${escapeHtml(line.description || '')}" style="width:100%">${allowanceNote}</td>
             <td><select class="sov-pkg" data-write>${pkgOpts}</select></td>
@@ -731,6 +731,7 @@ const JobsPage = {
     _readSov() {
         // Skip change_order rows — their value is owned by the CO, not the grid.
         return $$('#sov-body .sov-row').filter(tr => !tr.dataset.co).map(tr => ({
+            id: tr.dataset.id ? parseInt(tr.dataset.id) : null,
             item_no: tr.querySelector('.sov-item').value.trim() || null,
             description: tr.querySelector('.sov-desc').value.trim() || null,
             trade_package_id: tr.querySelector('.sov-pkg').value ? parseInt(tr.querySelector('.sov-pkg').value) : null,
@@ -1238,7 +1239,7 @@ const JobsPage = {
             const inv = a.invoice_id
                 ? `<a href="#/invoices/${a.invoice_id}">${escapeHtml(a.invoice_number || '#' + a.invoice_id)}</a>` : '';
             return `<tr>
-                <td>${escapeHtml(a.number)}</td>
+                <td>${escapeHtml(a.number)}${a.job_number ? `<br><span style="font-size:11px;color:var(--text-muted)">${escapeHtml(a.job_number)}</span>` : ''}</td>
                 <td>${escapeHtml(a.period_to || '')}</td>
                 <td><span class="badge">${escapeHtml(JobsPage.PA_STATUS_LABELS[a.status] || a.status)}</span></td>
                 <td class="amount">${m(t.this_period_total)}</td>
@@ -1269,7 +1270,7 @@ const JobsPage = {
         const parts = [`<button class="btn btn-sm btn-secondary" onclick="JobsPage.paEdit(${id})">${open ? 'Edit' : 'View'}</button>`];
         if (a.status === 'draft') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paSubmit(${id})">Submit</button>`);
         if (open) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paApprove(${id})">Approve</button>`);
-        if (a.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paVoid(${id})">Void</button>`);
+        if (a.status === 'approved') parts.push(`<button class="btn btn-sm btn-danger" data-destructive onclick="JobsPage.paVoid(${id})">Void</button>`);
         parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/pay-applications/${id}/pdf','_blank')">PDF</button>`);
         return parts.join(' ');
     },
@@ -1480,7 +1481,7 @@ const JobsPage = {
             <td>${escapeHtml(dp.date || '')}</td>
             <td class="amount">${m(dp.amount)}</td>
             <td>${escapeHtml(dp.memo || '')}</td>
-            <td>${dp.voided_at ? '<span class="badge">Void</span>' : `<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paVoidDeposit(${dp.id})">Void</button>`}</td>
+            <td>${dp.voided_at ? '<span class="badge">Void</span>' : `<button class="btn btn-sm btn-danger" data-destructive onclick="JobsPage.paVoidDeposit(${dp.id})">Void</button>`}</td>
         </tr>`).join('');
         return `<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:22px 0 6px 0">Owner deposits</h4>
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">

@@ -66,10 +66,24 @@ test('the grid renders each SOV line with live figures and the totals block', ()
         { completed_to_date: 55000, retainage_to_date: 5500, current_due: 18000, net_due: 18000 },
         { pct: 10 },
     );
-    assert.match(grid, /pa-line/);
     assert.match(grid, /data-sov="1"/);
-    assert.match(grid, /Current payment due/);
-    assert.match(grid, /\$55,?000\.00|\$55000\.00/);  // completed
+    // the row's completed / retainage / balance cells are computed live by the
+    // grid's own paLineMath, not echoed — prove the real numbers land.
+    assert.match(grid, /pa-completed">\$55,000\.00/);
+    assert.match(grid, /pa-retainage">\$5,500\.00/);
+    assert.match(grid, /pa-balance">\$5,000\.00/);
+});
+
+test('the SOV grid round-trips a line id so a billed line is preserved', () => {
+    const page = jobsContext(true).JobsPage;
+    const row = page.sovRowHtml(
+        { id: 7, item_no: '01', description: 'Sitework', kind: 'work', scheduled_value: 1000 },
+        0, [], [],
+    );
+    assert.match(row, /data-id="7"/);
+    // and _readSov emits that id back to the server
+    const jobs = fs.readFileSync(path.join(__dirname, '../../app/static/js/jobs.js'), 'utf8');
+    assert.match(jobs, /id:\s*tr\.dataset\.id\s*\?\s*parseInt\(tr\.dataset\.id\)/);
 });
 
 test('the pay-app log carries its columns, a guarded New, approve and PDF', () => {

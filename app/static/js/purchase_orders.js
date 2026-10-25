@@ -369,11 +369,16 @@ const PurchaseOrdersPage = {
                 cell = AccountQuickAdd.picker(`<select class="po-conv-account" data-line="${l.id}" aria-label="Account for line ${n + 1}">
                         <option value="">Choose an account...</option>${PurchaseAccounts.options(posting, pick)}</select>`, 'po-convert');
             }
-            const amtCol = partial
-                ? `<td class="amount"><input type="number" step="0.01" min="0" class="po-conv-amount" data-line="${l.id}" value="${remaining.toFixed(2)}" style="width:90px" aria-label="Amount this period for line ${n + 1}"></td>`
+            // The sub pay-app schedule (#555): previous (billed) / this period /
+            // remaining / the retainage this period holds back.
+            const retThis = remaining * (Number(po.retainage_pct) || 0) / 100;
+            const amtCols = partial
+                ? `<td class="amount">${formatCurrency(remaining)}</td>`
+                + `<td class="amount"><input type="number" step="0.01" min="0" class="po-conv-amount" data-line="${l.id}" value="${remaining.toFixed(2)}" style="width:90px" aria-label="Amount this period for line ${n + 1}"></td>`
+                + `<td class="amount">${formatCurrency(retThis)}</td>`
                 : '';
             return `<tr><td>${escapeHtml(l.description || (item ? item.name : ''))}</td>
-                <td class="amount">${formatCurrency(l.amount)}</td>${partial ? `<td class="amount">${formatCurrency(l.billed_amount)}</td>` : ''}${amtCol}<td>${cell}</td></tr>`;
+                <td class="amount">${formatCurrency(l.amount)}</td>${partial ? `<td class="amount">${formatCurrency(l.billed_amount)}</td>` : ''}${amtCols}<td>${cell}</td></tr>`;
         }).join('');
         const taxNote = Number(po.tax_amount)
             ? `<p class="form-hint">The ${formatCurrency(po.tax_amount)} of tax on this order is part of what these goods cost: it is added to each line's account, not to Sales Tax Payable.</p>`
@@ -386,7 +391,7 @@ const PurchaseOrdersPage = {
             <div class="form-group" style="max-width:200px;"><label for="po-conv-date">Bill date</label>
                 <input type="date" id="po-conv-date" value="${todayISO()}"></div>
             <div class="table-container"><table>
-                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Billed</th><th scope="col" class="amount">This period</th>' : ''}<th scope="col">Account</th></tr></thead>
+                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Previous</th><th scope="col" class="amount">Remaining</th><th scope="col" class="amount">This period</th><th scope="col" class="amount">Retainage</th>' : ''}<th scope="col">Account</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             ${taxNote}

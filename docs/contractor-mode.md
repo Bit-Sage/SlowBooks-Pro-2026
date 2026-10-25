@@ -540,9 +540,14 @@ stored and reversed the period they go into the work, and the income billed to
 date always equals completed-to-date. The journal is DR Accounts Receivable for
 the net (total − retainage held this period + retainage released), DR
 **Retainage Receivable** (1150) for the retainage held, CR 1150 for any
-released, CR income per line, CR sales tax as any invoice. The invoice's
-balance due is that net; the invoice view and PDF show *Retainage withheld this
-period*, *Retainage released* and *Current payment due*. **Void** reverses the
+released, CR income per line, CR sales tax as any invoice. Sales tax is charged
+on the billed work at the application's **tax rate** — defaulted from the job's
+accepted estimate (editable while the application is open) and applied like any
+invoice's, so a taxed job's progress bills carry tax and an untaxed one carries
+none. The invoice's balance due is that net; the invoice view and PDF show
+*Retainage withheld this period*, *Retainage released* and *Current payment
+due*. A dropped retainage percent makes the retainage this period negative and
+the 1150 leg a credit; the entry still balances. **Void** reverses the
 invoice (and the 1150 entries), and later applications stay correct because
 each reads its *previous* and *retainage to date* from the approved history
 live — nothing stored goes stale. Only one application may be open (draft or

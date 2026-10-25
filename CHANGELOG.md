@@ -476,7 +476,10 @@ the invoice for the job's customer — one line per SOV line billed this period
 stored and reversed when it is installed) — and posts a retainage journal: DR
 A/R net of retainage, DR **Retainage Receivable** (1150) for retainage held
 this period, CR 1150 for any retainage released, CR income per line, CR sales
-tax. The invoice carries `retainage_held`, `retainage_released` and its
+tax (charged on the billed work at the application's tax rate, defaulted from
+the job's accepted estimate). A dropped retainage percent makes the retainage
+this period negative and the 1150 leg a credit, and the entry still balances.
+The invoice carries `retainage_held`, `retainage_released` and its
 `pay_application_id`, and its balance due is the net of retainage. **Owner
 deposits** (`POST /api/jobs/{id}/deposits`) hold money on **Customer Deposits**
 (2210); a pay application's *deposit applied* draws one down as a payment to
