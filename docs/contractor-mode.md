@@ -105,6 +105,70 @@ line forms as they were and posts the code's type (the API accepts a line
 type for any company). Job-cost reports read the line's type first and fall
 back to the code's, and roll a section's cost up under its division.
 
+## Estimating
+
+In construction mode the estimate is a bid, not just a priced list (#551). A
+Business or Nonprofit company's estimate form and PDF are exactly as they were.
+
+**Packages and sections.** Each line can belong to a **trade package** — the
+bid package a sub is awarded (Concrete, Electrical …) — and to a cost-code
+**section** (`03 30 00`), as every costable line does. The package is the
+bid's view (lines group under it, Unassigned when blank); the section is where
+the cost posts. A unit of measure (SF, LF, EA, CY…) sits beside the quantity.
+
+**Line kinds.** A line is one of four:
+
+- **Base** — ordinary scope; its cost (quantity × unit cost) is what the
+  markups compound on.
+- **Allowance** — a budgeted figure for work not yet designed. It is added to
+  the bid *after* markup and carries none.
+- **Alternate** — an add or deduct the customer can choose. It sits in no
+  total until it is **accepted**, and then it counts as base scope.
+- **Unit price** — a rate card (a price per unit for work whose quantity is
+  unknown, like rock excavation). It is never in the bid total and is never
+  repriced.
+
+**How the markups compound.** Four percents ride the bid and stack in order,
+each figured on the running total before it: general conditions on the base
+cost, insurance on base + GC, fee on base + GC + insurance, bond on
+base + GC + insurance + fee. Worked example — a $100,000 base cost at
+8 / 1.5 / 5 / 1 percent:
+
+| Step | Figured on | Amount |
+| --- | --- | --- |
+| General conditions (8%) | 100,000 | 8,000.00 |
+| Insurance (1.5%) | 108,000 | 1,620.00 |
+| Fee (5%) | 109,620 | 5,481.00 |
+| Bond (1%) | 115,101 | 1,151.01 |
+| **Bid total** | base + the four + allowances | **116,252.01** |
+
+Allowances are added after this; unit prices and un-accepted alternates are
+not in it.
+
+**Price from cost.** The **Price from cost** button sets every base and
+accepted-alternate line's rate to its unit cost times the markup factor
+`(1+gc)(1+ins)(1+fee)(1+bond)`, so the sell price carries the markup and the
+margin is explicit. Lines with no unit cost keep their rate; allowances and
+unit prices are left alone. It is refused once the estimate is accepted or
+converted.
+
+**Accept locks the budget.** Accepting an estimate (it needs a job) seeds the
+job budget from it — a budget row you edited by hand still wins — and then
+**locks** the seeded rows: they are the contract budget. While they are
+locked, editing the budget or re-seeding it from another estimate is refused,
+and a job whose budget one estimate locked will not accept a second. The
+customer PDF groups the bid by package with the section code, then blocks the
+allowances, alternates (accepted ones marked) and unit prices, and shows the
+bid total — the markups are the contractor's own and are not itemised there
+(they are in the app's totals panel). Converting an accepted estimate to an
+invoice drops the unit-price lines and any un-accepted alternate and carries
+each line's cost type and unit cost onto the invoice.
+
+**Change orders come later.** A change order (a later issue) will be how a
+locked budget moves — a numbered document that revises the contract amount and
+the budget with an audit trail. Until it lands, the lock simply holds: the
+budget stays as the accepted estimate left it.
+
 ## The words
 
 A contractor keeps almost every business word — Customer, Invoice, Estimate,
@@ -154,5 +218,7 @@ appear. Every other report stays where it is.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
   rest.
-- **Nothing references a trade package yet** — bids and commitments against a
-  package are later steps.
+- **The estimate references trade packages** (#551, see *Estimating* above);
+  the contract on the job (lump sum / GMP / cost-plus, fee, cap, contingency,
+  retainage, schedule of values), change orders, and sub commitments against a
+  package are still later steps.

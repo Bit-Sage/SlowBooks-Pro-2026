@@ -109,6 +109,26 @@ transaction_lines and bill_lines. `purchase_orders.job_id` /
 A package is what a sub bids; a section is what costs post to. Seeded by
 `POST /api/construction/setup` when the company has none.
 
+## Construction estimating (#551)
+
+`estimate_lines` gains the bid shape: `trade_package_id` (nullable FK
+trade_packages, SET NULL — the bid package the line belongs to; null groups
+under "Unassigned"), `line_kind` (String(12), NOT NULL default `base` — one of
+`base` · `allowance` · `alternate` · `unit_price`), `unit` (String(20),
+nullable — SF, LF, EA, CY…) and `alternate_accepted` (Boolean, NOT NULL
+default false). `estimates` gains the four compounding markups `gc_pct`,
+`insurance_pct`, `fee_pct`, `bond_pct` (Numeric(7,4), NOT NULL default 0 —
+percent values, 5.5 = 5.5%) and `accepted_at` (DateTime, nullable).
+`job_budgets.locked` (Boolean, NOT NULL default false) marks the rows an
+accepted estimate owns — only a change order moves them. `invoice_lines` gains
+`cost_type` (String(20)) and `unit_cost` (Numeric(12,4)), both nullable, so a
+converted estimate carries its cost basis onto the invoice. The bid math
+(cost subtotal, the four markups, allowance total, bid total, the package and
+alternate and unit-price breakdowns) is computed, not stored —
+`app/services/estimating.py`. Migration
+`d9f6b2c4e7a1_construction_estimating` (additive and nullable/defaulted;
+downgrade reverses).
+
 ## Job cost model (milestone 3)
 
 | table | purpose |
