@@ -243,6 +243,10 @@ def test_two_periods_then_release(client, db_session, seed_accounts, seed_custom
     assert t2["completed_to_date"] == 55000.0
     assert t2["retainage_to_date"] == 5500.0
     assert t2["retainage_this_period"] == 2000.0
+    # billed to date is the latest application's cumulative figure, not a
+    # sum across applications (35,000 + 55,000 would count period 1 twice)
+    c = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
+    assert c["billed_to_date"] == 55000.0
     assert t2["current_due"] == 18000.0
     inv2 = db_session.query(Invoice).filter_by(id=r2.json()["invoice_id"]).first()
     assert inv2.subtotal == Decimal("20000.00")

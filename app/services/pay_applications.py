@@ -126,7 +126,9 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
     - `stored`    — SOV line id → the latest approved application's stored;
     - `prev_retainage` — the latest approved application's retainage_to_date;
     - `prev_certificates` — Σ of the approved applications' current_due;
-    - `billed`    — Σ of the approved applications' completed_to_date.
+    - `billed`    — the latest approved application's completed_to_date
+      (each application's figure is already cumulative; summing them would
+      count every earlier period again).
 
     One pass keeps the list and the next approve linear, not exponential — the
     old code recursed into application_figures per prior (#555 review)."""
@@ -162,7 +164,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
             stored[ln.sov_line_id] = _q(ln.stored)
         prev_ret = totals["retainage_to_date"]
         prev_cert = _q(prev_cert + totals["current_due"])
-        billed = _q(billed + totals["completed_to_date"])
+        billed = _q(totals["completed_to_date"])  # cumulative already; the latest wins
     return {
         "previous": previous,
         "stored": stored,
@@ -241,7 +243,8 @@ def deposits_figures(db: Session, job_id: int) -> dict:
 
 
 def billed_to_date(db: Session, job_id: int) -> Decimal:
-    """Σ approved applications' completed_to_date — owner billing to date."""
+    """Owner billing to date — the latest approved application's cumulative
+    completed_to_date (not a sum across applications)."""
     return _history(db, job_id)["billed"]
 
 
