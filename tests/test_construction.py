@@ -139,15 +139,29 @@ def _probe(name, *args):
 @requires_node
 def test_report_center_leads_with_contractor_cards_and_keeps_the_set():
     got = _probe("reports_cards_probe.js")
-    # the three contractor reports lead, in issue order
-    assert got["construction"][:3] == [
-        "job-profitability",
-        "job-budget-vs-actual",
-        "profit-loss-by-job",
+    # the Construction group leads: the three contractor reports that always
+    # existed, then the five job reports added in #556 (construction only)
+    construction_only = [
+        "wip-schedule",
+        "cost-to-complete",
+        "change-order-log",
+        "buyout",
+        "job-cost-by-vendor",
     ]
-    # and construction shows exactly the business set — same cards, same count
-    assert set(got["construction"]) == set(got["business"])
-    assert len(got["construction"]) == len(got["business"])
+    assert (
+        got["construction"][:8]
+        == [
+            "job-profitability",
+            "job-budget-vs-actual",
+            "profit-loss-by-job",
+        ]
+        + construction_only
+    )
+    # the five show in construction mode only; everything else is the business
+    # set, unchanged
+    assert set(got["construction"]) - set(got["business"]) == set(construction_only)
+    assert all(v not in got["business"] for v in construction_only)
+    assert len(got["construction"]) == len(got["business"]) + len(construction_only)
 
 
 @requires_node
