@@ -86,6 +86,20 @@ def test_a_read_only_token_still_saves_no_preference(client):
     assert r.status_code == 403
 
 
+def test_a_bookkeeper_token_writes_no_preference_either(client):
+    # a token has no row of its own: a write would land as user_id NULL,
+    # which on a password-only book is the operator's own preferences
+    r = client.post("/api/tokens", json={"label": "agent", "role": "bookkeeper"})
+    assert r.status_code == 201, r.text
+    headers = {"Authorization": f"Bearer {r.json()['token']}"}
+    client.post("/api/auth/logout")
+    for method in ("put", "delete"):
+        call = getattr(client, method)
+        kw = {"json": {"value": {"auto_decimal": True}}} if method == "put" else {}
+        r = call("/api/preferences/data_entry", headers=headers, **kw)
+        assert r.status_code == 403, (method, r.text)
+
+
 # The money fields of every transaction form, by file: the class hook.
 MONEY = {
     "invoices.js": [

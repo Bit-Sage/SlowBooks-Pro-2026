@@ -449,6 +449,23 @@ def _keeper_token(client):
     return keeper
 
 
+def _keeper_session(client):
+    # a person's own preferences are a signed-in person's, never a token's
+    # (a token's row would be user_id NULL): those controls go through a
+    # bookkeeper who signs in
+    r = client.post(
+        "/api/users",
+        json={"username": "keeper-person", "password": KEEPER_PW, "role": "bookkeeper"},
+    )
+    assert r.status_code in (200, 201), r.text
+    person = TestClient(app)
+    r = person.post(
+        "/api/auth/login", json={"username": "keeper-person", "password": KEEPER_PW}
+    )
+    assert r.status_code == 200, r.text
+    return person
+
+
 def _send(c, method, path, body, made):
     path = path.format(**made)
     if body == UPLOAD:
@@ -520,6 +537,7 @@ def test_every_control_a_bookkeeper_is_offered_the_server_answers(client, made):
     keeper = _keeper_token(client)
     for path in SETTINGS_READS:
         assert keeper.get(path).status_code == 200, path
+    person = _keeper_session(client)
     refused = []
     for control in sorted(offered):
         if control in SETTINGS_TAKEN_FROM_A_SIGN_IN:  # no API token may ask
@@ -527,7 +545,8 @@ def test_every_control_a_bookkeeper_is_offered_the_server_answers(client, made):
             continue
         calls = KEPT[control] if control in KEPT else [TAKEN[control]]
         for method, path, body, *answer in calls:
-            r = _send(keeper, method, path, body, made)
+            who = person if path.startswith("/api/preferences/") else keeper
+            r = _send(who, method, path, body, made)
             if r.status_code == 403:
                 refused.append(control)
             else:

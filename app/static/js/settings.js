@@ -1819,17 +1819,11 @@ const SettingsPage = {
     // the preferences API (post_sound), not the company-settings form, so it
     // follows a person across machines and each user keeps their own. The
     // checkbox saves itself on change, like the OCR engine above.
-    // A read-only or accountant sign-in cannot write preferences (PUT
-    // /api/preferences answers 403), so the section is hidden for them, the
-    // way other controls they cannot save are; their chime stays off.
+    // Every signed-in role writes its own preferences (#480), read-only
+    // and accountant included, so every one of them gets the toggle.
     async loadPostSoundPref() {
         const box = $('#post-sound-pref');
         if (!box) return;
-        const section = document.getElementById('settings-sounds');
-        if (typeof App !== 'undefined' && App.isLocked && App.isLocked()) {
-            if (section) section.hidden = true;
-            return;
-        }
         try {
             const pref = await API.get('/preferences/post_sound');
             box.checked = !!(pref && pref.value && pref.value.enabled);

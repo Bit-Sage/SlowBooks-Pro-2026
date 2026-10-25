@@ -1170,6 +1170,17 @@ async def _require_session(request: Request, call_next):
     # the person's own (app.routes.preferences). Not a token's: a token has
     # no screen and no row of its own.
     own_preference = token_principal is None and path.startswith("/api/preferences/")
+    # ...and a token may not write one: its row would be user_id NULL,
+    # which on a password-only book is the operator's own preferences.
+    if (
+        token_principal is not None
+        and path.startswith("/api/preferences/")
+        and request.method not in _READ_METHODS
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "An API token has no preferences of its own to set."},
+        )
     if (
         not backup_grant
         and not own_preference

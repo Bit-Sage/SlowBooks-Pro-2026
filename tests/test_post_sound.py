@@ -99,11 +99,13 @@ def test_the_posting_paths_ring_and_the_rest_stay_silent():
         assert call in src, name
 
 
-def test_a_locked_sign_in_does_not_see_the_toggle():
-    # read-only and accountant sign-ins get 403 on PUT /api/preferences, so
-    # the section is hidden for them rather than offering a toggle that fails
+def test_every_sign_in_sees_the_toggle():
+    # every signed-in role writes its own preferences since #480, so the
+    # Sounds section is no longer hidden from read-only and accountant
     assert 'id="settings-sounds"' in SETTINGS_JS
-    assert "App.isLocked && App.isLocked()" in SETTINGS_JS
+    body = SETTINGS_JS[SETTINGS_JS.index("async loadPostSoundPref() {") :]
+    body = body[: body.index("\n    },\n")]
+    assert "isLocked" not in body
 
 
 def test_the_toggle_primes_audio_inside_its_change_handler():

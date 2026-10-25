@@ -217,9 +217,9 @@ journal entry, transfer, pay run, credit memo or a register row; a delete, a
 void, a copy, a saved setting, an error or a warning stays silent. The sound
 is generated in the browser (Web Audio, no asset) and guarded, so a browser or
 desktop WebView without it carries on quietly; its audio is started inside a
-click or key press so the macOS app's WebView does not leave it muted. A
-read-only or accountant sign-in, which cannot save preferences, does not see
-the toggle.
+click or key press so the macOS app's WebView does not leave it muted. Every
+signed-in role has the toggle, read-only and accountant included; an API
+token has no preferences to set.
 
 **A company that charges no sales tax can stop unticking the Tax box on every
 line** (#486). Settings → Invoice Defaults has a new choice, "New lines and
