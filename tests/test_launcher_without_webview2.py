@@ -197,3 +197,27 @@ def test_no_shows_the_message_and_starts_nothing(monkeypatch, browser_run):
 def test_the_question_only_gets_asked_on_windows(monkeypatch):
     monkeypatch.setattr(dl.sys, "platform", "linux")
     assert dl._ask_yes_no("anything") is False
+
+
+# ---------------------------------------------------------------------------
+# The fatal-error dialog's "Email support" mailto (contact-support feature).
+# The launcher process never sets SLOWBOOKS_DESKTOP / SLOWBOOKS_SERVER_MODE
+# (those go only into the server child's env), so the deployment must be
+# passed in — otherwise a crashed native install would mail "Deployment:
+# Docker".
+# ---------------------------------------------------------------------------
+
+
+def test_support_mailto_labels_a_native_crash_native(monkeypatch):
+    monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
+    monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
+    mailto = dl._support_mailto(None, "native")
+    assert mailto and mailto.startswith("mailto:support@slowbookspro.com")
+    assert "native" in mailto and "Docker" not in mailto
+
+
+def test_support_mailto_labels_a_serve_lan_crash_server_edition(monkeypatch):
+    monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
+    monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
+    mailto = dl._support_mailto(None, "Server Edition")
+    assert mailto and "Server%20Edition" in mailto and "Docker" not in mailto

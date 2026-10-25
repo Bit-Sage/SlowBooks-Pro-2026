@@ -105,6 +105,17 @@
     const about = document.getElementById('about-btn');
     if (about) about.addEventListener('click', () => window.App && App.showAbout && App.showAbout());
 
+    // Contact support — the mailto form (support.js). Beside About in the top
+    // bar, and a line on the About/splash dialog.
+    const support = document.getElementById('support-btn');
+    if (support) support.addEventListener('click', () => window.SupportPage && SupportPage.open());
+    const supportLink = document.getElementById('splash-support-link');
+    if (supportLink) supportLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (splash) splash.classList.add('hidden');
+        if (window.SupportPage) SupportPage.open();
+    });
+
     const theme = document.getElementById('theme-toggle');
     if (theme) theme.addEventListener('click', () => window.App && App.toggleTheme && App.toggleTheme());
 

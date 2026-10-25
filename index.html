@@ -39,6 +39,10 @@
                 documentation (QBFC 5.0) and 14 years as a paying customer.<br>
                 Not affiliated with Intuit Inc.
             </div>
+            <div class="splash-legal">
+                Need a hand? <a href="#" id="splash-support-link">Contact support</a> from
+                inside the app &mdash; it opens your mail program with the details filled in.
+            </div>
             <button class="splash-btn" id="splash-dismiss">OK</button>
         </div>
     </div>
@@ -77,6 +81,7 @@
                 <button class="tb-btn" id="theme-toggle" title="Toggle Dark Mode">&#9788;</button>
                 <div class="topbar-clock" id="topbar-clock"></div>
                 <button class="tb-btn" id="about-btn">About</button>
+                <button class="tb-btn" id="support-btn" title="Contact support">Contact support</button>
                 <button class="tb-btn" id="logout-btn" title="Sign out">Sign Out</button>
             </div>
         </div>
@@ -318,6 +323,8 @@
     <script src="/static/js/migration.js"></script>
     <script src="/static/js/opening_balances.js"></script>
     <script src="/static/js/budgets.js"></script>
+    <!-- Contact support form (uses API / openModal / toast; standalone of App) -->
+    <script src="/static/js/support.js"></script>
     <!-- App must be last -->
     <script src="/static/js/app.js"></script>
     <!-- Static-page event wiring (replaces what used to be inline onclick=) -->

@@ -23,6 +23,23 @@ Schedule C exactly as before. A nonprofit no longer sees Schedule C; it files
 Form 990, whatever entity type it has chosen. The books never change; this is a
 tax-form matter only.
 
+**Contact support from inside the app** (@ContractorKeith). A Help → Contact
+support form (beside About, on the About dialog, and on the desktop launcher's
+error dialog) lets a user describe what went wrong and press Send. The app
+opens the user's own mail program with the message already written to
+support@slowbookspro.com — it makes no outbound network call of its own and
+ships no credentials, so the no-telemetry promise holds. The email carries an
+environment block (version, commit, platform, Python, deployment) and the last
+~50 lines of the log, redacted before they are placed: emails, personal and
+company names, dollar amounts, account and routing numbers, addresses, phone
+numbers and tax IDs become bracketed tokens, while timestamps and stack traces
+stay readable. A read-only `GET /api/support/diagnostics` endpoint builds the
+block and tail (never 500s on a missing log). Copy diagnostics puts the full
+block on the clipboard; long logs are trimmed in the mailto because some mail
+clients truncate long bodies; Reveal log file opens the log's folder on native
+desktop installs only. Security reports still go through GitHub Security
+Advisories. See docs/support.md.
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every
