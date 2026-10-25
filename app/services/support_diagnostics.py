@@ -163,11 +163,12 @@ def detect_platform():
 
 
 def detect_deployment():
-    """native / Server Edition / Docker.
+    """native / Server Edition / self-managed.
 
     The server process sets SLOWBOOKS_DESKTOP=1 for every server the launcher
     starts and SLOWBOOKS_SERVER_MODE=1 only when it serves beyond loopback
-    (--serve-lan). A browser install with neither flag is Docker / self-managed.
+    (--serve-lan). A browser install with neither flag is self-managed: Docker,
+    or a plain source run (nothing distinguishes the two from inside).
     NOTE: these flags live in the SERVER process; the launcher process itself
     passes its deployment explicitly (see desktop_launcher._support_mailto).
     """
@@ -177,12 +178,13 @@ def detect_deployment():
         return "Server Edition"
     if desktop:
         return "native"
-    return "Docker"
+    return "self-managed"
 
 
 def is_native():
     """The native desktop window — the only place Reveal log file makes sense
-    (a local folder to open; a browser/Server/Docker client has none)."""
+    (a local folder to open; a browser, Server Edition or self-managed client
+    has none)."""
     return detect_deployment() == "native"
 
 

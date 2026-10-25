@@ -86,9 +86,10 @@ def diagnostics(db: Session = Depends(get_db)):
 
 def _no_log_note(deployment: str) -> str:
     """Why there's no log tail. A browser install (Server Edition's
-    --serve-lan from source, or Docker) logs to the console / container logs,
+    --serve-lan from source, or self-managed: Docker or a plain source run)
+    logs to the console / container logs,
     not to launcher.log, so there is no file to read — say exactly that."""
-    if deployment in ("Server Edition", "Docker"):
+    if deployment in ("Server Edition", "self-managed"):
         return (
             "This deployment logs to the console (terminal or container logs), "
             "not to a file — copy the recent server output into your email."
@@ -99,7 +100,7 @@ def _no_log_note(deployment: str) -> str:
 @router.post("/reveal-log")
 def reveal_log():
     """Open the log file's folder in the platform file manager. Native desktop
-    only — a browser, Server Edition or Docker client has no local folder to
+    only — a browser, Server Edition or self-managed client has no local folder to
     open, so the route is a 404 there (and the form hides the button)."""
     if not support_diagnostics.is_native():
         raise HTTPException(status_code=404, detail="Not available on this install.")

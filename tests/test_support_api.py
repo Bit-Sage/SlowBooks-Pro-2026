@@ -10,7 +10,7 @@ import app.routes.support as support_routes
 def test_diagnostics_reports_environment(client):
     body = client.get("/api/support/diagnostics").json()
     assert body["platform"] in ("macOS", "Windows", "Linux")
-    assert body["deployment"] in ("native", "Server Edition", "Docker")
+    assert body["deployment"] in ("native", "Server Edition", "self-managed")
     assert "Version: v" in body["environment"]
     assert "Deployment:" in body["environment"]
 
@@ -92,12 +92,13 @@ def test_reveal_log_reports_a_missing_file_on_native(client, tmp_path, monkeypat
 def test_diagnostics_note_points_to_the_console_on_a_server_deployment(
     client, tmp_path, monkeypatch
 ):
-    # Docker / Server Edition: neither desktop flag, no launcher.log file.
+    # self-managed (Docker or a plain source run) / Server Edition: neither
+    # desktop flag, no launcher.log file.
     monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
     monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
     monkeypatch.setenv("SLOWBOOKS_DATA_DIR", str(tmp_path))
     body = client.get("/api/support/diagnostics").json()
-    assert body["deployment"] == "Docker"
+    assert body["deployment"] == "self-managed"
     assert body["log_available"] is False
     assert "console" in body["log_note"].lower()
 

@@ -1705,7 +1705,8 @@ def _support_mailto(log_path, deployment="native") -> str | None:
     ``deployment`` is passed EXPLICITLY: sd.detect_deployment() reads
     SLOWBOOKS_DESKTOP / SLOWBOOKS_SERVER_MODE, which this launcher only ever
     sets in the SERVER CHILD's env (see _server_env), never its own — so
-    detecting it here would mislabel every crashed native install as Docker."""
+    detecting it here would mislabel every crashed native install as
+    self-managed."""
     try:
         from urllib.parse import quote
 
