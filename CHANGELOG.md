@@ -16,7 +16,8 @@ Total Income, Total Cost of Goods Sold, Gross Profit, Total Expenses, Other
 Income / Other Expense (when there are any) and Net Income are the Profit &
 Loss's for the same dates. It narrows to one class or one job, sorts by
 number or name and can leave the adjusting entries out; a line's Type opens
-its document. Saves as PDF (landscape) and CSV, and as a saved report.
+its document. Saves as PDF (landscape) and CSV, and as a saved report; the
+CSV's Split column reads -SPLIT- in a spreadsheet as on the screen.
 
 **The Profit & Loss's totals open the transactions behind them** (#479).
 Total Income, Total Expenses, Gross Profit, Other Income / Other Expense, Net

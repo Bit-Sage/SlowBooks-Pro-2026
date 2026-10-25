@@ -269,6 +269,19 @@ def test_the_csv_adds_up_the_way_the_screen_does(client, books):
     assert by_label["Net Income"][10] == f"{D(str(d['net_income'])):.2f}"
     hotel_tax = next(x for x in lines if x[3] == "Travel: Hotel: Lodging Tax")
     assert hotel_tax[1] == "2"
+    # the product's own -SPLIT- is text in a spreadsheet as it stands: no
+    # formula guard's apostrophe (Excel showed '-SPLIT-)
+    splits = [x[9] for x in lines if "SPLIT" in x[9]]
+    assert splits and set(splits) == {"-SPLIT-"}, splits
+    assert "'-SPLIT-" not in text
+
+
+def test_the_split_word_is_unguarded_but_user_text_still_is():
+    from app.services.csv_export import _csv_safe, _Verbatim
+
+    assert _csv_safe(_Verbatim("-SPLIT-")) == "-SPLIT-"
+    assert _csv_safe("-SUM(A1)") == "'-SUM(A1)"
+    assert _csv_safe("=HYPERLINK(1)") == "'=HYPERLINK(1)"
 
 
 def test_the_pdf_is_landscape_with_the_class_named(client, books):

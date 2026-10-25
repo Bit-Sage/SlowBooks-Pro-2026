@@ -405,6 +405,18 @@ def profit_loss_csv(data: dict, company: str, words, show_changes: bool = True) 
     return out.getvalue()
 
 
+def _split_cell(split):
+    """The Split column: the product's -SPLIT- unguarded (it is text in a
+    spreadsheet, and the guard's apostrophe showed in Excel); an account
+    named there is the books' own text and keeps the guard."""
+    from app.services.csv_export import _Verbatim
+    from app.services.pl_detail import SPLIT_WORD
+
+    if split == SPLIT_WORD:
+        return _Verbatim(SPLIT_WORD)
+    return split or ""
+
+
 def profit_loss_detail_csv(data: dict, company: str, words) -> str:
     """The P&L Detail (#477) as a spreadsheet: one row per posted line
     (Section, Account number, Account, Type, Date, Num, Name, Memo, Split,
@@ -461,7 +473,7 @@ def profit_loss_detail_csv(data: dict, company: str, words) -> str:
                                 e.get("num") or "",
                                 e.get("name") or "",
                                 e.get("memo") or "",
-                                e.get("split") or "",
+                                _split_cell(e.get("split")),
                                 _money(e["amount"]),
                                 _money(e["balance"]),
                             ]

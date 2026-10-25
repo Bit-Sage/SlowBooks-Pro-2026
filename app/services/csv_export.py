@@ -66,6 +66,16 @@ def _money_cell(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+class _Verbatim(str):
+    """A cell holding the product's own fixed wording — P&L Detail's
+    "-SPLIT-", QuickBooks' word for a transaction across several accounts —
+    not anything a person typed. It is text in a spreadsheet as it stands
+    (no formula), so it is written without the guard's apostrophe, which
+    Excel shows. User data is never marked this way."""
+
+    __slots__ = ()
+
+
 def _csv_safe(value: str) -> str:
     """Neutralize spreadsheet formula injection. A cell beginning with
     =, +, -, @, TAB, or CR is treated as a formula by Excel/Sheets; prefixing
@@ -75,6 +85,8 @@ def _csv_safe(value: str) -> str:
     (SlowBooks-Pro-Testing#101); "-1+1" or "-SUM(A1)" is still prefixed. An
     _Identifier cell (a phone number, a reference) is always kept as text so
     "+15551234567" does not open as 1.5551e10 (reviewer, #410)."""
+    if isinstance(value, _Verbatim):
+        return str(value)
     if value and value[0] in _FORMULA_LEADS:
         if isinstance(value, _Identifier) or not _is_plain_number(value):
             return "'" + value
