@@ -582,18 +582,20 @@ const JobsPage = {
 
     async contractHtml() {
         const job = JobsPage._job;
-        const [data, estimates] = await Promise.all([
+        if (!TradePackages._list) await TradePackages.load();
+        const [data, estimates, codes] = await Promise.all([
             API.get(`/jobs/${job.id}/contract`),
             API.get(`/estimates?customer_id=${job.customer_id}`).catch(() => []),
+            API.get('/cost-codes').catch(() => []),
         ]);
         JobsPage._contract = data;
-        const packages = (TradePackages._list || []);
-        const codes = await API.get('/cost-codes').catch(() => []);
         JobsPage._sovCodes = codes;
-        const hasAccepted = (estimates || []).some(e => e.job_id === job.id && e.status === 'accepted');
+        // the accepted estimates on this job, kept so Build reuses them
+        JobsPage._acceptedEstimates = (estimates || []).filter(e => e.job_id === job.id && e.status === 'accepted');
+        const packages = (TradePackages._list || []);
         return JobsPage.contractTermsHtml(data.contract)
             + JobsPage.contractTilesHtml(data.contract)
-            + JobsPage.sovGridHtml(data.sov, data.contract, packages, codes, hasAccepted);
+            + JobsPage.sovGridHtml(data.sov, data.contract, packages, codes, JobsPage._acceptedEstimates.length > 0);
     },
 
     // The terms block: type, sum, date, fee, cap, contingency, retainage.
@@ -692,9 +694,10 @@ const JobsPage = {
             <td><select class="sov-pkg" data-write>${pkgOpts}</select></td>
             <td><select class="sov-code" data-write>${codeOpts}</select></td>
             <td><select class="sov-kind" data-write>${kindOpts}</select></td>
-            <td><input class="sov-value money" data-write type="number" step="0.01" min="0" value="${line.scheduled_value ?? ''}" style="width:110px;text-align:right" oninput="JobsPage.retotalSov()"></td>
+            <td><input class="sov-value money" data-write type="number" step="0.01" value="${line.scheduled_value ?? ''}" style="width:110px;text-align:right" oninput="JobsPage.retotalSov()" title="A deduct alternate may be negative"></td>
             <td style="white-space:nowrap">
                 <button class="btn btn-sm btn-secondary" data-write title="Move up" onclick="JobsPage.moveSovRow(this,-1)">↑</button>
+                <button class="btn btn-sm btn-secondary" data-write title="Move down" onclick="JobsPage.moveSovRow(this,1)">↓</button>
                 <button class="btn btn-sm btn-secondary" data-write title="Remove" onclick="JobsPage.removeSovRow(this)">✕</button>
             </td></tr>`;
     },
@@ -714,7 +717,11 @@ const JobsPage = {
         const lines = JobsPage._readSov();
         const total = lines.reduce((s, l) => s + (l.scheduled_value || 0), 0);
         const contract = (JobsPage._contract && JobsPage._contract.contract) || {};
-        const balance = (contract.contract_amount || 0) - total;
+        // the live contract-sum input wins over the saved figure, so the
+        // balance tracks an unsaved edit to the sum
+        const amtEl = $('#c-amount');
+        const sum = amtEl && amtEl.value !== '' ? parseFloat(amtEl.value) : (contract.contract_amount || 0);
+        const balance = (sum || 0) - total;
         const tEl = $('#sov-total'); if (tEl) tEl.textContent = formatCurrency(total);
         const bEl = $('#sov-balance');
         if (bEl) { bEl.textContent = formatCurrency(balance); bEl.style.color = Math.abs(balance) > 0.005 ? 'var(--text-danger)' : 'var(--text-success)'; }
@@ -774,12 +781,28 @@ const JobsPage = {
     },
 
     async buildSov() {
-        if (!confirm('This replaces the schedule of values.')) return;
-        const estimates = await API.get(`/estimates?customer_id=${JobsPage._job.customer_id}`).catch(() => []);
-        const accepted = (estimates || []).find(e => e.job_id === JobsPage._job.id && e.status === 'accepted');
-        if (!accepted) { toast('No accepted estimate on this job', 'error'); return; }
+        const accepted = JobsPage._acceptedEstimates || [];
+        if (!accepted.length) { toast('No accepted estimate on this job', 'error'); return; }
+        if (accepted.length === 1) {
+            if (!confirm('This replaces the schedule of values.')) return;
+            return JobsPage.buildSovFrom(accepted[0].id);
+        }
+        // more than one accepted estimate — let the operator pick which
+        const opts = accepted.map(e => `<option value="${e.id}">${escapeHtml(e.estimate_number || ('#' + e.id))} · ${escapeHtml(e.date || '')} · ${formatCurrency(e.total)}</option>`).join('');
+        openModal('Build schedule of values', `
+            <p>This replaces the schedule of values. Build it from:</p>
+            <div class="form-group"><label for="sov-build-est">Accepted estimate</label>
+                <select id="sov-build-est">${opts}</select></div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="JobsPage.buildSovFrom(parseInt($('#sov-build-est').value), true)">Build</button>
+            </div>`);
+    },
+
+    async buildSovFrom(estId, fromModal) {
+        if (fromModal) closeModal();
         try {
-            await API.post(`/jobs/${JobsPage._job.id}/contract/from-estimate/${accepted.id}`, {});
+            await API.post(`/jobs/${JobsPage._job.id}/contract/from-estimate/${estId}`, {});
             toast('Schedule of values built from the estimate');
             await JobsPage.setTab('contract');
         } catch (err) { toast(err.message, 'error'); }

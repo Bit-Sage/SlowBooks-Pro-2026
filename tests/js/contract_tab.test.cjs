@@ -106,3 +106,20 @@ test('saveContract and saveSov and buildSov are registered write actions', () =>
     assert.match(block, /'JobsPage\.saveSov'/);
     assert.match(block, /'JobsPage\.buildSov'/);
 });
+
+test('contractHtml loads the trade packages when the cache is empty', async () => {
+    // start with no package list cached, and record every API path the tab hits
+    const paths = [];
+    const ctx = jobsContext(true);
+    ctx.TradePackages._list = null;
+    ctx.API.get = async (p) => {
+        paths.push(p);
+        if (p.startsWith('/jobs/') && p.endsWith('/contract')) return { contract: {}, sov: [] };
+        return [];
+    };
+    ctx.JobsPage._job = { id: 1, customer_id: 2 };
+    const html = await ctx.JobsPage.contractHtml();
+    assert.ok(paths.includes('/trade-packages'), 'TradePackages.load() was called');
+    assert.deepEqual(ctx.TradePackages._list, []);
+    assert.match(html, /Schedule of values/);
+});
