@@ -156,7 +156,7 @@ a screen reader hears it (v2.22.2).
 
 If something in SlowBooks Pro is hard or impossible for you to use, open
 an issue at https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/issues or
-email trent@neonpulsetechshop.com and say which screen and which assistive
+email support@slowbookspro.com and say which screen and which assistive
 technology. Barriers are triaged as bugs.
 
 The same statement, with more screenshots, is on the website:
