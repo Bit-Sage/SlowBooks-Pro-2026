@@ -110,9 +110,9 @@ names the vendor whose name is the payee (capitals and surrounding spaces
 ignored), and a money-out payee no vendor has gets the register's toast — one
 toast for all of them after Add all — which makes the vendor and names it on
 the entry. The entry stores its vendor (`transactions.vendor_id`, migration
-`d7e8f9a0b1c2`), so the vendor's page lists its bank and card entries, its paid
-this year and all time count them, and its payments CSV has them as "Bank
-entry" rows. A transfer names no vendor, and a line added as a transfer (or
+`d7e8f9a0b1c2`), so the vendor's page lists its bank and card entries under
+Payments beside its bill payments, its paid this year and all time count them,
+and its payments CSV has them as "Bank entry" rows. A transfer names no vendor, and a line added as a transfer (or
 with no payee) is not offered as one.
 
 **A bank-feed rule from the vendor form** (#493). A bank rule could be made

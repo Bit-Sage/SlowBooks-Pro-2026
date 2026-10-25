@@ -138,14 +138,23 @@ const VendorsPage = {
                 <td class="amount">${formatCurrency(e.amount)}</td>
             </tr>`;
         }).join('');
+        // Payments are both kinds, under the paid-to-date line that counts
+        // them both: bill payments, then bank and card entries (a vendor paid
+        // only through the feed read "Paid this year: $57.00" over "No
+        // payments yet").
+        const subHead = 'font-size:11px;color:var(--text-muted);margin:8px 0 4px 0;font-weight:600';
+        const payHtml = payments.length === 0 ? '' : `
+                <h5 style="${subHead}">Bill payments (${payments.length})</h5>
+                <table class="data-table" style="font-size:12px">
+                    <thead><tr><th scope="col">Date</th><th scope="col">Method</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
+                    <tbody>${payRows}</tbody>
+                </table>`;
         const entriesHtml = entries.length === 0 ? '' : `
-            <div style="margin-top:14px">
-                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Bank and card entries (${entries.length})</h4>
+                <h5 style="${subHead}">Bank and card entries (${entries.length})</h5>
                 <table class="data-table" style="font-size:12px">
                     <thead><tr><th scope="col">Date</th><th scope="col">Account</th><th scope="col">Memo</th><th scope="col" class="amount">Amount</th></tr></thead>
                     <tbody>${entryRows}</tbody>
-                </table>
-            </div>`;
+                </table>`;
         const open = credits.filter(c => c.status !== 'void' && parseFloat(c.balance_remaining) > 0);
         const creditsHtml = open.length === 0 ? '' : `
             <div style="margin-bottom:14px">
@@ -229,18 +238,13 @@ const VendorsPage = {
                     </table>`}
             </div>
 
-            <!-- recent payments -->
+            <!-- payments: bill payments and bank entries -->
             <div>
-                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Recent payments (${payments.length})</h4>
+                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Payments (${payments.length + entries.length})</h4>
                 <p style="font-size:12px; margin:0 0 6px 0;">Paid this year: <strong>${formatCurrency(paidThisYear)}</strong> &middot; all time: <strong>${formatCurrency(paidAllTime)}</strong>
                     <a class="btn btn-sm btn-secondary" style="margin-left:8px;" href="/api/vendors/${vendor.id}/payments/csv" download>Save CSV</a></p>
-                ${payments.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;margin:0">No payments yet</p>' :
-                    `<table class="data-table" style="font-size:12px">
-                        <thead><tr><th scope="col">Date</th><th scope="col">Method</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
-                        <tbody>${payRows}</tbody>
-                    </table>`}
-            </div>
-            ${entriesHtml}`;
+                ${payments.length + entries.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;margin:0">No payments yet</p>' : payHtml + entriesHtml}
+            </div>`;
 
         // The page's own address (#/vendors/3, App.routes): Back from a
         // report opened below returns here, a reload keeps the page.
