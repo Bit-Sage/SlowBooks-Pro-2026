@@ -193,6 +193,11 @@ SETTINGS_TAKEN = {
         "/api/settings",
         {"company_type": "nonprofit"},
     ),
+    "Company Information › entity_type": (
+        "PUT",
+        "/api/settings",
+        {"entity_type": "s_corp"},
+    ),
     "Closing Date › Clear": ("PUT", "/api/settings", {"closing_date": ""}),
     "Email (SMTP) › Send Test Email": ("POST", "/api/settings/test-email", None),
     # Recent sends reads the email_log (recipients, raw SMTP errors): admin

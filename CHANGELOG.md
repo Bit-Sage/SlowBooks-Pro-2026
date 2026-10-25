@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A legal entity type on the company** (#488, @ContractorKeith). Settings →
+Company now asks for the company's legal form — sole proprietor, general
+partnership, limited partnership, limited liability partnership, LLC (with its
+tax election), C corporation or S corporation — kept separate from the company
+type, which stays a vocabulary mode. It is unset by default, so an existing
+company sees no change until it chooses. The entity type decides which federal
+return the company files, and Schedule C is now offered only to the ones that
+file it: a sole proprietor and a single-member LLC taxed as one. A company set
+to anything else sees one sentence on the Tax Reports page saying which return
+applies (Form 1065 for the partnerships and an LLC taxed as one, Form 1120-S
+for an S corp, Form 1120 for a C corp, Form 990 for a nonprofit), and the
+Schedule C API answers 409 with the same sentence. An unset entity type leaves
+Schedule C exactly as before. A nonprofit no longer sees Schedule C; it files
+Form 990, whatever entity type it has chosen. The books never change; this is a
+tax-form matter only.
+
 **Contact support from inside the app** (@ContractorKeith). A Help → Contact
 support form (beside About, on the About dialog, and on the desktop launcher's
 error dialog) lets a user describe what went wrong and press Send. The app
