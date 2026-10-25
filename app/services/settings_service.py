@@ -430,10 +430,25 @@ def entity_info(settings) -> dict:
     one; "Form 1120-S" for an S corp (or LLC-as-S-corp); "Form 1120" for a C
     corp (or LLC-as-C-corp); and "" when the entity type is unset, or an LLC
     whose election has not been chosen yet. An empty `return_form` is the
-    signal to leave Schedule C exactly as before (#488)."""
+    signal to leave Schedule C exactly as before (#488).
+
+    Nonprofit mode (company_type == "nonprofit") overrides all of this: a
+    nonprofit files Form 990 and never Schedule C, whatever entity type it has
+    picked, so the gate and the page show Form 990, not Schedule C."""
     settings = settings or {}
     entity_type = (settings.get("entity_type") or "").strip()
     election = (settings.get("llc_tax_election") or "").strip()
+    nonprofit = (settings.get("company_type") or "").strip() == "nonprofit"
+    if nonprofit:
+        # A nonprofit files Form 990 regardless of entity type; it never files
+        # Schedule C. Overrides the entity table below.
+        return {
+            "entity_type": entity_type,
+            "election": election if entity_type == "llc" else "",
+            "label": "a nonprofit",
+            "return_form": "Form 990",
+            "schedule_c": False,
+        }
     unset = {
         "entity_type": "",
         "election": "",

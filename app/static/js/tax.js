@@ -4,57 +4,39 @@
  * Feature 5: Pay Sales Tax
  */
 const TaxPage = {
-    // Legal entity type (#488) — the same table the server's entity_info
-    // reads (app/services/settings_service.py). Schedule C is offered only to
-    // a sole proprietor or a single-member LLC taxed as one; the others see a
-    // sentence saying which return they file. An unset entity type (or an LLC
-    // with no election yet) leaves Schedule C exactly as it was.
-    // Labels carry their own article (see settings_service.py); the sentence
-    // adds none.
-    _LLC_ELECTIONS: {
-        disregarded: ['an LLC taxed as a sole proprietor', 'Schedule C', true],
-        partnership: ['an LLC taxed as a partnership', 'Form 1065', false],
-        s_corp: ['an LLC taxed as an S corporation', 'Form 1120-S', false],
-        c_corp: ['an LLC taxed as a C corporation', 'Form 1120', false],
-    },
-    _ENTITY_RETURNS: {
-        sole_proprietor: ['a sole proprietor', 'Schedule C', true],
-        general_partnership: ['a general partnership', 'Form 1065', false],
-        limited_partnership: ['a limited partnership', 'Form 1065', false],
-        llp: ['a limited liability partnership', 'Form 1065', false],
-        c_corp: ['a C corporation', 'Form 1120', false],
-        s_corp: ['an S corporation', 'Form 1120-S', false],
-    },
-
+    // Legal entity type (#488) — the server computes the one entity table
+    // (app/services/settings_service.py entity_info) and returns it as
+    // App.settings.entity on the settings GET/PUT, so this page reads it
+    // rather than keeping its own copy. `return_form` is the federal return
+    // ("Schedule C", "Form 1065", "Form 990", …); `schedule_c` is whether
+    // Schedule C is that return; `label` carries its own article. An empty
+    // `return_form` means unset (or an LLC with no election), which leaves
+    // Schedule C exactly as it was.
     _entityInfo() {
         const s = (typeof App !== 'undefined' && App.settings) || {};
-        const type = (s.entity_type || '').trim();
-        const election = (s.llc_tax_election || '').trim();
-        if (!type) return { type: '', label: '', returnForm: '', scheduleC: false };
-        if (type === 'llc') {
-            const e = TaxPage._LLC_ELECTIONS[election];
-            if (!e) return { type: 'llc', label: 'an LLC', returnForm: '', scheduleC: false };
-            return { type: 'llc', label: e[0], returnForm: e[1], scheduleC: e[2] };
-        }
-        const r = TaxPage._ENTITY_RETURNS[type];
-        if (!r) return { type: '', label: '', returnForm: '', scheduleC: false };
-        return { type, label: r[0], returnForm: r[1], scheduleC: r[2] };
+        return s.entity || { entity_type: '', label: '', return_form: '', schedule_c: false };
     },
 
     async render() {
         const year = new Date().getFullYear();
         const info = TaxPage._entityInfo();
-        // A company whose entity type files something other than Schedule C
-        // sees one sentence instead of the report.
-        if (info.type && !info.scheduleC && info.returnForm) {
+        // A company that files something other than Schedule C (a partnership,
+        // a corporation, or a nonprofit on Form 990) sees one sentence in
+        // place of the Schedule C controls — but the header and the Pay Sales
+        // Tax button stay, since that button is the only way to record a
+        // sales-tax payment and every entity can owe sales tax.
+        if (info.return_form && !info.schedule_c) {
             return `
             <div class="page-header">
                 <h2>Tax Reports</h2>
             </div>
-            <p style="margin-top:12px;">This company is ${escapeHtml(info.label)}; it files ${escapeHtml(info.returnForm)}, not Schedule C. Change the entity type under Settings → Company if that is wrong.</p>`;
+            <div class="toolbar">
+                <button class="btn btn-secondary" onclick="TaxPage.showPaySalesTax()">Pay Sales Tax</button>
+            </div>
+            <p style="margin-top:12px;">This company is ${escapeHtml(info.label)}; it files ${escapeHtml(info.return_form)}, not Schedule C. Change the entity type under Settings → Company if that is wrong.</p>`;
         }
-        const sub = info.type && info.returnForm
-            ? `${escapeHtml(info.label)} &middot; files ${escapeHtml(info.returnForm)}`
+        const sub = info.return_form
+            ? `${escapeHtml(info.label)} &middot; files ${escapeHtml(info.return_form)}`
             : 'Profit or Loss from Business (Sole Proprietorship)';
         return `
             <div class="page-header">

@@ -13,7 +13,6 @@ from app.services.settings_service import entity_info
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_JS = ROOT / "app/static/js/settings.js"
-TAX_JS = ROOT / "app/static/js/tax.js"
 
 
 # entity_type, llc_tax_election -> label, return_form, schedule_c
@@ -53,6 +52,18 @@ def test_entity_info_ignores_a_stray_election_for_non_llc():
 def test_entity_info_handles_none_and_unset():
     assert entity_info(None)["return_form"] == ""
     assert entity_info({})["schedule_c"] is False
+
+
+def test_entity_info_nonprofit_files_990():
+    # A nonprofit files Form 990 and never Schedule C, whatever entity type it
+    # has picked. A nonprofit that chose C corporation must not be told it
+    # files Form 1120.
+    info = entity_info({"company_type": "nonprofit", "entity_type": "c_corp"})
+    assert info["return_form"] == "Form 990"
+    assert info["schedule_c"] is False
+    assert info["label"] == "a nonprofit"
+    # even with no entity type chosen, a nonprofit is gated on Form 990
+    assert entity_info({"company_type": "nonprofit"})["return_form"] == "Form 990"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +114,36 @@ def test_schedule_c_unset_entity_type_is_as_before(client, seed_accounts):
     assert client.get("/api/tax/schedule-c").status_code == 200
 
 
+def test_schedule_c_refuses_a_nonprofit_with_form_990(client):
+    # A nonprofit that picked C corporation still files Form 990, not 1120.
+    client.put(
+        "/api/settings", json={"company_type": "nonprofit", "entity_type": "c_corp"}
+    )
+    r = client.get("/api/tax/schedule-c")
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "not_schedule_c"
+    assert "Form 990" in detail["message"]
+    assert "Form 1120" not in detail["message"]
+
+
+def test_tax_mappings_still_work_for_an_s_corp(client):
+    # The 409 gate is only on the Schedule C routes; the tax mappings list
+    # (its own toolbar action) stays reachable for every entity.
+    client.put("/api/settings", json={"entity_type": "s_corp"})
+    assert client.get("/api/tax/mappings").status_code == 200
+
+
+def test_settings_returns_the_computed_entity_object(client):
+    # The server returns entity_info() as a computed `entity` object on the
+    # settings GET/PUT, so the UI reads one table rather than copying it (#488).
+    put = client.put("/api/settings", json={"entity_type": "s_corp"}).json()
+    assert put["entity"]["return_form"] == "Form 1120-S"
+    assert put["entity"]["schedule_c"] is False
+    get = client.get("/api/settings").json()
+    assert get["entity"]["label"] == "an S corporation"
+
+
 # ---------------------------------------------------------------------------
 # The LLC "Taxed as" select only renders for an LLC (source assertions)
 # ---------------------------------------------------------------------------
@@ -115,9 +156,3 @@ def test_llc_election_select_is_hidden_unless_llc():
     # and the onchange toggles it as the picker changes
     assert "SettingsPage._onEntityTypeChange" in js
     assert "group.hidden = sel.value !== 'llc';" in js
-
-
-def test_tax_page_gates_on_entity_info():
-    js = TAX_JS.read_text()
-    assert "info.type && !info.scheduleC && info.returnForm" in js
-    assert "not Schedule C" in js

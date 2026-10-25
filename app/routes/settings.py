@@ -18,6 +18,7 @@ from app.services.settings_service import (
     SECRET_PLACEHOLDER,
     SettingValueError,
     clean_setting_value,
+    entity_info,
     get_all_settings,
     redact_secrets,
     set_setting,
@@ -90,6 +91,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _with_entity(db: Session) -> dict:
+    """Settings with secrets redacted, plus a computed `entity` object
+    (settings_service.entity_info) so one table — the server's — decides the
+    entity label, federal return and the Schedule C gate. The UI reads this
+    rather than copying the table (#488)."""
+    settings = get_all_settings(db)
+    result = _redact_secrets(settings)
+    result["entity"] = entity_info(settings)
+    return result
+
+
 @router.get("")
 def get_settings(db: Session = Depends(get_db)):
     """Every company setting, secrets redacted.
@@ -102,7 +114,7 @@ def get_settings(db: Session = Depends(get_db)):
     Divide by 100 before posting; the API rejects a document `tax_rate`
     above 1.
     """
-    return _redact_secrets(get_all_settings(db))
+    return _with_entity(db)
 
 
 @router.get("/unreadable-secrets")
@@ -234,7 +246,7 @@ def update_settings(
         from app.services.company_service import sync_manifest_name
 
         sync_manifest_name(incoming.get("company_name"))
-    return _redact_secrets(get_all_settings(db))
+    return _with_entity(db)
 
 
 @router.post("/test-email")

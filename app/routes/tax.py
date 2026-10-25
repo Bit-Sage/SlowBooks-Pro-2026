@@ -19,12 +19,13 @@ router = APIRouter(prefix="/api/tax", tags=["tax"])
 
 
 def _require_schedule_c(db: Session) -> None:
-    """Schedule C is a sole-proprietor form (#488). A company with a legal
-    entity type that files something else is refused with 409 and the one
-    sentence the page shows, so a partnership or corporation never exports a
-    form it does not file. An unset entity type is left exactly as before."""
+    """Schedule C is a sole-proprietor form (#488). A company that files
+    something else (a partnership, a corporation, or a nonprofit on Form 990)
+    is refused with 409 and the one sentence the page shows, so it never
+    exports a form it does not file. An unset entity type is left exactly as
+    before: an empty return_form is the signal to pass through."""
     info = entity_info(get_all_settings(db))
-    if info["entity_type"] and not info["schedule_c"] and info["return_form"]:
+    if info["return_form"] and not info["schedule_c"]:
         raise HTTPException(
             status_code=409,
             detail={

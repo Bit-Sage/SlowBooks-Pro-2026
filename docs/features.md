@@ -655,8 +655,8 @@ All payroll, HR, tax-form, and self-service portal endpoints are documented with
 | `/api/reports/sales-tax/pay` | POST | Record sales tax payment to government |
 | `/api/reports/general-ledger` (+`/pdf`, `/csv`) | GET | Every posted line by account: balance brought forward, running balance, source, class, period total; `account_id` and `class_id` filter it, the balance brought forward under the same class test (v2.22.0) |
 | `/api/reports/income-by-customer` | GET | Sales totals per customer |
-| `/api/tax/schedule-c` | GET | Schedule C data from P&L |
-| `/api/tax/schedule-c/csv` | GET | Schedule C CSV export |
+| `/api/tax/schedule-c` | GET | Schedule C data from P&L; 409 `not_schedule_c` when the company's entity type files another return (#488) |
+| `/api/tax/schedule-c/csv` | GET | Schedule C CSV export; 409 `not_schedule_c` when the company's entity type files another return (#488) |
 | `/api/reports/statement-of-activities` (+`/pdf`, `/csv`) | GET | Nonprofit: revenue, releases, expenses by restriction |
 | `/api/reports/statement-of-financial-position` (+`/pdf`, `/csv`) | GET | Nonprofit: net assets with / without donor restrictions |
 | `/api/reports/fund-balances` (+`/pdf`, `/csv`) | GET | Nonprofit: per restricted fund |
