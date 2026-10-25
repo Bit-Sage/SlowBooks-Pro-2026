@@ -140,6 +140,15 @@ def test_what_is_refused(client, books):
     assert both.status_code == 400
     long = client.get(f"{base}?start_date=2000-01-01&end_date=2026-12-31&columns=month")
     assert long.status_code == 400
+    assert long.json()["detail"] == (
+        "At most 60 columns: choose a shorter period or quarters"
+    )
+    # by quarter already, quarters is no way out
+    long_q = client.get(
+        f"{base}?start_date=1990-01-01&end_date=2026-12-31&columns=quarter"
+    )
+    assert long_q.status_code == 400
+    assert long_q.json()["detail"] == "At most 60 columns: choose a shorter period"
     # the plain P&L is as it was
     plain = _get(client, f"{base}?{SPRING}")
     assert "columns" not in plain and "columns_by" not in plain

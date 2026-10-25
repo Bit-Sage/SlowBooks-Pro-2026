@@ -44,7 +44,9 @@ report; the PDF prints the grid landscape and the CSV is the grid (a
 sub-account indented beneath its parent) or one row per account and month. The
 prior-year comparison is off while the columns are on. Switching to Month or
 Quarter widens the dialog with the sidebar kept beneath it, so the title, the
-Dates control and the account names stay in reach.
+Dates control and the account names stay in reach. A period too long for 60
+columns is refused with a sentence that suggests quarters only to a request by
+month.
 
 **The Profit & Loss CSV carries the sub-account families** (#489). The
 export was flat, one row per account by its full path, so a spreadsheet lost

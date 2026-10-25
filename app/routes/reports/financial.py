@@ -338,7 +338,7 @@ def _period_columns(db, start: date, end: date, columns: str) -> list[dict]:
             raise HTTPException(
                 status_code=400,
                 detail=f"At most {MAX_PERIOD_COLUMNS} columns: choose a shorter period"
-                " or quarters",
+                + (" or quarters" if step == 1 else ""),
             )
         m += step
         while m > 12:
