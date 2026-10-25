@@ -9,6 +9,7 @@ from app.schemas.common import (
     StrictModel,
     TaxRate,
     TaxRateOut,
+    clean_line_cost_type,
     validate_non_negative_line,
     quantity_text,
 )
@@ -22,11 +23,14 @@ class EstimateLineCreate(StrictModel):
     rate: Decimal = Decimal("0")
     amount: Decimal = Decimal("0")
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     unit_cost: Optional[Decimal] = None
     is_taxable: Optional[bool] = None
     class_name: Optional[str] = None
     job_id: Optional[int] = None
     line_order: int = 0
+
+    _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
     @model_validator(mode="after")
     def _check_non_negative(self):
@@ -42,6 +46,7 @@ class EstimateLineResponse(BaseModel):
     rate: RateOut
     amount: Decimal
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     unit_cost: Optional[Decimal] = None
     is_taxable: bool = True
     class_name: Optional[str]

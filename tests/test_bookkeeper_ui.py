@@ -98,7 +98,7 @@ SETTINGS_KEPT = {
     "Cost Codes › Add Cost Code": [
         ("POST", "/api/cost-codes", {"code": "05", "name": "Metals"}, 201)
     ],
-    "Cost Codes › Load standard list": [
+    "Cost Codes › Load standard divisions and common sections": [
         ("POST", "/api/cost-codes/standard", None, 200)
     ],
     "Cost Codes › Import CSV": [

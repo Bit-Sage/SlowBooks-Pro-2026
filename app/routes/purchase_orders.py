@@ -22,6 +22,7 @@ from app.schemas.purchase_orders import (
     POUpdate,
 )
 from app.services.accounting import _q, compute_line_totals
+from app.services.job_costing import line_cost_type
 from app.services.numbering import next_po_number
 from app.services.request_utils import content_disposition
 from app.services.purchase_posting import (
@@ -134,6 +135,7 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
             amount=_q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate))),
             job_id=line_data.job_id,
             cost_code_id=line_data.cost_code_id,
+            cost_type=line_cost_type(db, line_data.cost_code_id, line_data.cost_type),
             line_order=line_data.line_order or i,
         )
         db.add(line)
@@ -176,6 +178,9 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                     amount=amt,
                     job_id=line_data.job_id,
                     cost_code_id=line_data.cost_code_id,
+                    cost_type=line_cost_type(
+                        db, line_data.cost_code_id, line_data.cost_type
+                    ),
                     line_order=line_data.line_order or i,
                 )
             )
@@ -399,6 +404,7 @@ def convert_to_bill(
                 bill_id=bill.id,
                 job_id=poline.job_id or po.job_id,
                 cost_code_id=poline.cost_code_id,
+                cost_type=poline.cost_type,
                 item_id=poline.item_id,
                 account_id=posting_acct,
                 description=poline.description,
@@ -417,6 +423,7 @@ def convert_to_bill(
                     "description": poline.description or "",
                     "job_id": poline.job_id or po.job_id,
                     "cost_code_id": poline.cost_code_id,
+                    "cost_type": poline.cost_type,
                 }
             )
 

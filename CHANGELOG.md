@@ -40,6 +40,47 @@ clients truncate long bodies; Reveal log file opens the log's folder on native
 desktop installs only. Security reports still go through GitHub Security
 Advisories. See docs/support.md.
 
+**Construction cost codes by division and section, trade packages, and a
+cost type on every line** (#550, @ContractorKeith). The Construction company
+type (#431) keeps its contractor accounts, its Sub vendor type with the
+1099-NEC transition rule, its light vocabulary (Subcontractor → Sub) and its
+Report Center ordering (Job Profitability, Job Budget vs Actual, P&L by Job).
+What changes is the cost-code chart. Codes now use the two-level
+division/section numbering common in commercial construction specifications —
+a **division** ("03") and a **section** ("03 30 00", with an optional ".16"
+extension) — and a section sits under its division automatically. What you
+type is normalized on save and import (`033000`, `03-3000`, `03.30.00` all
+become `03 30 00`); a code that numbers its own way (`L-100`, `EQ`, a numeric
+`1000`/`2000` chart) is left exactly as typed and never rewritten on
+re-import. The switch (and the Cost Codes page's **Load standard divisions
+and common sections** button) seeds the standard division titles plus a
+modest set of common sections — the full numbered section catalog is a
+licensed product, so you import your own through **Import CSV** (a few hundred
+sections with just `code,name` land normalized and auto-parented in one
+call). The accounts, cost types and the standard catalog still seed only into
+a company that has no cost codes of its own yet, so a custom chart is left
+alone.
+
+New **Trade Packages** (Concrete, Drywall and Ceilings, HVAC, Electrical …):
+a bid package is what a sub bids and gets awarded, mapped to the cost-code
+sections its costs post to. A package can span divisions; a division can be
+split across packages. Construction setup seeds the defaults, mapped to the
+sections it has. And a **cost type** now rides each budget, estimate,
+commitment and bill line — not fixed per code — so a line can carry a type
+that differs from its code's default; left blank, it falls back to the code's
+type, so existing books read exactly as before. In construction mode the cost
+type picker appears beside the cost code on bills, expenses, journal entries,
+purchase orders and estimates (Business and Nonprofit forms keep their
+columns and post the code's type); job-cost reports roll a section's cost up
+under its division.
+
+Not yet: no first-run "what kind of company is this?" prompt (company_type
+still defaults to Business; Construction is chosen in Settings, as Nonprofit
+is), no new accounting, no change orders / draws / pay applications screens,
+no COI-expiry warning in Pay Bills, and nothing references a trade package
+yet (bids and commitments are later steps). A prompt to collect a Sub's W-9
+is a follow-up. See [docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

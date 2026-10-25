@@ -44,6 +44,7 @@ from app.services.accounting import (
     reversing_lines,
 )
 from app.services.inventory_service import get_inventory_asset_account_id
+from app.services.job_costing import line_cost_type
 from app.services.closing_date import check_closing_date
 from app.services.numbering import next_vendor_credit_number
 from app.services.purchase_posting import (
@@ -175,6 +176,8 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
 
     for i, line_data in enumerate(data.lines):
         amt = amounts[i]
+        # The line's cost type, validated and filled from the code when blank.
+        eff_cost_type = line_cost_type(db, line_data.cost_code_id, line_data.cost_type)
         item = None
         if line_data.item_id:
             item = db.query(Item).filter(Item.id == line_data.item_id).first()
@@ -232,6 +235,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                 job_id=line_data.job_id,
                 class_id=line_data.class_id,
                 cost_code_id=line_data.cost_code_id,
+                cost_type=eff_cost_type,
                 line_order=line_data.line_order or i,
             )
         )
@@ -246,6 +250,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                     "job_id": line_data.job_id,
                     "class_id": line_data.class_id,
                     "cost_code_id": line_data.cost_code_id,
+                    "cost_type": eff_cost_type,
                 }
             )
 

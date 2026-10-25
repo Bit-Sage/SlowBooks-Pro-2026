@@ -7,6 +7,7 @@ from app.schemas.common import (
     StrictModel,
     TaxRateFloat,
     TaxRateOut,
+    clean_line_cost_type,
     validate_non_negative_line,
     quantity_text,
 )
@@ -31,6 +32,7 @@ class BillLineCreate(StrictModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     function: Optional[str] = None
     is_billable: bool = False
     description: Optional[str] = None
@@ -38,6 +40,8 @@ class BillLineCreate(StrictModel):
     rate: Optional[float] = None
     amount: Optional[float] = None
     line_order: int = 0
+
+    _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
     @model_validator(mode="after")
     def _price_the_line(self):
@@ -76,6 +80,7 @@ class BillLineResponse(BaseModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     function: Optional[str] = None
     is_billable: bool = False
     description: Optional[str] = None

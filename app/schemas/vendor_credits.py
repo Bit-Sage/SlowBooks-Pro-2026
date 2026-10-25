@@ -7,6 +7,7 @@ from app.schemas.common import (
     StrictModel,
     TaxRateFloat,
     TaxRateOut,
+    clean_line_cost_type,
     validate_non_negative_line,
     quantity_text,
 )
@@ -22,7 +23,10 @@ class VendorCreditLineCreate(StrictModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     line_order: int = 0
+
+    _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
     @model_validator(mode="after")
     def _check_non_negative(self):
@@ -43,6 +47,7 @@ class VendorCreditLineResponse(BaseModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     line_order: int = 0
     model_config = {"from_attributes": True}
 

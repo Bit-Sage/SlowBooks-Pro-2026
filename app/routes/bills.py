@@ -27,6 +27,7 @@ from app.services.accounting import (
 )
 from app.services.audit import audited_bulk_delete
 from app.services.closing_date import check_closing_date
+from app.services.job_costing import line_cost_type
 from app.services.request_utils import content_disposition
 from app.services.purchase_posting import (
     expense_account_for,
@@ -190,6 +191,8 @@ def _post_bill_lines(
     journal_lines = []
     for i, line_data in enumerate(lines):
         amt = amounts[i]
+        # The line's cost type, validated and filled from the code when blank.
+        eff_cost_type = line_cost_type(db, line_data.cost_code_id, line_data.cost_type)
         item = None
         if line_data.item_id:
             item = db.query(Item).filter(Item.id == line_data.item_id).first()
@@ -252,6 +255,7 @@ def _post_bill_lines(
                 job_id=line_data.job_id,
                 class_id=line_data.class_id,
                 cost_code_id=line_data.cost_code_id,
+                cost_type=eff_cost_type,
                 function=line_data.function,
                 is_billable=line_data.is_billable,
                 line_order=line_data.line_order or i,
@@ -268,6 +272,7 @@ def _post_bill_lines(
                     "job_id": line_data.job_id,
                     "class_id": line_data.class_id,
                     "cost_code_id": line_data.cost_code_id,
+                    "cost_type": eff_cost_type,
                     "is_billable": line_data.is_billable,
                     # absent = default from the fund; explicit null = unassigned
                     **(
@@ -539,6 +544,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                 job_id=ln.job_id,
                 class_id=ln.class_id,
                 cost_code_id=ln.cost_code_id,
+                cost_type=ln.cost_type,
                 is_billable=bool(ln.is_billable),
                 description=ln.description,
                 # the stored Decimals, not a float round trip (everything

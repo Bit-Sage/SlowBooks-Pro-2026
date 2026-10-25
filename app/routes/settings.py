@@ -49,7 +49,7 @@ _redact_secrets = redact_secrets
 # Settings whose value is one of a fixed set. The SPA renders a <select>;
 # this is the server-side twin so an API token cannot store "banana".
 ENUM_SETTINGS = {
-    "company_type": frozenset({"business", "nonprofit"}),
+    "company_type": frozenset({"business", "nonprofit", "construction"}),
     "ocr_engine": frozenset({"auto", "tesseract"}),
     # Legal entity type (#488) — kept away from company_type so a sibling PR
     # that edits that line merges without a conflict. "" is unset and allowed

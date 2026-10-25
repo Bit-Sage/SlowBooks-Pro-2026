@@ -238,6 +238,7 @@ const BillsPage = {
         const classGroup = await classFormGroupHtml(bill ? bill.class_id : undefined);
         const jobGroup = await jobFormGroupHtml(bill ? bill.job_id : null);
         await CostCodes.load();
+        await CostTypes.load();
         await Nonprofit.loadFunds();
 
         BillsPage._vendors = vendors;
@@ -265,7 +266,7 @@ const BillsPage = {
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Line Items</h3>
                 <div class="table-container table-container--scroll"><table class="line-items-table bill-lines-table">
-                    <thead><tr><th scope="col">Item</th><th scope="col" title="Where the line is recorded">Account</th><th scope="col">Description</th>${CostCodes.headHtml()}${Nonprofit.headHtml()}<th scope="col" title="Billable to the job's customer">Bill?</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col" title="Where the line is recorded">Account</th><th scope="col">Description</th>${CostCodes.headHtml()}${CostTypes.headHtml()}${Nonprofit.headHtml()}<th scope="col" title="Billable to the job's customer">Bill?</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
                     <tbody id="bill-lines">${bill ? '' : BillsPage.lineHtml(0)}</tbody>
                 </table></div>
                 <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="BillsPage.addLine()">+ Add Line</button>
@@ -322,7 +323,7 @@ const BillsPage = {
                 <td><select class="line-item" onchange="BillsPage.itemSelected(this)">${ItemQuickAdd.options(BillsPage._items, l.item_id)}</select></td>
                 <td>${AccountQuickAdd.picker(`<select class="line-account"${stock ? ' disabled title="Stock items are recorded in Inventory"' : ''}><option value="">Choose...</option>${acctOpts}</select>`, 'bill', { disabled: stock })}</td>
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
-                ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
+                ${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${CostTypes.cellHtml('line-cost-type', l.cost_type)}${Nonprofit.cellHtml('line-function', l.function, l.class_id)}
                 <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
                 <td><input class="line-qty" type="number" step="0.0001" value="${qty}" oninput="BillsPage.qtyChanged(this)"></td>
                 <td><input class="line-rate money" type="number" step="0.0001" value="${rate}" oninput="BillsPage.recalc()"></td>
@@ -603,6 +604,7 @@ const BillsPage = {
                 description: row.querySelector('.line-desc')?.value || '',
                 ...priced,
                 cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
+                cost_type: CostTypes.fromRow(row, 'line-cost-type'),
                 class_id: Nonprofit.fundFromRow(row, 'line-function'),
                 ...Nonprofit.linePayload(row, 'line-function'),
                 is_billable: !!row.querySelector('.line-billable')?.checked,

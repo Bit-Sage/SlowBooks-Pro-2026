@@ -24,6 +24,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
@@ -78,6 +79,27 @@ def cost_type_map(db: Session) -> dict[str, CostType]:
     return {r.code: r for r in db.query(CostType).all()}
 
 
+def line_cost_type(
+    db: Session, cost_code_id: Optional[int], cost_type: Optional[str]
+) -> Optional[str]:
+    """A document line's effective cost type (#550). A value given on the
+    line is validated against the cost_types table, the same check the cost
+    code gets; a blank falls back to the code's default so existing postings
+    are unchanged. Raises HTTPException(422) on an unknown type."""
+    if cost_type is not None:
+        if cost_type not in cost_type_map(db):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown cost type '{cost_type}' — add it under Settings → Cost Types",
+            )
+        return cost_type
+    if cost_code_id:
+        code = db.get(CostCode, cost_code_id)
+        if code:
+            return code.cost_type
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Cost-code tree
 # ---------------------------------------------------------------------------
@@ -122,15 +144,35 @@ def would_cycle(db: Session, code_id: int, new_parent_id: Optional[int]) -> bool
 
 
 def import_cost_codes(db: Session, rows: list[dict]) -> dict:
-    """Rows of {code, name, cost_type?, parent_code?}. Parents may appear
-    after children; a second pass links them. Existing codes are updated
-    (name / type / parent), never duplicated."""
+    """Rows of {code, name, cost_type?, parent_code?, level?}. Codes are
+    normalized to the "DD SS SS" division/section shape (a custom code is left
+    as typed), the level is derived from the shape when a row doesn't give one,
+    and a section with no parent_code is auto-parented to its division —
+    created from the title table when the chart is missing it. Parents may
+    appear after children; a second pass links them. Existing codes are updated
+    (name / type / level / parent), never duplicated."""
+    from app.services.cost_code_catalog import (
+        code_level,
+        division_of,
+        ensure_division,
+        normalize_code,
+    )
+
     types = cost_type_map(db)
     created = updated = 0
     errors: list[str] = []
     by_code: dict[str, CostCode] = {c.code.lower(): c for c in db.query(CostCode).all()}
+
+    def code_as_saved(raw: str) -> str:
+        # A code that already exists as typed (case-insensitive) keeps its
+        # stored form, so re-importing the same list is a no-op for every
+        # chart; otherwise normalize to the division/section shape.
+        raw = (raw or "").strip()
+        hit = by_code.get(raw.lower())
+        return (hit.code if hit else normalize_code(raw))[:20]
+
     for i, row in enumerate(rows, 1):
-        code = (row.get("code") or "").strip()[:20]
+        code = code_as_saved(row.get("code"))
         name = (row.get("name") or "").strip()[:200]
         if not code or not name:
             errors.append(f"row {i}: code and name are required")
@@ -139,32 +181,45 @@ def import_cost_codes(db: Session, rows: list[dict]) -> dict:
         if ctype not in types:
             errors.append(f"row {i}: unknown cost type '{ctype}'")
             continue
+        # A level the row names wins; otherwise the shape derives one. A blank
+        # neither-names-nor-derives leaves a pinned level alone on an update.
+        derived = (row.get("level") or "").strip().lower() or code_level(code)
         existing = by_code.get(code.lower())
         if existing:
             existing.name, existing.cost_type = name, ctype
+            if derived:
+                existing.level = derived
             updated += 1
         else:
-            existing = CostCode(code=code, name=name, cost_type=ctype)
+            existing = CostCode(code=code, name=name, cost_type=ctype, level=derived)
             db.add(existing)
             db.flush()
             by_code[code.lower()] = existing
             created += 1
     for i, row in enumerate(rows, 1):
-        code = (row.get("code") or "").strip().lower()
-        parent_code = (row.get("parent_code") or "").strip().lower()
+        code = code_as_saved(row.get("code")).lower()
+        parent_code = code_as_saved(row.get("parent_code")).lower()
         if not code or code not in by_code:
             continue
-        if parent_code:
-            parent = by_code.get(parent_code)
-            if not parent:
-                errors.append(f"row {i}: parent '{parent_code}' not found")
-                continue
-            if parent.id == by_code[code].id or would_cycle(
-                db, by_code[code].id, parent.id
-            ):
-                errors.append(f"row {i}: parent would create a cycle")
-                continue
-            by_code[code].parent_id = parent.id
+        child = by_code[code]
+        if not parent_code:
+            # No parent given: a section sits under its division.
+            div = division_of(child.code)
+            if div and div.lower() != code:
+                before = len(by_code)
+                parent = ensure_division(db, div, by_code)
+                if len(by_code) > before:
+                    created += 1
+                child.parent_id = parent.id
+            continue
+        parent = by_code.get(parent_code)
+        if not parent:
+            errors.append(f"row {i}: parent '{parent_code}' not found")
+            continue
+        if parent.id == child.id or would_cycle(db, child.id, parent.id):
+            errors.append(f"row {i}: parent would create a cycle")
+            continue
+        child.parent_id = parent.id
     db.flush()
     return {"created": created, "updated": updated, "errors": errors}
 
@@ -733,7 +788,9 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
     hide the margin), revenue = the line amount. Lines without a code roll
     into a whole-job row. Re-seeding replaces the estimate rows; a row the
     operator edited by hand (source "manual") wins and is left alone."""
-    totals: dict[Optional[int], list[Decimal]] = {}
+    # Key on (cost_code_id, cost_type): a line carries its own type (#550), and
+    # the budget's unique key allows both a code and a type on one row.
+    totals: dict[tuple, list[Decimal]] = {}
     for ln in estimate.lines:
         qty = Decimal(str(ln.quantity or 0))
         cost = (
@@ -742,7 +799,9 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
             else Decimal("0")
         )
         rev = _q(ln.amount or 0)
-        bucket = totals.setdefault(ln.cost_code_id, [Decimal("0"), Decimal("0")])
+        bucket = totals.setdefault(
+            (ln.cost_code_id, ln.cost_type), [Decimal("0"), Decimal("0")]
+        )
         bucket[0] += cost
         bucket[1] += rev
     db.query(JobBudget).filter(
@@ -759,12 +818,13 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
         .all()
     }
     rows = []
-    for code_id, (cost, rev) in totals.items():
+    for (code_id, ctype), (cost, rev) in totals.items():
         if code_id in manual_codes:
             continue
         row = JobBudget(
             job_id=job.id,
             cost_code_id=code_id,
+            cost_type=ctype,
             amount=cost,
             revenue_amount=rev,
             source="estimate",
@@ -847,6 +907,7 @@ def job_cost_tree(
     committed_rows = (
         db.query(
             PurchaseOrderLine.cost_code_id,
+            PurchaseOrderLine.cost_type,
             sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.amount), 0),
         )
         .select_from(PurchaseOrderLine)
@@ -857,27 +918,34 @@ def job_cost_tree(
                 (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED)
             ),
         )
-        .group_by(PurchaseOrderLine.cost_code_id)
+        .group_by(PurchaseOrderLine.cost_code_id, PurchaseOrderLine.cost_type)
         .all()
     )
     budgets = db.query(JobBudget).filter(JobBudget.job_id == job_id).all()
 
-    # per-code figures (own lines only; roll-ups come after)
-    fig: dict = {}  # key: ("code", id) | ("uncoded", type_code) | ("job", None)
+    # Per-code figures keyed by the EFFECTIVE cost type (#550): the line's own
+    # type wins, the code's is the fallback, and a type the cost_types table no
+    # longer has is bucketed under "other" so a cost never vanishes. A coded
+    # figure therefore lives under exactly one type, so a cost is counted once.
+    fig: dict = {}  # ("code", id, type) | ("uncoded", type)
     line_rows: dict = {}
 
-    def key_for(code_id, cost_type):
+    def eff_type(code_id, line_ct):
+        t = line_ct or (
+            code_by_id[code_id].cost_type if code_id in code_by_id else None
+        )
+        if t is None:
+            return None
+        return t if t in types else "other"
+
+    def key_for(code_id, line_ct):
+        t = eff_type(code_id, line_ct)
         if code_id and code_id in code_by_id:
-            return ("code", code_id)
-        return ("uncoded", cost_type or "other")
+            return ("code", code_id, t or "other")
+        return ("uncoded", t or "other")
 
     for ln, txn, acct in lines:
-        ctype = ln.cost_type or (
-            code_by_id[ln.cost_code_id].cost_type
-            if ln.cost_code_id in code_by_id
-            else None
-        )
-        k = key_for(ln.cost_code_id, ctype)
+        k = key_for(ln.cost_code_id, ln.cost_type)
         f = fig.setdefault(k, _blank())
         if acct.account_type == AccountType.INCOME:
             amt = Decimal(str(ln.credit)) - Decimal(str(ln.debit))
@@ -901,23 +969,21 @@ def job_cost_tree(
                 "is_billable": bool(ln.is_billable),
             }
         )
-    for code_id, amt in committed_rows:
-        k = key_for(
-            code_id, code_by_id[code_id].cost_type if code_id in code_by_id else None
-        )
+    for code_id, line_ct, amt in committed_rows:
+        k = key_for(code_id, line_ct)
         fig.setdefault(k, _blank())["committed"] += Decimal(str(amt))
     job_level = _blank()
     type_level: dict[str, dict] = {}
     for b in budgets:
-        if b.cost_code_id:
-            k = (
-                ("code", b.cost_code_id)
-                if b.cost_code_id in code_by_id
-                else ("uncoded", "other")
-            )
-            f = fig.setdefault(k, _blank())
+        if b.cost_code_id and b.cost_code_id in code_by_id:
+            t = eff_type(b.cost_code_id, b.cost_type) or "other"
+            f = fig.setdefault(("code", b.cost_code_id, t), _blank())
+        elif b.cost_code_id:
+            t = b.cost_type if b.cost_type in types else "other"
+            f = fig.setdefault(("uncoded", t), _blank())
         elif b.cost_type:
-            f = type_level.setdefault(b.cost_type, _blank())
+            t = b.cost_type if b.cost_type in types else "other"
+            f = type_level.setdefault(t, _blank())
         else:
             f = job_level
         if b.source == "change":
@@ -926,15 +992,25 @@ def job_cost_tree(
             f["original"] += Decimal(str(b.amount))
         f["est_revenue"] += Decimal(str(b.revenue_amount or 0))
 
-    # build the code tree per cost type with roll-ups
-    def node_for(n) -> dict:
+    # build the code tree per cost type with roll-ups. A code node appears
+    # under a type when its subtree carries any figure for that type OR the
+    # type is the code's own default (so an empty chart still renders its
+    # structure); a division may legitimately show under several types, each
+    # with only that type's costs.
+    def node_for(n, type_code):
         c = n["code"]
-        own = fig.get(("code", c.id), _blank())
-        children = [node_for(ch) for ch in n["children"]]
+        children = [
+            cn
+            for cn in (node_for(ch, type_code) for ch in n["children"])
+            if cn is not None
+        ]
+        own = fig.get(("code", c.id, type_code), _blank())
         agg = {
             k: own[k] + sum((ch["_raw"][k] for ch in children), Decimal("0"))
             for k in own
         }
+        if not any(agg.values()) and c.cost_type != type_code:
+            return None
         return {
             "id": c.id,
             "code": c.code,
@@ -944,7 +1020,7 @@ def job_cost_tree(
             "is_active": c.is_active,
             "own": _finish(own),
             "figures": _finish(agg),
-            "lines": line_rows.get(("code", c.id), []),
+            "lines": line_rows.get(("code", c.id, type_code), []),
             "children": children,
             "_raw": agg,
         }
@@ -953,7 +1029,7 @@ def job_cost_tree(
     type_nodes = []
     grand = _blank()
     for t in ordered_types:
-        roots = [node_for(n) for n in tree if n["code"].cost_type == t.code]
+        roots = [r for r in (node_for(n, t.code) for n in tree) if r is not None]
         uncoded_own = fig.get(("uncoded", t.code), _blank())
         agg = {
             k: uncoded_own[k] + sum((r["_raw"][k] for r in roots), Decimal("0"))
@@ -983,7 +1059,7 @@ def job_cost_tree(
                 },
             }
         )
-    # codes whose type is unknown to the table still show up
+    # whole-job budgets (no code, no type) sit outside the type branches
     for k in job_level:
         grand[k] += job_level[k]
 

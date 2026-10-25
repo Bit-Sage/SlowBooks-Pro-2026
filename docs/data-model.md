@@ -81,16 +81,33 @@ Migration `e9f0a1b2c3d4_add_jobs`.
 
 | column | notes |
 |---|---|
-| id, code (unique, case-insensitive via API), name | e.g. `03` Concrete |
-| cost_type | labor · material · subcontract · equipment · other |
+| id, code (unique, case-insensitive via API; normalized to the `DD SS SS` division/section shape) | e.g. `03` Concrete, `03 30 00` Cast-in-Place Concrete |
+| level | `division` · `section` · null (a custom, non-standard code) |
+| cost_type | per-code default: labor · material · subcontract · equipment · other |
 | account_id (FK accounts, nullable) | default posting account |
+| parent_id (self FK) | a section's division; set automatically |
 | notes, is_active | inactive = hidden from pickers |
 
 `cost_code_id` (nullable FK) on transaction_lines, bill_lines, invoice_lines,
-estimate_lines, purchase_order_lines, time_entries. `is_billable` +
-`billed_invoice_line_id` (FK invoice_lines) on transaction_lines and
-bill_lines. `purchase_orders.job_id` / `purchase_order_lines.job_id` feed
-committed cost. Migration `f0a1b2c3d4e5_add_cost_codes`.
+estimate_lines, purchase_order_lines, vendor_credit_lines, time_entries. A
+nullable `cost_type` (String(20)) rides every costable line —
+transaction_lines, bill_lines, estimate_lines, purchase_order_lines,
+vendor_credit_lines — chosen per line, falling back to the code's default when
+blank. `is_billable` + `billed_invoice_line_id` (FK invoice_lines) on
+transaction_lines and bill_lines. `purchase_orders.job_id` /
+`purchase_order_lines.job_id` feed committed cost. Migrations
+`f0a1b2c3d4e5_add_cost_codes`, `c8e4a2f1b3d5_division_section_cost_codes`
+(#550: `level`, the four line `cost_type` columns, trade packages).
+
+## Trade packages (#550)
+
+| table | purpose |
+|---|---|
+| trade_packages | id, name (unique), notes, is_active, sort_order, timestamps — the bid packages a GC awards |
+| trade_package_sections | (package_id, cost_code_id) composite PK — a package ↔ cost-code section, many-to-many |
+
+A package is what a sub bids; a section is what costs post to. Seeded by
+`POST /api/construction/setup` when the company has none.
 
 ## Job cost model (milestone 3)
 
@@ -101,7 +118,7 @@ committed cost. Migration `f0a1b2c3d4e5_add_cost_codes`.
 | equipment | code, name, hourly_rate, cost_code_id, recovery_account_id |
 | job_costs | number (JC-000001), date, job_id (NULL for allocations), memo, source manual/time_entry/allocation, status posted/void, transaction_id, total |
 | job_cost_lines | job_id, cost_code_id, cost_type, qty/rate/amount, debit_account_id, credit_account_id, employee_id, equipment_id, time_entry_id, is_burden, is_billable |
-| job_budgets | job_id × (cost_code_id \| cost_type \| neither), amount, revenue_amount, source manual/estimate/change, estimate_id |
+| job_budgets | job_id × (cost_code_id and/or cost_type, or neither), amount, revenue_amount, source manual/estimate/change, estimate_id — the unique key is (job, code, type), so a row may carry both |
 | employees.cost_rate, burden_pct · estimate_lines.unit_cost · time_entries.job_cost_id · transaction_lines.cost_type | |
 
 Migration `a1b2c3d4e5f6_job_cost_model`.

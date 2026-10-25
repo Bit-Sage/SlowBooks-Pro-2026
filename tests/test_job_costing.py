@@ -423,7 +423,8 @@ def test_budget_from_estimate_and_cost_tree_columns(
     assert saved.status_code == 200, saved.text
     by_key = {(r["cost_code_id"], r["cost_type"]): r for r in saved.json()}
     assert by_key[(trim["id"], None)]["source"] == "manual"
-    assert (fram["id"], None) in by_key  # estimate rows kept
+    # the estimate row carries the line's type (filled from the code) (#550)
+    assert (fram["id"], "material") in by_key  # estimate rows kept
 
     # actuals + committed
     vendor = client.post("/api/vendors", json={"name": "Lumber"}).json()

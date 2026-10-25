@@ -1665,6 +1665,37 @@ const CostCodes = {
     },
 };
 
+// ---------------------------------------------------------------------------
+// Cost types — the per-LINE cost type that sits beside the cost code on a cost
+// form (#550). Same shape as CostCodes; shown in construction mode under the
+// cost code column's gate (CostCodes.any()), since a line only carries a cost
+// type where it carries a cost code. Business and Nonprofit forms keep their
+// nine columns (the bill form fits the agents' window exactly) and post the
+// code's own type. Blank means "use the cost code's own type".
+// ---------------------------------------------------------------------------
+const CostTypes = {
+    _list: null,
+    async load() {
+        try { CostTypes._list = await API.get('/cost-types'); } catch (e) { CostTypes._list = []; }
+        return CostTypes._list;
+    },
+    // construction mode, and gated the same way the cost code column is
+    any() { return Terms.isConstruction() && CostCodes.any(); },
+    optionsHtml(selected) {
+        return '<option value="">--</option>' + (CostTypes._list || []).map(t =>
+            `<option value="${escapeHtml(t.code)}" ${selected === t.code ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+    },
+    // <td> for a line row, or '' when there is no cost code column
+    cellHtml(cls, selected) {
+        return CostTypes.any() ? `<td><select class="${cls}">${CostTypes.optionsHtml(selected)}</select></td>` : '';
+    },
+    headHtml(label = 'Cost Type') { return CostTypes.any() ? `<th scope="col">${label}</th>` : ''; },
+    fromRow(row, cls) {
+        const v = row.querySelector(`.${cls}`)?.value;
+        return v || null;
+    },
+};
+
 // Normalize a form's job_id string to int-or-null for the API payload.
 function jobIdFromForm(form) {
     const v = form.job_id ? form.job_id.value : '';

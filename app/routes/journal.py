@@ -34,6 +34,7 @@ from app.services.bank_posting import (
 )
 from app.services.bank_register import date_text
 from app.services.closing_date import check_closing_date
+from app.services.job_costing import line_cost_type
 from app.services.safe_errors import safe_message
 from app.services.entry_text import header_text
 
@@ -130,6 +131,7 @@ def _line_dict(line, acct) -> dict:
         "job_id": line.job_id,
         "class_id": line.class_id,
         "cost_code_id": line.cost_code_id,
+        "cost_type": line.cost_type,
         "function": line.function,
         "is_billable": bool(line.is_billable),
     }
@@ -188,12 +190,25 @@ def _journal_lines(db: Session, data, edit: bool = False) -> list[dict]:
         # the body leaves out keeps what the line has, so a memo fix from a
         # client that sends bare lines doesn't clear a line's class, job,
         # cost code or billable mark (#388 review).
-        for key in ("class_id", "job_id", "cost_code_id", "is_billable", "function"):
+        for key in (
+            "class_id",
+            "job_id",
+            "cost_code_id",
+            "cost_type",
+            "is_billable",
+            "function",
+        ):
             if key in line.model_fields_set:
                 value = getattr(line, key)
                 if value is None and key in unmanaged:
                     continue
                 row[key] = value
+        # Validate a sent cost type against cost_types (and fill from the code
+        # when blank), the same check the other cost forms run (#550).
+        if "cost_type" in row:
+            row["cost_type"] = line_cost_type(
+                db, row.get("cost_code_id"), row["cost_type"]
+            )
         lines.append(row)
     return lines
 

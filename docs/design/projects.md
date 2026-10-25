@@ -48,7 +48,7 @@ rewrite.
    awarded, in progress, closed, not awarded), type, dates, site address,
    contract amount, notes. Display name "Customer: Job" so QB migrants feel at
    home. Customers gain nothing structural; the job is the child.
-3. **Cost codes.** `cost_codes` with a CSI-style default list, each mapped to an
+3. **Cost codes.** `cost_codes` with a division/section default list, each mapped to an
    expense or COGS account, with a cost type (labor, material, subcontract,
    equipment, other). Job cost detail is job × cost code × cost type.
 4. **Costs in.** Bills, expenses, card charges, checks and PO lines take job,

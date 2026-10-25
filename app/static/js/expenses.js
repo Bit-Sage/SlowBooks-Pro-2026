@@ -62,7 +62,10 @@ const ExpensesPage = {
         const classGroup = await classFormGroupHtml();
         const jobGroup = await jobFormGroupHtml(null);
         await CostCodes.load();
+        await CostTypes.load();
         const costCodeGroup = CostCodes.any() ? `<div class="form-group"><label>Cost Code</label><select name="cost_code_id">${CostCodes.optionsHtml(null)}</select></div>` : '';
+        // Blank cost type = use the cost code's own type; shown with the code.
+        const costTypeGroup = CostTypes.any() ? `<div class="form-group"><label>Cost Type</label><select name="cost_type">${CostTypes.optionsHtml(null)}</select></div>` : '';
         const billableGroup = `<div class="form-group"><label>Billable</label><label style="font-weight:normal;"><input type="checkbox" name="is_billable"> Bill this cost to the job's customer</label></div>`;
         // Expense and cost-of-goods accounts: materials are bought against
         // 5100 Materials Cost as often as against an expense (W-L18).
@@ -88,7 +91,7 @@ const ExpensesPage = {
                         <input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
                     <div class="form-group"><label>Reference</label>
                         <input name="reference" placeholder="Receipt / check #"></div>
-                    ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}${costCodeGroup}${billableGroup}
+                    ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}${costCodeGroup}${costTypeGroup}${billableGroup}
                     <div class="form-group full-width"><label>Memo</label>
                         <textarea name="memo"></textarea></div>
                 </div>
@@ -200,6 +203,7 @@ const ExpensesPage = {
                 ...Nonprofit.formPayload(form),
                 job_id: jobIdFromForm(form),
                 cost_code_id: form.cost_code_id ? (form.cost_code_id.value ? parseInt(form.cost_code_id.value) : null) : null,
+                cost_type: form.cost_type && form.cost_type.value ? form.cost_type.value : null,
                 is_billable: !!(form.is_billable && form.is_billable.checked),
             };
             // a check number the bank account already has (#481)

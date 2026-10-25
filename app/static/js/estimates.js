@@ -143,6 +143,7 @@ const EstimatesPage = {
         const classGroup = await classFormGroupHtml(est.class_id);
         const jobGroup = await jobFormGroupHtml(est.job_id, 'est-customer-select');
         await CostCodes.load();
+        await CostTypes.load();
         if (est.lines.length === 0) est.lines = [{ item_id: '', description: '', quantity: 1, rate: 0 }];
 
         EstimatesPage.lineCount = est.lines.length;
@@ -178,7 +179,7 @@ const EstimatesPage = {
                 <h3 style="margin:16px 0 8px; font-size:14px; color:var(--gray-600);">Line Items</h3>
                 <div class="table-container table-container--scroll"><table class="line-items-table">
                     <thead><tr>
-                        <th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" title='Unit cost (budget side)'>Cost</th><th scope="col" class="col-qty">Qty</th>
+                        <th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}${CostTypes.headHtml()}<th scope="col" title='Unit cost (budget side)'>Cost</th><th scope="col" class="col-qty">Qty</th>
                         <th scope="col" class="col-rate">Rate</th><th scope="col" title="Sales tax applies to this line">Tax</th><th scope="col" class="col-amount">Amount</th><th scope="col" class="col-actions"></th>
                     </tr></thead>
                     <tbody id="est-lines">
@@ -206,7 +207,7 @@ const EstimatesPage = {
             <td><select class="line-item" style="min-width:150px" onchange="EstimatesPage.itemSelected(${idx})">
                 ${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
-            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
+            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
             <td><input class="line-unit-cost money" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
             <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
@@ -261,6 +262,7 @@ const EstimatesPage = {
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
                 is_taxable: row.querySelector('.line-taxable') ? row.querySelector('.line-taxable').checked : null,
                 cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
+                cost_type: CostTypes.fromRow(row, 'line-cost-type'),
                 unit_cost: row.querySelector('.line-unit-cost')?.value ? parseFloat(row.querySelector('.line-unit-cost').value) : null,
                 line_order: i,
             });

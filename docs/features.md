@@ -176,6 +176,18 @@ The register is the ledger account (v2.10, issue #114). Full guide: [docs/bankin
 - **Pledges** — recurring pledges and their installments (generated invoices link to their template and carry its grant), one-off pledges, write-off to Bad Debt Expense through a credit memo; credit memo void
 - Guide: [nonprofit-module.md](nonprofit-module.md); design: [design/nonprofit.md](design/nonprofit.md)
 
+## Construction mode
+- **One switch** — Settings → Company Type → Construction, the contractor counterpart to Nonprofit: it changes no data and is reversible. It adds the contractor accounts, the division/section cost codes and the default trade packages rather than re-seeding the chart
+- **Contractor accounts** (#431) — Retainage Receivable (1150), Construction in Progress (1350), Retainage Payable (2050), Customer Deposits (2210), Use Tax Payable (2220), Equipment Cost (5400), Other Job Costs (5500); each created only if missing, its number yielding to a chart that already owns it, each pinned to an Other Current (job-cost accounts to Cost of Goods Sold) balance-sheet line. Idempotent: switching again or back changes nothing
+- **Division/section cost codes** (#550) — divisions (`03` Concrete) and sections (`03 30 00` Cast-in-Place Concrete, optional `.SS` extension), the two-level numbering used in commercial construction specifications, each code carrying a `level` and a section auto-parented to its division. Typed codes normalize on save and import (`033000`, `03-3000`, `03.30.00` → `03 30 00`); a code that numbers its own way (`L-100`, `EQ`, a numeric `1000`/`2000` chart) is left exactly as typed and never rewritten on re-import. The switch (and the **Load standard divisions and common sections** button) seeds the standard division titles and a modest set of common sections — only into a company with no codes of its own — and the labor / material / subcontract / equipment / other cost types. The full numbered section catalog is a licensed product, so you import your own through **Import CSV** (a few hundred `code,name` rows land normalized and auto-parented in one call)
+- **Trade packages** (#550) — the bid packages a GC awards (Concrete, Drywall and Ceilings, HVAC …), mapped many-to-many to the cost-code sections their costs post to; a package can span divisions and a division can be split across packages. Seeded with defaults on the switch; edited under Settings → Trade Packages (construction only). Nothing references a package yet
+- **Cost type per line** (#550) — a cost type rides each budget, estimate, commitment and bill line (not fixed per code), chosen beside the cost code on bills, expenses, journal entries, purchase orders and estimates in construction mode (other company types keep their forms and post the code's type; the API takes a line type for any company); blank uses the code's default. Job-cost reports read the line's type first and roll a section's cost up under its division
+- **Light vocabulary** — a contractor keeps Customer, Invoice, Estimate and Job; the one word that changes is Subcontractor → **Sub**, on screens and in prose. The API, database and exports never change name
+- **Subcontractor vendor type** — a vendor can be marked a Sub, revealing a trade License #, and a certificate of insurance (Carrier, Policy #, Expires); the first time a vendor is marked a Sub, 1099-NEC turns on (only when its 1099 type is still blank, so a Sub already on 1099-MISC is left alone), and you can change it afterward. Un-marking a Sub clears the license and COI fields but leaves the 1099 answer as it is. A new vendor is not 1099 by default (W-9 on file stays a recorded fact, not a default)
+- **Report Center** leads with the contractor reports that exist — Job Profitability, Job Budget vs Actual, P&L by Job
+- **Not yet** — no first-run company-type prompt (Construction is chosen in Settings, as Nonprofit is), no new accounting, no change-order / draw / pay-application screens, no COI-expiry warning in Pay Bills, nothing references a trade package yet, and Customer:Job still prints with a space
+- Guide: [contractor-mode.md](contractor-mode.md)
+
 ## Dashboard
 - Company Snapshot with Total Receivables, Overdue Invoices, Active Customers, Total Payables
 - **AR Aging Bar Chart** — Color-coded stacked bar (Current/30/60/90+ days); each segment wide enough to hold it carries its figure (v2.22.2)
@@ -772,7 +784,7 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
 - IIF `Customer:Job` imports as a job under the customer.
 - Roadmap (cost codes, committed cost, change orders, progress billing,
   time/burden, WIP): `docs/design/projects.md`.
-- Cost codes (Settings → Cost Codes; CSI MasterFormat loader) with cost
+- Cost codes (Settings → Cost Codes; standard division/section loader) with cost
   types; per-line on bills, expenses, POs, journal entries; job costs by
   code; billable flag on cost lines; committed cost from open POs.
 - Job cost model: nested cost codes with CSV import, editable cost types with

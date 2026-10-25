@@ -2,8 +2,8 @@ from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field
-from app.schemas.common import StrictModel
+from pydantic import BaseModel, Field, field_validator
+from app.schemas.common import StrictModel, clean_line_cost_type
 
 
 class ExpenseCreate(StrictModel):
@@ -21,8 +21,11 @@ class ExpenseCreate(StrictModel):
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     function: Optional[str] = None  # nonprofit: program | management | fundraising
     is_billable: bool = False
+
+    _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
 
 class ExpenseResponse(BaseModel):

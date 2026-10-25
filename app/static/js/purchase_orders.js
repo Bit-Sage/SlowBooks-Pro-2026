@@ -90,6 +90,7 @@ const PurchaseOrdersPage = {
 
         const jobGroup = await jobFormGroupHtml(po.job_id || null);
         await CostCodes.load();
+        await CostTypes.load();
         // Inactive vendors stay off the picker, except the one this PO names.
         const vendorOpts = vendors
             .filter(v => v.is_active !== false || v.id == po.vendor_id)
@@ -112,7 +113,7 @@ const PurchaseOrdersPage = {
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Line Items</h3>
                 <table class="line-items-table">
-                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}<th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}${CostTypes.headHtml()}<th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
                     <tbody id="po-lines">
                         ${po.lines.map((l, i) => PurchaseOrdersPage.lineHtml(i, l, items)).join('')}
                     </tbody>
@@ -137,7 +138,7 @@ const PurchaseOrdersPage = {
         return `<tr data-poline="${idx}">
             <td><select class="line-item" onchange="PurchaseOrdersPage.itemSel(${idx})">${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
-            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}
+            ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
             <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="PurchaseOrdersPage.recalc()"></td>
             <td><input class="line-rate money" type="number" step="0.0001" value="${line.rate || 0}" oninput="PurchaseOrdersPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1)*(line.rate||0))}</td>
@@ -191,6 +192,7 @@ const PurchaseOrdersPage = {
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
                 cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
+                cost_type: CostTypes.fromRow(row, 'line-cost-type'),
                 line_order: i,
             });
         });

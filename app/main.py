@@ -81,6 +81,8 @@ from app.routes import preferences as preferences_routes
 from app.routes import cost_codes as cost_codes_routes
 from app.routes import job_costing as job_costing_routes
 from app.routes import nonprofit as nonprofit_routes
+from app.routes import construction as construction_routes
+from app.routes import trade_packages as trade_packages_routes
 from app.routes import donors as donors_routes
 from app.routes import in_kind as in_kind_routes
 from app.routes import fx as fx_routes
@@ -620,7 +622,7 @@ async def _method_not_allowed_handler(request: Request, exc: StarletteHTTPExcept
     it (scripts/audit/vocab_walk.py)."""
     if isinstance(exc.detail, str) and exc.detail and exc.status_code != 405:
         terms = _company_terms()
-        if terms.is_nonprofit:
+        if terms.has_words:
             worded = terms.text(exc.detail)
             if worded != exc.detail:
                 return JSONResponse(
@@ -731,7 +733,7 @@ async def _request_validation_handler(request: Request, exc: RequestValidationEr
     from app.services.validation_messages import with_messages
 
     terms = _company_terms()
-    wording = terms.text if terms.is_nonprofit else None
+    wording = terms.text if terms.has_words else None
     errors = _json_safe(jsonable_encoder(exc.errors()))
     return JSONResponse(
         status_code=422,
@@ -1386,6 +1388,8 @@ app.include_router(job_costing_routes.cost_types_router)
 app.include_router(job_costing_routes.equipment_router)
 app.include_router(job_costing_routes.job_costs_router)
 app.include_router(nonprofit_routes.router)
+app.include_router(construction_routes.router)
+app.include_router(trade_packages_routes.router)
 app.include_router(donors_routes.router)
 app.include_router(in_kind_routes.router)
 app.include_router(fx_routes.router)

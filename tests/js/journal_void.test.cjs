@@ -20,6 +20,7 @@ function page(entry) {
         formatDate: value => value, formatCurrency: value => `$${value}`,
         sourceWord: value => String(value || ''),
         CostCodes: { headHtml: () => '' },
+        CostTypes: { headHtml: () => '', cellHtml: () => '', load: async () => {}, fromRow: () => null },
         openModal: (title, html) => dialogs.push({ title, html }),
     };
     vm.createContext(context);
@@ -62,6 +63,7 @@ function listPage(entries) {
         formatDate: value => value, formatCurrency: value => `$${value}`,
         sourceWord: value => String(value || ''),
         CostCodes: { headHtml: () => '' },
+        CostTypes: { headHtml: () => '', cellHtml: () => '', load: async () => {}, fromRow: () => null },
         openModal: (title, html) => { context.shown = html; },
     };
     vm.createContext(context);

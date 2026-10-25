@@ -98,6 +98,8 @@ class EstimateLine(Base):
     # Per-line job; NULL falls back to the document header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # Per-line cost type; NULL falls back to the cost code's default.
+    cost_type = Column(String(20), nullable=True)
     unit_cost = Column(Numeric(12, 4), nullable=True)  # cost side; rate is revenue
     # Per-line sales tax (default: the item's flag, or taxable). A customer-
     # owned-device repair is labor with no tax; the part on the same invoice

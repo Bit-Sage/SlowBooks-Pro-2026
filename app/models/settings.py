@@ -28,7 +28,7 @@ DEFAULT_SETTINGS = {
     # Company type drives the vocabulary (Customer/Donor, Invoice/Pledge,
     # Class/Fund ...), the nonprofit nav items and reports, the default
     # dashboard layout and the on-demand net-asset accounts. Data never
-    # changes name; only what is rendered. business | nonprofit
+    # changes name; only what is rendered. business | nonprofit | construction
     "company_type": "business",
     "company_name": "My Company",
     # First month of the fiscal year, "1"-"12" (#444). "1" = the calendar

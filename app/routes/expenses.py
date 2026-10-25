@@ -15,6 +15,7 @@ from app.models.contacts import Vendor
 from app.models.transactions import Transaction
 from app.schemas.expenses import ExpenseCreate, ExpenseResponse
 from app.services.accounting import create_journal_entry, reversing_lines
+from app.services.job_costing import line_cost_type
 from app.services.bank_posting import assert_not_reconciled, release_statement_links
 from app.services.check_numbers import refuse_duplicate
 from app.services.closing_date import check_closing_date
@@ -196,6 +197,7 @@ def create_expense(
             "credit": Decimal("0"),
             "description": line_desc,
             "cost_code_id": data.cost_code_id,
+            "cost_type": line_cost_type(db, data.cost_code_id, data.cost_type),
             "is_billable": data.is_billable,
             **(
                 {"function": data.function}

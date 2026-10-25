@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
-from app.schemas.common import StrictModel
+from app.schemas.common import StrictModel, clean_line_cost_type
 
 
 class JournalLineCreate(StrictModel):
@@ -11,10 +11,13 @@ class JournalLineCreate(StrictModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     function: Optional[str] = None
     is_billable: bool = False
     debit: Decimal = Decimal("0")
     credit: Decimal = Decimal("0")
+
+    _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
     @field_validator("debit", "credit")
     @classmethod
@@ -36,6 +39,7 @@ class JournalLineResponse(BaseModel):
     job_id: Optional[int] = None
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
+    cost_type: Optional[str] = None
     function: Optional[str] = None
     is_billable: bool = False
     debit: float

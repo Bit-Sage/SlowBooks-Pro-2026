@@ -2058,6 +2058,10 @@ td > select[class$="-fund"] { min-width: 124px; }
 .bill-lines-table .cbx--line-item { min-width: 110px; }
 .bill-lines-table .cbx--line-account { min-width: 200px; }
 .bill-lines-table .cbx--line-cost-code { min-width: 110px; }
+/* The per-line cost type (#550) is a plain select; keep it narrow so the
+   ninth/tenth column doesn't push the line table into a scrollbar at the
+   agent's window width. It truncates a long type name rather than widen. */
+.line-items-table .line-cost-type { width: 84px; min-width: 84px; max-width: 84px; }
 .bill-lines-table .line-desc { min-width: 140px; }
 .bill-lines-table .line-qty { min-width: 64px; }
 .bill-lines-table .line-rate { min-width: 84px; }

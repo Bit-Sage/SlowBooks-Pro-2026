@@ -55,7 +55,13 @@ def test_cost_code_crud_and_standard_list(client):
 
     std = client.post("/api/cost-codes/standard").json()
     codes = {c["code"] for c in std}
-    assert {"01", "03", "26", "L", "EQ"} <= codes
+    # standard divisions and common sections, parented by code
+    assert {"01", "03", "26"} <= codes
+    assert {"03 30 00", "23 05 00"} <= codes
+    by_code = {c["code"]: c for c in std}
+    assert by_code["03"]["level"] == "division"
+    assert by_code["03 30 00"]["level"] == "section"
+    assert by_code["03 30 00"]["parent_code"] == "03"
     # existing "06" kept as the user's own row, not duplicated
     again = client.post("/api/cost-codes/standard").json()
     assert len(again) == len(std)

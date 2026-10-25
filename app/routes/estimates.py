@@ -24,6 +24,7 @@ from app.routes.invoices.helpers import (
 from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.routes.invoice_messages import default_message_body
 from app.services.audit import audited_bulk_delete
+from app.services.job_costing import line_cost_type
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.contacts import Customer
@@ -162,6 +163,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             class_name=line_data.class_name,
             job_id=line_data.job_id,
             cost_code_id=line_data.cost_code_id,
+            cost_type=line_cost_type(db, line_data.cost_code_id, line_data.cost_type),
             unit_cost=line_data.unit_cost,
             is_taxable=(
                 line_data.is_taxable if line_data.is_taxable is not None else True
@@ -235,6 +237,9 @@ def update_estimate(
                 class_name=line_data.class_name,
                 job_id=line_data.job_id,
                 cost_code_id=line_data.cost_code_id,
+                cost_type=line_cost_type(
+                    db, line_data.cost_code_id, line_data.cost_type
+                ),
                 unit_cost=line_data.unit_cost,
                 is_taxable=(
                     line_data.is_taxable if line_data.is_taxable is not None else True

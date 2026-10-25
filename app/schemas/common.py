@@ -45,6 +45,20 @@ def _blank_to_none(v):
     return v
 
 
+def clean_line_cost_type(v):
+    """Shape a per-line cost_type (#550): blank is None, otherwise the key
+    form the cost_types table uses (lowercase, spaces to underscores). The
+    value is checked against the table in the route, like the cost code."""
+    if v is None:
+        return None
+    v = str(v).strip().lower().replace(" ", "_")
+    if not v:
+        return None
+    if len(v) > 20:
+        raise ValueError("cost_type must be 20 characters or fewer")
+    return v
+
+
 # An email field that treats blank as absent. HTML forms submit every empty
 # input as "" — Optional[OptionalEmail] alone rejects that with a pattern
 # 422 even though the user typed nothing (#64). Blank collapses to None

@@ -185,6 +185,7 @@ const JournalPage = {
         const classGroup = await classFormGroupHtml(entry ? entry.class_id : undefined);
         const jobGroup = await jobFormGroupHtml(entry ? entry.job_id : null);
         await CostCodes.load();
+        await CostTypes.load();
         await Nonprofit.loadFunds();
         JournalPage._accounts = accounts;
         JournalPage._lineCount = 2;
@@ -213,12 +214,12 @@ const JournalPage = {
                 </div>
                 <h3 style="margin:12px 0 8px; font-size:14px;">Lines</h3>
                 <table class="line-items-table">
-                    <thead><tr><th scope="col">Account</th><th scope="col">Description</th>${CostCodes.headHtml()}${Nonprofit.headHtml()}<th scope="col" class="col-rate">Debit</th><th scope="col" class="col-rate">Credit</th><th scope="col" class="col-actions"></th></tr></thead>
+                    <thead><tr><th scope="col">Account</th><th scope="col">Description</th>${CostCodes.headHtml()}${CostTypes.headHtml()}${Nonprofit.headHtml()}<th scope="col" class="col-rate">Debit</th><th scope="col" class="col-rate">Credit</th><th scope="col" class="col-actions"></th></tr></thead>
                     <tbody id="je-lines">
                         <tr data-jeline="0">
                             <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                             <td><input class="je-desc"></td>
-                            ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
+                            ${CostCodes.cellHtml('je-cost-code')}${CostTypes.cellHtml('je-cost-type')}${Nonprofit.cellHtml('je-function')}
                             <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
@@ -226,7 +227,7 @@ const JournalPage = {
                         <tr data-jeline="1">
                             <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                             <td><input class="je-desc"></td>
-                            ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
+                            ${CostCodes.cellHtml('je-cost-code')}${CostTypes.cellHtml('je-cost-type')}${Nonprofit.cellHtml('je-function')}
                             <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
@@ -274,6 +275,8 @@ const JournalPage = {
             row.querySelector('.je-credit').value = Number(l.credit || 0).toFixed(2);
             const cc = row.querySelector('.je-cost-code');
             if (cc && l.cost_code_id != null) cc.value = l.cost_code_id;
+            const ct = row.querySelector('.je-cost-type');
+            if (ct && l.cost_type != null) ct.value = l.cost_type;
             const fund = row.querySelector('.je-function-fund');
             if (fund && l.class_id != null) fund.value = l.class_id;
             const fn = row.querySelector('.je-function');
@@ -296,7 +299,7 @@ const JournalPage = {
             <tr data-jeline="${idx}">
                 <td><select class="je-account"><option value="">--</option>${acctOpts}</select></td>
                 <td><input class="je-desc"></td>
-                            ${CostCodes.cellHtml('je-cost-code')}${Nonprofit.cellHtml('je-function')}
+                            ${CostCodes.cellHtml('je-cost-code')}${CostTypes.cellHtml('je-cost-type')}${Nonprofit.cellHtml('je-function')}
                 <td><input class="je-debit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                 <td><input class="je-credit money" type="number" step="0.01" value="0" oninput="JournalPage.recalc()"></td>
                 <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="this.closest('tr').remove();JournalPage.recalc()">X</button></td>
@@ -372,6 +375,7 @@ const JournalPage = {
                 // line's class on every edit (#388 review). Left out, the
                 // server keeps what the line has.
                 if (row.querySelector('.je-cost-code')) line.cost_code_id = CostCodes.fromRow(row, 'je-cost-code');
+                if (row.querySelector('.je-cost-type')) line.cost_type = CostTypes.fromRow(row, 'je-cost-type');
                 if (row.querySelector('.je-function-fund')) line.class_id = Nonprofit.fundFromRow(row, 'je-function');
                 lines.push(line);
             }

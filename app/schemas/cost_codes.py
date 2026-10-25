@@ -36,6 +36,8 @@ class CostCodeCreate(StrictModel):
     code: str
     name: str
     cost_type: str = "other"
+    # Derived from the (normalized) code when omitted; a caller may pin it.
+    level: Optional[str] = None
     account_id: Optional[int] = None
     parent_id: Optional[int] = None
     notes: Optional[str] = None
@@ -49,6 +51,7 @@ class CostCodeUpdate(StrictModel):
     code: Optional[str] = None
     name: Optional[str] = None
     cost_type: Optional[str] = None
+    level: Optional[str] = None
     account_id: Optional[int] = None
     parent_id: Optional[int] = None
     notes: Optional[str] = None
@@ -73,6 +76,7 @@ class CostCodeResponse(BaseModel):
     name: str
     label: str = ""
     cost_type: str
+    level: Optional[str] = None
     account_id: Optional[int] = None
     account_name: Optional[str] = None
     parent_id: Optional[int] = None

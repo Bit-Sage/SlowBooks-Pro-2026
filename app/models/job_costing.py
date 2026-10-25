@@ -180,8 +180,9 @@ class JobBudget(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
-    # Either a cost code, or a cost type (whole-type budget), or neither
-    # (whole-job budget). Never both.
+    # A cost code, a cost type (whole-type budget), both (a coded line
+    # budgeted at a specific type), or neither (whole-job budget). The unique
+    # constraint keys on (job, code, type), so both together is allowed.
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
     cost_type = Column(String(20), nullable=True)
     amount = Column(Numeric(15, 2), nullable=False, default=0)

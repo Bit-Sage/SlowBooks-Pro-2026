@@ -368,7 +368,7 @@ const ReportsPage = {
     // place of the P&L and Balance Sheet.
     _cards() {
         const card = ReportsPage._pick;
-        return [
+        const cards = [
             ...(Terms.isNonprofit() ? ReportsPage._nonprofitCards() : [card('profit-loss', T('Profit & Loss'), Terms.text('Income vs expenses for a period'))]),
             card('profit-loss-detail', `${T('Profit & Loss')} Detail`, Terms.text('Every transaction under each income and expense account, totals that match the P&L')),
             card('profit-loss-by-class', T('P&L by Class'), Terms.text('Income vs expenses split by class')),
@@ -399,6 +399,17 @@ const ReportsPage = {
             card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
             card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
         ];
+        // Construction leads with the contractor reports (the job views the
+        // trade lives in), pulled to the front in their issue order; the
+        // rest keep their fixed order. Committed Costs and Job Cost by
+        // Vendor aren't standalone cards yet, so only the three that exist
+        // lead. Mirrors the nonprofit swap above.
+        if (Terms.isConstruction()) {
+            const lead = ['job-profitability', 'job-budget-vs-actual', 'profit-loss-by-job'];
+            const front = lead.map(v => cards.find(c => c.view === v)).filter(Boolean);
+            return [...front, ...cards.filter(c => !lead.includes(c.view))];
+        }
+        return cards;
     },
 
     // A card and its view, for arranging; the html is ReportsPage._card's.

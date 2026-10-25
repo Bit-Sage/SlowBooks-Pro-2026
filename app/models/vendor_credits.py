@@ -117,6 +117,8 @@ class VendorCreditLine(Base):
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # Per-line cost type; NULL falls back to the cost code's default.
+    cost_type = Column(String(20), nullable=True)
     line_order = Column(Integer, default=0)
 
     vendor_credit = relationship("VendorCredit", back_populates="lines")
