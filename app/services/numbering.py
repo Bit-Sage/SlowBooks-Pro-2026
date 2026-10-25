@@ -158,6 +158,17 @@ def next_po_number(db: Session) -> str:
     )
 
 
+def next_change_order_number(db: Session, kind: str) -> str:
+    """The next change-order number for its kind (#554): PCO-0001 for a
+    potential change, CO-0001 for an owner change order, SCO-0001 for a sub.
+    Each kind shares one unique `number` column, so the candidate is still
+    collision-checked across all three series."""
+    from app.models.change_orders import ChangeOrder
+
+    prefix = {"pco": "PCO-", "owner": "CO-", "sub": "SCO-"}.get(kind, "CO-")
+    return next_document_number(db, ChangeOrder.number, prefix=prefix, first=1, pad=4)
+
+
 def next_estimate_number(db: Session) -> str:
     """Estimates seed from the user-configurable settings counter."""
     settings = get_all_settings(db)

@@ -299,6 +299,17 @@ def generate_estimate_pdf(estimate, company_settings: dict) -> bytes:
     return render_pdf(html_str)
 
 
+def render_change_order_html(co, totals: dict, company_settings: dict) -> str:
+    """The owner change order / PCO document (#554): title, description, the
+    priced lines with their sell amounts grouped per cost type, the markup as
+    one line, and the total. Reuses the estimate PDF's face."""
+    return _render("change_order_pdf.html", company_settings, co=co, totals=totals)
+
+
+def generate_change_order_pdf(co, totals: dict, company_settings: dict) -> bytes:
+    return render_pdf(render_change_order_html(co, totals, company_settings))
+
+
 def generate_statement_pdf(
     customer, activity: dict, company_settings: dict, as_of_date=None
 ) -> bytes:

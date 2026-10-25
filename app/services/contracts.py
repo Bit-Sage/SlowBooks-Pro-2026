@@ -273,8 +273,15 @@ def contract_summary(
     cap = job.cap_amount
     cap_remaining = _q(cap - (cost + fee)) if cap is not None else None
 
+    from app.services.change_orders import (
+        allowances_summary,
+        change_orders_summary,
+        contingency_used as co_contingency_used,
+    )
+
     contingency = job.contingency_amount
-    contingency_used = Decimal("0")  # #554 fills this
+    # Σ sell_total of approved contingency-funded owner change orders (#554).
+    contingency_used = co_contingency_used(db, job)
     contingency_remaining = (
         _q(contingency - contingency_used) if contingency is not None else None
     )
@@ -305,8 +312,13 @@ def contract_summary(
         "retainage_pct": f(job.retainage_pct),
         "contract_date": job.contract_date,
         "contract_estimate_id": job.contract_estimate_id,
+        "co_markup_pct": f(job.co_markup_pct),
         "sov_total": float(sov_total),
         "sov_balance": float(sov_balance),
         "billed_to_date": float(billed),
         "billed_pct": billed_pct,
+        # Change orders (#554): the allowance draw-down per line and the CO
+        # counts/total the Contract tab's Changes tile reads.
+        "allowances": allowances_summary(db, job),
+        "change_orders": change_orders_summary(db, job),
     }

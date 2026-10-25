@@ -9,6 +9,10 @@ from app.models.banking import BankAccount, BankTransaction, Reconciliation
 from app.models.settings import Settings
 from app.models.classes import TxnClass  # noqa: F401 — registers the table
 from app.models.jobs import Job, SovLine  # noqa: F401 — registers the tables
+from app.models.change_orders import (  # noqa: F401 — registers the tables
+    ChangeOrder,
+    ChangeOrderLine,
+)
 from app.models.preferences import UserPreference  # noqa: F401 — registers the table
 from app.models.cost_codes import CostCode  # noqa: F401 — registers the table
 from app.models.job_costing import (  # noqa: F401 — registers the tables

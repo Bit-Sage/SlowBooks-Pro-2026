@@ -34,6 +34,49 @@ from app.services.purchase_posting import (
 router = APIRouter(prefix="/api/purchase-orders", tags=["purchase_orders"])
 
 
+def append_commitment_lines(db: Session, po: PurchaseOrder, co_lines) -> None:
+    """Append lines to a commitment without touching the ones it already has
+    (#554 sub change orders). Unlike update_po, which replaces every line,
+    this is append-only: each new PurchaseOrderLine starts unbilled, the PO's
+    subtotal/tax/total are recomputed from all its lines, and a closed
+    commitment reopens to partial because there is more to bill now.
+
+    `co_lines` are ChangeOrderLine rows; a line's unit cost becomes the PO
+    line's rate and its cost becomes the amount (a commitment moves by cost).
+    """
+    start = len(po.lines)
+    for i, line in enumerate(co_lines):
+        db.add(
+            PurchaseOrderLine(
+                purchase_order_id=po.id,
+                description=line.description,
+                quantity=line.quantity,
+                rate=line.unit_cost,
+                amount=_q(Decimal(str(line.amount or 0))),
+                billed_amount=Decimal("0"),
+                job_id=po.job_id,
+                cost_code_id=line.cost_code_id,
+                cost_type=line.cost_type,
+                line_order=start + i,
+            )
+        )
+    db.flush()
+    db.refresh(po)
+    _retotal_commitment(po)
+    if po.status == POStatus.CLOSED:
+        po.status = POStatus.PARTIAL
+    db.flush()
+
+
+def _retotal_commitment(po: PurchaseOrder) -> None:
+    """Recompute a commitment's subtotal/tax/total from its current lines."""
+    subtotal = _q(sum((Decimal(str(ln.amount or 0)) for ln in po.lines), Decimal("0")))
+    tax_rate = Decimal(str(po.tax_rate or 0))
+    po.subtotal = subtotal
+    po.tax_amount = _q(subtotal * tax_rate)
+    po.total = _q(subtotal + po.tax_amount)
+
+
 @router.get("", response_model=list[POResponse])
 def list_pos(
     vendor_id: int = None,

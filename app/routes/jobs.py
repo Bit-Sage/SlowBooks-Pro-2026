@@ -540,9 +540,25 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Trade package not found")
         if line.cost_code_id and not db.get(CostCode, line.cost_code_id):
             raise HTTPException(status_code=404, detail="Cost code not found")
-    db.query(SovLine).filter(SovLine.job_id == job.id).delete()
+    # A change_order-kind line is owned by its change order (#554), not the
+    # grid: it is never sent by the client and is preserved across a save.
+    if any(line.kind == "change_order" for line in data.lines):
+        raise HTTPException(
+            status_code=422,
+            detail="A change-order line's value is owned by its change order.",
+        )
+    kept = (
+        db.query(SovLine)
+        .filter(SovLine.job_id == job.id, SovLine.kind == "change_order")
+        .all()
+    )
+    db.query(SovLine).filter(
+        SovLine.job_id == job.id, SovLine.kind != "change_order"
+    ).delete()
     db.flush()
-    for n, line in enumerate(data.lines, start=1):
+    n = 0
+    for line in data.lines:
+        n += 1
         item_no = (line.item_no or "").strip() or f"{n:02d}"
         db.add(
             SovLine(
@@ -556,6 +572,10 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
                 scheduled_value=_q(line.scheduled_value),
             )
         )
+    # Change-order lines keep their value and FK, renumbered after the rest.
+    for co_line in kept:
+        n += 1
+        co_line.line_no = n
     db.commit()
     db.refresh(job)
     return ContractSummary(**contract_summary(db, job))

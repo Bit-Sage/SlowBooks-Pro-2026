@@ -137,6 +137,7 @@ class ContractTerms(StrictModel):
     cap_amount: Optional[Money] = None
     contingency_amount: Optional[Money] = None
     retainage_pct: Optional[Decimal] = None
+    co_markup_pct: Optional[Decimal] = None
     contract_date: Optional[dt_date] = None
 
     _type = field_validator("contract_type")(_check_contract_type)
@@ -214,12 +215,16 @@ class ContractSummary(BaseModel):
     contingency_used: float = 0.0
     contingency_remaining: Optional[float] = None
     retainage_pct: Optional[float] = None
+    co_markup_pct: Optional[float] = None
     contract_date: Optional[dt_date] = None
     contract_estimate_id: Optional[int] = None
     sov_total: float = 0.0
     sov_balance: float = 0.0
     billed_to_date: float = 0.0
     billed_pct: Optional[float] = None
+    # Change orders (#554): allowance draw-down per line and the CO roll-up.
+    allowances: List[dict] = []
+    change_orders: dict = {}
 
 
 class ContractResponse(BaseModel):
