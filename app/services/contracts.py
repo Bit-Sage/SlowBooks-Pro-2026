@@ -11,7 +11,8 @@
 # (tax is added on each invoice, #555). The math here is pure where it can be
 # (sov_from_estimate, the summary arithmetic); build_sov is the one DB writer.
 # Later steps plug in here: #553 buyout/commitments, #554 change orders (fills
-# "changes" and "contingency_used"), #555 progress billing, #556 WIP reports.
+# "changes" and "contingency_used"), #555 progress billing. The #556 WIP
+# schedule reads contract_summary for each job's contract and billing.
 # ============================================================================
 
 from decimal import Decimal

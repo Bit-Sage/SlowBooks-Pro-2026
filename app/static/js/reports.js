@@ -41,6 +41,11 @@ const ReportsPage = {
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
+        'wip-schedule':         { label: 'WIP Schedule',       open: (p) => ReportsPage.wipSchedule(p), asOf: true },
+        'cost-to-complete':     { label: 'Cost to Complete',   open: (p) => ReportsPage.costToComplete(p), asOf: true },
+        'change-order-log':     { label: 'Change Order Log',   open: (p) => ReportsPage.changeOrderLog(p), asOf: true },
+        'buyout':               { label: 'Buyout Report',      open: (p) => ReportsPage.buyoutReport(p), asOf: true },
+        'job-cost-by-vendor':   { label: () => `${T('Job')} Cost by Vendor`, open: (p) => ReportsPage.jobCostByVendor(p) },
         'budget-vs-actual':     { label: 'Budget vs Actual',   open: (p) => { if (/^\d{4}$/.test(p.year || '')) BudgetsPage._year = parseInt(p.year, 10); return BudgetsPage.showVariance(p); } },
         'financial-statements': { label: 'Financial Statements Pack', open: (p) => ReportsPage.financialStatementsPdf(p) },
         'fixed-asset-reconciliation': { label: 'Fixed Asset Reconciliation', open: () => ReportsPage.fixedAssetReconciliation() },
@@ -399,13 +404,21 @@ const ReportsPage = {
             card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
             card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
         ];
-        // Construction leads with the contractor reports (the job views the
-        // trade lives in), pulled to the front in their issue order; the
-        // rest keep their fixed order. Committed Costs and Job Cost by
-        // Vendor aren't standalone cards yet, so only the three that exist
-        // lead. Mirrors the nonprofit swap above.
+        // Construction leads with a Construction group: the three contractor
+        // reports that always existed, then the five job reports added in #556.
+        // The job reports are construction-only cards (a Business or Nonprofit
+        // company never sees them); the rest keep their fixed order. Mirrors
+        // the nonprofit swap above.
         if (Terms.isConstruction()) {
-            const lead = ['job-profitability', 'job-budget-vs-actual', 'profit-loss-by-job'];
+            cards.push(
+                card('wip-schedule', 'WIP Schedule', Terms.text('Work in progress: revised contract, cost to date, percent complete, earned vs billed and over/under billing per job')),
+                card('cost-to-complete', 'Cost to Complete', Terms.text('Per job and cost code: budget, committed, actual, cost to complete, projected final and variance')),
+                card('change-order-log', 'Change Order Log', Terms.text('Every change order per job — kind, status, funding, cost, markup, sell — with the running approved total')),
+                card('buyout', 'Buyout Report', Terms.text('Each job\'s trade packages: bid vs bought, variance, committed-remaining and billed to date')),
+                card('job-cost-by-vendor', `${T('Job')} Cost by Vendor`, Terms.text('Posted job cost grouped by vendor, with bills, paid to date, retainage held and open A/P')),
+            );
+            const lead = ['job-profitability', 'job-budget-vs-actual', 'profit-loss-by-job',
+                'wip-schedule', 'cost-to-complete', 'change-order-log', 'buyout', 'job-cost-by-vendor'];
             const front = lead.map(v => cards.find(c => c.view === v)).filter(Boolean);
             return [...front, ...cards.filter(c => !lead.includes(c.view))];
         }
@@ -3649,7 +3662,8 @@ ReportsPage.jobProfitability = async function (prefill) {
             <td class="amount" style="font-weight:700;">${formatCurrency(j.net_income)}</td>
             <td class="amount">${pct(j.margin_pct)}</td>
         </tr>`).join('');
-        return `${filtered}
+        const exportQs = `start_date=${data.start_date}&end_date=${data.end_date}${filter}`;
+        return `${ReportsPage._exportButtons('job-profitability', exportQs)}${filtered}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}${params.customer_id ? '' : ` · ${Terms.text('"No job" holds untagged activity')} <em>and</em> ${Terms.text('the applied-cost credits behind Job Cost Entries (labor, equipment, overhead applied to jobs), so its costs can be negative and the totals still match the P&L')}`}
             </div>
@@ -3689,7 +3703,7 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
             <td class="amount">${pct(j.pct_used)}</td>
             <td class="amount">${formatCurrency(j.act_revenue)}</td>
         </tr>`; }).join('');
-        return `
+        return `${ReportsPage._exportButtons('job-budget-vs-actual', `start_date=${range.start}&end_date=${range.end}`)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 Actuals for ${escapeHtml(range.start)} — ${escapeHtml(range.end)}; budgets and committed cost are job-to-date. Click a job to drill down.
             </div>
@@ -3705,6 +3719,166 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
                 </tr></tfoot>
             </table></div>`;
     }, "Dates", false, { view: 'job-budget-vs-actual', prefill });
+};
+
+// ---------------------------------------------------------------------------
+// Construction job reports (#556) — the WIP schedule with over/under billing,
+// cost-to-complete, the change-order log, the buyout report and job cost by
+// vendor. Each is a plain grid with a totals row, rows that open the job, and
+// Save PDF / Save CSV on the shared renderer. Cards show in construction mode
+// only.
+// ---------------------------------------------------------------------------
+ReportsPage._money = (v) => (v === null || v === undefined) ? '' : formatCurrency(v);
+ReportsPage._pctCell = (v) => (v === null || v === undefined) ? '' : `${v.toFixed(1)}%`;
+ReportsPage._jobRowOpen = (id) => id ? `style="cursor:pointer" onclick="App.navigate('#/jobs/${id}')"` : '';
+
+ReportsPage.wipSchedule = async function (prefill) {
+    await ReportsPage.openPeriodModal('WIP Schedule', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/wip-schedule?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money, pct = ReportsPage._pctCell;
+        const rows = data.rows.map(r => `<tr ${ReportsPage._jobRowOpen(r.job_id)}>
+            <td>${escapeHtml(r.customer_name || '')}</td>
+            <td>${escapeHtml(r.job_name)}</td>
+            <td class="amount">${m(r.revised_contract)}</td>
+            <td class="amount">${m(r.estimated_total_cost)}</td>
+            <td class="amount">${m(r.cost_to_date)}</td>
+            <td class="amount">${pct(r.percent_complete)}</td>
+            <td class="amount">${m(r.earned_revenue)}</td>
+            <td class="amount">${m(r.billed_to_date)}</td>
+            <td class="amount">${m(r.over_billing)}</td>
+            <td class="amount">${m(r.under_billing)}</td>
+            <td class="amount">${m(r.cost_to_complete)}</td>
+        </tr>`).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('wip-schedule', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
+                As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Billings over earned are a liability; under earned are an asset. This report posts nothing.
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">${T('Customer')}</th><th scope="col">${T('Job')}</th>
+                <th scope="col" class="amount">Revised</th><th scope="col" class="amount">Est. cost</th><th scope="col" class="amount">Cost to date</th>
+                <th scope="col" class="amount">% complete</th><th scope="col" class="amount">Earned</th><th scope="col" class="amount">Billed</th>
+                <th scope="col" class="amount">Over billed</th><th scope="col" class="amount">Under billed</th><th scope="col" class="amount">To complete</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="11">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);">
+                    <td colspan="2">Total</td>
+                    <td class="amount">${m(t.revised_contract)}</td><td class="amount">${m(t.estimated_total_cost)}</td><td class="amount">${m(t.cost_to_date)}</td>
+                    <td></td><td class="amount">${m(t.earned_revenue)}</td><td class="amount">${m(t.billed_to_date)}</td>
+                    <td class="amount">${m(t.over_billing)}</td><td class="amount">${m(t.under_billing)}</td><td class="amount">${m(t.cost_to_complete)}</td>
+                </tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'wip-schedule', prefill, spotlight: false });
+};
+
+ReportsPage.costToComplete = async function (prefill) {
+    await ReportsPage.openPeriodModal('Cost to Complete', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/cost-to-complete?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money, pct = ReportsPage._pctCell;
+        const figRow = (label, f, depth, style) => `<tr style="${style || ''}">
+            <td style="padding-left:${6 + 14 * depth}px">${escapeHtml(label)}</td>
+            <td class="amount">${m(f.budget_revised)}</td><td class="amount">${m(f.committed)}</td><td class="amount">${m(f.actual)}</td>
+            <td class="amount">${m(f.cost_to_complete)}</td><td class="amount">${m(f.projected_final)}</td><td class="amount">${m(f.variance)}</td>
+            <td class="amount">${pct(f.pct_complete)}</td></tr>`;
+        const walk = (node, depth) => figRow(node.label, node.figures, depth) + (node.children || []).map(c => walk(c, depth + 1)).join('');
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="8">${escapeHtml(job.job_name)}</td></tr>`;
+            const tree = job.tree.map(n => walk(n, 1)).join('');
+            const uncoded = job.uncoded ? figRow('Uncoded', job.uncoded, 1) : '';
+            const total = figRow(`Total ${job.job_name}`, job.totals, 0, 'font-weight:600;');
+            return head + tree + uncoded + total;
+        }).join('');
+        return `${ReportsPage._exportButtons('cost-to-complete', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Cost to complete is the remaining budget plus open commitments; projected final is actual + cost to complete.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Cost code</th><th scope="col" class="amount">Budget</th><th scope="col" class="amount">Committed</th>
+                <th scope="col" class="amount">Actual</th><th scope="col" class="amount">To complete</th><th scope="col" class="amount">Projected final</th>
+                <th scope="col" class="amount">Variance</th><th scope="col" class="amount">% complete</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="8">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);">
+                    <td>Grand total</td><td class="amount">${m(data.totals.budget_revised)}</td><td class="amount">${m(data.totals.committed)}</td>
+                    <td class="amount">${m(data.totals.actual)}</td><td class="amount">${m(data.totals.cost_to_complete)}</td><td class="amount">${m(data.totals.projected_final)}</td>
+                    <td class="amount">${m(data.totals.variance)}</td><td></td></tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'cost-to-complete', prefill, spotlight: false });
+};
+
+ReportsPage.changeOrderLog = async function (prefill) {
+    await ReportsPage.openPeriodModal('Change Order Log', ReportsPage.defaultPeriod(), async () => {
+        const data = await API.get('/reports/change-order-log');
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const c = job.contract;
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;">
+                <td colspan="6">${escapeHtml(job.job_name)}</td>
+                <td class="amount" colspan="2">contract ${m(c.original)} + ${m(c.approved_changes)} = ${m(c.revised)}</td></tr>`;
+            const cos = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.number)}</td><td>${escapeHtml(r.kind)}</td><td>${escapeHtml(r.status)}</td>
+                <td>${escapeHtml(r.title || '')}</td><td>${escapeHtml(r.funding || '')}</td>
+                <td class="amount">${m(r.cost)}</td><td class="amount">${m(r.sell)}</td><td class="amount">${m(r.running_approved)}</td></tr>`).join('');
+            return head + (cos || '<tr><td colspan="8" style="color:var(--gray-400);">No change orders</td></tr>');
+        }).join('');
+        const counts = Object.entries(data.totals.counts).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none';
+        return `${ReportsPage._exportButtons('change-order-log', '')}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">Pending total ${m(data.totals.pending_total)} · ${escapeHtml(counts)}</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Number</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Title</th>
+                <th scope="col">Funding</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Sell</th><th scope="col" class="amount">Approved to date</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="8">No jobs</td></tr>'}</tbody>
+            </table></div>`;
+    }, "As Of", true, { view: 'change-order-log', prefill, spotlight: false });
+};
+
+ReportsPage.buyoutReport = async function (prefill) {
+    await ReportsPage.openPeriodModal('Buyout Report', ReportsPage.defaultPeriod(), async () => {
+        const data = await API.get('/reports/buyout');
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="6">${escapeHtml(job.job_name)}</td></tr>`;
+            const pkgs = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.package_name)}</td><td class="amount">${m(r.bid_cost)}</td><td class="amount">${m(r.bought)}</td>
+                <td class="amount">${m(r.variance)}</td><td class="amount">${m(r.committed_remaining)}</td><td class="amount">${m(r.billed_to_date)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td>Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.bid_cost)}</td><td class="amount">${m(t.bought)}</td>
+                <td class="amount">${m(t.variance)}</td><td class="amount">${m(t.committed_remaining)}</td><td class="amount">${m(t.billed_to_date)}</td></tr>`;
+            return head + pkgs + total;
+        }).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('buyout', '')}
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Package</th><th scope="col" class="amount">Bid</th><th scope="col" class="amount">Bought</th>
+                <th scope="col" class="amount">Variance</th><th scope="col" class="amount">Remaining</th><th scope="col" class="amount">Billed</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="6">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td>Grand total</td><td class="amount">${m(t.bid_cost)}</td><td class="amount">${m(t.bought)}</td>
+                <td class="amount">${m(t.variance)}</td><td class="amount">${m(t.committed_remaining)}</td><td class="amount">${m(t.billed_to_date)}</td></tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'buyout', prefill, spotlight: false });
+};
+
+ReportsPage.jobCostByVendor = async function (prefill) {
+    await ReportsPage.openPeriodModal(`${T('Job')} Cost by Vendor`, ReportsPage.defaultPeriod(), async (_period, range) => {
+        const data = await API.get(`/reports/job-cost-by-vendor?start_date=${range.start}&end_date=${range.end}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="6">${escapeHtml(job.job_name)}</td></tr>`;
+            const vendors = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.vendor_name)}</td><td class="amount">${m(r.cost)}</td><td class="amount">${r.bills_count}</td>
+                <td class="amount">${m(r.paid_to_date)}</td><td class="amount">${m(r.retainage_outstanding)}</td><td class="amount">${m(r.open_ap)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td>Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.cost)}</td><td></td>
+                <td class="amount">${m(t.paid_to_date)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.open_ap)}</td></tr>`;
+            return head + vendors + total;
+        }).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('job-cost-by-vendor', `start_date=${range.start}&end_date=${range.end}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">Cost is for ${escapeHtml(range.start)} — ${escapeHtml(range.end)}; bills, paid, retainage and open A/P are job-to-date.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Vendor</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Bills</th>
+                <th scope="col" class="amount">Paid</th><th scope="col" class="amount">Retainage held</th><th scope="col" class="amount">Open A/P</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="6">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td>Grand total</td><td class="amount">${m(t.cost)}</td><td></td>
+                <td class="amount">${m(t.paid_to_date)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.open_ap)}</td></tr></tfoot>
+            </table></div>`;
+    }, "Dates", false, { view: 'job-cost-by-vendor', prefill, spotlight: false });
 };
 
 

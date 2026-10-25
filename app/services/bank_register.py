@@ -159,6 +159,10 @@ _LINKS = {
     "manual_void": "/#/journal/{id}",
     "qbo_ledger_void": "/#/journal/{id}",
     "qbo_journal_void": "/#/journal/{id}",
+    # An owner deposit (#555) lives on the job's Pay apps tab, not a page of
+    # its own, so its posting and the void link to the journal entry.
+    "job_deposit": "/#/journal/{txn}",
+    "job_deposit_void": "/#/journal/{txn}",
     # A reversal of a posting that is itself a side effect (a payment's
     # exchange adjustment, the local cost of goods a QBO ledger import
     # takes back): the posting it reversed, as a journal entry.

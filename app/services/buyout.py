@@ -5,8 +5,8 @@
 # its schedule of values. This builds the job's buyout table: what each trade
 # package was bid at (from the accepted estimate), what has been bought (the
 # commitments on the job), and the variance, with committed-remaining and
-# billed-to-date alongside. #556 turns this into the standalone buyout report
-# and job-cost-by-vendor; this endpoint is the seam.
+# billed-to-date alongside. The #556 buyout report foots job_buyout across
+# jobs, and job cost by vendor reads the posted job cost beside it.
 # ============================================================================
 
 from decimal import Decimal
