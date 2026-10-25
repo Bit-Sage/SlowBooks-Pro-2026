@@ -43,11 +43,34 @@ def _bid_estimate(db: Session, job: Job):
     )
 
 
-def job_buyout(db: Session, job: Job) -> dict:
+def _billed_as_of(db: Session, po: PurchaseOrder, as_of) -> Decimal:
+    """What has been billed against a commitment as of a date: the pre-tax
+    subtotal of its non-void bills dated on or before `as_of`. With no date the
+    caller uses the lines' cumulative billed_amount instead."""
+    from app.models.bills import Bill, BillStatus
+
+    bills = (
+        db.query(Bill)
+        .filter(
+            Bill.po_id == po.id,
+            Bill.status != BillStatus.VOID,
+            Bill.date <= as_of,
+        )
+        .all()
+    )
+    return _q(sum((Decimal(str(b.subtotal or 0)) for b in bills), Decimal("0")))
+
+
+def job_buyout(db: Session, job: Job, as_of=None) -> dict:
     """One row per trade package: the bid cost, what has been bought, the
     variance, committed-remaining, billed-to-date and the commitments behind
     it. An 'Unassigned' row gathers commitments with no package (and any bid
-    cost with no package); a totals row foots the table."""
+    cost with no package); a totals row foots the table.
+
+    With `as_of` (the buyout report, #556) only commitments dated that day or
+    earlier count, and billed-to-date is the non-void bills dated by then; with
+    the default None every non-draft commitment counts and billing is the
+    lines' cumulative billed_amount."""
     # Bid cost per package from the accepted estimate.
     bid_by_pkg: dict = {}  # package_id (or None) -> {"name", "cost"}
     est = _bid_estimate(db, job)
@@ -58,16 +81,14 @@ def job_buyout(db: Session, job: Job) -> dict:
                 "cost": _q(row["cost"]),
             }
 
-    # Commitments on the job (header job), non-draft.
-    commitments = (
-        db.query(PurchaseOrder)
-        .filter(
-            PurchaseOrder.job_id == job.id,
-            PurchaseOrder.status.in_(_NON_DRAFT),
-        )
-        .order_by(PurchaseOrder.po_number)
-        .all()
+    # Commitments on the job (header job), non-draft; dated by as_of when given.
+    q = db.query(PurchaseOrder).filter(
+        PurchaseOrder.job_id == job.id,
+        PurchaseOrder.status.in_(_NON_DRAFT),
     )
+    if as_of is not None:
+        q = q.filter(PurchaseOrder.date <= as_of)
+    commitments = q.order_by(PurchaseOrder.po_number).all()
 
     # Accumulate per package.
     packages: dict = {}  # package_id (or None) -> row dict
@@ -103,21 +124,29 @@ def job_buyout(db: Session, job: Job) -> dict:
         # Bought is the pre-tax subtotal, so it compares like-for-like with the
         # bid cost; tax is payable in full and is not a buyout figure.
         subtotal = _q(po.subtotal or 0)
-        billed = _q(
-            sum((Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0"))
-        )
         remaining = Decimal("0")
-        if po.status in _OPEN:
-            remaining = _q(
+        if as_of is None:
+            billed = _q(
                 sum(
-                    (
-                        Decimal(str(ln.amount or 0))
-                        - Decimal(str(ln.billed_amount or 0))
-                        for ln in po.lines
-                    ),
+                    (Decimal(str(ln.billed_amount or 0)) for ln in po.lines),
                     Decimal("0"),
                 )
             )
+            if po.status in _OPEN:
+                remaining = _q(
+                    sum(
+                        (
+                            Decimal(str(ln.amount or 0))
+                            - Decimal(str(ln.billed_amount or 0))
+                            for ln in po.lines
+                        ),
+                        Decimal("0"),
+                    )
+                )
+        else:
+            billed = _billed_as_of(db, po, as_of)
+            if po.status in _OPEN:
+                remaining = _q(subtotal - billed)
         row["bought"] += subtotal
         row["committed_remaining"] += remaining
         row["billed_to_date"] += billed

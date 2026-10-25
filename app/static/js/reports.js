@@ -3736,35 +3736,41 @@ ReportsPage.wipSchedule = async function (prefill) {
     await ReportsPage.openPeriodModal('WIP Schedule', ReportsPage.defaultPeriod(), async (_period, params) => {
         const data = await API.get(`/reports/wip-schedule?as_of=${params.as_of_date}`);
         const m = ReportsPage._money, pct = ReportsPage._pctCell;
+        // billed_basis: "apps" when billing comes from approved pay
+        // applications, "posted" when it falls back to posted revenue.
+        const basis = (b) => b === 'pay_applications' ? 'apps' : (b === 'posted_revenue' ? 'posted' : '');
         const rows = data.rows.map(r => `<tr ${ReportsPage._jobRowOpen(r.job_id)}>
             <td>${escapeHtml(r.customer_name || '')}</td>
             <td>${escapeHtml(r.job_name)}</td>
             <td class="amount">${m(r.revised_contract)}</td>
             <td class="amount">${m(r.estimated_total_cost)}</td>
+            <td class="amount">${pct(r.margin_pct)}</td>
             <td class="amount">${m(r.cost_to_date)}</td>
             <td class="amount">${pct(r.percent_complete)}</td>
             <td class="amount">${m(r.earned_revenue)}</td>
             <td class="amount">${m(r.billed_to_date)}</td>
+            <td style="font-size:10px; color:var(--gray-500);">${escapeHtml(basis(r.billed_basis))}</td>
             <td class="amount">${m(r.over_billing)}</td>
             <td class="amount">${m(r.under_billing)}</td>
+            <td class="amount">${m(r.retainage_outstanding)}</td>
             <td class="amount">${m(r.cost_to_complete)}</td>
         </tr>`).join('');
         const t = data.totals;
         return `${ReportsPage._exportButtons('wip-schedule', `as_of=${params.as_of_date}`)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Billings over earned are a liability; under earned are an asset. This report posts nothing.
+                As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Billings over earned are a liability; under earned are an asset. Basis shows whether billing is from approved pay applications or posted revenue. This report posts nothing.
             </div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">${T('Customer')}</th><th scope="col">${T('Job')}</th>
-                <th scope="col" class="amount">Revised</th><th scope="col" class="amount">Est. cost</th><th scope="col" class="amount">Cost to date</th>
-                <th scope="col" class="amount">% complete</th><th scope="col" class="amount">Earned</th><th scope="col" class="amount">Billed</th>
-                <th scope="col" class="amount">Over billed</th><th scope="col" class="amount">Under billed</th><th scope="col" class="amount">To complete</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="11">No jobs</td></tr>'}</tbody>
+                <th scope="col" class="amount">Revised</th><th scope="col" class="amount">Est. cost</th><th scope="col" class="amount">Margin</th><th scope="col" class="amount">Cost to date</th>
+                <th scope="col" class="amount">% complete</th><th scope="col" class="amount">Earned</th><th scope="col" class="amount">Billed</th><th scope="col">Basis</th>
+                <th scope="col" class="amount">Over billed</th><th scope="col" class="amount">Under billed</th><th scope="col" class="amount">Retainage</th><th scope="col" class="amount">To complete</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="14">No jobs</td></tr>'}</tbody>
                 <tfoot><tr style="font-weight:700; background:var(--gray-50);">
                     <td colspan="2">Total</td>
-                    <td class="amount">${m(t.revised_contract)}</td><td class="amount">${m(t.estimated_total_cost)}</td><td class="amount">${m(t.cost_to_date)}</td>
-                    <td></td><td class="amount">${m(t.earned_revenue)}</td><td class="amount">${m(t.billed_to_date)}</td>
-                    <td class="amount">${m(t.over_billing)}</td><td class="amount">${m(t.under_billing)}</td><td class="amount">${m(t.cost_to_complete)}</td>
+                    <td class="amount">${m(t.revised_contract)}</td><td class="amount">${m(t.estimated_total_cost)}</td><td class="amount">${pct(t.margin_pct)}</td><td class="amount">${m(t.cost_to_date)}</td>
+                    <td></td><td class="amount">${m(t.earned_revenue)}</td><td class="amount">${m(t.billed_to_date)}</td><td></td>
+                    <td class="amount">${m(t.over_billing)}</td><td class="amount">${m(t.under_billing)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.cost_to_complete)}</td>
                 </tr></tfoot>
             </table></div>`;
     }, "As Of", true, { view: 'wip-schedule', prefill, spotlight: false });
@@ -3803,8 +3809,8 @@ ReportsPage.costToComplete = async function (prefill) {
 };
 
 ReportsPage.changeOrderLog = async function (prefill) {
-    await ReportsPage.openPeriodModal('Change Order Log', ReportsPage.defaultPeriod(), async () => {
-        const data = await API.get('/reports/change-order-log');
+    await ReportsPage.openPeriodModal('Change Order Log', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/change-order-log?as_of=${params.as_of_date}`);
         const m = ReportsPage._money;
         const body = data.jobs.map(job => {
             const c = job.contract;
@@ -3818,8 +3824,8 @@ ReportsPage.changeOrderLog = async function (prefill) {
             return head + (cos || '<tr><td colspan="8" style="color:var(--gray-400);">No change orders</td></tr>');
         }).join('');
         const counts = Object.entries(data.totals.counts).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none';
-        return `${ReportsPage._exportButtons('change-order-log', '')}
-            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">Pending total ${m(data.totals.pending_total)} · ${escapeHtml(counts)}</div>
+        return `${ReportsPage._exportButtons('change-order-log', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)} · pending total ${m(data.totals.pending_total)} · ${escapeHtml(counts)}</div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Number</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Title</th>
                 <th scope="col">Funding</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Sell</th><th scope="col" class="amount">Approved to date</th></tr></thead>
@@ -3829,8 +3835,8 @@ ReportsPage.changeOrderLog = async function (prefill) {
 };
 
 ReportsPage.buyoutReport = async function (prefill) {
-    await ReportsPage.openPeriodModal('Buyout Report', ReportsPage.defaultPeriod(), async () => {
-        const data = await API.get('/reports/buyout');
+    await ReportsPage.openPeriodModal('Buyout Report', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/buyout?as_of=${params.as_of_date}`);
         const m = ReportsPage._money;
         const body = data.jobs.map(job => {
             const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="6">${escapeHtml(job.job_name)}</td></tr>`;
@@ -3843,7 +3849,8 @@ ReportsPage.buyoutReport = async function (prefill) {
             return head + pkgs + total;
         }).join('');
         const t = data.totals;
-        return `${ReportsPage._exportButtons('buyout', '')}
+        return `${ReportsPage._exportButtons('buyout', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}</div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Package</th><th scope="col" class="amount">Bid</th><th scope="col" class="amount">Bought</th>
                 <th scope="col" class="amount">Variance</th><th scope="col" class="amount">Remaining</th><th scope="col" class="amount">Billed</th></tr></thead>

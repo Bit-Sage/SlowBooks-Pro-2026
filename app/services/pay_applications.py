@@ -129,9 +129,10 @@ def application_totals(
 # ── History (earlier APPROVED applications, read live) ──────────────────────
 
 
-def _approved(db: Session, job_id: int, before_no=None):
+def _approved(db: Session, job_id: int, before_no=None, as_of=None):
     """This job's approved applications, oldest first; optionally only those
-    numbered below `before_no` (an application's own history excludes it)."""
+    numbered below `before_no` (an application's own history excludes it) or
+    dated on or before `as_of` (a report reading the books as of a date)."""
     from app.models.pay_applications import PayApplication
 
     q = db.query(PayApplication).filter(
@@ -140,10 +141,12 @@ def _approved(db: Session, job_id: int, before_no=None):
     )
     if before_no is not None:
         q = q.filter(PayApplication.application_no < before_no)
+    if as_of is not None:
+        q = q.filter(PayApplication.date <= as_of)
     return q.order_by(PayApplication.application_no).all()
 
 
-def _history(db: Session, job_id: int, before_no=None) -> dict:
+def _history(db: Session, job_id: int, before_no=None, as_of=None) -> dict:
     """One oldest-first pass over this job's approved applications numbered
     below `before_no` (all of them when None). Accumulates, with the pure
     `application_totals` and no recursion, the state an application reads from
@@ -166,7 +169,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
     prev_released = _ZERO
     prev_cert = _ZERO
     billed = _ZERO
-    for app in _approved(db, job_id, before_no):
+    for app in _approved(db, job_id, before_no, as_of=as_of):
         rows = [
             _Row(
                 scheduled_value=ln.scheduled_value,
@@ -252,23 +255,29 @@ def application_figures(db: Session, app) -> dict:
     )
 
 
-def retainage_outstanding(db: Session, job_id: int) -> Decimal:
+def retainage_outstanding(db: Session, job_id: int, as_of=None) -> Decimal:
     """Owner retainage still held — the latest approved application's
-    retainage_to_date, which is already net of releases."""
-    return _history(db, job_id)["prev_retainage"]
+    retainage_to_date, which is already net of releases (dated on or before
+    `as_of` when given)."""
+    return _history(db, job_id, as_of=as_of)["prev_retainage"]
 
 
-def retainage_held_to_date(db: Session, job_id: int) -> Decimal:
+def retainage_held_to_date(db: Session, job_id: int, as_of=None) -> Decimal:
     """Owner retainage withheld to date, before releases (outstanding +
     released), so held − released reads as what is still outstanding."""
     return _q(
-        retainage_outstanding(db, job_id) + retainage_released_to_date(db, job_id)
+        retainage_outstanding(db, job_id, as_of=as_of)
+        + retainage_released_to_date(db, job_id, as_of=as_of)
     )
 
 
-def retainage_released_to_date(db: Session, job_id: int) -> Decimal:
-    """Σ release_retainage of approved applications."""
-    return _q(sum((_q(a.release_retainage) for a in _approved(db, job_id)), _ZERO))
+def retainage_released_to_date(db: Session, job_id: int, as_of=None) -> Decimal:
+    """Σ release_retainage of approved applications (dated ≤ `as_of`)."""
+    return _q(
+        sum(
+            (_q(a.release_retainage) for a in _approved(db, job_id, as_of=as_of)), _ZERO
+        )
+    )
 
 
 def deposits_figures(db: Session, job_id: int) -> dict:
@@ -295,10 +304,11 @@ def deposits_figures(db: Session, job_id: int) -> dict:
     }
 
 
-def billed_to_date(db: Session, job_id: int) -> Decimal:
+def billed_to_date(db: Session, job_id: int, as_of=None) -> Decimal:
     """Owner billing to date — the latest approved application's cumulative
-    completed_to_date (not a sum across applications)."""
-    return _history(db, job_id)["billed"]
+    completed_to_date (not a sum across applications), counting only
+    applications dated on or before `as_of` when given."""
+    return _history(db, job_id, as_of=as_of)["billed"]
 
 
 def billed_completed_by_sov_line(db: Session, job_id: int) -> dict:
@@ -309,6 +319,14 @@ def billed_completed_by_sov_line(db: Session, job_id: int) -> dict:
     prev, stored = h["previous"], h["stored"]
     keys = set(prev) | set(stored)
     return {k: _q(prev.get(k, _ZERO) + stored.get(k, _ZERO)) for k in keys}
+
+
+def has_approved_application(db: Session, job_id: int, as_of=None) -> bool:
+    """Whether the job has an approved application dated on or before `as_of`
+    (any approved one when `as_of` is None). The contract summary and the WIP
+    schedule read this to decide whether billing comes from the applications
+    or from posted revenue."""
+    return bool(_approved(db, job_id, as_of=as_of))
 
 
 class _Row:

@@ -274,13 +274,19 @@ def contract_summary(
     job: Job,
     cost: Optional[Decimal] = None,
     billed: Optional[Decimal] = None,
+    as_of=None,
 ) -> dict:
     """The contract roll-up for one job. `cost` (actual job-to-date cost) and
     `billed` (posted revenue carrying the job) may be passed in by a caller
     that already has them — the job detail hands over the profitability
     figures it computed, so a plain job fetch costs no extra query. When they
     are None the cost tree supplies them, so the Contract tab always agrees
-    with the rest of the job page."""
+    with the rest of the job page.
+
+    `as_of` scopes the billing and retainage to the approved applications dated
+    on or before that day (the WIP schedule reads the books as of a date); with
+    the default None they are read to date. The caller passes `billed` already
+    scoped to the same date when it wants a clean as-of figure."""
     if cost is None or billed is None:
         from app.services.job_costing import job_cost_tree
 
@@ -336,17 +342,19 @@ def contract_summary(
     from app.services.pay_applications import (
         billed_to_date as pa_billed_to_date,
         deposits_figures,
+        has_approved_application,
         retainage_held_to_date,
         retainage_released_to_date,
     )
 
-    # Only an approved application moves billed-to-date; a draft leaves the
-    # posted revenue figure standing (#555 review).
-    if _has_approved_application(db, job.id):
-        billed = pa_billed_to_date(db, job.id)
+    # Only an approved application moves billed-to-date (a draft leaves the
+    # posted revenue figure standing); as of a date, one dated that day or
+    # earlier.
+    if has_approved_application(db, job.id, as_of):
+        billed = pa_billed_to_date(db, job.id, as_of)
     deposits = deposits_figures(db, job.id)
-    ret_held = retainage_held_to_date(db, job.id)
-    ret_released = retainage_released_to_date(db, job.id)
+    ret_held = retainage_held_to_date(db, job.id, as_of)
+    ret_released = retainage_released_to_date(db, job.id, as_of)
     billed_pct = float(billed / amount * 100) if amount else None
 
     def f(v):

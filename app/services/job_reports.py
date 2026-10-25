@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func as sqlfunc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.accounts import Account, AccountType
 from app.models.cost_codes import CostCode
@@ -45,7 +45,7 @@ def select_jobs(
 
     `status` names one job status and wins; otherwise not-awarded jobs are
     always left out and closed ones too unless `include_closed`."""
-    q = db.query(Job)
+    q = db.query(Job).options(joinedload(Job.customer))
     if job_id is not None:
         q = q.filter(Job.id == job_id)
     if customer_id is not None:
@@ -140,12 +140,40 @@ def _blank_wip_row(job: Job) -> dict:
     return row
 
 
+def _contract_changes_after(db: Session, job: Job, as_of: date) -> Decimal:
+    """Σ sell of this job's approved, contract-funded owner change orders whose
+    approve landed after `as_of` — what to back out of the current contract to
+    read the sum as it stood on that day."""
+    from app.models.change_orders import ChangeOrder
+    from app.services.change_orders import co_totals
+
+    total = _ZERO
+    cos = (
+        db.query(ChangeOrder)
+        .filter(
+            ChangeOrder.job_id == job.id,
+            ChangeOrder.kind == "owner",
+            ChangeOrder.status == "approved",
+            ChangeOrder.funding == "contract",
+        )
+        .all()
+    )
+    for co in cos:
+        approved = co.approved_at.date() if co.approved_at else None
+        if approved is not None and approved > as_of:
+            total += co_totals(co, job)["sell_total"]
+    return _q(total)
+
+
 def wip_row(db: Session, job: Job, as_of: date) -> dict:
     """One WIP line for a job. A job with no contract amount is listed with
-    blank figures (the schedule still shows it)."""
+    blank figures (the schedule still shows it). Every money figure reads the
+    books as of `as_of`: actuals and posted revenue to that date, billing and
+    retainage from the approved applications dated that day or earlier, and the
+    revised contract with the change orders approved by then."""
     from app.services.contracts import contract_summary
     from app.services.job_costing import job_cost_tree
-    from app.services.pay_applications import has_any_application
+    from app.services.pay_applications import has_approved_application
 
     if job.contract_amount is None:
         return _blank_wip_row(job)
@@ -155,14 +183,24 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     est_total_cost = _q(totals["revised"])  # budget original + changes (cost side)
     posted_revenue = _q(totals["act_revenue"])
 
-    summary = contract_summary(db, job, cost=cost_to_date, billed=posted_revenue)
-    revised = _q(summary["contract_amount"])
+    summary = contract_summary(
+        db, job, cost=cost_to_date, billed=posted_revenue, as_of=as_of
+    )
+    current_revised = _q(summary["contract_amount"])
     original = (
         _q(summary["original_contract_amount"])
         if summary["original_contract_amount"] is not None
-        else revised
+        else current_revised
     )
-    approved_cos = _q(summary["changes"])
+    # The contract as of the date: back out the contract-funded COs approved
+    # after it, so original + approved-as-of = revised-as-of.
+    changes_after = (
+        _contract_changes_after(db, job, as_of)
+        if summary["original_contract_amount"] is not None
+        else _ZERO
+    )
+    revised = _q(current_revised - changes_after)
+    approved_cos = _q(revised - original)
     billed = _q(summary["billed_to_date"])
     retainage_out = _q(summary["retainage"]["outstanding"])
 
@@ -175,13 +213,22 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     earned = _q(revised * pct)
     over = _q(billed - earned) if billed > earned else _ZERO
     under = _q(earned - billed) if earned > billed else _ZERO
+    # Floored at zero: an overrun does not create negative work to do, so the
+    # projected final cost is max(cost to date, estimate) and the projected
+    # gross profit diverges from the estimated one once a job runs over.
     cost_to_complete = _q(est_total_cost - cost_to_date)
+    if cost_to_complete < _ZERO:
+        cost_to_complete = _ZERO
     projected_final_cost = _q(cost_to_date + cost_to_complete)
     projected_gp = _q(revised - projected_final_cost)
     estimated_gp = _q(revised - est_total_cost)
     margin = _q(estimated_gp / revised * 100) if revised else None
 
-    basis = "pay_applications" if has_any_application(db, job.id) else "posted_revenue"
+    basis = (
+        "pay_applications"
+        if has_approved_application(db, job.id, as_of)
+        else "posted_revenue"
+    )
     return {
         "job_id": job.id,
         "job_name": job.name,
@@ -217,8 +264,10 @@ def wip_schedule(
     include_closed: bool = False,
 ) -> dict:
     """The work-in-progress schedule: one row per job, cost-to-cost, with over
-    and under billing. Actuals are as of `as_of`; budgets and billing are
-    job-to-date."""
+    and under billing. Every money figure reads as of `as_of` — actuals and
+    posted revenue to that date, billing and retainage from the applications
+    approved by then, the revised contract with the change orders approved by
+    then. Budgets have no date, so the estimated total cost is job-to-date."""
     as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
     rows = [wip_row(db, job, as_of) for job in jobs]
@@ -288,14 +337,32 @@ def _blank_raw() -> dict:
     return {"orig": _ZERO, "chg": _ZERO, "committed": _ZERO, "actual": _ZERO}
 
 
-def _ctc_job(db: Session, job: Job, as_of: date) -> dict:
+def _ctc_totals(budget: Decimal, committed: Decimal, actual: Decimal, parts) -> dict:
+    """Totals that foot the rows: budget / committed / actual are the raw sums,
+    but cost to complete, projected final and variance are the SUM of the
+    already-clamped per-row figures (Σ max(…) ≠ max(Σ …) once a code runs over),
+    and percent complete is recomputed on the summed cost and budget."""
+    ctc = _q(sum((Decimal(str(p["cost_to_complete"])) for p in parts), _ZERO))
+    projected = _q(sum((Decimal(str(p["projected_final"])) for p in parts), _ZERO))
+    variance = _q(sum((Decimal(str(p["variance"])) for p in parts), _ZERO))
+    budget, committed, actual = _q(budget), _q(committed), _q(actual)
+    pct = _q(actual / budget * 100) if budget else None
+    return {
+        "budget_revised": float(budget),
+        "committed": float(committed),
+        "actual": float(actual),
+        "cost_to_complete": float(ctc),
+        "projected_final": float(projected),
+        "variance": float(variance),
+        "pct_complete": float(pct) if pct is not None else None,
+    }
+
+
+def _ctc_job(db: Session, job: Job, as_of: date, tree: list) -> dict:
     """Cost-to-complete for one job: the cost-code tree (division › section)
     with budget / committed / actual rolled up, plus an Uncoded row and totals.
-    """
+    `tree` is the shared code_tree, built once by the caller."""
     from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
-    from app.services.job_costing import code_tree
-
-    codes = db.query(CostCode).all()
 
     raw: dict = {}  # cost_code_id (or None) -> raw figures
 
@@ -349,16 +416,17 @@ def _ctc_job(db: Session, job: Job, as_of: date) -> dict:
     for code_id, amt in cq.group_by(PurchaseOrderLine.cost_code_id).all():
         bucket(code_id)["committed"] += Decimal(str(amt))
 
-    grand = _blank_raw()
+    raw_grand = _blank_raw()
 
     def node_for(n):
         c = n["code"]
-        children = [node_for(ch) for ch in n["children"]]
+        # Build and keep the real children first — an empty section returns
+        # None and must not reach the aggregation (it has no _raw).
+        children = [built for built in (node_for(ch) for ch in n["children"]) if built]
         own = raw.get(c.id, _blank_raw())
         agg = {k: own[k] + sum((ch["_raw"][k] for ch in children), _ZERO) for k in own}
         if not any(agg.values()):
             return None
-        kept = [ch for ch in children if ch is not None]
         return {
             "id": c.id,
             "code": c.code,
@@ -366,19 +434,19 @@ def _ctc_job(db: Session, job: Job, as_of: date) -> dict:
             "label": c.label,
             "level": c.level,
             "figures": _ctc_figures(agg),
-            "children": kept,
+            "children": children,
             "_raw": agg,
         }
 
     tree_nodes = []
-    for n in code_tree(codes):
+    for n in tree:
         built = node_for(n)
         if built is not None:
             tree_nodes.append(built)
 
     def accrue(node):
-        for k in grand:
-            grand[k] += node["_raw"][k]
+        for k in raw_grand:
+            raw_grand[k] += node["_raw"][k]
 
     def strip(node):
         for ch in node.get("children", []):
@@ -389,13 +457,26 @@ def _ctc_job(db: Session, job: Job, as_of: date) -> dict:
         accrue(node)
 
     uncoded_raw = raw.get(None, _blank_raw())
-    for k in grand:
-        grand[k] += uncoded_raw[k]
+    for k in raw_grand:
+        raw_grand[k] += uncoded_raw[k]
+
+    uncoded = _ctc_figures(uncoded_raw) if any(uncoded_raw.values()) else None
+
+    # Job totals foot the printed rows: the top-level nodes and Uncoded carry
+    # the clamped cost-to-complete / projected / variance; budget, committed and
+    # actual are the raw sums.
+    parts = [node["figures"] for node in tree_nodes]
+    if uncoded is not None:
+        parts.append(uncoded)
+    totals = _ctc_totals(
+        raw_grand["orig"] + raw_grand["chg"],
+        raw_grand["committed"],
+        raw_grand["actual"],
+        parts,
+    )
 
     for node in tree_nodes:
         strip(node)
-
-    uncoded = _ctc_figures(uncoded_raw) if any(uncoded_raw.values()) else None
     return {
         "job_id": job.id,
         "job_name": job.name,
@@ -403,7 +484,7 @@ def _ctc_job(db: Session, job: Job, as_of: date) -> dict:
         "customer_name": _customer_name(job),
         "tree": tree_nodes,
         "uncoded": uncoded,
-        "totals": _ctc_figures(grand),
+        "totals": totals,
     }
 
 
@@ -415,22 +496,23 @@ def cost_to_complete(
     status: Optional[str] = None,
     include_closed: bool = False,
 ) -> dict:
-    """Cost to complete per job, per cost code, with grand totals."""
+    """Cost to complete per job, per cost code, with grand totals that foot the
+    jobs."""
+    from app.services.job_costing import code_tree
+
     as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
-    rows = [_ctc_job(db, job, as_of) for job in jobs]
+    tree = code_tree(db.query(CostCode).all())
+    rows = [_ctc_job(db, job, as_of, tree) for job in jobs]
 
-    grand = _blank_raw()
-    for job_data in rows:
-        t = job_data["totals"]
-        grand["actual"] += Decimal(str(t["actual"]))
-        grand["committed"] += Decimal(str(t["committed"]))
-        # back out budget revised into orig (changes already folded in)
-        grand["orig"] += Decimal(str(t["budget_revised"]))
+    budget = sum((Decimal(str(j["totals"]["budget_revised"])) for j in rows), _ZERO)
+    committed = sum((Decimal(str(j["totals"]["committed"])) for j in rows), _ZERO)
+    actual = sum((Decimal(str(j["totals"]["actual"])) for j in rows), _ZERO)
+    totals = _ctc_totals(budget, committed, actual, [j["totals"] for j in rows])
     return {
         "as_of": as_of.isoformat(),
         "jobs": rows,
-        "totals": _ctc_figures(grand),
+        "totals": totals,
         "columns": CTC_COLUMNS,
     }
 
@@ -451,10 +533,9 @@ CO_COLUMNS = [
 ]
 
 
-def _co_job(db: Session, job: Job) -> dict:
+def _co_job(db: Session, job: Job, as_of: date) -> dict:
     from app.models.change_orders import ChangeOrder
     from app.services.change_orders import co_totals
-    from app.services.contracts import contract_summary
 
     cos = (
         db.query(ChangeOrder)
@@ -465,6 +546,7 @@ def _co_job(db: Session, job: Job) -> dict:
     counts: dict[str, int] = {}
     pending_total = _ZERO
     running = _ZERO
+    approved_changes = _ZERO  # owner, contract-funded, approved by as_of
     out_rows = []
     for co in cos:
         counts[co.status] = counts.get(co.status, 0) + 1
@@ -472,10 +554,16 @@ def _co_job(db: Session, job: Job) -> dict:
         cost = figs["cost_total"]
         sell = figs["sell_total"]
         markup = figs["markup_total"]
-        # The running approved total follows the contract: an approved,
-        # contract-funded owner CO adds its sell. Others leave it where it is.
-        if co.status == "approved" and co.kind == "owner" and co.funding == "contract":
+        approved_on = co.approved_at.date() if co.approved_at else None
+        approved_by_as_of = (
+            co.status == "approved" and approved_on is not None and approved_on <= as_of
+        )
+        # The running approved total follows the contract as of the date: an
+        # approved, contract-funded owner CO approved by then adds its sell.
+        if approved_by_as_of and co.kind == "owner" and co.funding == "contract":
             running = _q(running + sell)
+            approved_changes = running
+        # Pending is read as of today (a live figure, not dated).
         if co.status == "pending" and co.kind == "owner":
             pending_total += sell
         commitment = None
@@ -507,16 +595,24 @@ def _co_job(db: Session, job: Job) -> dict:
             }
         )
 
-    summary = contract_summary(db, job)
+    # The contract read straight off the job's own columns (no cost tree): the
+    # revised sum as of the date is the original plus the changes approved by
+    # then, so it agrees with the running total above.
+    original = (
+        _q(job.original_contract_amount)
+        if job.original_contract_amount is not None
+        else (_q(job.contract_amount) if job.contract_amount is not None else None)
+    )
+    revised = _q(original + approved_changes) if original is not None else None
     return {
         "job_id": job.id,
         "job_name": job.name,
         "customer_id": job.customer_id,
         "customer_name": _customer_name(job),
         "contract": {
-            "original": summary["original_contract_amount"],
-            "approved_changes": summary["changes"],
-            "revised": summary["contract_amount"],
+            "original": float(original) if original is not None else None,
+            "approved_changes": float(_q(approved_changes)),
+            "revised": float(revised) if revised is not None else None,
         },
         "pending_total": float(_q(pending_total)),
         "counts": counts,
@@ -526,15 +622,18 @@ def _co_job(db: Session, job: Job) -> dict:
 
 def change_order_log(
     db: Session,
+    as_of: Optional[date] = None,
     job_id: Optional[int] = None,
     customer_id: Optional[int] = None,
     status: Optional[str] = None,
     include_closed: bool = False,
 ) -> dict:
-    """Every change order per job, with the running approved total and the
-    contract it builds (original + approved changes = revised)."""
+    """Every change order per job, with the running approved total (as of
+    `as_of` — the change orders approved by then) and the contract it builds
+    (original + approved changes = revised). Pending is read as of today."""
+    as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
-    rows = [_co_job(db, job) for job in jobs]
+    rows = [_co_job(db, job, as_of) for job in jobs]
     counts: dict[str, int] = {}
     pending_total = _ZERO
     for job_data in rows:
@@ -542,6 +641,7 @@ def change_order_log(
             counts[st] = counts.get(st, 0) + n
         pending_total += Decimal(str(job_data["pending_total"]))
     return {
+        "as_of": as_of.isoformat(),
         "jobs": rows,
         "totals": {"counts": counts, "pending_total": float(_q(pending_total))},
         "columns": CO_COLUMNS,
@@ -570,20 +670,23 @@ _BUYOUT_SUMMED = (
 
 def buyout_report(
     db: Session,
+    as_of: Optional[date] = None,
     job_id: Optional[int] = None,
     customer_id: Optional[int] = None,
     status: Optional[str] = None,
     include_closed: bool = False,
 ) -> dict:
     """The job_buyout rows across jobs, totals per job and grand (#553 is the
-    per-job seam; this foots it across the company)."""
+    per-job seam; this foots it across the company). As of `as_of`, only the
+    commitments dated by then count and billing is the bills dated by then."""
     from app.services.buyout import job_buyout
 
+    as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
     rows = []
     grand = {k: _ZERO for k in _BUYOUT_SUMMED}
     for job in jobs:
-        data = job_buyout(db, job)
+        data = job_buyout(db, job, as_of=as_of)
         for k in _BUYOUT_SUMMED:
             grand[k] += Decimal(str(data["totals"][k]))
         rows.append(
@@ -598,6 +701,7 @@ def buyout_report(
             }
         )
     return {
+        "as_of": as_of.isoformat(),
         "jobs": rows,
         "totals": {k: float(_q(v)) for k, v in grand.items()},
         "columns": BUYOUT_COLUMNS,
@@ -609,22 +713,48 @@ def buyout_report(
 VENDOR_COLUMNS = [
     {"key": "vendor_name", "label": "Vendor", "kind": "text"},
     {"key": "cost", "label": "Cost", "kind": "money"},
-    {"key": "bills_count", "label": "Bills", "kind": "int"},
+    {"key": "bills_count", "label": "Bills", "kind": "num"},
     {"key": "paid_to_date", "label": "Paid", "kind": "money"},
     {"key": "retainage_outstanding", "label": "Retainage held", "kind": "money"},
     {"key": "open_ap", "label": "Open A/P", "kind": "money"},
 ]
 
-_VENDOR_SUMMED = ("cost", "paid_to_date", "retainage_outstanding", "open_ap")
+_VENDOR_SUMMED = (
+    "cost",
+    "bills_count",
+    "paid_to_date",
+    "retainage_outstanding",
+    "open_ap",
+)
 
 _NO_VENDOR = "No vendor"
 
 
+def _bill_job_share(bill, job_id: int) -> Decimal:
+    """The job's share of a bill: the bill's line amounts carrying the job (a
+    line's own job, else the bill's header) over all its line amounts. A
+    header-only bill (no line amounts, or none tagged) on the job is a full 1;
+    on another job, 0. So a bill split across jobs splits its payment,
+    retainage and A/P by the money on each."""
+    total = _ZERO
+    job_amt = _ZERO
+    for ln in bill.lines:
+        amt = Decimal(str(ln.amount or 0))
+        total += amt
+        ln_job = ln.job_id if ln.job_id is not None else bill.job_id
+        if ln_job == job_id:
+            job_amt += amt
+    if total == _ZERO:
+        return _ONE if bill.job_id == job_id else _ZERO
+    return job_amt / total
+
+
 def _vendor_bill_figures(db: Session, job_id: int, vendor_id: int) -> dict:
-    """For one vendor on one job: the count of its bills carrying the job, the
-    bill payments allocated to them (non-void), the retainage held but not
-    released, and the open A/P balance. A bill carries the job on its header or
-    on any of its lines."""
+    """For one vendor on one job: the bills carrying the job and the payments,
+    retainage held-less-released and open A/P on them — each prorated by the
+    job's share of the bill's line amounts (a header-only bill is a whole 1),
+    so a bill split across two jobs lands half on each. A bill carries the job
+    on its header or on any of its lines."""
     from sqlalchemy import or_
 
     from app.models.bills import (
@@ -643,20 +773,15 @@ def _vendor_bill_figures(db: Session, job_id: int, vendor_id: int) -> dict:
         )
         .all()
     )
+    # payments allocated to each bill (non-void), by bill id
+    paid_by_bill: dict[int, Decimal] = {}
     bill_ids = [b.id for b in bills]
-    retainage = sum(
-        (
-            Decimal(str(b.retainage_held or 0))
-            - Decimal(str(b.retainage_released or 0))
-            for b in bills
-        ),
-        _ZERO,
-    )
-    open_ap = sum((Decimal(str(b.balance_due or 0)) for b in bills), _ZERO)
-    paid = _ZERO
     if bill_ids:
-        paid = (
-            db.query(sqlfunc.coalesce(sqlfunc.sum(BillPaymentAllocation.amount), 0))
+        rows = (
+            db.query(
+                BillPaymentAllocation.bill_id,
+                sqlfunc.coalesce(sqlfunc.sum(BillPaymentAllocation.amount), 0),
+            )
             .select_from(BillPaymentAllocation)
             .join(
                 BillPayment,
@@ -666,11 +791,28 @@ def _vendor_bill_figures(db: Session, job_id: int, vendor_id: int) -> dict:
                 BillPaymentAllocation.bill_id.in_(bill_ids),
                 BillPayment.is_voided.is_(False),
             )
-            .scalar()
-            or 0
+            .group_by(BillPaymentAllocation.bill_id)
+            .all()
         )
+        paid_by_bill = {bid: Decimal(str(amt)) for bid, amt in rows}
+
+    count = _ZERO
+    retainage = _ZERO
+    open_ap = _ZERO
+    paid = _ZERO
+    for b in bills:
+        share = _bill_job_share(b, job_id)
+        if share == _ZERO:
+            continue
+        count += share
+        retainage += share * (
+            Decimal(str(b.retainage_held or 0))
+            - Decimal(str(b.retainage_released or 0))
+        )
+        open_ap += share * Decimal(str(b.balance_due or 0))
+        paid += share * paid_by_bill.get(b.id, _ZERO)
     return {
-        "bills_count": len(bills),
+        "bills_count": float(_q(count)),
         "paid_to_date": _q(paid),
         "retainage_outstanding": _q(retainage),
         "open_ap": _q(open_ap),
@@ -763,9 +905,15 @@ def job_cost_by_vendor(
     include_closed: bool = False,
 ) -> dict:
     """Posted job cost grouped job → vendor (the transaction header's vendor; a
-    No vendor bucket holds the rest), with the vendor's bills count, paid to
-    date, retainage held outstanding and open A/P on the job. Cost is
-    period-filterable by transaction date; the bill figures are job-to-date."""
+    No vendor bucket holds the rest), with the vendor's bills, paid to date,
+    retainage held outstanding and open A/P on the job. Cost is period-filtered
+    by transaction date; the bill figures are job-to-date and **prorated by the
+    job's share of each bill's line amounts** (a header-only bill counts whole,
+    a bill split across jobs splits), so bills can read fractional."""
+    from fastapi import HTTPException
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date is after end_date")
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
     rows = [_vendor_job(db, job, start_date, end_date) for job in jobs]
     grand = {k: _ZERO for k in _VENDOR_SUMMED}

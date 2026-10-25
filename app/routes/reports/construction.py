@@ -13,7 +13,7 @@ import io
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -47,6 +47,9 @@ def _pdf_cell(value, kind: str) -> str:
         return f"{float(value):.1f}%"
     if kind == "int":
         return str(int(value))
+    if kind == "num":
+        # a count that can be fractional (a bill split across jobs): trim zeros
+        return f"{float(value):g}"
     return str(value)
 
 
@@ -59,6 +62,8 @@ def _csv_cell(value, kind: str):
         return _Percent(float(value))
     if kind == "int":
         return int(value)
+    if kind == "num":
+        return float(value)
     return value
 
 
@@ -319,6 +324,7 @@ def cost_to_complete_csv(
 
 @router.get("/change-order-log")
 def change_order_log_route(
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
@@ -326,9 +332,13 @@ def change_order_log_route(
     include_closed: _CLOSED_Q = False,
 ):
     """Every change order per job — number, kind, status, title, date, funding,
-    cost, markup, sell, the running approved total and the contract it builds —
-    with pending totals and counts by status."""
-    return change_order_log(db, job_id, customer_id, status, include_closed)
+    cost, markup, sell, the running approved total (as of `as_of`) and the
+    contract it builds — with pending totals and counts by status."""
+    return change_order_log(db, as_of, job_id, customer_id, status, include_closed)
+
+
+def _co_period(data: dict) -> str:
+    return f"As of {data['as_of']}"
 
 
 def _co_sections(data: dict) -> list[dict]:
@@ -365,7 +375,7 @@ def _co_sections(data: dict) -> list[dict]:
     return [
         {
             "title": "Change Order Log",
-            "period": "",
+            "period": _co_period(data),
             "columns": [c["label"] for c in cols],
             "text_columns": _text_columns(cols),
             "rows": out_rows,
@@ -377,14 +387,15 @@ def _co_csv(data: dict, company: str) -> str:
     cols = data["columns"]
     out = io.StringIO()
     w = _SafeWriter(out)
-    _preamble(w, company, "Change Order Log", "")
+    _preamble(w, company, "Change Order Log", _co_period(data))
     w.writerow(["Job"] + [c["label"] for c in cols])
     for job in data["jobs"]:
         c = job["contract"]
+        # The contract the change orders build, in a labelled row of its own.
         w.writerow(
             [
                 job["job_name"],
-                "contract",
+                "Contract (original + approved changes = revised)",
                 _money(c["original"] or 0),
                 _money(c["approved_changes"] or 0),
                 _money(c["revised"] or 0),
@@ -404,26 +415,28 @@ def _co_csv(data: dict, company: str) -> str:
 
 @router.get("/change-order-log/pdf")
 def change_order_log_pdf(
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
     status: _STATUS_Q = None,
     include_closed: _CLOSED_Q = False,
 ):
-    data = change_order_log(db, job_id, customer_id, status, include_closed)
+    data = change_order_log(db, as_of, job_id, customer_id, status, include_closed)
     return _pdf_response(_co_sections(data), db, "change-order-log.pdf", landscape=True)
 
 
 @router.get("/change-order-log/csv")
 def change_order_log_csv(
     request: Request,
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
     status: _STATUS_Q = None,
     include_closed: _CLOSED_Q = False,
 ):
-    data = change_order_log(db, job_id, customer_id, status, include_closed)
+    data = change_order_log(db, as_of, job_id, customer_id, status, include_closed)
     return _csv_download(
         _co_csv(data, _company_name(db)), "change-order-log.csv", request
     )
@@ -434,6 +447,7 @@ def change_order_log_csv(
 
 @router.get("/buyout")
 def buyout_route(
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
@@ -442,11 +456,13 @@ def buyout_route(
 ):
     """The buyout report: each job's trade packages — bid cost, bought,
     variance, committed-remaining and billed-to-date, with the commitments
-    behind each — the Unassigned row kept, totals per job and grand."""
-    return buyout_report(db, job_id, customer_id, status, include_closed)
+    behind each — the Unassigned row kept, totals per job and grand. As of
+    `as_of`, only commitments dated by then count and billing is the bills
+    dated by then."""
+    return buyout_report(db, as_of, job_id, customer_id, status, include_closed)
 
 
-def _per_job_grid_sections(data: dict, title: str) -> list[dict]:
+def _per_job_grid_sections(data: dict, title: str, period: str = "") -> list[dict]:
     """A per-job grid (buyout, job cost by vendor): a job header, its rows, a
     job total, then a grand total."""
     cols = data["columns"]
@@ -472,7 +488,7 @@ def _per_job_grid_sections(data: dict, title: str) -> list[dict]:
     return [
         {
             "title": title,
-            "period": "",
+            "period": period,
             "columns": [c["label"] for c in cols],
             "text_columns": 1,
             "rows": out_rows,
@@ -480,11 +496,11 @@ def _per_job_grid_sections(data: dict, title: str) -> list[dict]:
     ]
 
 
-def _per_job_grid_csv(data: dict, company: str, report: str) -> str:
+def _per_job_grid_csv(data: dict, company: str, report: str, period: str = "") -> str:
     cols = data["columns"]
     out = io.StringIO()
     w = _SafeWriter(out)
-    _preamble(w, company, report, "")
+    _preamble(w, company, report, period)
     w.writerow(["Job"] + [c["label"] for c in cols])
     for job in data["jobs"]:
         for r in job["rows"]:
@@ -512,15 +528,16 @@ def _per_job_grid_csv(data: dict, company: str, report: str) -> str:
 
 @router.get("/buyout/pdf")
 def buyout_pdf(
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
     status: _STATUS_Q = None,
     include_closed: _CLOSED_Q = False,
 ):
-    data = buyout_report(db, job_id, customer_id, status, include_closed)
+    data = buyout_report(db, as_of, job_id, customer_id, status, include_closed)
     return _pdf_response(
-        _per_job_grid_sections(data, "Buyout Report"),
+        _per_job_grid_sections(data, "Buyout Report", f"As of {data['as_of']}"),
         db,
         "buyout.pdf",
         landscape=True,
@@ -530,15 +547,18 @@ def buyout_pdf(
 @router.get("/buyout/csv")
 def buyout_csv(
     request: Request,
+    as_of: date = Query(default=None),
     db: Session = Depends(get_db),
     job_id: _JOB_Q = None,
     customer_id: _CUST_Q = None,
     status: _STATUS_Q = None,
     include_closed: _CLOSED_Q = False,
 ):
-    data = buyout_report(db, job_id, customer_id, status, include_closed)
+    data = buyout_report(db, as_of, job_id, customer_id, status, include_closed)
     return _csv_download(
-        _per_job_grid_csv(data, _company_name(db), "Buyout Report"),
+        _per_job_grid_csv(
+            data, _company_name(db), "Buyout Report", f"As of {data['as_of']}"
+        ),
         "buyout.csv",
         request,
     )
@@ -561,9 +581,9 @@ def job_cost_by_vendor_route(
     paid to date, retainage held outstanding and open A/P on the job. Cost is
     for the period; the bill figures are job-to-date. A No vendor bucket holds
     the cost with no vendor on its transaction (journals, job cost entries)."""
+    # start_date > end_date is refused inside the service, so the JSON, PDF and
+    # CSV routes all share the one guard.
     start_date, end_date = _period(db, start_date, end_date)
-    if start_date > end_date:
-        raise HTTPException(status_code=400, detail="start_date is after end_date")
     return job_cost_by_vendor(
         db, start_date, end_date, job_id, customer_id, status, include_closed
     )
@@ -783,20 +803,28 @@ def _bva_period(db, start_date, end_date):
     return start_date, end_date
 
 
-def _bva_rows(db, start_date, end_date):
+def _bva_rows(db, start_date, end_date, customer_id=None, include_inactive=False):
     from app.services.job_costing import budget_vs_actual_all_jobs
 
-    return budget_vs_actual_all_jobs(db, start_date, end_date)
+    return budget_vs_actual_all_jobs(
+        db,
+        start_date,
+        end_date,
+        customer_id=customer_id,
+        include_inactive=include_inactive,
+    )
 
 
 @router.get("/job-budget-vs-actual/pdf")
 def job_budget_vs_actual_pdf(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    customer_id: _CUST_Q = None,
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     start_date, end_date = _bva_period(db, start_date, end_date)
-    rows_data = _bva_rows(db, start_date, end_date)
+    rows_data = _bva_rows(db, start_date, end_date, customer_id, include_inactive)
     cols = _BVA_COLUMNS
     from decimal import Decimal
 
@@ -842,10 +870,12 @@ def job_budget_vs_actual_csv(
     request: Request,
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    customer_id: _CUST_Q = None,
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     start_date, end_date = _bva_period(db, start_date, end_date)
-    rows_data = _bva_rows(db, start_date, end_date)
+    rows_data = _bva_rows(db, start_date, end_date, customer_id, include_inactive)
     cols = _BVA_COLUMNS
     from decimal import Decimal
 
