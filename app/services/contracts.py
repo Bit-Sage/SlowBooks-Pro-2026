@@ -173,6 +173,17 @@ def build_sov(db: Session, job: Job, estimate: Estimate, replace: bool = True) -
                 "message": "That estimate is not on this job.",
             },
         )
+    # #555: rebuilding the schedule would orphan what has been billed against
+    # it, so an approved pay application blocks a replace.
+    if replace and _has_approved_application(db, job.id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "sov_has_billings",
+                "message": "A pay application has billed this schedule; it can no longer be rebuilt.",
+            },
+        )
+
     lines = sov_from_estimate(estimate)
     # The owner contingency carried inside the contract is its own SOV line.
     if job.contingency_amount is not None:
@@ -239,6 +250,17 @@ def sync_contingency_line(db: Session, job: Job) -> None:
     db.flush()
 
 
+def _has_approved_application(db: Session, job_id: int) -> bool:
+    from app.models.pay_applications import PayApplication
+
+    return (
+        db.query(PayApplication.id)
+        .filter(PayApplication.job_id == job_id, PayApplication.status == "approved")
+        .first()
+        is not None
+    )
+
+
 def contract_summary(
     db: Session,
     job: Job,
@@ -298,6 +320,24 @@ def contract_summary(
         (Decimal(str(r.scheduled_value)) for r in job.sov_lines), Decimal("0")
     )
     sov_balance = _q((amount or Decimal("0")) - sov_total)
+
+    # Progress billing (#555): billed-to-date switches to Σ approved
+    # applications' completed_to_date once the job has any application;
+    # otherwise the posted revenue figure above stands. Deposits and
+    # owner-side retainage ride alongside.
+    from app.services.pay_applications import (
+        billed_to_date as pa_billed_to_date,
+        deposits_figures,
+        has_any_application,
+        retainage_held_to_date,
+        retainage_released_to_date,
+    )
+
+    if has_any_application(db, job.id):
+        billed = pa_billed_to_date(db, job.id)
+    deposits = deposits_figures(db, job.id)
+    ret_held = retainage_held_to_date(db, job.id)
+    ret_released = retainage_released_to_date(db, job.id)
     billed_pct = float(billed / amount * 100) if amount else None
 
     def f(v):
@@ -329,4 +369,15 @@ def contract_summary(
         # counts/total the Contract tab's Changes tile reads.
         "allowances": allowances_summary(db, job),
         "change_orders": change_orders_summary(db, job),
+        # Progress billing (#555): owner deposits and the owner-side retainage.
+        "deposits": {
+            "received": float(deposits["received"]),
+            "applied": float(deposits["applied"]),
+            "unapplied": float(deposits["unapplied"]),
+        },
+        "retainage": {
+            "held_to_date": float(ret_held),
+            "released_to_date": float(ret_released),
+            "outstanding": float(_q(ret_held - ret_released)),
+        },
     }

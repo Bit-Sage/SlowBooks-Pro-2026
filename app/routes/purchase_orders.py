@@ -21,6 +21,7 @@ from app.schemas.purchase_orders import (
     POResponse,
     POUpdate,
 )
+from app.schemas.pay_applications import ReleaseRetainageRequest
 from app.services.accounting import _q, compute_line_totals
 from app.services.job_costing import line_cost_type
 from app.services.numbering import next_po_number
@@ -379,6 +380,211 @@ def po_print_preview(po_id: int, db: Session = Depends(get_db)):
             "<script>window.onload=function(){window.print();}</script></body>",
         )
     )
+
+
+def _commitment_retainage(db: Session, po: PurchaseOrder):
+    """(held_to_date, released_to_date) for a commitment: Σ retainage_held of
+    its non-void bills, and what has been released so far."""
+    from app.models.bills import Bill, BillStatus
+
+    held = _q(
+        sum(
+            (
+                _q(b.retainage_held or 0)
+                for b in db.query(Bill).filter(
+                    Bill.po_id == po.id, Bill.status != BillStatus.VOID
+                )
+            ),
+            Decimal("0"),
+        )
+    )
+    return held, _q(po.retainage_released or 0)
+
+
+@router.get("/{po_id}/pay-app")
+def commitment_pay_app(po_id: int, db: Session = Depends(get_db)):
+    """A commitment's schedule for a sub pay application (#555): per line
+    scheduled / previous billed / remaining, the retainage held and released
+    to date, and its bills with their lien-waiver status (warn-only)."""
+    from app.models.bills import Bill, BillStatus
+
+    po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    lines = []
+    for ln in po.lines:
+        scheduled = _q(ln.amount or 0)
+        billed = _q(ln.billed_amount or 0)
+        lines.append(
+            {
+                "line_id": ln.id,
+                "description": ln.description or "",
+                "scheduled": float(scheduled),
+                "previous_billed": float(billed),
+                "remaining": float(_q(scheduled - billed)),
+            }
+        )
+    held, released = _commitment_retainage(db, po)
+    bills = (
+        db.query(Bill)
+        .filter(Bill.po_id == po.id, Bill.status != BillStatus.VOID)
+        .order_by(Bill.date, Bill.id)
+        .all()
+    )
+    return {
+        "po_id": po.id,
+        "po_number": po.po_number,
+        "vendor_name": po.vendor.name if po.vendor else "",
+        "retainage_pct": (
+            float(po.retainage_pct) if po.retainage_pct is not None else None
+        ),
+        "lines": lines,
+        "scheduled_total": float(
+            _q(sum((Decimal(str(ln.amount or 0)) for ln in po.lines), Decimal("0")))
+        ),
+        "billed_total": float(
+            _q(
+                sum(
+                    (Decimal(str(ln.billed_amount or 0)) for ln in po.lines),
+                    Decimal("0"),
+                )
+            )
+        ),
+        "retainage_held_to_date": float(held),
+        "retainage_released_to_date": float(released),
+        "retainage_outstanding": float(_q(held - released)),
+        "bills": [
+            {
+                "bill_id": b.id,
+                "bill_number": b.bill_number,
+                "date": b.date.isoformat() if b.date else None,
+                "retainage_held": float(_q(b.retainage_held or 0)),
+                "retainage_released": float(_q(b.retainage_released or 0)),
+                "lien_waiver_status": b.lien_waiver_status,
+            }
+            for b in bills
+        ],
+    }
+
+
+@router.post("/{po_id}/release-retainage")
+def release_retainage(
+    po_id: int,
+    data: Optional[ReleaseRetainageRequest] = None,
+    db: Session = Depends(get_db),
+):
+    """Release retainage held on a commitment (#555): a bill for the vendor
+    with one line carrying no expense account, DR Retainage Payable (2050) /
+    CR A/P for the amount, payable through Pay Bills. 422 over what is held."""
+    from app.models.bills import Bill, BillLine, BillStatus
+    from app.routes.invoices.helpers import _due_date_from_terms
+    from app.services.accounting import (
+        create_journal_entry,
+        ensure_construction_accounts,
+        get_ap_account_id,
+    )
+    from app.services.closing_date import check_closing_date
+
+    if data is None:
+        data = ReleaseRetainageRequest()
+    po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    held, released = _commitment_retainage(db, po)
+    outstanding = _q(held - released)
+    amount = _q(data.amount) if data.amount is not None else outstanding
+    if amount <= 0:
+        raise HTTPException(
+            status_code=422, detail="No retainage is outstanding to release."
+        )
+    if amount > outstanding:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Release {amount:.2f} is more than the {outstanding:.2f} of "
+                "retainage held on this commitment."
+            ),
+        )
+    when = data.date or po.date
+    check_closing_date(db, when)
+    vendor = po.vendor
+    terms = (vendor.terms if vendor else None) or "Net 30"
+    ap_id = get_ap_account_id(db)
+    retainage_acct = ensure_construction_accounts(db)["2050"]
+
+    base = f"RET-{po.po_number}"
+    taken = {
+        n
+        for (n,) in db.query(Bill.bill_number).filter(
+            Bill.vendor_id == po.vendor_id, Bill.bill_number.like(f"{base}%")
+        )
+    }
+    bill_number, k = base, 1
+    while bill_number in taken:
+        k += 1
+        bill_number = f"{base}-{k}"
+
+    bill = Bill(
+        bill_number=bill_number,
+        vendor_id=po.vendor_id,
+        status=BillStatus.UNPAID,
+        po_id=po.id,
+        date=when,
+        terms=terms,
+        due_date=_due_date_from_terms(when, terms),
+        subtotal=amount,
+        tax_rate=Decimal("0"),
+        tax_amount=Decimal("0"),
+        total=amount,
+        retainage_released=amount,
+        balance_due=amount,
+        notes=f"Retainage release — {po.po_number}",
+        job_id=po.job_id,
+    )
+    db.add(bill)
+    db.flush()
+    db.add(
+        BillLine(
+            bill_id=bill.id,
+            description=f"Retainage release — {po.po_number}",
+            quantity=Decimal("1"),
+            rate=amount,
+            amount=amount,
+            job_id=po.job_id,
+            line_order=0,
+        )
+    )
+    txn = create_journal_entry(
+        db,
+        when,
+        f"Retainage release — {po.po_number}",
+        [
+            {
+                "account_id": retainage_acct.id,
+                "debit": amount,
+                "credit": Decimal("0"),
+                "description": f"Retainage release — {po.po_number}",
+                "job_id": po.job_id,
+            },
+            {
+                "account_id": ap_id,
+                "debit": Decimal("0"),
+                "credit": amount,
+                "description": f"Retainage release — {po.po_number} - {vendor.name if vendor else ''}",
+            },
+        ],
+        source_type="bill",
+        source_id=bill.id,
+        job_id=po.job_id,
+    )
+    bill.transaction_id = txn.id
+    po.retainage_released = _q(released + amount)
+    db.commit()
+    return {
+        "bill_id": bill.id,
+        "amount": float(amount),
+        "message": f"Retainage release bill created from {po.po_number}",
+    }
 
 
 @router.post("/{po_id}/convert-to-bill")

@@ -541,6 +541,51 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
     db.flush()
 
 
+def _refuse_if_co_line_billed(db: Session, co: ChangeOrder) -> None:
+    """A change_order SOV line that a pay application has billed (previous +
+    this period + stored > 0 on any non-void application) cannot be voided
+    out from under the billing (#555, 409 co_billed)."""
+    from app.models.pay_applications import PayApplication, PayApplicationLine
+    from app.services.pay_applications import billed_completed_by_sov_line
+
+    sov_line_ids = [
+        r.id
+        for r in db.query(SovLine).filter(
+            SovLine.job_id == co.job_id, SovLine.change_order_id == co.id
+        )
+    ]
+    if not sov_line_ids:
+        return
+    billed = billed_completed_by_sov_line(db, co.job_id)
+    if any(_q(billed.get(sid, 0)) > 0 for sid in sov_line_ids):
+        _raise_co_billed()
+    open_line = (
+        db.query(PayApplicationLine)
+        .join(
+            PayApplication, PayApplication.id == PayApplicationLine.pay_application_id
+        )
+        .filter(
+            PayApplication.job_id == co.job_id,
+            PayApplication.status != "void",
+            PayApplicationLine.sov_line_id.in_(sov_line_ids),
+            (PayApplicationLine.this_period + PayApplicationLine.stored) > 0,
+        )
+        .first()
+    )
+    if open_line is not None:
+        _raise_co_billed()
+
+
+def _raise_co_billed() -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "co_billed",
+            "message": "A pay application has billed this change order; it cannot be voided.",
+        },
+    )
+
+
 def reverse_change_order(db: Session, co: ChangeOrder) -> None:
     """Undo apply_change_order from the CO's frozen figures, in the route's
     transaction."""
@@ -551,6 +596,7 @@ def reverse_change_order(db: Session, co: ChangeOrder) -> None:
 
     if co.kind == "owner":
         if co.funding == "contract":
+            _refuse_if_co_line_billed(db, co)  # 409 co_billed
             base = Decimal(str(job.contract_amount or 0))
             job.contract_amount = _q(base - sell_total)
             # TODO (#555): 409 co_billed when a pay application has billed this

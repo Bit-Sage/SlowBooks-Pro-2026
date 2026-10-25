@@ -969,6 +969,20 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         touched_pos.add(poline.purchase_order_id)
     _resync_po_status(db, touched_pos)
 
+    # A retainage-release bill (#555) gave the figure back to its commitment;
+    # voiding it (the reversing JE above already backed out the 2050/A-P split)
+    # restores the outstanding retainage on the commitment.
+    if (bill.retainage_released or Decimal("0")) > 0 and bill.po_id:
+        po = db.get(PurchaseOrder, bill.po_id)
+        if po is not None:
+            po.retainage_released = _q(
+                max(
+                    Decimal("0"),
+                    Decimal(str(po.retainage_released or 0))
+                    - Decimal(str(bill.retainage_released or 0)),
+                )
+            )
+
     bill.status = BillStatus.VOID
     bill.balance_due = Decimal("0")
     db.commit()

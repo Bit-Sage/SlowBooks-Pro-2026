@@ -35,6 +35,7 @@ from app.schemas.jobs import (
     SovLineOut,
     SovSave,
 )
+from app.schemas.pay_applications import JobDepositCreate
 from app.models.estimates import Estimate
 from app.services.contracts import (
     build_sov,
@@ -44,6 +45,7 @@ from app.services.contracts import (
 )
 from app.services.estimating import estimate_totals
 from app.services.accounting import _q
+from app.services.closing_date import check_closing_date
 from app.models.job_costing import JobBudget
 from app.services.job_costing import (
     budget_vs_actual_all_jobs,
@@ -570,12 +572,31 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
         .filter(SovLine.job_id == job.id, SovLine.kind == "change_order")
         .all()
     )
+
+    # A pay application that has billed the schedule pins its lines: a billed
+    # line must round-trip by id and may not shrink below what it has billed,
+    # and it may not be dropped (#555). With no approved application the save
+    # is an ordinary full replace — existing lines are rebuilt from scratch.
+    from app.services.pay_applications import billed_completed_by_sov_line
+
+    billed = billed_completed_by_sov_line(db, job.id)
+    if billed:
+        _save_sov_with_billings(db, job, data.lines, kept, billed)
+    else:
+        _save_sov_replace(db, job, data.lines, kept)
+    db.commit()
+    db.refresh(job)
+    return ContractSummary(**contract_summary(db, job))
+
+
+def _save_sov_replace(db: Session, job: Job, lines, kept) -> None:
+    """Full replace of the non change-order lines (no billings to protect)."""
     db.query(SovLine).filter(
         SovLine.job_id == job.id, SovLine.kind != "change_order"
     ).delete()
     db.flush()
     n = 0
-    for line in data.lines:
+    for line in lines:
         n += 1
         item_no = (line.item_no or "").strip() or f"{n:02d}"
         db.add(
@@ -590,13 +611,75 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
                 scheduled_value=_q(line.scheduled_value),
             )
         )
-    # Change-order lines keep their value and FK, renumbered after the rest.
+    for co_line in kept:  # keep their value and FK, renumbered after the rest
+        n += 1
+        co_line.line_no = n
+
+
+def _save_sov_with_billings(db: Session, job: Job, lines, kept, billed) -> None:
+    """Save the schedule while a pay application has billed it: update a
+    billed line in place by id (never dropping it or shrinking it below its
+    billed completed_to_date), add new lines, drop only unbilled ones (#555)."""
+    existing = {
+        r.id: r
+        for r in db.query(SovLine).filter(
+            SovLine.job_id == job.id, SovLine.kind != "change_order"
+        )
+    }
+    sent_ids = {line.id for line in lines if line.id is not None}
+    for line_id, row in existing.items():
+        if line_id not in sent_ids and _q(billed.get(line_id, 0)) > 0:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Line {row.item_no or row.line_no} has been billed and "
+                    "cannot be dropped from the schedule."
+                ),
+            )
+    n = 0
+    seen = set()
+    for line in lines:
+        n += 1
+        item_no = (line.item_no or "").strip() or f"{n:02d}"
+        row = existing.get(line.id) if line.id is not None else None
+        if row is not None:
+            seen.add(row.id)
+            floor = _q(billed.get(row.id, 0))
+            if _q(line.scheduled_value) < floor:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Line {item_no} has billed {floor:.2f}; its scheduled "
+                        f"value cannot drop below that."
+                    ),
+                )
+            row.line_no = n
+            row.item_no = item_no
+            row.description = line.description
+            row.trade_package_id = line.trade_package_id
+            row.cost_code_id = line.cost_code_id
+            row.kind = line.kind
+            row.scheduled_value = line.scheduled_value
+        else:
+            db.add(
+                SovLine(
+                    job_id=job.id,
+                    line_no=n,
+                    item_no=item_no,
+                    description=line.description,
+                    trade_package_id=line.trade_package_id,
+                    cost_code_id=line.cost_code_id,
+                    kind=line.kind,
+                    scheduled_value=line.scheduled_value,
+                )
+            )
+    for line_id, row in existing.items():
+        if line_id not in seen:  # unbilled and not resent — drop it
+            db.delete(row)
+    db.flush()
     for co_line in kept:
         n += 1
         co_line.line_no = n
-    db.commit()
-    db.refresh(job)
-    return ContractSummary(**contract_summary(db, job))
 
 
 @router.get("/{job_id}/buyout")
@@ -608,6 +691,140 @@ def get_buyout(job_id: int, db: Session = Depends(get_db)):
 
     job = _get(db, job_id)
     return job_buyout(db, job)
+
+
+# ---------------------------------------------------------------------------
+# Owner deposits (#555) — money taken before (or ahead of) the work, held on
+# Customer Deposits (2210) until a pay application applies it.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{job_id}/deposits")
+def list_deposits(job_id: int, db: Session = Depends(get_db)):
+    from app.models.job_deposits import JobDeposit
+    from app.schemas.pay_applications import JobDepositOut, JobDepositsResponse
+    from app.services.pay_applications import deposits_figures
+
+    _get(db, job_id)
+    rows = (
+        db.query(JobDeposit)
+        .filter(JobDeposit.job_id == job_id)
+        .order_by(JobDeposit.date, JobDeposit.id)
+        .all()
+    )
+    figures = deposits_figures(db, job_id)
+    return JobDepositsResponse(
+        deposits=[JobDepositOut.model_validate(r) for r in rows],
+        received=float(figures["received"]),
+        applied=float(figures["applied"]),
+        unapplied=float(figures["unapplied"]),
+    )
+
+
+@router.post("/{job_id}/deposits", status_code=201)
+def create_deposit(job_id: int, data: JobDepositCreate, db: Session = Depends(get_db)):
+    from app.models.accounts import Account
+    from app.models.job_deposits import JobDeposit
+    from app.schemas.pay_applications import JobDepositOut
+    from app.services.accounting import (
+        create_journal_entry,
+        ensure_construction_accounts,
+    )
+
+    job = _get(db, job_id)
+    check_closing_date(db, data.date)
+    bank = db.get(Account, data.deposit_to_account_id)
+    if bank is None:
+        raise HTTPException(status_code=404, detail="Deposit-to account not found")
+    deposits_acct = ensure_construction_accounts(db)["2210"]
+    dep = JobDeposit(
+        job_id=job.id,
+        date=data.date,
+        amount=_q(data.amount),
+        deposit_to_account_id=bank.id,
+        memo=data.memo,
+    )
+    db.add(dep)
+    db.flush()
+    # DR bank / CR Customer Deposits (2210).
+    txn = create_journal_entry(
+        db,
+        data.date,
+        f"Deposit — {job.full_name}",
+        [
+            {
+                "account_id": bank.id,
+                "debit": _q(data.amount),
+                "credit": Decimal("0"),
+                "description": f"Deposit — {job.full_name}",
+                "job_id": job.id,
+            },
+            {
+                "account_id": deposits_acct.id,
+                "debit": Decimal("0"),
+                "credit": _q(data.amount),
+                "description": f"Customer deposit — {job.full_name}",
+                "job_id": job.id,
+            },
+        ],
+        source_type="job_deposit",
+        source_id=dep.id,
+        job_id=job.id,
+    )
+    dep.transaction_id = txn.id
+    db.commit()
+    db.refresh(dep)
+    return JobDepositOut.model_validate(dep)
+
+
+@router.post("/{job_id}/deposits/{deposit_id}/void")
+def void_deposit(job_id: int, deposit_id: int, db: Session = Depends(get_db)):
+    from app.models.job_deposits import JobDeposit
+    from app.schemas.pay_applications import JobDepositOut
+    from app.services.accounting import create_journal_entry, reversing_lines
+    from app.services.pay_applications import deposits_figures
+
+    _get(db, job_id)
+    dep = db.get(JobDeposit, deposit_id)
+    if dep is None or dep.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    if dep.voided_at is not None:
+        raise HTTPException(status_code=400, detail="Deposit already voided")
+    # An applied deposit can't be voided — it is funding an approved billing.
+    figures = deposits_figures(db, job_id)
+    if figures["applied"] > 0 and figures["unapplied"] < Decimal(str(dep.amount)):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "deposit_applied",
+                "message": "Some of this deposit has been applied to a pay application.",
+            },
+        )
+    check_closing_date(db, dep.date)
+    if dep.transaction_id:
+        from app.models.transactions import TransactionLine
+
+        lines = (
+            db.query(TransactionLine)
+            .filter(TransactionLine.transaction_id == dep.transaction_id)
+            .all()
+        )
+        if lines:
+            create_journal_entry(
+                db,
+                dep.date,
+                f"VOID Deposit — {_get(db, job_id).full_name}",
+                reversing_lines(lines),
+                source_type="job_deposit_void",
+                source_id=dep.id,
+                job_id=job_id,
+            )
+    from datetime import datetime as _dt, timezone as _tz
+
+    dep.voided_at = _dt.now(_tz.utc)
+    db.commit()
+    db.refresh(dep)
+    return JobDepositOut.model_validate(dep)
 
 
 @router.post("", response_model=JobResponse, status_code=201)

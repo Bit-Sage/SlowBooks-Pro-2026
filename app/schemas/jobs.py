@@ -165,6 +165,9 @@ class ContractTerms(StrictModel):
 
 
 class SovLineIn(StrictModel):
+    # The existing line this row is (so a billed line round-trips by id, #555);
+    # absent on a freshly added row.
+    id: Optional[int] = None
     item_no: Optional[str] = Field(default=None, max_length=10)
     description: Optional[str] = Field(default=None, max_length=200)
     trade_package_id: Optional[int] = None
@@ -232,6 +235,9 @@ class ContractSummary(BaseModel):
     # Change orders (#554): allowance draw-down per line and the CO roll-up.
     allowances: List[dict] = []
     change_orders: dict = {}
+    # Progress billing (#555): owner deposits and owner-side retainage.
+    deposits: dict = {}
+    retainage: dict = {}
 
 
 class ContractResponse(BaseModel):

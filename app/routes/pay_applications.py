@@ -1,0 +1,650 @@
+# ============================================================================
+# Pay applications (#555) — the owner's progress billing from the schedule of
+# values. The document and its lifecycle: a draft pre-filled from the SOV,
+# edited while draft/submitted, approved into an invoice (and a deposit
+# payment when one applies), voided back out.
+#
+# The math is pure (app/services/pay_applications.py); the effects — the
+# invoice, its retainage journal (A/R, 1150, income, tax) and the deposit
+# payment — land on approve and reverse on void.
+# ============================================================================
+
+from datetime import date as dt_date, datetime, timezone
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.contacts import Customer
+from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
+from app.models.job_deposits import JobDeposit  # noqa: F401 (register the table)
+from app.models.jobs import Job, SovLine
+from app.models.pay_applications import PayApplication, PayApplicationLine
+from app.schemas.pay_applications import (
+    PayApplicationCreate,
+    PayApplicationOut,
+    PayApplicationUpdate,
+)
+from app.services.accounting import (
+    _q,
+    create_journal_entry,
+    ensure_construction_accounts,
+    get_ar_account_id,
+    get_default_income_account_id,
+    get_sales_tax_account_id,
+)
+from app.services.closing_date import check_closing_date
+from app.services.numbering import next_invoice_number
+from app.services.pay_applications import (
+    application_figures,
+    deposits_figures,
+    line_computed,
+    previous_by_sov_line,
+    retainage_held_to_date,
+    retainage_released_to_date,
+)
+from app.services.request_utils import content_disposition
+
+router = APIRouter(prefix="/api/pay-applications", tags=["pay-applications"])
+
+_ZERO = Decimal("0")
+_OPEN = ("draft", "submitted")
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _get(db: Session, app_id: int) -> PayApplication:
+    app = db.get(PayApplication, app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="Pay application not found")
+    return app
+
+
+def _sub_waivers(db: Session, job_id: int, period_to) -> dict:
+    """The job's bills dated on/before the period whose lien-waiver status is
+    missing or pending — what the GC should collect before submitting. Warn
+    only."""
+    from app.models.bills import Bill, BillStatus
+
+    q = db.query(Bill).filter(Bill.job_id == job_id, Bill.status != BillStatus.VOID)
+    if period_to is not None:
+        q = q.filter(Bill.date <= period_to)
+    bills = []
+    for b in q.order_by(Bill.date).all():
+        if b.lien_waiver_status in (None, "pending"):
+            bills.append(
+                {
+                    "bill_id": b.id,
+                    "bill_number": b.bill_number,
+                    "vendor_name": b.vendor.name if b.vendor else "",
+                    "date": b.date.isoformat() if b.date else None,
+                    "lien_waiver_status": b.lien_waiver_status,
+                }
+            )
+    return {"bills": bills, "missing": len(bills)}
+
+
+def _out(db: Session, app: PayApplication) -> PayApplicationOut:
+    prev = previous_by_sov_line(db, app.job_id, app.application_no)
+    lines = []
+    for ln in app.lines:
+        row = line_computed(
+            type(
+                "L",
+                (),
+                {
+                    "scheduled_value": ln.scheduled_value,
+                    "previous": prev.get(ln.sov_line_id, _ZERO),
+                    "this_period": ln.this_period,
+                    "stored": ln.stored,
+                },
+            ),
+            app.retainage_pct,
+        )
+        lines.append(
+            {
+                "id": ln.id,
+                "sov_line_id": ln.sov_line_id,
+                "line_no": ln.line_no,
+                "item_no": ln.item_no,
+                "description": ln.description,
+                **row,
+            }
+        )
+    totals = {
+        k: (float(v) if isinstance(v, Decimal) else v)
+        for k, v in application_figures(db, app).items()
+    }
+    out = PayApplicationOut.model_validate(app)
+    out.lines = lines
+    out.totals = totals
+    out.invoice_number = app.invoice.invoice_number if app.invoice else None
+    out.sub_waivers = _sub_waivers(db, app.job_id, app.period_to)
+    out.unapplied_deposits = float(deposits_figures(db, app.job_id)["unapplied"])
+    out.retainage_outstanding = float(
+        _q(
+            retainage_held_to_date(db, app.job_id)
+            - retainage_released_to_date(db, app.job_id)
+        )
+    )
+    return out
+
+
+def _validate(db: Session, app: PayApplication) -> None:
+    """The per-line and header guards (422): a line billed past its scheduled
+    value, a release past the held-to-date, a deposit past what is unapplied."""
+    prev = previous_by_sov_line(db, app.job_id, app.application_no)
+    for ln in app.lines:
+        completed = _q(
+            prev.get(ln.sov_line_id, _ZERO) + _q(ln.this_period) + _q(ln.stored)
+        )
+        if completed > _q(ln.scheduled_value):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{ln.item_no or ''} {ln.description or ''}".strip()
+                    + f": completed to date {completed:.2f} is more than the "
+                    f"scheduled value {_q(ln.scheduled_value):.2f}."
+                ),
+            )
+    held = retainage_held_to_date(db, app.job_id)
+    released = retainage_released_to_date(db, app.job_id)
+    if _q(app.release_retainage) > _q(held - released):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Release {_q(app.release_retainage):.2f} is more than the "
+                f"{_q(held - released):.2f} of retainage held to date."
+            ),
+        )
+    unapplied = deposits_figures(db, app.job_id)["unapplied"]
+    if _q(app.deposit_applied) > unapplied:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Deposit applied {_q(app.deposit_applied):.2f} is more than the "
+                f"{unapplied:.2f} of unapplied deposits."
+            ),
+        )
+
+
+# ── CRUD ─────────────────────────────────────────────────────────────────
+
+
+@router.get("", response_model=list[PayApplicationOut])
+def list_pay_applications(job_id: int = Query(...), db: Session = Depends(get_db)):
+    apps = (
+        db.query(PayApplication)
+        .filter(PayApplication.job_id == job_id)
+        .order_by(PayApplication.application_no)
+        .all()
+    )
+    return [_out(db, a) for a in apps]
+
+
+@router.get("/{app_id}", response_model=PayApplicationOut)
+def get_pay_application(app_id: int, db: Session = Depends(get_db)):
+    return _out(db, _get(db, app_id))
+
+
+@router.post("", response_model=PayApplicationOut, status_code=201)
+def create_pay_application(data: PayApplicationCreate, db: Session = Depends(get_db)):
+    job = db.get(Job, data.job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # Only one draft/submitted application per job at a time.
+    open_one = (
+        db.query(PayApplication)
+        .filter(PayApplication.job_id == job.id, PayApplication.status.in_(_OPEN))
+        .first()
+    )
+    if open_one is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "application_open",
+                "message": f"{open_one.number} is still open; submit or approve it first.",
+            },
+        )
+    last = (
+        db.query(PayApplication)
+        .filter(PayApplication.job_id == job.id)
+        .order_by(PayApplication.application_no.desc())
+        .first()
+    )
+    no = (last.application_no if last else 0) + 1
+    number = f"PA-{job.job_number or job.id}-{no:02d}"
+    app = PayApplication(
+        job_id=job.id,
+        application_no=no,
+        number=number,
+        date=data.date or dt_date.today(),
+        period_to=data.period_to,
+        status="draft",
+        retainage_pct=(
+            data.retainage_pct if data.retainage_pct is not None else job.retainage_pct
+        ),
+        notes=data.notes,
+    )
+    db.add(app)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Could not assign a pay application number; retry."
+        )
+    # Pre-fill a line from every SOV line, in order — change_order, allowance
+    # and contingency lines bill like work.
+    for n, sov in enumerate(job.sov_lines, start=1):
+        db.add(
+            PayApplicationLine(
+                pay_application_id=app.id,
+                sov_line_id=sov.id,
+                line_no=n,
+                item_no=sov.item_no,
+                description=sov.description,
+                scheduled_value=sov.scheduled_value,
+                this_period=_ZERO,
+                stored=_ZERO,
+            )
+        )
+    db.flush()
+    db.refresh(app)
+    db.commit()
+    db.refresh(app)
+    return _out(db, app)
+
+
+@router.put("/{app_id}", response_model=PayApplicationOut)
+def update_pay_application(
+    app_id: int, data: PayApplicationUpdate, db: Session = Depends(get_db)
+):
+    app = _get(db, app_id)
+    if app.status not in _OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a draft or submitted pay application can be edited.",
+        )
+    for key in (
+        "date",
+        "period_to",
+        "retainage_pct",
+        "release_retainage",
+        "deposit_applied",
+        "lien_waiver_status",
+        "notes",
+    ):
+        val = getattr(data, key)
+        if val is not None:
+            setattr(app, key, val)
+    if data.lines is not None:
+        by_sov = {ln.sov_line_id: ln for ln in app.lines}
+        for row in data.lines:
+            ln = by_sov.get(row.sov_line_id)
+            if ln is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"SOV line {row.sov_line_id} is not on this pay application.",
+                )
+            ln.this_period = _q(row.this_period)
+            ln.stored = _q(row.stored)
+    db.flush()
+    _validate(db, app)
+    db.commit()
+    db.refresh(app)
+    return _out(db, app)
+
+
+@router.post("/{app_id}/submit", response_model=PayApplicationOut)
+def submit_pay_application(app_id: int, db: Session = Depends(get_db)):
+    app = _get(db, app_id)
+    if app.status != "draft":
+        raise HTTPException(
+            status_code=409, detail="Only a draft pay application can be submitted."
+        )
+    _validate(db, app)
+    app.status = "submitted"
+    db.commit()
+    db.refresh(app)
+    return _out(db, app)
+
+
+# ── Approve → invoice (+ deposit payment) ──────────────────────────────────
+
+
+@router.post("/{app_id}/approve", response_model=PayApplicationOut)
+def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
+    app = _get(db, app_id)
+    if app.status not in _OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a draft or submitted pay application can be approved.",
+        )
+    job = db.get(Job, app.job_id)
+    customer = db.get(Customer, job.customer_id) if job else None
+    if customer is None:
+        raise HTTPException(status_code=422, detail="The job has no customer to bill.")
+    when = app.date or dt_date.today()
+    check_closing_date(db, when)
+    _validate(db, app)
+
+    figures = application_figures(db, app)
+    retainage_held = figures["retainage_this_period"]
+    retainage_released = figures["release_retainage"]
+
+    # This period's billable amount per line: this_period + the stored delta
+    # (this application's stored − the prior approved application's stored),
+    # so stored materials are billed when stored and reversed when installed.
+    prior_stored = _prior_stored(db, app)
+    invoice_lines = []  # (description, amount, cost_code_id)
+    for ln in app.lines:
+        delta = _q(ln.stored) - prior_stored.get(ln.sov_line_id, _ZERO)
+        amount = _q(_q(ln.this_period) + delta)
+        if amount == 0:
+            continue
+        sov = db.get(SovLine, ln.sov_line_id) if ln.sov_line_id else None
+        desc = (
+            f"{ln.item_no or ''} {ln.description or ''}".strip() or "Progress billing"
+        )
+        invoice_lines.append((desc, amount, sov.cost_code_id if sov else None))
+
+    taxable = customer.is_taxable is not False
+    subtotal = _q(sum((a for _d, a, _c in invoice_lines), _ZERO))
+    tax_rate = _ZERO  # a pay application carries no sales-tax rate of its own
+    tax_amount = _ZERO
+    total = _q(subtotal + tax_amount)
+
+    invoice = _create_invoice(
+        db,
+        customer=customer,
+        job=job,
+        when=when,
+        lines=invoice_lines,
+        subtotal=subtotal,
+        tax_rate=tax_rate,
+        tax_amount=tax_amount,
+        total=total,
+        retainage_held=retainage_held,
+        retainage_released=retainage_released,
+        taxable=taxable,
+        pay_application=app,
+    )
+
+    app.status = "approved"
+    app.approved_at = datetime.now(timezone.utc)
+    app.invoice_id = invoice.id
+    db.flush()
+
+    deposit = _q(app.deposit_applied)
+    if deposit > 0:
+        _apply_deposit(db, app, invoice, customer, deposit, when)
+    else:
+        db.commit()
+    db.refresh(app)
+    return _out(db, app)
+
+
+def _prior_stored(db: Session, app: PayApplication) -> dict:
+    from app.services.pay_applications import stored_by_sov_line
+
+    return stored_by_sov_line(db, app.job_id, app.application_no)
+
+
+def _create_invoice(
+    db,
+    *,
+    customer,
+    job,
+    when,
+    lines,
+    subtotal,
+    tax_rate,
+    tax_amount,
+    total,
+    retainage_held,
+    retainage_released,
+    taxable,
+    pay_application,
+):
+    """Build the pay application's invoice and post its retainage journal:
+    DR A/R (net of retainage), DR 1150 for retainage held, CR 1150 for
+    retainage released, CR income per line, CR sales tax."""
+    ar_id = get_ar_account_id(db)
+    income_id = get_default_income_account_id(db)
+    retainage_recv = ensure_construction_accounts(db)["1150"].id
+    balance_due = _q(total - retainage_held + retainage_released)
+
+    invoice = None
+    last_err = None
+    for _ in range(10):
+        number = next_invoice_number(db)
+        invoice = Invoice(
+            invoice_number=number,
+            customer_id=customer.id,
+            status=(InvoiceStatus.PAID if balance_due == 0 else InvoiceStatus.SENT),
+            date=when,
+            due_date=when,
+            terms="Net 30",
+            subtotal=subtotal,
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            amount_paid=_ZERO,
+            balance_due=balance_due,
+            retainage_held=retainage_held,
+            retainage_released=retainage_released,
+            pay_application_id=pay_application.id,
+            job_id=job.id,
+            notes=f"{pay_application.number}",
+        )
+        db.add(invoice)
+        try:
+            db.flush()
+            break
+        except IntegrityError as e:
+            if "invoice_number" not in str(e.orig).lower():
+                raise
+            last_err = e
+            db.rollback()
+            invoice = None
+    if invoice is None:
+        raise HTTPException(
+            status_code=503, detail="Could not assign an invoice number; retry."
+        ) from last_err
+
+    for i, (desc, amount, cost_code_id) in enumerate(lines):
+        db.add(
+            InvoiceLine(
+                invoice_id=invoice.id,
+                description=desc,
+                quantity=Decimal("1"),
+                rate=amount,
+                amount=amount,
+                job_id=job.id,
+                cost_code_id=cost_code_id,
+                is_taxable=taxable,
+                line_order=i,
+            )
+        )
+
+    journal_lines = [
+        {
+            "account_id": ar_id,
+            "debit": _q(total - retainage_held + retainage_released),
+            "credit": _ZERO,
+            "description": f"{pay_application.number} - {customer.name}",
+            "job_id": job.id,
+        }
+    ]
+    if retainage_held > 0:
+        journal_lines.append(
+            {
+                "account_id": retainage_recv,
+                "debit": retainage_held,
+                "credit": _ZERO,
+                "description": f"Retainage withheld - {pay_application.number}",
+                "job_id": job.id,
+            }
+        )
+    if retainage_released > 0:
+        journal_lines.append(
+            {
+                "account_id": retainage_recv,
+                "debit": _ZERO,
+                "credit": retainage_released,
+                "description": f"Retainage released - {pay_application.number}",
+                "job_id": job.id,
+            }
+        )
+    for desc, amount, cost_code_id in lines:
+        journal_lines.append(
+            {
+                "account_id": income_id,
+                "debit": _ZERO,
+                "credit": amount,
+                "description": desc,
+                "job_id": job.id,
+                "cost_code_id": cost_code_id,
+            }
+        )
+    if tax_amount > 0:
+        journal_lines.append(
+            {
+                "account_id": get_sales_tax_account_id(db),
+                "debit": _ZERO,
+                "credit": tax_amount,
+                "description": "Sales tax",
+            }
+        )
+    txn = create_journal_entry(
+        db,
+        when,
+        f"{pay_application.number} - {customer.name}",
+        journal_lines,
+        source_type="invoice",
+        source_id=invoice.id,
+        reference=invoice.invoice_number,
+        job_id=job.id,
+    )
+    invoice.transaction_id = txn.id
+    db.flush()
+    return invoice
+
+
+def _apply_deposit(db, app, invoice, customer, amount, when):
+    """Apply an owner deposit to the pay application's invoice: a Payment
+    whose deposit_to account is Customer Deposits (2210), so its journal is
+    DR 2210 / CR A/R."""
+    from app.routes.payments import create_payment
+    from app.schemas.payments import PaymentAllocationCreate, PaymentCreate
+
+    deposits_acct = ensure_construction_accounts(db)["2210"].id
+    data = PaymentCreate(
+        customer_id=customer.id,
+        date=when,
+        amount=amount,
+        method="deposit",
+        deposit_to_account_id=deposits_acct,
+        notes=f"Deposit applied — {app.number}",
+        allocations=[PaymentAllocationCreate(invoice_id=invoice.id, amount=amount)],
+    )
+    create_payment(data, db)  # commits
+
+
+# ── Void ────────────────────────────────────────────────────────────────────
+
+
+@router.post("/{app_id}/void", response_model=PayApplicationOut)
+def void_pay_application(app_id: int, db: Session = Depends(get_db)):
+    app = _get(db, app_id)
+    if app.status != "approved":
+        raise HTTPException(
+            status_code=409, detail="Only an approved pay application can be voided."
+        )
+    invoice = db.get(Invoice, app.invoice_id) if app.invoice_id else None
+    if invoice is not None:
+        _refuse_if_truly_paid(db, invoice)
+        dep = _deposit_payment(db, invoice)
+        if dep is not None:
+            from app.routes.payments import void_payment
+
+            void_payment(dep.id, db)  # commits; restores the invoice balance
+            db.refresh(invoice)
+        from app.routes.invoices.lifecycle import void_invoice
+
+        void_invoice(invoice.id, db)  # commits; reverses the journal incl. 1150
+    app.status = "void"
+    app.voided_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(app)
+    return _out(db, app)
+
+
+def _deposit_payment(db, invoice):
+    """The deposit payment this invoice's approval created, if any."""
+    from app.models.payments import Payment, PaymentAllocation
+
+    return (
+        db.query(Payment)
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+        .filter(
+            PaymentAllocation.invoice_id == invoice.id,
+            Payment.method == "deposit",
+            Payment.is_voided.is_(False),
+        )
+        .first()
+    )
+
+
+def _refuse_if_truly_paid(db, invoice):
+    """409 invoice_paid when the invoice carries a payment other than the
+    deposit application — a real receipt has to be voided first."""
+    from app.models.payments import Payment, PaymentAllocation
+
+    others = (
+        db.query(Payment)
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+        .filter(
+            PaymentAllocation.invoice_id == invoice.id,
+            Payment.is_voided.is_(False),
+            Payment.method != "deposit",
+        )
+        .first()
+    )
+    if others is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "invoice_paid",
+                "message": "The invoice has a payment on it; void the payment first.",
+            },
+        )
+
+
+# ── PDF ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/{app_id}/pdf")
+def pay_application_pdf(app_id: int, db: Session = Depends(get_db)):
+    from app.services.pdf_service import generate_pay_application_pdf
+    from app.services.settings_service import get_all_settings
+
+    app = _get(db, app_id)
+    out = _out(db, app)
+    company = get_all_settings(db)
+    job = db.get(Job, app.job_id)
+    pdf_bytes = generate_pay_application_pdf(app, out, job, company)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": content_disposition(
+                f"PayApplication_{app.number}.pdf"
+            )
+        },
+    )

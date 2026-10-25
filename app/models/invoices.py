@@ -70,6 +70,16 @@ class Invoice(Base):
     amount_paid = Column(Numeric(15, 2), default=0)
     balance_due = Column(Numeric(15, 2), default=0)
 
+    # Construction progress billing (#555): the retainage this invoice holds
+    # back (to Retainage Receivable, 1150) and any held retainage it bills
+    # back (released from 1150), and the owner pay application it came from.
+    # All zero/null on an ordinary invoice.
+    retainage_held = Column(Numeric(15, 2), nullable=False, default=0)
+    retainage_released = Column(Numeric(15, 2), nullable=False, default=0)
+    pay_application_id = Column(
+        Integer, ForeignKey("pay_applications.id", ondelete="SET NULL"), nullable=True
+    )
+
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
 

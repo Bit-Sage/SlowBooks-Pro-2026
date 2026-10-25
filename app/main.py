@@ -84,6 +84,7 @@ from app.routes import nonprofit as nonprofit_routes
 from app.routes import construction as construction_routes
 from app.routes import trade_packages as trade_packages_routes
 from app.routes import change_orders as change_orders_routes
+from app.routes import pay_applications as pay_applications_routes
 from app.routes import donors as donors_routes
 from app.routes import in_kind as in_kind_routes
 from app.routes import fx as fx_routes
@@ -1410,6 +1411,7 @@ app.include_router(nonprofit_routes.router)
 app.include_router(construction_routes.router)
 app.include_router(trade_packages_routes.router)
 app.include_router(change_orders_routes.router)
+app.include_router(pay_applications_routes.router)
 app.include_router(donors_routes.router)
 app.include_router(in_kind_routes.router)
 app.include_router(fx_routes.router)

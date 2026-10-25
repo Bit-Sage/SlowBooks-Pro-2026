@@ -51,6 +51,9 @@ class PurchaseOrder(Base):
         Integer, ForeignKey("trade_packages.id", ondelete="SET NULL"), nullable=True
     )
     retainage_pct = Column(Numeric(5, 2), nullable=True)
+    # Retainage released on this commitment so far (#555): held − released is
+    # the retainage still outstanding to the sub.
+    retainage_released = Column(Numeric(15, 2), nullable=False, default=0)
     scope_notes = Column(Text, nullable=True)
 
     subtotal = Column(Numeric(15, 2), default=0)
