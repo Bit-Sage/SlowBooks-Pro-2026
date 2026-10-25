@@ -32,6 +32,7 @@ from app.services.accounting import (
     reversing_lines,
 )
 from app.services.audit import audited_bulk_delete
+from app.services.compliance import vendor_compliance
 from app.services.closing_date import check_closing_date
 from app.services.job_costing import line_cost_type
 from app.services.request_utils import content_disposition
@@ -79,7 +80,7 @@ def list_bills(
         resp = BillResponse.model_validate(b)
         if b.vendor:
             resp.vendor_name = b.vendor.name
-            resp.vendor_compliance = VendorCompliance(**_vendor_compliance(b.vendor))
+            resp.vendor_compliance = VendorCompliance(**vendor_compliance(b.vendor))
         results.append(resp)
     return results
 
@@ -92,7 +93,7 @@ def get_bill(bill_id: int, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
-        resp.vendor_compliance = VendorCompliance(**_vendor_compliance(bill.vendor))
+        resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
     return resp
 
 
@@ -157,23 +158,6 @@ def _default_bill_number(db: Session, vendor: Vendor, date) -> str:
     while f"{base}-{n}" in taken:
         n += 1
     return f"{base}-{n}"
-
-
-def _vendor_compliance(vendor: Vendor) -> dict:
-    """The Sub paperwork flags the bills list and Pay Bills read (#553).
-    Warn-only: an expired COI or missing W-9 never blocks a payment. COI
-    counts as expired when it is past or, for a Sub, missing entirely."""
-    from datetime import date as _date
-
-    is_sub = bool(vendor and vendor.vendor_type == "sub")
-    coi_expires = vendor.coi_expires if vendor else None
-    coi_expired = is_sub and (coi_expires is None or _date.today() > coi_expires)
-    return {
-        "is_sub": is_sub,
-        "w9_on_file": bool(vendor and vendor.w9_on_file),
-        "coi_expires": coi_expires,
-        "coi_expired": coi_expired,
-    }
 
 
 def _post_bill_lines(
@@ -390,9 +374,22 @@ def _flush_number(db: Session, number: str) -> None:
         )
 
 
+def _reject_po_line_links(lines) -> None:
+    """A bill line's purchase_order_line_id is set only when a commitment is
+    converted (#553); a hand-entered or edited bill may not claim one, or the
+    void path would hand dollars back to a commitment it never billed."""
+    if any(getattr(ln, "purchase_order_line_id", None) is not None for ln in lines):
+        raise HTTPException(
+            status_code=422,
+            detail="purchase_order_line_id is set by converting a commitment, "
+            "not on a bill entered or edited by hand.",
+        )
+
+
 @router.post("", response_model=BillResponse, status_code=201)
 def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
+    _reject_po_line_links(data.lines)
 
     vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
     if not vendor:
@@ -497,7 +494,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     db.refresh(bill)
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
-    resp.vendor_compliance = VendorCompliance(**_vendor_compliance(vendor))
+    resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
     return resp
 
 
@@ -515,6 +512,8 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bill not found")
     if bill.status == BillStatus.VOID:
         raise HTTPException(status_code=400, detail="Cannot edit a voided bill")
+    if data.lines is not None:
+        _reject_po_line_links(data.lines)
     check_closing_date(db, bill.date)
 
     # The edit form sends a cleared number as null; the generate step below
@@ -604,6 +603,9 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                 class_id=ln.class_id,
                 cost_code_id=ln.cost_code_id,
                 cost_type=ln.cost_type,
+                # Keep the commitment back-link across a repost (#553), so a
+                # later void still restores the PO line's billed_amount.
+                purchase_order_line_id=ln.purchase_order_line_id,
                 is_billable=bool(ln.is_billable),
                 description=ln.description,
                 # the stored Decimals, not a float round trip (everything
@@ -637,6 +639,28 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                     f"Bill total cannot be less than the amount already paid "
                     f"({amount_paid:.2f}). Void the payment first, or keep the "
                     "total at least that much."
+                ),
+            )
+        # Retainage held (#553) stays between zero and the subtotal, and what
+        # is left payable after it cannot fall below what has been paid.
+        # Checked here, before anything is torn down, so a bad edit mutates
+        # nothing.
+        retainage_held = _q(update_data.get("retainage_held", bill.retainage_held) or 0)
+        if retainage_held > subtotal:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Retainage held ({retainage_held:.2f}) cannot exceed the "
+                    f"subtotal ({subtotal:.2f})."
+                ),
+            )
+        if _q(total - retainage_held) < amount_paid:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Retainage held ({retainage_held:.2f}) would leave less "
+                    f"than the {amount_paid:.2f} already paid. Lower the "
+                    "retainage or void the payment first."
                 ),
             )
 
@@ -695,17 +719,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             txn.class_id = bill.class_id
             txn.job_id = bill.job_id
 
-        # Retainage held (#553) stays between zero and the new subtotal, and
-        # comes out of what is payable alongside anything already paid.
-        retainage_held = _q(bill.retainage_held or 0)
-        if retainage_held > subtotal:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Retainage held ({retainage_held:.2f}) cannot exceed the "
-                    f"subtotal ({subtotal:.2f})."
-                ),
-            )
+        # retainage_held was validated above, before the teardown.
         bill.subtotal = subtotal
         bill.tax_rate = tax_rate
         bill.tax_amount = tax_amount
@@ -739,7 +753,9 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         db.flush()
         db.refresh(bill)
 
-        if bill.balance_due == 0 and amount_paid >= bill.total:
+        # Net of retainage is what's payable, so a bill paid down to the held
+        # amount is PAID, not stuck PARTIAL (#553).
+        if bill.balance_due <= 0 and amount_paid >= _q(total - retainage_held):
             bill.status = BillStatus.PAID
         elif amount_paid > 0:
             bill.status = BillStatus.PARTIAL
@@ -753,7 +769,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
     db.refresh(bill)
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
-    resp.vendor_compliance = VendorCompliance(**_vendor_compliance(vendor))
+    resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
     return resp
 
 
@@ -845,7 +861,9 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         touched_pos.add(poline.purchase_order_id)
     for po_id in touched_pos:
         po = db.get(PurchaseOrder, po_id)
-        if not po or po.status == POStatus.DRAFT:
+        if not po or po.status in (POStatus.DRAFT, POStatus.RECEIVED):
+            # RECEIVED (goods in hand) trumps the billing state and is never
+            # walked back to SENT/PARTIAL by a void.
             continue
         billed = sum(
             (Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0")
@@ -868,5 +886,5 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
-        resp.vendor_compliance = VendorCompliance(**_vendor_compliance(bill.vendor))
+        resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
     return resp

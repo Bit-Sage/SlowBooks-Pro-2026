@@ -667,7 +667,7 @@ const BillsPage = {
         if (!c || !c.is_sub) return '';
         const bits = [];
         if (!c.w9_on_file) bits.push('W-9 missing');
-        if (c.coi_expired) bits.push('COI expired');
+        if (c.coi_expired) bits.push(c.coi_expires ? 'COI expired' : 'COI missing');
         if (!bits.length) return '';
         return ` <span class="compliance-flag" style="color:var(--text-danger);font-size:11px">(${bits.join(', ')})</span>`;
     },

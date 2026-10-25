@@ -9,7 +9,6 @@
 # and job-cost-by-vendor; this endpoint is the seam.
 # ============================================================================
 
-from datetime import date as _date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -18,6 +17,7 @@ from app.models.estimates import Estimate, EstimateStatus
 from app.models.jobs import Job
 from app.models.purchase_orders import POStatus, PurchaseOrder
 from app.services.accounting import _q
+from app.services.compliance import vendor_compliance
 from app.services.estimating import estimate_totals
 
 # A commitment counts once it has left draft; its remaining (unbilled) part
@@ -41,18 +41,6 @@ def _bid_estimate(db: Session, job: Job):
         .order_by(Estimate.id)
         .first()
     )
-
-
-def _compliance(vendor) -> dict:
-    is_sub = bool(vendor and vendor.vendor_type == "sub")
-    coi_expires = vendor.coi_expires if vendor else None
-    coi_expired = is_sub and (coi_expires is None or _date.today() > coi_expires)
-    return {
-        "is_sub": is_sub,
-        "w9_on_file": bool(vendor and vendor.w9_on_file),
-        "coi_expires": coi_expires.isoformat() if coi_expires else None,
-        "coi_expired": coi_expired,
-    }
 
 
 def job_buyout(db: Session, job: Job) -> dict:
@@ -112,7 +100,9 @@ def job_buyout(db: Session, job: Job) -> dict:
             else (bid_by_pkg.get(None, {}).get("name") or _UNASSIGNED)
         )
         row = row_for(pkg_id, name if pkg_id is not None else _UNASSIGNED)
-        total = _q(po.total or 0)
+        # Bought is the pre-tax subtotal, so it compares like-for-like with the
+        # bid cost; tax is payable in full and is not a buyout figure.
+        subtotal = _q(po.subtotal or 0)
         billed = _q(
             sum((Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0"))
         )
@@ -128,7 +118,7 @@ def job_buyout(db: Session, job: Job) -> dict:
                     Decimal("0"),
                 )
             )
-        row["bought"] += total
+        row["bought"] += subtotal
         row["committed_remaining"] += remaining
         row["billed_to_date"] += billed
         row["commitments"].append(
@@ -137,12 +127,12 @@ def job_buyout(db: Session, job: Job) -> dict:
                 "number": po.po_number,
                 "vendor_name": po.vendor.name if po.vendor else "",
                 "type": po.commitment_type,
-                "total": float(total),
+                "subtotal": float(subtotal),
                 "billed": float(billed),
                 "status": (
                     po.status.value if hasattr(po.status, "value") else po.status
                 ),
-                "compliance": _compliance(po.vendor),
+                "compliance": vendor_compliance(po.vendor),
             }
         )
 

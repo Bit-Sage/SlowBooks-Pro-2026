@@ -330,6 +330,8 @@ const JobsPage = {
                 ${stat('Revenue', JobsPage.money(t.act_revenue))}
                 ${stat('Margin', JobsPage.pct(margin), margin !== null && margin < 0 ? 'var(--text-danger)' : null, '(revenue − cost) / revenue')}
                 ${stat('Billed vs contract', JobsPage.pct(billedPct))}
+                ${Terms.isConstruction() ? stat('Committed total', JobsPage.money(t.committed_total), null, 'Every subcontract and PO issued on this job (not period-scoped)') : ''}
+                ${Terms.isConstruction() ? stat('Billed to date (subs)', JobsPage.money(t.billed_to_date), null, 'Billed against commitments so far — the sub/supplier side, not the owner billing on the Contract tab') : ''}
             </div>
             <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;">
                 <div>
@@ -832,7 +834,7 @@ const JobsPage = {
             if (!c || !c.is_sub) return '';
             const bits = [];
             if (!c.w9_on_file) bits.push('W-9 missing');
-            if (c.coi_expired) bits.push('COI expired');
+            if (c.coi_expired) bits.push(c.coi_expires ? 'COI expired' : 'COI missing');
             return bits.length ? ` <span style="color:var(--text-danger);font-size:11px">(${bits.join(', ')})</span>` : '';
         };
         const body = rows.map(r => {
@@ -840,7 +842,7 @@ const JobsPage = {
                 `<div style="font-size:11px;padding-left:8px">
                     <a href="#/purchase-orders" onclick="PurchaseOrdersPage.view(${c.id});return false;">${escapeHtml(c.number)}</a>
                     · ${escapeHtml(c.vendor_name)} · ${c.type === 'subcontract' ? 'Subcontract' : 'PO'}
-                    · ${m(c.total)} (${m(c.billed)} billed) · ${escapeHtml(c.status)}${flag(c.compliance)}
+                    · ${m(c.subtotal)} (${m(c.billed)} billed) · ${escapeHtml(c.status)}${flag(c.compliance)}
                 </div>`).join('');
             return `<tr>
                 <td>${escapeHtml(r.package_name)}${commits ? `<div style="margin-top:4px">${commits}</div>` : ''}</td>

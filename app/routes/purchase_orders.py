@@ -173,27 +173,63 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
             setattr(po, key, val)
 
     if data.lines is not None:
-        db.query(PurchaseOrderLine).filter(
-            PurchaseOrderLine.purchase_order_id == po_id
-        ).delete()
-        for i, line_data in enumerate(data.lines):
-            amt = _q(Decimal(str(line_data.quantity)) * Decimal(str(line_data.rate)))
-            db.add(
-                PurchaseOrderLine(
-                    purchase_order_id=po_id,
-                    item_id=line_data.item_id,
-                    description=line_data.description,
-                    quantity=line_data.quantity,
-                    rate=line_data.rate,
-                    amount=amt,
-                    job_id=line_data.job_id,
-                    cost_code_id=line_data.cost_code_id,
-                    cost_type=line_cost_type(
-                        db, line_data.cost_code_id, line_data.cost_type
-                    ),
-                    line_order=line_data.line_order or i,
+        # Carry each line's billed-to-date (and its bill links) across the
+        # edit (#553): a line the request still names by id is updated in
+        # place, not dropped and recreated. A billed line that the edit would
+        # remove, or whose amount would fall below what has been billed, is a
+        # change only a sub change order can make — refuse it (409).
+        existing = {ln.id: ln for ln in po.lines}
+        incoming_ids = {ld.id for ld in data.lines if ld.id}
+        line_amounts = [
+            _q(Decimal(str(ld.quantity)) * Decimal(str(ld.rate))) for ld in data.lines
+        ]
+        _billed = "This commitment has been billed; change it with a sub change order."
+        for ln in po.lines:
+            if float(ln.billed_amount or 0) > 0 and ln.id not in incoming_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "commitment_billed", "message": _billed},
                 )
-            )
+        for ld, amt in zip(data.lines, line_amounts):
+            if ld.id and ld.id in existing:
+                billed = Decimal(str(existing[ld.id].billed_amount or 0))
+                if billed > 0 and amt < billed:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "commitment_billed", "message": _billed},
+                    )
+
+        for ln in list(po.lines):
+            if ln.id not in incoming_ids:
+                db.delete(ln)
+        for i, (line_data, amt) in enumerate(zip(data.lines, line_amounts)):
+            ct = line_cost_type(db, line_data.cost_code_id, line_data.cost_type)
+            if line_data.id and line_data.id in existing:
+                ln = existing[line_data.id]
+                ln.item_id = line_data.item_id
+                ln.description = line_data.description
+                ln.quantity = line_data.quantity
+                ln.rate = line_data.rate
+                ln.amount = amt
+                ln.job_id = line_data.job_id
+                ln.cost_code_id = line_data.cost_code_id
+                ln.cost_type = ct
+                ln.line_order = line_data.line_order or i
+            else:
+                db.add(
+                    PurchaseOrderLine(
+                        purchase_order_id=po_id,
+                        item_id=line_data.item_id,
+                        description=line_data.description,
+                        quantity=line_data.quantity,
+                        rate=line_data.rate,
+                        amount=amt,
+                        job_id=line_data.job_id,
+                        cost_code_id=line_data.cost_code_id,
+                        cost_type=ct,
+                        line_order=line_data.line_order or i,
+                    )
+                )
         tax_rate = data.tax_rate if data.tax_rate is not None else po.tax_rate
         subtotal, tax_amount, total = compute_line_totals(data.lines, tax_rate)
         po.subtotal = subtotal
@@ -335,9 +371,11 @@ def convert_to_bill(
     # This period's amount per line. With no amounts given at all (the
     # business To Bill dialog, or no body), every line bills its full
     # remaining (amount − billed_amount), as it always did. Once any amount is
-    # given, the request is choosing lines explicitly: a line with an amount
-    # bills it (422 if ≤ 0 or more than remaining); a line with no amount is
-    # left for a later period.
+    # given, the request is a partial bill and chooses lines explicitly: an
+    # amount bills that line (negative is refused, over-remaining is 422), a
+    # zero means skip it this period, and a line with no amount is left for a
+    # later period. The construction dialog sends an amount for every line
+    # (zeros included), so an all-zero submit bills nothing → 409.
     lines = list(po.lines)
     partial_request = bool(asked)
     this_period: dict[int, Decimal] = {}
@@ -347,10 +385,10 @@ def convert_to_bill(
         )
         if poline.id in asked:
             amt = asked[poline.id]
-            if amt <= 0:
+            if amt < 0:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"Line amount {amt:.2f} must be more than zero.",
+                    detail=f"Line amount {amt:.2f} cannot be negative.",
                 )
             if amt > remaining:
                 raise HTTPException(
@@ -360,7 +398,7 @@ def convert_to_bill(
                         f"{remaining:.2f} left to bill on that line."
                     ),
                 )
-            this_period[poline.id] = amt
+            this_period[poline.id] = amt  # a zero skips the line this period
         elif partial_request:
             this_period[poline.id] = Decimal("0")
         else:
@@ -371,8 +409,8 @@ def convert_to_bill(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"{po.po_number} has nothing left to bill — every line is "
-                "already billed in full."
+                f"{po.po_number} has nothing left to bill — enter an amount on "
+                "at least one line, or bill the remaining periods."
             ),
         )
 
@@ -444,12 +482,20 @@ def convert_to_bill(
     if po.retainage_pct:
         retainage_held = _q(subtotal * Decimal(str(po.retainage_pct)) / Decimal("100"))
 
+    # Give the bill a currency + rate like Enter Bill does; a converted bill
+    # with neither made PUT /api/bills/{id} 500 in currency.convert_lines.
+    from app.services.currency import resolve_rate
+
+    doc_currency, doc_rate = resolve_rate(db, None, None)
+
     bill = Bill(
         bill_number=bill_number,
         vendor_id=po.vendor_id,
         status=BillStatus.UNPAID,
         po_id=po.id,
         date=po.date,
+        currency=doc_currency,
+        exchange_rate=doc_rate,
         # The vendor's terms, and the due date they give — a converted bill
         # had "Net 30" and no due date, so it never aged (macbase1 F10).
         terms=terms,
@@ -561,6 +607,11 @@ def convert_to_bill(
         _q(Decimal(str(ln.amount or 0))) - _q(Decimal(str(ln.billed_amount or 0))) <= 0
         for ln in lines
     )
-    po.status = POStatus.CLOSED if fully_billed else POStatus.PARTIAL
+    if fully_billed:
+        po.status = POStatus.CLOSED
+    elif po.status != POStatus.RECEIVED:
+        # RECEIVED (goods in hand) trumps a partial-billing state; billing in
+        # parts doesn't walk it back.
+        po.status = POStatus.PARTIAL
     db.commit()
     return {"bill_id": bill.id, "message": f"Bill created from {po.po_number}"}

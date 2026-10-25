@@ -1174,6 +1174,10 @@ def job_cost_tree(
     )
     totals["committed_total"] = cf["committed_total"]
     totals["billed_to_date"] = cf["billed_to_date"]
+    # committed_total and billed_to_date are whole-commitment figures, not
+    # period-scoped like the actuals above — a commitment has no period. The
+    # flag says so for a dated cost tree (#553).
+    totals["commitments_all_time"] = True
     return {
         "job_id": job_id,
         "start_date": start_date.isoformat() if start_date else None,

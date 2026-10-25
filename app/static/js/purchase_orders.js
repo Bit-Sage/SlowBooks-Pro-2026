@@ -166,7 +166,7 @@ const PurchaseOrdersPage = {
     },
 
     lineHtml(idx, line, items) {
-        return `<tr data-poline="${idx}">
+        return `<tr data-poline="${idx}" data-line-id="${line.id || ''}">
             <td><select class="line-item" onchange="PurchaseOrdersPage.itemSel(${idx})">${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             ${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
@@ -264,7 +264,10 @@ const PurchaseOrdersPage = {
         const form = e.target;
         const lines = [];
         $$('#po-lines tr').forEach((row, i) => {
-            lines.push({
+            // Send an existing line's id so its billed-to-date survives the
+            // edit (#553); a new line has none.
+            const lineId = row.dataset.lineId ? parseInt(row.dataset.lineId) : null;
+            const line = {
                 item_id: ItemQuickAdd.itemId(row.querySelector('.line-item')),
                 description: row.querySelector('.line-desc')?.value || '',
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
@@ -272,7 +275,9 @@ const PurchaseOrdersPage = {
                 cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
                 cost_type: CostTypes.fromRow(row, 'line-cost-type'),
                 line_order: i,
-            });
+            };
+            if (lineId) line.id = lineId;
+            lines.push(line);
         });
         const data = {
             vendor_id: parseInt(form.vendor_id.value),
@@ -359,26 +364,39 @@ const PurchaseOrdersPage = {
     },
 
     async doConvert(id) {
-        const lines = [];
-        for (const sel of $$('.po-conv-account')) {
-            if (!sel.value) {
-                toast('Choose an account for every line, then create the bill.', 'error');
-                sel.focus();
-                return;
+        let lines;
+        const amtInputs = $$('.po-conv-amount');
+        if (amtInputs.length) {
+            // Construction partial billing: send {line_id, amount} for every
+            // line, zeros included, so the server knows this is a partial
+            // request and bills only the lines with an amount. Require an
+            // account only on a line actually being billed.
+            const byLine = {};
+            for (const inp of amtInputs) {
+                const lid = parseInt(inp.dataset.line);
+                byLine[lid] = { line_id: lid, amount: parseFloat(inp.value) || 0 };
             }
-            lines.push({ line_id: parseInt(sel.dataset.line), account_id: parseInt(sel.value) });
-        }
-        // This period's amount per line, when the construction dialog offered
-        // it. An amount of zero means skip the line this period, so only
-        // positive amounts are sent; once any is sent the server bills just
-        // those lines.
-        const byLine = Object.fromEntries(lines.map(l => [l.line_id, l]));
-        for (const inp of $$('.po-conv-amount')) {
-            const lid = parseInt(inp.dataset.line);
-            const amt = parseFloat(inp.value);
-            if (!isNaN(amt) && amt > 0) {
-                if (!byLine[lid]) { byLine[lid] = { line_id: lid }; lines.push(byLine[lid]); }
-                byLine[lid].amount = amt;
+            for (const sel of $$('.po-conv-account')) {
+                const lid = parseInt(sel.dataset.line);
+                const row = byLine[lid];
+                if (row && row.amount > 0 && !sel.value) {
+                    toast('Choose an account for every line you are billing, then create the bill.', 'error');
+                    sel.focus();
+                    return;
+                }
+                if (row && sel.value) row.account_id = parseInt(sel.value);
+            }
+            lines = Object.values(byLine);
+        } else {
+            // Business dialog: an account per line, billed in full as today.
+            lines = [];
+            for (const sel of $$('.po-conv-account')) {
+                if (!sel.value) {
+                    toast('Choose an account for every line, then create the bill.', 'error');
+                    sel.focus();
+                    return;
+                }
+                lines.push({ line_id: parseInt(sel.dataset.line), account_id: parseInt(sel.value) });
             }
         }
         try {

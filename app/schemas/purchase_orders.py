@@ -15,6 +15,9 @@ from app.schemas.invoices import RateOut
 
 
 class POLineCreate(StrictModel):
+    # An existing line's id, sent on an update so its billed-to-date and the
+    # bill links to it survive the edit (#553). Absent = a new line.
+    id: Optional[int] = None
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
