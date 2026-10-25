@@ -462,6 +462,42 @@ revised schedule (#555) and the change-order log report (#556) build on this;
 a Business or Nonprofit company sees none of it. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**Progress billing and retainage** (#555, @ContractorKeith). A construction job
+now bills its owner from the schedule of values with a **pay application**:
+each SOV line carries previous, this period, materials presently stored,
+completed-to-date, percent complete, balance to finish and retainage, and the
+application totals the way the owner's certificate reads — completed and stored
+to date, retainage to date, total earned less retainage, less previous
+certificates, the current payment due, and the balance to finish. A new
+application pre-fills every SOV line (change-order, allowance and contingency
+lines bill like work); only one may be open per job (409). **Approve** creates
+the invoice for the job's customer — one line per SOV line billed this period
+(this period plus the change in stored materials, so stored is billed when
+stored and reversed when it is installed) — and posts a retainage journal: DR
+A/R net of retainage, DR **Retainage Receivable** (1150) for retainage held
+this period, CR 1150 for any retainage released, CR income per line, CR sales
+tax. The invoice carries `retainage_held`, `retainage_released` and its
+`pay_application_id`, and its balance due is the net of retainage. **Owner
+deposits** (`POST /api/jobs/{id}/deposits`) hold money on **Customer Deposits**
+(2210); a pay application's *deposit applied* draws one down as a payment to
+2210 on approve. **Void** reverses the invoice (and 1150), restores an applied
+deposit, and leaves later applications' figures correct (they read history
+live). On the **sub** side, a commitment's schedule drives a **Sub pay app**
+(the existing partial convert) and **Release retainage** writes a bill DR
+**Retainage Payable** (2050) / CR A/P, payable through Pay Bills; 422 over what
+is held, and voiding it restores the figure. Lien waivers ride on both sides:
+an application warns about sub bills still missing a waiver for the period. The
+schedule can no longer be rebuilt once billed (409 `sov_has_billings`), a line
+cannot shrink below what it has billed (422), and an owner change order whose
+SOV line has been billed cannot be voided (409 `co_billed`). A **Pay apps** tab
+(construction only, after Change orders) holds the application grid, the totals
+block, the deposits block and Save / Submit / Approve / Void / PDF
+(`GET /api/pay-applications/{id}/pdf` prints the pay application and its
+continuation sheet); the invoice view and PDF show the retainage lines. The
+WIP schedule, cost-to-complete, the change-order log, the buyout report and job
+cost by vendor (#556) build on this; a Business or Nonprofit company sees none
+of it. See [docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

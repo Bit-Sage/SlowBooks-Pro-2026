@@ -237,7 +237,7 @@ not-to-exceed). The type decides how the fee and the cap read:
   it to the sum so the schedule still balances), drawn down as change orders
   use it (#554 tracks the draw-down).
 - **Retainage %** — the portion of each billing the owner holds back until the
-  job is accepted. It is stored now and used when progress billing lands.
+  job is accepted. Progress billing (below) holds it back and releases it.
 - **Contract date** and the **source estimate**, shown when the contract was
   built from one.
 
@@ -278,12 +278,10 @@ contingency), a freshly built schedule already balances.
 **What comes next.** Change orders (#554, see *Change orders* below) revise the
 contract amount, the budget and the sub commitments together, with the rule
 that work paid for out of an allowance carries no markup. Progress billing
-(#555) will turn the SOV
-into an owner pay application — previous / this period / stored / retainage /
-balance per line — holding retainage back and releasing it at the end. Job
-reports (#556) will add the WIP schedule with over- and under-billing. This
-issue sets the contract and builds the schedule; it leaves those seams open
-rather than filling them.
+(#555, see *Progress billing and retainage* below) turns the SOV into an owner
+pay application — previous / this period / stored / retainage / balance per
+line — holding retainage back and releasing it at the end. Job reports (#556)
+will add the WIP schedule with over- and under-billing.
 
 ## Buyout and commitments
 
@@ -362,10 +360,10 @@ bill in a closed period, since it posts nothing.
 
 **What comes next.** Sub **change orders** (#554, see *Change orders* below)
 revise a commitment the way owner change orders revise the contract.
-**Progress billing** (#555) will turn a commitment's schedule of values into a
-sub pay application and release retainage on both sides. **Reports** (#556)
-will add the buyout report and job cost by vendor. This issue sets the
-commitments and leaves those seams open.
+**Progress billing** (#555, see *Progress billing and retainage* below) bills a
+commitment's schedule of values as a sub pay application and releases retainage
+on both sides. **Reports** (#556) will add the buyout report and job cost by
+vendor.
 
 ## Change orders
 
@@ -481,11 +479,111 @@ lifecycle is draft → submitted (*pending*) → approved, with reject and void
 beside it; a PCO runs
 draft → pending → promoted (asking to *promote* rather than approve).
 
-**What comes next.** Progress billing (#555) will bill the revised schedule of
-values — a pay application against the contract sum the change orders moved,
-holding and releasing retainage. The change-order **log report** (#556) will
-list every change order and its effect. This issue writes the change orders
-and leaves those seams open.
+**Billed change orders are locked.** Once a pay application has billed a
+change order's schedule-of-values line (#555, below), that change order can no
+longer be voided — the void answers 409 `co_billed`, the same guard a sub
+change order's billed commitment line already carried. The change-order **log
+report** (#556) will list every change order and its effect.
+
+## Progress billing and retainage
+
+Progress billing turns the owner's schedule of values into a **pay
+application** — the contractor's periodic bill against the contract, the
+counterpart to a commercial Pay application and its Continuation sheet (#555).
+Each application bills a period; approving it creates the invoice.
+
+**The application and its math.** Every SOV line (work, allowance, contingency
+and change-order lines all bill the same way) carries, per period:
+
+- **Scheduled value** — the line's amount.
+- **Previous** — the sum of *this period* on this job's earlier approved
+  applications for the line.
+- **This period** — the work completed this period.
+- **Stored** — materials presently stored, not yet in the work (not
+  cumulative).
+- **Completed to date** = previous + this period + stored.
+- **% complete** = completed ÷ scheduled.
+- **Balance to finish** = scheduled − completed.
+- **Retainage** = completed × the retainage percent (copied from the contract
+  at creation, editable while the application is a draft).
+
+The application totals read the way the owner's certificate does: completed and
+stored to date, **retainage to date** (the sum of the line retainage),
+**retainage this period** (retainage to date less the prior application's),
+**total earned less retainage** (completed − retainage to date), **less
+previous certificates** (the prior applications' payment due), the **current
+payment due** (total earned less retainage − previous certificates + any
+retainage released), and the balance to finish. A **deposit applied** (below)
+nets off the current due to the **net due**.
+
+**A worked two-period example with stored materials and a release.** A
+$100,000 contract on two lines, 10% retainage:
+
+| | Scheduled | Previous | This period | Stored | Completed | Retainage | Current due |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **App 1** | 100,000 | 0 | 30,000 | 5,000 | 35,000 | 3,500 | **31,500** |
+| **App 2** | 100,000 | 30,000 | 20,000 | 5,000 | 55,000 | 5,500 | **18,000** |
+| **App 3** (release) | 100,000 | 50,000 | 0 | 5,000 | 55,000 | 5,500 | **5,500** |
+
+App 1 bills 35,000 of work-and-stored, holds 3,500 of retainage, and certifies
+$31,500. App 2 bills 20,000 more; retainage to date is now 5,500, so retainage
+*this period* is 2,000, and with $31,500 previously certified the current due
+is $18,000. App 3 does no new work but **releases** the 5,500 held: no
+retainage this period, and the current due is the 5,500 released. Across the
+three, the owner has certified $55,000 and been billed the 5,500 of retainage
+back.
+
+**What approve posts.** The invoice carries one line per SOV line with a
+non-zero this-period amount, where the amount is *this period plus the change
+in stored materials* — so stored materials are billed the period they are
+stored and reversed the period they go into the work, and the income billed to
+date always equals completed-to-date. The journal is DR Accounts Receivable for
+the net (total − retainage held this period + retainage released), DR
+**Retainage Receivable** (1150) for the retainage held, CR 1150 for any
+released, CR income per line, CR sales tax as any invoice. The invoice's
+balance due is that net; the invoice view and PDF show *Retainage withheld this
+period*, *Retainage released* and *Current payment due*. **Void** reverses the
+invoice (and the 1150 entries), and later applications stay correct because
+each reads its *previous* and *retainage to date* from the approved history
+live — nothing stored goes stale. Only one application may be open (draft or
+submitted) per job at a time.
+
+**Owner deposits.** Money an owner pays ahead of the work is a **deposit**
+(Pay apps tab → Owner deposits, or `POST /api/jobs/{id}/deposits`): it posts DR
+the bank / CR **Customer Deposits** (2210) and shows as received, applied and
+unapplied. A pay application's **deposit applied** draws the unapplied balance
+down — on approve a payment whose deposit-to account is 2210 is created and
+applied to the invoice (DR 2210 / CR A/R), so the owner's prepayment settles
+the current due. Voiding the application restores the deposit; a deposit that
+has been applied cannot be voided until the application is.
+
+**The sub side.** A commitment bills a period at a time exactly as buyout
+described (the **Sub pay app** button opens the partial-convert dialog with
+previous / this period / remaining). Its held retainage is released with
+**Release retainage** (`POST /api/purchase-orders/{id}/release-retainage`),
+which writes a bill for the vendor carrying no expense account: DR **Retainage
+Payable** (2050) / CR Accounts Payable for the amount, payable through Pay Bills
+like any bill. A release over what is held is refused (422), and voiding the
+release bill gives the retainage back to the commitment. Retainage is held and
+released this way on **both** sides — 1150 receivable on the owner side, 2050
+payable on the sub side.
+
+**Lien waivers.** On the sub side a bill carries its lien-waiver status
+(not required / pending / conditional / unconditional), as it has since buyout;
+the commitment's pay-app schedule lists its bills with that status. On the owner
+side, a pay application warns — it never blocks — about the job's sub bills
+dated on or before the period whose waiver is still missing or pending, so the
+GC sees what to collect before submitting.
+
+**The schedule is now anchored.** Once an approved application has billed the
+schedule of values, it can no longer be rebuilt from the estimate (409
+`sov_has_billings`), a line cannot be dropped or shrunk below what it has billed
+(422), and a billed change order cannot be voided (409 `co_billed`). New lines
+can still be added.
+
+**What comes next.** The WIP schedule with over- and under-billing,
+cost-to-complete, the change-order log, the buyout report and job cost by
+vendor (#556) read these figures; this issue leaves those reports' seams open.
 
 ## The words
 
@@ -528,16 +626,16 @@ appear. Every other report stays where it is.
   new company file; Construction is chosen in Settings afterward, as
   Nonprofit is. A "what kind of company is this?" step at creation is a
   later issue.
-- **No draws yet.** No pay applications or progress-billing screens
-  (#555); change orders (#554) are in, but the accounts are there to post to
-  by hand until progress billing lands.
+- **No job reports yet.** Progress billing with retainage (#555) is in, but the
+  WIP schedule with over- and under-billing, cost-to-complete, the change-order
+  log, the buyout report and job cost by vendor (#556) are still later steps.
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
   rest.
 - **The estimate references trade packages** (#551), **the contract on the
   job** (#552) is set with its schedule of values, sub commitments bill
-  against a package (#553), and **change orders** (#554, see *Change orders*
-  above) revise the contract, budget and commitments; progress billing / owner
-  pay applications with retainage (#555) and WIP reports (#556) are still later
-  steps.
+  against a package (#553), **change orders** (#554, see *Change orders* above)
+  revise the contract, budget and commitments, and **progress billing** (#555,
+  see *Progress billing and retainage* above) bills the schedule with retainage
+  on both sides; WIP and the other job reports (#556) are still later steps.
