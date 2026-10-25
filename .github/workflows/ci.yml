@@ -201,7 +201,10 @@ jobs:
           # and eight new PDF tests (P&L Detail, the month / quarter grid, the
           # check test print and pre-printed stock) that skip with the other
           # PDF tests (no WeasyPrint stack on the runner).
-          MAX_SKIPS: "179"
+          # 180 with the vendor card's payments browser test
+          # (test_browser_vendor_payments_card.py, no Playwright here; read
+          # from 40159680023 on 7ebfc826: 5,249 passed, 180 skipped).
+          MAX_SKIPS: "180"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
