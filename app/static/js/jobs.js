@@ -964,7 +964,7 @@ const JobsPage = {
         if (co.status === 'pending' && co.kind !== 'pco') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coApprove(${id})">Approve</button>`);
         if (draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coReject(${id})">Reject</button>`);
         if (co.kind === 'pco' && draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coPromote(${id})">Promote</button>`);
-        if (co.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coVoid(${id})">Void</button>`);
+        if (co.status === 'approved') parts.push(`<button data-destructive class="btn btn-sm btn-danger" onclick="JobsPage.coVoid(${id})">Void</button>`);
         if (co.kind === 'owner' && co.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coMakeSub(${id})">Make sub order</button>`);
         if (co.kind !== 'sub') parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/change-orders/${id}/pdf','_blank')">PDF</button>`);
         return parts.join(' ');
