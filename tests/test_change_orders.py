@@ -15,7 +15,6 @@ from pathlib import Path
 
 from app.models.change_orders import ChangeOrder
 from app.models.job_costing import JobBudget
-from app.models.jobs import SovLine
 from app.services.change_orders import co_totals, line_sell, effective_markup, line_cost
 from app.services.job_costing import job_cost_tree
 from app.services.pdf_service import render_change_order_html
@@ -404,11 +403,20 @@ def _sent_commitment(client, vendor_id, job_id, lines, **extra):
     return up.json()
 
 
-def test_sub_co_appends_commitment_lines(
+def _sub_line(desc, unit_cost):
+    return {
+        "description": desc,
+        "cost_type": "subcontract",
+        "quantity": 1,
+        "unit_cost": unit_cost,
+    }
+
+
+def test_sub_co_appends_and_keeps_billed_amount(
     client, db_session, seed_accounts, seed_customer
 ):
     job = _job(client, seed_customer.id)
-    vendor = _vendor(client)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
     po = _sent_commitment(
         client,
         vendor["id"],
@@ -416,20 +424,16 @@ def test_sub_co_appends_commitment_lines(
         [{"description": "Base scope", "quantity": 1, "rate": 10000}],
         commitment_type="subcontract",
     )
-    assert float(po["total"]) == 10000.0
-    # an owner CO with subcontract scope
-    owner = _co(
-        client,
-        job["id"],
-        [
-            {
-                "description": "Added scope",
-                "cost_type": "subcontract",
-                "quantity": 1,
-                "unit_cost": 2500,
-            },
-        ],
+    base_line_id = po["lines"][0]["id"]
+    # Bill PART of the base line first, so "billed_amount kept" can actually
+    # fail if the append clobbered it (it was a no-op assertion before).
+    conv = client.post(
+        f"/api/purchase-orders/{po['id']}/convert-to-bill",
+        json={"lines": [{"line_id": base_line_id, "amount": 4000}]},
     )
+    assert conv.status_code == 200, conv.text
+
+    owner = _co(client, job["id"], [_sub_line("Added scope", 2500)])
     sub = client.post(
         f"/api/change-orders/{owner['id']}/sub-order",
         json={"commitment_id": po["id"]},
@@ -441,18 +445,21 @@ def test_sub_co_appends_commitment_lines(
     fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
     assert float(fresh["total"]) == 12500.0  # the commitment grew by cost
     assert len(fresh["lines"]) == 2
-    # the existing line kept its billed_amount
-    base = db_session.query(SovLine)  # noqa: F841 — just forcing a fresh read below
+
     db_session.expire_all()
     from app.models.purchase_orders import PurchaseOrderLine
 
     lines = (
         db_session.query(PurchaseOrderLine).filter_by(purchase_order_id=po["id"]).all()
     )
-    assert all(Decimal(str(line.billed_amount)) == Decimal("0") for line in lines)
+    base = next(line for line in lines if line.id == base_line_id)
+    assert Decimal(str(base.billed_amount)) == Decimal("4000.00")  # kept
+    added = [line for line in lines if line.change_order_id == sub["id"]]
+    assert len(added) == 1
+    assert Decimal(str(added[0].billed_amount)) == Decimal("0")
 
 
-def test_sub_co_reopens_a_closed_commitment_and_buyout_grows(
+def test_sub_co_grows_a_partial_commitment_and_buyout(
     client, db_session, seed_accounts, seed_customer
 ):
     job = _job(client, seed_customer.id)
@@ -468,23 +475,15 @@ def test_sub_co_reopens_a_closed_commitment_and_buyout_grows(
         commitment_type="subcontract",
         trade_package_id=pkg["id"],
     )
-    # fully bill it → closed
-    conv = client.post(f"/api/purchase-orders/{po['id']}/convert-to-bill", json=None)
-    assert conv.status_code == 200, conv.text
-    assert client.get(f"/api/purchase-orders/{po['id']}").json()["status"] == "closed"
-
-    owner = _co(
-        client,
-        job["id"],
-        [
-            {
-                "description": "More slab",
-                "cost_type": "subcontract",
-                "quantity": 1,
-                "unit_cost": 1500,
-            },
-        ],
+    # partially bill it → partial (still open)
+    conv = client.post(
+        f"/api/purchase-orders/{po['id']}/convert-to-bill",
+        json={"lines": [{"line_id": po["lines"][0]["id"], "amount": 2000}]},
     )
+    assert conv.status_code == 200, conv.text
+    assert client.get(f"/api/purchase-orders/{po['id']}").json()["status"] == "partial"
+
+    owner = _co(client, job["id"], [_sub_line("More slab", 1500)])
     sub = client.post(
         f"/api/change-orders/{owner['id']}/sub-order",
         json={"commitment_id": po["id"]},
@@ -492,12 +491,85 @@ def test_sub_co_reopens_a_closed_commitment_and_buyout_grows(
     assert _submit_approve(client, sub["id"]).status_code == 200
 
     fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
-    assert fresh["status"] == "partial"  # reopened — there is more to bill
+    assert fresh["status"] == "partial"
     assert float(fresh["total"]) == 6500.0
 
     buyout = client.get(f"/api/jobs/{job['id']}/buyout").json()
     row = next(r for r in buyout["rows"] if r["package_id"] == pkg["id"])
     assert row["bought"] == 6500.0
+
+
+def test_sub_co_refuses_a_closed_or_foreign_commitment(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    # a fully-billed (closed) commitment is not open
+    closed_po = _sent_commitment(
+        client,
+        vendor["id"],
+        job["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    assert (
+        client.post(
+            f"/api/purchase-orders/{closed_po['id']}/convert-to-bill", json=None
+        ).status_code
+        == 200
+    )
+    owner = _co(client, job["id"], [_sub_line("Extra", 1000)])
+    r = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order",
+        json={"commitment_id": closed_po["id"]},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "commitment_not_open"
+
+    # a commitment on another job is a mismatch
+    other = _job(client, seed_customer.id, name="Other")
+    foreign_po = _sent_commitment(
+        client,
+        vendor["id"],
+        other["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    r = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order",
+        json={"commitment_id": foreign_po["id"]},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "commitment_job_mismatch"
+
+
+def test_void_sub_co_removes_exactly_its_line_not_an_identical_original(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_commitment(
+        client,
+        vendor["id"],
+        job["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    base_line_id = po["lines"][0]["id"]
+    # owner CO carries a line of the SAME amount as the original base line
+    owner = _co(client, job["id"], [_sub_line("Identical", 5000)])
+    sub = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
+    ).json()
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    assert len(client.get(f"/api/purchase-orders/{po['id']}").json()["lines"]) == 2
+
+    r = client.post(f"/api/change-orders/{sub['id']}/void")
+    assert r.status_code == 200, r.text
+    fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
+    assert len(fresh["lines"]) == 1  # exactly the CO line removed
+    assert fresh["lines"][0]["id"] == base_line_id  # the original survived
+    assert float(fresh["total"]) == 5000.0
 
 
 def test_void_sub_co_refuses_when_billed(
@@ -534,6 +606,225 @@ def test_void_sub_co_refuses_when_billed(
     r = client.post(f"/api/change-orders/{sub['id']}/void")
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "co_billed"
+
+
+def test_linked_sub_co_does_not_double_count_the_budget(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_commitment(
+        client,
+        vendor["id"],
+        job["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    # owner CO (contract-funded) with subcontract scope → one change row (cost)
+    owner = _co(client, job["id"], [_sub_line("Scope", 2500)])
+    assert _submit_approve(client, owner["id"]).status_code == 200
+    # its sub order carries the same scope to the commitment — and must NOT
+    # write the cost again.
+    sub = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
+    ).json()
+    assert _submit_approve(client, sub["id"]).status_code == 200
+
+    rows = (
+        db_session.query(JobBudget)
+        .filter(JobBudget.job_id == job["id"], JobBudget.source == "change")
+        .all()
+    )
+    assert sum(Decimal(str(r.amount)) for r in rows) == Decimal("2500.00")
+
+
+# ── Same-key budget collision + manual budget stays editable ────────────────
+
+
+def test_estimate_locked_row_and_co_share_a_key(
+    client, db_session, seed_accounts, seed_customer
+):
+    code = _section(client, "03 30 00", "Cast-in-Place Concrete", cost_type="material")
+    est = client.post(
+        "/api/estimates",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-02-01",
+            "lines": [
+                {
+                    "description": "Slab",
+                    "quantity": 1,
+                    "rate": 10000,
+                    "unit_cost": 8000,
+                    "cost_code_id": code["id"],
+                    "cost_type": "material",
+                }
+            ],
+        },
+    ).json()
+    job = _job(client, seed_customer.id)
+    accepted = client.post(
+        f"/api/estimates/{est['id']}/accept", json={"job_id": job["id"]}
+    )
+    assert accepted.status_code == 200, accepted.text
+    _contract(client, job["id"], contract_type="lump_sum", contract_amount=10000)
+
+    # an owner CO on the SAME code/type approves (no unique-key 500)
+    co = _co(
+        client,
+        job["id"],
+        [
+            {
+                "description": "More concrete",
+                "cost_type": "material",
+                "cost_code_id": code["id"],
+                "quantity": 1,
+                "unit_cost": 1000,
+            }
+        ],
+    )
+    assert _submit_approve(client, co["id"]).status_code == 200
+
+    rows = (
+        db_session.query(JobBudget)
+        .filter(JobBudget.job_id == job["id"], JobBudget.cost_code_id == code["id"])
+        .all()
+    )
+    sources = {r.source for r in rows}
+    assert "estimate" in sources and "change" in sources  # coexist on one key
+
+    tree = job_cost_tree(db_session, job["id"])["totals"]
+    assert tree["original"] == 8000.0  # the estimate-locked cost
+    assert tree["changes"] == 1000.0  # the change order's cost
+    assert tree["revised"] == 9000.0
+
+
+def test_manual_budget_edits_when_only_co_rows_are_locked(
+    client, db_session, seed_customer
+):
+    job = _job(client, seed_customer.id, contract_amount=0)
+    _contract(client, job["id"], contract_type="lump_sum", contract_amount=100000)
+    # an approved owner CO leaves locked source="change" rows on (None, material)
+    co = _co(client, job["id"], [MATERIAL])
+    assert _submit_approve(client, co["id"]).status_code == 200
+    # a manual budget on a DIFFERENT key still saves (not refused as locked)
+    r = client.put(
+        f"/api/jobs/{job['id']}/budgets",
+        json={"rows": [{"cost_type": "other", "amount": 7000, "revenue_amount": 9000}]},
+    )
+    assert r.status_code == 200, r.text
+    # but a manual row that names a CO-owned key is refused
+    r2 = client.put(
+        f"/api/jobs/{job['id']}/budgets",
+        json={"rows": [{"cost_type": "material", "amount": 1, "revenue_amount": 1}]},
+    )
+    assert r2.status_code == 409
+    assert r2.json()["detail"]["code"] == "co_row"
+
+
+# ── Frozen math + numbering race + deduct ───────────────────────────────────
+
+
+def test_approved_co_is_frozen_against_a_later_term_change(client, seed_customer):
+    job = _job(client, seed_customer.id, contract_amount=0)
+    _contract(
+        client,
+        job["id"],
+        contract_type="lump_sum",
+        contract_amount=100000,
+        co_markup_pct=10,
+    )
+    co = _co(
+        client,
+        job["id"],
+        [
+            {
+                "description": "Steel",
+                "cost_type": "material",
+                "quantity": 1,
+                "unit_cost": 1000,
+            }
+        ],
+    )
+    assert _submit_approve(client, co["id"]).status_code == 200
+    assert client.get(f"/api/change-orders/{co['id']}").json()["sell_total"] == 1100.0
+
+    # change the default markup AFTER approval
+    _contract(client, job["id"], co_markup_pct=50)
+    # the approved CO is frozen: its figures and the tile do not move
+    assert client.get(f"/api/change-orders/{co['id']}").json()["sell_total"] == 1100.0
+    contract = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
+    assert contract["contract_amount"] == 101100.0
+    assert contract["changes"] == 1100.0
+
+    # void returns the contract exactly to the original
+    assert client.post(f"/api/change-orders/{co['id']}/void").status_code == 200
+    contract = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
+    assert contract["contract_amount"] == 100000.0
+
+
+def test_numbering_collision_retries(client, db_session, seed_customer):
+    job = _job(client, seed_customer.id)
+    # pre-seed CO-0001 (what the owner series computes first)
+    db_session.add(
+        ChangeOrder(number="CO-0001", job_id=job["id"], kind="owner", status="draft")
+    )
+    db_session.commit()
+    owner = _co(client, job["id"], [LABOR])
+    assert owner["number"] == "CO-0002"  # skipped the taken number, no 500
+
+
+def test_deduct_co_sharing_a_key_leaves_the_add_on_void(
+    client, db_session, seed_customer
+):
+    job = _job(client, seed_customer.id, contract_amount=0)
+    _contract(client, job["id"], contract_type="lump_sum", contract_amount=100000)
+    add = _co(
+        client,
+        job["id"],
+        [
+            {
+                "description": "Add",
+                "cost_type": "material",
+                "quantity": 1,
+                "unit_cost": 1000,
+            }
+        ],
+    )
+    assert _submit_approve(client, add["id"]).status_code == 200
+    deduct = _co(
+        client,
+        job["id"],
+        [
+            {
+                "description": "Deduct",
+                "cost_type": "material",
+                "quantity": 1,
+                "unit_cost": -400,
+            }
+        ],
+    )
+    assert _submit_approve(client, deduct["id"]).status_code == 200
+
+    # both share (None, material): one change row holding the net
+    rows = (
+        db_session.query(JobBudget)
+        .filter(JobBudget.job_id == job["id"], JobBudget.source == "change")
+        .all()
+    )
+    assert len(rows) == 1
+    assert Decimal(str(rows[0].amount)) == Decimal("600.00")  # 1000 − 400
+
+    # voiding the add leaves the deduct's figures behind (row not deleted)
+    assert client.post(f"/api/change-orders/{add['id']}/void").status_code == 200
+    db_session.expire_all()
+    rows = (
+        db_session.query(JobBudget)
+        .filter(JobBudget.job_id == job["id"], JobBudget.source == "change")
+        .all()
+    )
+    assert len(rows) == 1
+    assert Decimal(str(rows[0].amount)) == Decimal("-400.00")
 
 
 # ── PDF (HTML stage) ────────────────────────────────────────────────────────

@@ -28,7 +28,7 @@ function jobsContext(construction) {
     vm.createContext(context);
     vm.runInContext(
         fs.readFileSync(path.join(__dirname, '../../app/static/js/utils.js'), 'utf8') +
-            '\nthis.TradePackages = TradePackages;',
+            '\nthis.TradePackages = TradePackages;\nthis.CostTypes = CostTypes;',
         context,
     );
     vm.runInContext(
@@ -37,6 +37,11 @@ function jobsContext(construction) {
         context,
     );
     context.TradePackages._list = [{ id: 7, name: 'Concrete' }];
+    context.CostTypes._list = [
+        { code: 'labor', name: 'Labor' },
+        { code: 'material', name: 'Material' },
+        { code: 'subcontract', name: 'Subcontract' },
+    ];
     return context;
 }
 
@@ -106,10 +111,24 @@ test('an allowance SOV line shows its change-order draw-down', () => {
     assert.match(grid, /\$500\.00 left/);
 });
 
+test('the line form draws cost types from CostTypes._list and a sub commitment picker', () => {
+    const page = jobsContext(true).JobsPage;
+    page._coCodes = [{ id: 1, code: '03 30 00', label: '03 30 00' }];
+    page._coAllowances = [];
+    page._coCommitments = [{ id: 9, number: 'SUB-0001', vendor_name: 'Ace' }];
+    const form = page.coFormHtml({ kind: 'sub', funding: 'contract', lines: [{ cost_type: 'material', quantity: 1, unit_cost: 100 }] });
+    // cost-type options are the loaded CostTypes, not a hardcoded list
+    assert.match(form, /value="labor"/);
+    assert.match(form, /value="subcontract"/);
+    // the commitment picker lists number · vendor
+    assert.match(form, /id="co-commitment"/);
+    assert.match(form, /SUB-0001 · Ace/);
+});
+
 test('the change-order write actions are registered', () => {
     const app = fs.readFileSync(path.join(__dirname, '../../app/static/js/app.js'), 'utf8');
     const block = app.slice(app.indexOf('WRITE_ACTIONS:'), app.indexOf('hideWriteControls(root)'));
-    for (const fn of ['coNew', 'coSave', 'coApprove', 'coVoid', 'coPromote', 'coMakeSub']) {
+    for (const fn of ['coNew', 'coSave', 'coApprove', 'coVoid', 'coPromote', 'coMakeSub', 'coSubmitSubOrder']) {
         assert.match(block, new RegExp(`'JobsPage\\.${fn}'`));
     }
 });
