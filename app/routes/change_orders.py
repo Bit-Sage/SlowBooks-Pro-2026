@@ -26,6 +26,7 @@ from app.schemas.change_orders import (
     SubOrderIn,
 )
 from app.services.change_orders import (
+    _check_commitment,
     apply_change_order,
     co_totals,
     recompute,
@@ -112,14 +113,19 @@ def _set_lines(db: Session, co: ChangeOrder, lines) -> None:
     recompute(co, co.job)
 
 
-def _assign_number(db: Session, co: ChangeOrder) -> None:
-    """Assign the next number for the CO's kind with the race-retry pattern."""
+def _create_numbered(db: Session, **fields) -> ChangeOrder:
+    """Build and flush a ChangeOrder with the next number for its kind, with
+    the create_po race-retry pattern: next_change_order_number is MAX+1 with
+    no row lock, so two concurrent creates can collide on the `number` UNIQUE
+    constraint. Rebuild the row inside the loop after a rollback (a rolled-back
+    ORM object cannot be re-flushed)."""
     last_err = None
     for _ in range(10):
-        co.number = next_change_order_number(db, co.kind)
+        co = ChangeOrder(number=next_change_order_number(db, fields["kind"]), **fields)
+        db.add(co)
         try:
             db.flush()
-            return
+            return co
         except IntegrityError as e:
             if "number" not in str(e.orig).lower():
                 raise
@@ -128,6 +134,26 @@ def _assign_number(db: Session, co: ChangeOrder) -> None:
     raise HTTPException(
         status_code=503, detail="Could not assign a change order number; please retry."
     ) from last_err
+
+
+def _copy_lines(db: Session, change_order_id: int, lines) -> None:
+    """Copy ChangeOrderLine rows onto another change order (promote / sub)."""
+    for i, line in enumerate(lines):
+        db.add(
+            ChangeOrderLine(
+                change_order_id=change_order_id,
+                line_order=i,
+                description=line.description,
+                cost_type=line.cost_type,
+                cost_code_id=line.cost_code_id,
+                trade_package_id=line.trade_package_id,
+                quantity=line.quantity,
+                unit=line.unit,
+                unit_cost=line.unit_cost,
+                markup_pct=line.markup_pct,
+            )
+        )
+    db.flush()
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -163,7 +189,8 @@ def create_change_order(data: ChangeOrderCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=422, detail="A sub change order needs a commitment."
         )
-    co = ChangeOrder(
+    co = _create_numbered(
+        db,
         job_id=job.id,
         kind=data.kind,
         status="draft",
@@ -176,8 +203,6 @@ def create_change_order(data: ChangeOrderCreate, db: Session = Depends(get_db)):
         commitment_id=data.commitment_id,
         owner_change_order_id=data.owner_change_order_id,
     )
-    db.add(co)
-    _assign_number(db, co)
     _set_lines(db, co, data.lines)
     db.commit()
     db.refresh(co)
@@ -330,7 +355,8 @@ def promote_change_order(
                 "message": f"A {pco.status} potential change order cannot be promoted.",
             },
         )
-    owner = ChangeOrder(
+    owner = _create_numbered(
+        db,
         job_id=pco.job_id,
         kind="owner",
         status="draft",
@@ -342,23 +368,8 @@ def promote_change_order(
         markup_pct=pco.markup_pct,
         source_pco_id=pco.id,
     )
-    db.add(owner)
-    _assign_number(db, owner)
-    for i, line in enumerate(pco.lines):
-        db.add(
-            ChangeOrderLine(
-                change_order_id=owner.id,
-                line_order=i,
-                description=line.description,
-                cost_type=line.cost_type,
-                cost_code_id=line.cost_code_id,
-                trade_package_id=line.trade_package_id,
-                quantity=line.quantity,
-                unit=line.unit,
-                unit_cost=line.unit_cost,
-                markup_pct=line.markup_pct,
-            )
-        )
+    _copy_lines(db, owner.id, pco.lines)
+    # Set after the numbering retry loop: a collision's rollback would undo it.
     pco.status = "promoted"
     db.commit()
     db.refresh(owner)
@@ -382,6 +393,7 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
     po = db.get(PurchaseOrder, data.commitment_id)
     if po is None:
         raise HTTPException(status_code=404, detail="Commitment not found")
+    _check_commitment(po, owner)  # same job, open commitment
     if data.line_ids is not None:
         chosen = [ln for ln in owner.lines if ln.id in set(data.line_ids)]
     else:
@@ -391,7 +403,8 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
             status_code=422,
             detail="No lines to carry to the sub change order.",
         )
-    sub = ChangeOrder(
+    sub = _create_numbered(
+        db,
         job_id=owner.job_id,
         kind="sub",
         status="draft",
@@ -402,23 +415,7 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
         commitment_id=po.id,
         owner_change_order_id=owner.id,
     )
-    db.add(sub)
-    _assign_number(db, sub)
-    for i, line in enumerate(chosen):
-        db.add(
-            ChangeOrderLine(
-                change_order_id=sub.id,
-                line_order=i,
-                description=line.description,
-                cost_type=line.cost_type,
-                cost_code_id=line.cost_code_id,
-                trade_package_id=line.trade_package_id,
-                quantity=line.quantity,
-                unit=line.unit,
-                unit_cost=line.unit_cost,
-                markup_pct=line.markup_pct,
-            )
-        )
+    _copy_lines(db, sub.id, chosen)
     db.commit()
     db.refresh(sub)
     return _co_out(db, sub)
@@ -426,8 +423,9 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
 
 @router.get("/{co_id}/pdf")
 def change_order_pdf(co_id: int, db: Session = Depends(get_db)):
-    """The owner CO / PCO document: title, description, lines with sell
-    amounts per cost type, the markup shown as one line, and the total."""
+    """The owner CO / PCO document: title, description, the price (sell) per
+    line and per cost type, and the total. Cost and markup stay in the app —
+    they are the contractor's own and are not on the owner's document."""
     co = _get(db, co_id)
     recompute(co, co.job)
     company = get_settings(db)

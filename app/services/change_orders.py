@@ -6,10 +6,11 @@
 # commitment happens on approve (apply_change_order) and reverses on void
 # (reverse_change_order), each in one transaction the route owns.
 #
-# The math is pure (compute_line, co_totals): Decimal, cents half-up. The
-# effects read the job and write JobBudget/SovLine/PurchaseOrderLine rows.
-# Later: #555 progress billing bills the revised SOV and would touch a
-# change_order-kind line's billing (the co_billed guard reserves that case).
+# The math is pure (compute_line, co_totals): Decimal, cents half-up. A draft
+# or pending CO recomputes from its inputs; once approved the figures are
+# FROZEN — co_totals reads the stored amount/sell_amount and the effective
+# markup stamped at approve, so changing a contract term afterward never moves
+# an approved CO and void reverses the exact figures it applied.
 # ============================================================================
 
 from datetime import datetime, timezone
@@ -21,11 +22,15 @@ from sqlalchemy.orm import Session
 from app.models.change_orders import ChangeOrder, ChangeOrderLine
 from app.models.job_costing import JobBudget
 from app.models.jobs import Job, SovLine
-from app.models.purchase_orders import PurchaseOrder
+from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
 from app.services.accounting import _q
 
 _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
+
+# A commitment a sub CO may append to: issued and still open (not draft, not
+# fully-billed/closed, not void). CLOSED means every line is fully billed.
+_SUB_OPEN = (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED)
 
 
 # ── Pure math ────────────────────────────────────────────────────────────
@@ -57,7 +62,9 @@ def line_sell(cost: Decimal, markup: Decimal, kind: str) -> Decimal:
 
 
 def compute_line(line: ChangeOrderLine, co: ChangeOrder, job: Job) -> None:
-    """Stamp a line's server-computed amount (cost) and sell_amount in place."""
+    """Stamp a line's server-computed amount (cost) and sell_amount in place,
+    from the effective markup (line → CO → job → 0, forced to 0 under an
+    allowance)."""
     cost = line_cost(line.quantity, line.unit_cost)
     markup = effective_markup(
         line.markup_pct, co.markup_pct, job.co_markup_pct, co.funding
@@ -67,13 +74,33 @@ def compute_line(line: ChangeOrderLine, co: ChangeOrder, job: Job) -> None:
 
 
 def recompute(co: ChangeOrder, job: Job) -> None:
-    """Recompute every line of a CO (call before reading its totals or saving)."""
+    """Refresh every line's stored figures from its inputs — but only while the
+    CO is draft or pending. Once approved (or void) the figures are frozen:
+    they are the numbers the approve applied, and a later change to a contract
+    term must not move them."""
+    if co.status not in ("draft", "pending"):
+        return
     for line in co.lines:
         compute_line(line, co, job)
 
 
+def _freeze(co: ChangeOrder, job: Job) -> None:
+    """Compute and persist each line's cost, sell and the effective markup it
+    carried — called once at approve so the CO's figures never move again."""
+    for line in co.lines:
+        cost = line_cost(line.quantity, line.unit_cost)
+        markup = effective_markup(
+            line.markup_pct, co.markup_pct, job.co_markup_pct, co.funding
+        )
+        line.markup_pct = markup  # stamp the effective markup on the line
+        line.amount = cost
+        line.sell_amount = line_sell(cost, markup, co.kind)
+
+
 def co_totals(co: ChangeOrder, job: Job) -> dict:
-    """Cost, markup and sell totals for a CO, plus the same per cost type."""
+    """Cost, markup and sell totals for a CO, plus the same per cost type.
+    Draft/pending COs recompute first; an approved/void CO reads its frozen
+    stored figures."""
     recompute(co, job)
     cost_total = sum((_q(line.amount) for line in co.lines), _ZERO)
     sell_total = sum((_q(line.sell_amount) for line in co.lines), _ZERO)
@@ -98,7 +125,8 @@ def co_totals(co: ChangeOrder, job: Job) -> dict:
 
 
 def _budget_groups(co: ChangeOrder) -> dict:
-    """CO lines grouped by (cost_code_id, cost_type) -> (cost, sell)."""
+    """CO lines grouped by (cost_code_id, cost_type) -> (cost, sell), read from
+    the stored figures."""
     groups: dict[tuple, list] = {}
     for line in co.lines:
         key = (line.cost_code_id, line.cost_type)
@@ -183,24 +211,23 @@ def change_orders_summary(db: Session, job: Job) -> dict:
 
 
 # ── Budget rows (source="change", locked) ──────────────────────────────────
+#
+# Keyed (job, cost_code_id, cost_type, source="change") — the uq_job_budget key
+# includes source, so a change row coexists with an estimate-locked row on the
+# same code/type (the tree shows one under original, the other under changes).
+# Approved COs accumulate into the one change row per key; void subtracts.
 
 
 def _write_change_budgets(
-    db: Session, job_id: int, co: ChangeOrder, revenue_mode: str
+    db: Session, job_id: int, co: ChangeOrder, with_revenue: bool
 ) -> None:
-    """Add this CO's cost/revenue into the job's source="change" budget rows,
-    one per (cost_code_id, cost_type). revenue_mode: "sell" (contract /
-    contingency), "cost" (allowance — revenue equals cost, no markup) or
-    "zero" (a sub CO — a commitment carries no revenue). Bypasses
-    _refuse_locked_budget by design: a change order is the one thing that may
-    move a locked budget."""
+    """Add this CO's cost into the job's source="change" budget rows, one per
+    (cost_code_id, cost_type). A contract-funded owner CO also adds the sell as
+    revenue; a contingency-/allowance-funded CO and a sub CO write revenue 0
+    (the contract already carries that money). Bypasses _refuse_locked_budget
+    by design: a change order is the one thing that may move a locked budget."""
     for (code_id, ctype), (cost, sell) in _budget_groups(co).items():
-        if revenue_mode == "sell":
-            rev = sell
-        elif revenue_mode == "cost":
-            rev = cost
-        else:
-            rev = _ZERO
+        rev = sell if with_revenue else _ZERO
         row = _find_change_budget(db, job_id, code_id, ctype)
         if row is None:
             db.add(
@@ -221,22 +248,19 @@ def _write_change_budgets(
 
 
 def _remove_change_budgets(
-    db: Session, job_id: int, co: ChangeOrder, revenue_mode: str
+    db: Session, job_id: int, co: ChangeOrder, with_revenue: bool
 ) -> None:
     """Reverse _write_change_budgets: subtract this CO's cost/revenue from the
-    change rows, deleting a row that reaches zero."""
+    change rows, deleting a row only once it is fully zero (so a deduct CO
+    sharing a key with an add leaves the add's figures behind)."""
     for (code_id, ctype), (cost, sell) in _budget_groups(co).items():
-        rev = (
-            sell
-            if revenue_mode == "sell"
-            else (cost if revenue_mode == "cost" else _ZERO)
-        )
+        rev = sell if with_revenue else _ZERO
         row = _find_change_budget(db, job_id, code_id, ctype)
         if row is None:
             continue
         row.amount = _q(Decimal(str(row.amount)) - cost)
         row.revenue_amount = _q(Decimal(str(row.revenue_amount)) - rev)
-        if row.amount <= _ZERO and row.revenue_amount <= _ZERO:
+        if row.amount == _ZERO and row.revenue_amount == _ZERO:
             db.delete(row)
     db.flush()
 
@@ -259,41 +283,75 @@ def _find_change_budget(db: Session, job_id: int, code_id, ctype):
     return q.first()
 
 
-def _revenue_mode(co: ChangeOrder) -> str:
-    if co.kind == "sub":
-        return "zero"
-    if co.funding == "allowance":
-        return "cost"
-    return "sell"
+def _writes_budget(co: ChangeOrder) -> bool:
+    """A sub CO backed by an owner CO (owner_change_order_id set) writes no
+    budget of its own — the owner CO already carried the cost, so writing it
+    again here would double-count. Only a standalone sub CO writes cost."""
+    if co.kind == "sub" and co.owner_change_order_id is not None:
+        return False
+    return True
 
 
-# ── Commitment append (sub CO) ──────────────────────────────────────────────
+# ── Commitment append / remove (sub CO) ─────────────────────────────────────
+
+
+def _check_commitment(po: PurchaseOrder, co: ChangeOrder) -> None:
+    """Guard a sub CO's commitment: it must be on the same job and still open
+    (issued, not fully billed, not draft)."""
+    if po.job_id != co.job_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "commitment_job_mismatch",
+                "message": "That commitment is on a different job.",
+            },
+        )
+    if po.status not in _SUB_OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "commitment_not_open",
+                "message": "A sub change order needs an open commitment (not draft or fully billed).",
+            },
+        )
 
 
 def remove_commitment_lines(db: Session, po: PurchaseOrder, co: ChangeOrder) -> None:
-    """Reverse append_commitment_lines on void. A line already billed against
-    cannot be pulled (409 co_billed)."""
-    co_amounts = [_q(line.amount) for line in co.lines]
-    # Match this CO's appended lines by their unbilled amount, newest first.
-    appended = [ln for ln in po.lines if _q(ln.billed_amount) == _ZERO]
-    for amt in co_amounts:
-        match = next((ln for ln in appended if _q(ln.amount) == amt), None)
-        if match is None:
-            # A line we would remove has been billed — refuse the void.
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "co_billed",
-                    "message": "A commitment line this change order added has been billed; it cannot be voided.",
-                },
-            )
-        appended.remove(match)
-        db.delete(match)
+    """Reverse append_commitment_lines on void: remove exactly the lines this CO
+    added (matched by change_order_id). A line already billed against cannot be
+    pulled (409 co_billed). Re-totals and re-evaluates the PO status (back to
+    closed when every remaining line is fully billed)."""
+    added = (
+        db.query(PurchaseOrderLine)
+        .filter(
+            PurchaseOrderLine.purchase_order_id == po.id,
+            PurchaseOrderLine.change_order_id == co.id,
+        )
+        .all()
+    )
+    if any(_q(ln.billed_amount) > _ZERO for ln in added):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "co_billed",
+                "message": "A commitment line this change order added has been billed; it cannot be voided.",
+            },
+        )
+    for ln in added:
+        db.delete(ln)
     db.flush()
     db.refresh(po)
     from app.routes.purchase_orders import _retotal_commitment
 
     _retotal_commitment(po)
+    # Re-evaluate the status: closed when nothing remains to bill, else partial
+    # if anything has been billed; otherwise leave it as issued.
+    remaining = sum((_q(ln.amount) - _q(ln.billed_amount) for ln in po.lines), _ZERO)
+    billed = sum((_q(ln.billed_amount) for ln in po.lines), _ZERO)
+    if po.lines and remaining <= _ZERO:
+        po.status = POStatus.CLOSED
+    elif billed > _ZERO:
+        po.status = POStatus.PARTIAL
     db.flush()
 
 
@@ -306,10 +364,11 @@ def _next_sov_line_no(job: Job) -> int:
 
 def apply_change_order(db: Session, co: ChangeOrder) -> None:
     """Every effect of approving a change order, in the route's transaction.
-    Raises 409 contingency_exceeded / allowance_exceeded when a draw would
-    pass its limit."""
+    Freezes the CO's figures first, then applies them. Raises 409
+    contingency_exceeded / allowance_exceeded when a draw would pass its
+    limit, and the commitment guards for a sub CO."""
     job = co.job
-    recompute(co, job)
+    _freeze(co, job)
     totals = co_totals(co, job)
     sell_total = totals["sell_total"]
 
@@ -327,11 +386,11 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                 change_order_id=co.id,
             )
             db.add(line)
-            _write_change_budgets(db, job.id, co, "sell")
+            _write_change_budgets(db, job.id, co, with_revenue=True)
         elif co.funding == "contingency":
             limit = job.contingency_amount
             if limit is not None:
-                already = contingency_used(db, job)  # excludes this not-yet-approved CO
+                already = contingency_used(db, job)  # excludes this pending CO
                 if _q(already + sell_total) > _q(limit):
                     raise HTTPException(
                         status_code=409,
@@ -340,7 +399,7 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                             "message": "This change order would draw more than the contract's contingency.",
                         },
                     )
-            _write_change_budgets(db, job.id, co, "sell")
+            _write_change_budgets(db, job.id, co, with_revenue=False)
         elif co.funding == "allowance":
             if co.allowance_sov_line_id is None:
                 raise HTTPException(
@@ -358,7 +417,7 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                             "message": "This change order would spend more than the allowance holds.",
                         },
                     )
-            _write_change_budgets(db, job.id, co, "cost")
+            _write_change_budgets(db, job.id, co, with_revenue=False)
     elif co.kind == "sub":
         if co.commitment_id is None:
             raise HTTPException(
@@ -367,10 +426,12 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
         po = db.get(PurchaseOrder, co.commitment_id)
         if po is None:
             raise HTTPException(status_code=404, detail="Commitment not found")
+        _check_commitment(po, co)
         from app.routes.purchase_orders import append_commitment_lines
 
-        append_commitment_lines(db, po, co.lines)
-        _write_change_budgets(db, job.id, co, "zero")
+        append_commitment_lines(db, po, co.lines, co.id)
+        if _writes_budget(co):
+            _write_change_budgets(db, job.id, co, with_revenue=False)
 
     co.status = "approved"
     co.approved_at = datetime.now(timezone.utc)
@@ -378,29 +439,30 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
 
 
 def reverse_change_order(db: Session, co: ChangeOrder) -> None:
-    """Undo apply_change_order, in the route's transaction."""
+    """Undo apply_change_order from the CO's frozen figures, in the route's
+    transaction."""
     job = co.job
-    recompute(co, job)
-    totals = co_totals(co, job)
+    totals = co_totals(co, job)  # frozen — the figures approve applied
     sell_total = totals["sell_total"]
 
     if co.kind == "owner":
         if co.funding == "contract":
             base = Decimal(str(job.contract_amount or 0))
             job.contract_amount = _q(base - sell_total)
+            # TODO (#555): 409 co_billed when a pay application has billed this
+            # SOV line, before removing it.
             db.query(SovLine).filter(
                 SovLine.job_id == job.id, SovLine.change_order_id == co.id
             ).delete()
-            _remove_change_budgets(db, job.id, co, "sell")
-        elif co.funding == "contingency":
-            _remove_change_budgets(db, job.id, co, "sell")
-        elif co.funding == "allowance":
-            _remove_change_budgets(db, job.id, co, "cost")
+            _remove_change_budgets(db, job.id, co, with_revenue=True)
+        elif co.funding in ("contingency", "allowance"):
+            _remove_change_budgets(db, job.id, co, with_revenue=False)
     elif co.kind == "sub" and co.commitment_id is not None:
         po = db.get(PurchaseOrder, co.commitment_id)
         if po is not None:
             remove_commitment_lines(db, po, co)  # may 409 co_billed
-        _remove_change_budgets(db, job.id, co, "zero")
+        if _writes_budget(co):
+            _remove_change_budgets(db, job.id, co, with_revenue=False)
 
     co.status = "void"
     co.voided_at = datetime.now(timezone.utc)

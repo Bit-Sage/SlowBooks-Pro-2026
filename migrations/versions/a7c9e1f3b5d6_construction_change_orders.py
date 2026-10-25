@@ -14,6 +14,11 @@ orders sees none of it:
 - jobs gains co_markup_pct (the default markup on owner change orders).
 - sov_lines gains change_order_id (SET NULL) — the owner CO that owns a
   change_order-kind SOV line.
+- purchase_order_lines gains change_order_id (SET NULL, indexed) — the sub CO
+  that appended the line, so a void removes exactly those.
+- uq_job_budget widens to (job_id, cost_code_id, cost_type, source) so a
+  change-order budget row coexists with an estimate-locked/manual one on the
+  same code/type.
 
 downgrade reverses.
 
@@ -129,8 +134,43 @@ def upgrade() -> None:
             ondelete="SET NULL",
         )
 
+    with op.batch_alter_table("purchase_order_lines") as batch:
+        batch.add_column(sa.Column("change_order_id", sa.Integer(), nullable=True))
+        batch.create_foreign_key(
+            "fk_po_line_change_order",
+            "change_orders",
+            ["change_order_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+    op.create_index(
+        "ix_po_lines_change_order_id",
+        "purchase_order_lines",
+        ["change_order_id"],
+        unique=False,
+    )
+
+    # Widen the job-budget unique key to include source (#554), so a change
+    # row coexists with an estimate-locked/manual row on the same code/type.
+    with op.batch_alter_table("job_budgets") as batch:
+        batch.drop_constraint("uq_job_budget", type_="unique")
+        batch.create_unique_constraint(
+            "uq_job_budget", ["job_id", "cost_code_id", "cost_type", "source"]
+        )
+
 
 def downgrade() -> None:
+    with op.batch_alter_table("job_budgets") as batch:
+        batch.drop_constraint("uq_job_budget", type_="unique")
+        batch.create_unique_constraint(
+            "uq_job_budget", ["job_id", "cost_code_id", "cost_type"]
+        )
+
+    op.drop_index("ix_po_lines_change_order_id", table_name="purchase_order_lines")
+    with op.batch_alter_table("purchase_order_lines") as batch:
+        batch.drop_constraint("fk_po_line_change_order", type_="foreignkey")
+        batch.drop_column("change_order_id")
+
     with op.batch_alter_table("sov_lines") as batch:
         batch.drop_constraint("fk_sov_line_change_order", type_="foreignkey")
         batch.drop_column("change_order_id")

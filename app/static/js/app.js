@@ -1074,7 +1074,7 @@ const App = {
         'JobsPage.saveBudget', 'JobsPage.seedBudget', 'JobsPage.saveContract', 'JobsPage.saveSov', 'JobsPage.buildSov',
         'JobsPage.coNew', 'JobsPage.coEdit', 'JobsPage.coSave', 'JobsPage.coAddLine', 'JobsPage.coRemoveLine',
         'JobsPage.coSubmit', 'JobsPage.coApprove', 'JobsPage.coReject', 'JobsPage.coVoid', 'JobsPage.coPromote',
-        'JobsPage.coMakeSub',
+        'JobsPage.coMakeSub', 'JobsPage.coSubmitSubOrder',
         'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
         'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',
         'RecurringPage.del', 'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',

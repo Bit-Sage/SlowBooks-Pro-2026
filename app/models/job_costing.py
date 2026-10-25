@@ -174,8 +174,13 @@ class JobCostLine(Base):
 
 class JobBudget(Base):
     __tablename__ = "job_budgets"
+    # The unique key includes source (#554): a change-order row may share a
+    # (job, code, type) with an estimate-locked or manual row — the tree shows
+    # one under "original" and the other under "changes".
     __table_args__ = (
-        UniqueConstraint("job_id", "cost_code_id", "cost_type", name="uq_job_budget"),
+        UniqueConstraint(
+            "job_id", "cost_code_id", "cost_type", "source", name="uq_job_budget"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

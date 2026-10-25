@@ -59,22 +59,21 @@
     {% if co.title %}<div class="co-title">{{ co.title }}</div>{% endif %}
     {% if co.description %}<div class="co-desc">{{ co.description }}</div>{% endif %}
 
-    {# Material and labor priced separately — one block per cost type, each
-       showing its own cost, markup and sell (#554). #}
+    {# The owner's document shows the PRICE (sell) per line and per cost type
+       and the total. Cost and markup stay in the app — they are the
+       contractor's own and are not itemised here (#554). #}
     <table class="line-items">
         <thead><tr>
             <th>Description</th>
             <th class="r" style="width:70px;">Qty</th>
-            <th class="r" style="width:80px;">Unit cost</th>
-            <th class="r" style="width:90px;">Cost</th>
+            <th class="r" style="width:90px;">Price</th>
         </tr></thead>
         <tbody>
         {% for line in co.lines %}
             <tr>
                 <td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }} <span style="color:#888;font-size:8pt;">({{ line.cost_type }})</span></td>
                 <td class="r">{{ line.quantity | qty }}{% if line.unit %} {{ line.unit }}{% endif %}</td>
-                <td class="r">{{ line.unit_cost | rate }}</td>
-                <td class="r">{{ line.amount | currency }}</td>
+                <td class="r">{{ line.sell_amount | currency }}</td>
             </tr>
         {% endfor %}
         </tbody>
@@ -83,10 +82,8 @@
     <div class="totals">
         <table>
             {% for ct, v in totals.by_cost_type.items() %}
-            <tr><td class="label">{{ ct | title }} cost</td><td class="r">{{ v.cost | currency }}</td></tr>
+            <tr><td class="label">{{ ct | title }}</td><td class="r">{{ v.sell | currency }}</td></tr>
             {% endfor %}
-            <tr><td class="label">Cost</td><td class="r">{{ totals.cost_total | currency }}</td></tr>
-            <tr><td class="label">Markup</td><td class="r">{{ totals.markup_total | currency }}</td></tr>
             <tr><td class="label grand">Total</td><td class="r grand">{{ totals.sell_total | currency }}</td></tr>
         </table>
     </div>

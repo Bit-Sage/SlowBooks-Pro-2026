@@ -301,8 +301,9 @@ def generate_estimate_pdf(estimate, company_settings: dict) -> bytes:
 
 def render_change_order_html(co, totals: dict, company_settings: dict) -> str:
     """The owner change order / PCO document (#554): title, description, the
-    priced lines with their sell amounts grouped per cost type, the markup as
-    one line, and the total. Reuses the estimate PDF's face."""
+    price (sell) per line and per cost type, and the total. Cost and markup
+    stay in the app — not on the owner's document. Reuses the estimate PDF's
+    face."""
     return _render("change_order_pdf.html", company_settings, co=co, totals=totals)
 
 

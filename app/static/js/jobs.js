@@ -908,10 +908,10 @@ const JobsPage = {
     CO_KINDS: { pco: 'Potential', owner: 'Owner', sub: 'Sub' },
     CO_FUNDING: { contract: 'Contract', allowance: 'Allowance', contingency: 'Contingency' },
     CO_STATUS_LABELS: { draft: 'Draft', pending: 'Pending', approved: 'Approved', rejected: 'Rejected', void: 'Void', promoted: 'Promoted' },
-    CO_COST_TYPES: ['labor', 'material', 'subcontract', 'equipment', 'other'],
 
     async changeOrdersHtml() {
         const job = JobsPage._job;
+        await Promise.all([CostTypes.load(), TradePackages.load()]);
         const [list, contract, codes] = await Promise.all([
             API.get(`/change-orders?job_id=${job.id}`),
             API.get(`/jobs/${job.id}/contract`),
@@ -1026,7 +1026,8 @@ const JobsPage = {
         line = line || {};
         const codes = JobsPage._coCodes || [];
         const packages = TradePackages._list || [];
-        const typeOpts = JobsPage.CO_COST_TYPES.map(t => `<option value="${t}" ${line.cost_type === t ? 'selected' : ''}>${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('');
+        const types = CostTypes._list || [];
+        const typeOpts = types.map(t => `<option value="${escapeHtml(t.code)}" ${line.cost_type === t.code ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
         const codeOpts = ['<option value="">—</option>'].concat(codes.map(c => `<option value="${c.id}" ${String(line.cost_code_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.code)}</option>`)).join('');
         const pkgOpts = ['<option value="">—</option>'].concat(packages.map(p => `<option value="${p.id}" ${String(line.trade_package_id) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
         return `<tr class="co-line">
@@ -1134,11 +1135,13 @@ const JobsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    CO_VERB_PAST: { submit: 'submitted', approve: 'approved', reject: 'rejected', void: 'voided', promote: 'promoted' },
+
     async _coAction(id, verb, confirmMsg) {
         if (confirmMsg && !confirm(confirmMsg)) return;
         try {
             await API.post(`/change-orders/${id}/${verb}`, {});
-            toast(`Change order ${verb === 'sub-order' ? 'sub order created' : verb + 'ted'}`);
+            toast(`Change order ${JobsPage.CO_VERB_PAST[verb] || verb}`);
             await JobsPage.setTab('changeorders');
         } catch (err) { toast(err.message, 'error'); }
     },
@@ -1148,12 +1151,34 @@ const JobsPage = {
     coVoid(id) { JobsPage._coAction(id, 'void', 'Void this change order? Every effect is reversed.'); },
     coPromote(id) { JobsPage._coAction(id, 'promote', 'Promote this potential change order to an owner change order?'); },
 
+    // Make sub order: pick a commitment (number · vendor) and the owner-CO
+    // lines to carry, rather than typing an id.
     async coMakeSub(id) {
-        const cid = prompt('Commitment id to make a sub change order on:');
-        if (!cid) return;
+        const co = await API.get(`/change-orders/${id}`);
+        const commits = JobsPage._coCommitments || [];
+        if (!commits.length) { toast('No commitments on this job to attach to', 'error'); return; }
+        const commitOpts = commits.map(c => `<option value="${c.id}">${escapeHtml(c.number)} · ${escapeHtml(c.vendor_name || '')}</option>`).join('');
+        const lineRows = (co.lines || []).map(l =>
+            `<label style="display:block;font-size:12px"><input type="checkbox" class="co-sub-line" value="${l.id}" ${l.cost_type === 'subcontract' ? 'checked' : ''}> ${escapeHtml(l.description || '')} (${escapeHtml(l.cost_type)}) — ${formatCurrency(parseFloat(l.amount) || 0)}</label>`).join('');
+        const html = `<form id="co-sub-form" onsubmit="JobsPage.coSubmitSubOrder(event, ${id})">
+            <div class="form-group"><label>Commitment</label><select id="co-sub-commitment" required>${commitOpts}</select></div>
+            <div class="form-group"><label>Lines to carry (unchecked = subcontract lines only)</label>${lineRows || '<div style="color:var(--text-muted)">No lines.</div>'}</div>
+            <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create sub order</button></div>
+        </form>`;
+        openModal('Make sub order', html);
+    },
+
+    async coSubmitSubOrder(e, id) {
+        if (e) e.preventDefault();
+        const commitment_id = parseInt($('#co-sub-commitment').value);
+        const line_ids = $$('.co-sub-line').filter(c => c.checked).map(c => parseInt(c.value));
+        const body = { commitment_id };
+        if (line_ids.length) body.line_ids = line_ids;
         try {
-            await API.post(`/change-orders/${id}/sub-order`, { commitment_id: parseInt(cid) });
+            await API.post(`/change-orders/${id}/sub-order`, body);
             toast('Sub change order created');
+            closeModal();
             await JobsPage.setTab('changeorders');
         } catch (err) { toast(err.message, 'error'); }
     },

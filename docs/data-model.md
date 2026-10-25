@@ -244,7 +244,7 @@ log report is #556.
 | equipment | code, name, hourly_rate, cost_code_id, recovery_account_id |
 | job_costs | number (JC-000001), date, job_id (NULL for allocations), memo, source manual/time_entry/allocation, status posted/void, transaction_id, total |
 | job_cost_lines | job_id, cost_code_id, cost_type, qty/rate/amount, debit_account_id, credit_account_id, employee_id, equipment_id, time_entry_id, is_burden, is_billable |
-| job_budgets | job_id × (cost_code_id and/or cost_type, or neither), amount, revenue_amount, source manual/estimate/change, estimate_id — the unique key is (job, code, type), so a row may carry both |
+| job_budgets | job_id × (cost_code_id and/or cost_type, or neither), amount, revenue_amount, source manual/estimate/change, estimate_id — the unique key is (job, code, type, source) (#554), so a change row coexists with an estimate/manual row on the same code and type |
 | employees.cost_rate, burden_pct · estimate_lines.unit_cost · time_entries.job_cost_id · transaction_lines.cost_type | |
 
 Migration `a1b2c3d4e5f6_job_cost_model`.

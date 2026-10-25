@@ -34,12 +34,14 @@ from app.services.purchase_posting import (
 router = APIRouter(prefix="/api/purchase-orders", tags=["purchase_orders"])
 
 
-def append_commitment_lines(db: Session, po: PurchaseOrder, co_lines) -> None:
+def append_commitment_lines(
+    db: Session, po: PurchaseOrder, co_lines, change_order_id: int
+) -> None:
     """Append lines to a commitment without touching the ones it already has
     (#554 sub change orders). Unlike update_po, which replaces every line,
-    this is append-only: each new PurchaseOrderLine starts unbilled, the PO's
-    subtotal/tax/total are recomputed from all its lines, and a closed
-    commitment reopens to partial because there is more to bill now.
+    this is append-only: each new PurchaseOrderLine starts unbilled, carries
+    the change order it came from (so void can remove exactly these), and the
+    PO's subtotal/tax/total are recomputed from all its lines.
 
     `co_lines` are ChangeOrderLine rows; a line's unit cost becomes the PO
     line's rate and its cost becomes the amount (a commitment moves by cost).
@@ -57,14 +59,13 @@ def append_commitment_lines(db: Session, po: PurchaseOrder, co_lines) -> None:
                 job_id=po.job_id,
                 cost_code_id=line.cost_code_id,
                 cost_type=line.cost_type,
+                change_order_id=change_order_id,
                 line_order=start + i,
             )
         )
     db.flush()
     db.refresh(po)
     _retotal_commitment(po)
-    if po.status == POStatus.CLOSED:
-        po.status = POStatus.PARTIAL
     db.flush()
 
 

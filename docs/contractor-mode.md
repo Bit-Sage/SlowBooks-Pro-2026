@@ -413,23 +413,37 @@ and reverses on **void**:
   (`source = change`) with the cost on the cost side and the sell on the
   revenue side. The job-cost tree shows these in its **Changes** column.
 - *Owner CO, contingency-funded* — the contract is unchanged; the budget rows
-  are written as above; the draw counts against the contract's contingency
+  carry the **cost with no revenue** (the contract already holds the
+  contingency money); the draw counts against the contract's contingency
   (refused 409 `contingency_exceeded` when it would pass the contingency
   amount).
 - *Owner CO, allowance-funded* — the contract is unchanged and no SOV line is
-  added; the budget rows carry the cost with revenue equal to cost (no
-  markup); the draw counts against the allowance line (refused 409
-  `allowance_exceeded` when it would pass the allowance). The Contract tab
-  shows each allowance's used and remaining.
-- *Sub CO* — appends the lines to its commitment (never touching what is
-  already billed), recomputes the commitment's total and reopens a closed
-  commitment to *partial*; the buyout table's *bought* grows automatically.
-  The budget rows carry the cost with no revenue.
+  added; the budget rows carry the **cost with no revenue** (the allowance
+  already holds the money, and the work carries no markup); the draw counts
+  against the allowance line (refused 409 `allowance_exceeded` when it would
+  pass the allowance). The Contract tab shows each allowance's used and
+  remaining.
+- *Sub CO* — appends the lines to its commitment, which must be on the **same
+  job** and **open** (refused 409 `commitment_job_mismatch` or
+  `commitment_not_open` otherwise), and recomputes the commitment's total; the
+  buyout table's *bought* grows automatically. The budget rows carry the cost
+  with no revenue (and none at all when the sub CO backs an owner CO, which
+  already carried that cost).
+
+Because the budget key includes the row's source, a change-order budget row
+sits beside an estimate-locked or manual row on the same code and type — the
+job-cost tree reads one under **Original** and the other under **Changes**.
+
+A change order's figures **freeze** when it is approved: the cost, sell and
+the effective markup each line carried are stored, so changing the job's
+markup or a contract term afterward never moves an approved change order, and
+void reverses the exact figures it applied.
 
 **Void** reverses each of these — the contract and SOV line, the budget rows,
-and the appended commitment lines — except that a commitment line already
-billed against cannot be pulled (409 `co_billed`). The lifecycle is draft →
-submitted (*pending*) → approved, with reject and void beside it; a PCO runs
+and the appended commitment lines (exactly the ones it added) — except that a
+commitment line already billed against cannot be pulled (409 `co_billed`). The
+lifecycle is draft → submitted (*pending*) → approved, with reject and void
+beside it; a PCO runs
 draft → pending → promoted (asking to *promote* rather than approve).
 
 **What comes next.** Progress billing (#555) will bill the revised schedule of

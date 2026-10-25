@@ -424,20 +424,25 @@ contract term — and work an allowance pays for carries **none** (the allowance
 already held the money). An owner change order's **funding** decides the
 effect on approve: *contract* adds its sell total to the contract amount,
 appends a read-only `change_order` line to the schedule of values and writes
-locked `source=change` budget rows (the job-cost tree's Changes column);
-*contingency* draws the owner's contingency down (409 `contingency_exceeded`
-over the limit); *allowance* spends an allowance line at cost (409
-`allowance_exceeded`). A sub change order appends cost-only lines to its
-commitment, reopening a closed one to partial, and the Buyout tab's *bought*
-grows. Every effect lands on **approve** in one transaction and reverses on
-**void** — except a commitment line already billed against, which refuses the
-void (409 `co_billed`). A **Change orders** tab (construction only, after
-Buyout) holds the log with filters, the line form with live cost and sell per
-cost type, and Submit / Approve / Reject / Void / Promote / Make sub order /
-PDF; the Contract tab's Changes tile goes live, its terms gain **Markup on
-change orders**, and the schedule of values shows change-order lines read-only
-with each allowance's used and remaining. An owner CO / PCO prints as a
-document (`GET /api/change-orders/{id}/pdf`). Progress billing against the
+locked `source=change` budget rows with the sell as revenue (the job-cost
+tree's Changes column); *contingency* draws the owner's contingency down (409
+`contingency_exceeded`), and *allowance* spends an allowance line at cost (409
+`allowance_exceeded`), both writing the cost with no revenue (the contract
+already carries that money). A sub change order appends cost-only lines to an
+open commitment on the same job (409 when it is on another job or not open),
+and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
+changing a contract term afterward never moves an approved CO. Every effect
+reverses on **void** — except a commitment line already billed against, which
+refuses the void (409 `co_billed`), and the budget key widens to include
+`source` so a change row sits beside an estimate-locked one. A **Change
+orders** tab (construction only, after Buyout) holds the log, the line form
+with live cost and sell per cost type, and Submit / Approve / Reject / Void /
+Promote / Make sub order / PDF; the Contract tab's Changes tile goes live, its
+terms gain **Markup on change orders**, and the schedule of values shows
+change-order lines read-only with each allowance's used and remaining. An
+owner CO / PCO prints as a document showing the price per line and cost type
+(`GET /api/change-orders/{id}/pdf`; cost and markup stay in the app). Progress
+billing against the
 revised schedule (#555) and the change-order log report (#556) build on this;
 a Business or Nonprofit company sees none of it. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
