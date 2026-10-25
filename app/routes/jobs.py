@@ -178,6 +178,27 @@ def _budget_response(row: JobBudget) -> JobBudgetResponse:
     return data
 
 
+def _refuse_locked_budget(db: Session, job_id: int) -> None:
+    """A budget locked by an accepted estimate (#551) is the contract — only
+    a change order moves it, so editing or re-seeding it is a 409."""
+    locked = (
+        db.query(JobBudget)
+        .filter(JobBudget.job_id == job_id, JobBudget.locked.is_(True))
+        .first()
+    )
+    if locked is None:
+        return
+    est = db.get(Estimate, locked.estimate_id) if locked.estimate_id else None
+    number = est.estimate_number if est else "an accepted estimate"
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "budget_locked",
+            "message": f"Locked by estimate {number}; change it with a change order",
+        },
+    )
+
+
 @router.get("/{job_id}/budgets", response_model=list[JobBudgetResponse])
 def get_job_budgets(job_id: int, db: Session = Depends(get_db)):
     _get(db, job_id)
@@ -196,6 +217,7 @@ def save_job_budgets(job_id: int, data: JobBudgetSave, db: Session = Depends(get
     seeded rows are kept unless the same key is supplied, which then takes
     over as manual). Zero-amount rows are dropped."""
     _get(db, job_id)
+    _refuse_locked_budget(db, job_id)
     types = cost_type_map(db)
     existing = {
         (r.cost_code_id, r.cost_type): r
@@ -248,6 +270,7 @@ def seed_budget_from_estimate(
     job_id: int, estimate_id: int, db: Session = Depends(get_db)
 ):
     job = _get(db, job_id)
+    _refuse_locked_budget(db, job_id)
     est = db.get(Estimate, estimate_id)
     if not est:
         raise HTTPException(status_code=404, detail="Estimate not found")

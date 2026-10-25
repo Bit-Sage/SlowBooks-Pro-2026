@@ -3,7 +3,7 @@
 # then marks the estimate CONVERTED. PDFs are rendered with WeasyPrint.
 # ============================================================================
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -24,11 +24,19 @@ from app.routes.invoices.helpers import (
 from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.routes.invoice_messages import default_message_body
 from app.services.audit import audited_bulk_delete
-from app.services.job_costing import line_cost_type
+from app.services.job_costing import line_cost_type, budgets_from_estimate
+from app.services.estimating import estimate_totals, reprice_factor
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.contacts import Customer
-from app.schemas.estimates import EstimateCreate, EstimateUpdate, EstimateResponse
+from app.models.job_costing import JobBudget
+from app.models.jobs import Job
+from app.schemas.estimates import (
+    EstimateCreate,
+    EstimateUpdate,
+    EstimateResponse,
+    EstimateAccept,
+)
 from app.schemas.invoices import InvoiceResponse, ZeroTotalConfirmation
 from app.services.pdf_service import generate_estimate_pdf
 from app.services.numbering import next_estimate_number, next_invoice_number
@@ -52,6 +60,74 @@ _ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
 
 def _customer_bill_to(customer) -> dict:
     return {f"bill_{k}": getattr(customer, f"bill_{k}", None) for k in _ADDRESS_PARTS}
+
+
+def _estimate_response(est: Estimate) -> EstimateResponse:
+    """A single estimate's response: the customer name, each line's package
+    name, and the bid math (#551). The list endpoint skips the totals."""
+    resp = EstimateResponse.model_validate(est)
+    if est.customer:
+        resp.customer_name = est.customer.name
+    by_line = {ln.id: ln for ln in est.lines}
+    for line_resp in resp.lines:
+        line = by_line.get(line_resp.id)
+        if line is not None and line.trade_package is not None:
+            line_resp.trade_package_name = line.trade_package.name
+    resp.totals = estimate_totals(est)
+    return resp
+
+
+def _accept_estimate(db: Session, estimate: Estimate, job_id: Optional[int]):
+    """Accept an estimate (#551): lock its job's budget to it. Shared by the
+    POST /accept endpoint and a PUT that sets status=accepted, so there is one
+    code path. The budget is seeded (manual rows win) and the estimate's own
+    rows are marked locked; from then on only a change order moves them."""
+    if estimate.status == EstimateStatus.CONVERTED:
+        raise HTTPException(status_code=409, detail="Estimate already converted")
+    if estimate.status == EstimateStatus.ACCEPTED:
+        raise HTTPException(status_code=409, detail="Estimate already accepted")
+    job_id = job_id if job_id is not None else estimate.job_id
+    if job_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "no_job", "message": "Accepting needs a job to budget."},
+        )
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.customer_id != estimate.customer_id:
+        raise HTTPException(
+            status_code=422, detail="Job belongs to a different customer"
+        )
+    # A budget already locked by a DIFFERENT estimate stays its contract.
+    other_lock = (
+        db.query(JobBudget)
+        .filter(
+            JobBudget.job_id == job.id,
+            JobBudget.locked.is_(True),
+            JobBudget.estimate_id != estimate.id,
+        )
+        .first()
+    )
+    if other_lock is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "budget_locked",
+                "message": "This job's budget is already locked to another estimate.",
+            },
+        )
+
+    estimate.job_id = job.id
+    estimate.status = EstimateStatus.ACCEPTED
+    estimate.accepted_at = datetime.now(timezone.utc)
+    budgets_from_estimate(db, job, estimate)
+    # Lock exactly the rows this acceptance seeded; manual rows stay editable.
+    db.query(JobBudget).filter(
+        JobBudget.job_id == job.id,
+        JobBudget.source == "estimate",
+        JobBudget.estimate_id == estimate.id,
+    ).update({JobBudget.locked: True}, synchronize_session=False)
 
 
 @router.get("", response_model=list[EstimateResponse])
@@ -92,10 +168,7 @@ def get_estimate(estimate_id: int, db: Session = Depends(get_db)):
     est = db.query(Estimate).filter(Estimate.id == estimate_id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estimate not found")
-    resp = EstimateResponse.model_validate(est)
-    if est.customer:
-        resp.customer_name = est.customer.name
-    return resp
+    return _estimate_response(est)
 
 
 @router.post("", response_model=EstimateResponse, status_code=201)
@@ -107,7 +180,6 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
     refuse_other_customers_jobs(db, customer.id, data.job_id, data.lines, "estimate")
 
     cust_id = customer.id
-    cust_name = customer.name
     # The estimate is addressed to the customer, as an invoice is; it was
     # never filled, so its PDF and the invoice it became had no address.
     bill_to = _customer_bill_to(customer)
@@ -134,6 +206,10 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             notes=data.notes,
             class_id=data.class_id,
             job_id=data.job_id,
+            gc_pct=data.gc_pct,
+            insurance_pct=data.insurance_pct,
+            fee_pct=data.fee_pct,
+            bond_pct=data.bond_pct,
             **bill_to,
         )
         db.add(estimate)
@@ -165,6 +241,10 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             cost_code_id=line_data.cost_code_id,
             cost_type=line_cost_type(db, line_data.cost_code_id, line_data.cost_type),
             unit_cost=line_data.unit_cost,
+            trade_package_id=line_data.trade_package_id,
+            line_kind=line_data.line_kind,
+            unit=line_data.unit,
+            alternate_accepted=line_data.alternate_accepted,
             is_taxable=(
                 line_data.is_taxable if line_data.is_taxable is not None else True
             ),
@@ -180,9 +260,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(estimate)
-    resp = EstimateResponse.model_validate(estimate)
-    resp.customer_name = cust_name
-    return resp
+    return _estimate_response(estimate)
 
 
 @router.put("/{estimate_id}", response_model=EstimateResponse)
@@ -196,6 +274,11 @@ def update_estimate(
     changes = reject_null_updates(
         Estimate, data.model_dump(exclude_unset=True, exclude={"lines"})
     )
+    # Accepting through a PUT takes the one accept code path, after the other
+    # changes (a new job on the same request) land (#551).
+    accepting = changes.get("status") == EstimateStatus.ACCEPTED
+    if accepting:
+        changes.pop("status")
     if changes.get("customer_id") not in (None, estimate.customer_id):
         customer = db.get(Customer, changes["customer_id"])
         if not customer:
@@ -265,12 +348,69 @@ def update_estimate(
         estimate.tax_amount = tax_amount
         estimate.total = total
 
+    if accepting:
+        db.flush()
+        _accept_estimate(db, estimate, estimate.job_id)
+
     db.commit()
     db.refresh(estimate)
-    resp = EstimateResponse.model_validate(estimate)
-    if estimate.customer:
-        resp.customer_name = estimate.customer.name
-    return resp
+    return _estimate_response(estimate)
+
+
+@router.post("/{estimate_id}/reprice", response_model=EstimateResponse)
+def reprice_from_cost(estimate_id: int, db: Session = Depends(get_db)):
+    """Price from cost (#551): set each base / accepted-alternate line's rate
+    to its unit cost times the markup factor (1+gc)(1+ins)(1+fee)(1+bond), to
+    the cent, and recompute the line and document totals the way an edit
+    does. Lines without a unit cost keep their rate; allowances and unit-price
+    lines are never repriced. Refused once the estimate is accepted or
+    converted — its numbers are settled then."""
+    estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
+    if not estimate:
+        raise HTTPException(status_code=404, detail="Estimate not found")
+    if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
+        raise HTTPException(
+            status_code=409,
+            detail="A settled estimate can't be repriced; make a new one or a change order.",
+        )
+
+    factor = reprice_factor(estimate)
+    for line in estimate.lines:
+        kind = line.line_kind or "base"
+        base_scope = kind == "base" or (kind == "alternate" and line.alternate_accepted)
+        if not base_scope or line.unit_cost is None:
+            continue
+        line.rate = _q(Decimal(str(line.unit_cost)) * factor)
+        line.amount = _q(Decimal(str(line.quantity or 0)) * Decimal(str(line.rate)))
+
+    subtotal, tax_amount, total = compute_line_totals(
+        list(estimate.lines), estimate.tax_rate
+    )
+    estimate.subtotal = subtotal
+    estimate.tax_amount = tax_amount
+    estimate.total = total
+
+    db.commit()
+    db.refresh(estimate)
+    return _estimate_response(estimate)
+
+
+@router.post("/{estimate_id}/accept", response_model=EstimateResponse)
+def accept_estimate(
+    estimate_id: int,
+    data: Optional[EstimateAccept] = None,
+    db: Session = Depends(get_db),
+):
+    """Accept the estimate and lock its job's budget to it (#551). Needs a
+    job (on the body or the estimate); refuses an already accepted/converted
+    estimate, or a job whose budget another estimate already locked."""
+    estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
+    if not estimate:
+        raise HTTPException(status_code=404, detail="Estimate not found")
+    _accept_estimate(db, estimate, data.job_id if data else None)
+    db.commit()
+    db.refresh(estimate)
+    return _estimate_response(estimate)
 
 
 @router.get("/{estimate_id}/pdf")
@@ -336,7 +476,18 @@ def convert_to_invoice(
     # not the estimate's stored tax (see taxed_copy_lines).
     from app.services.accounting import compute_line_totals, taxed_copy_lines
 
-    copied = taxed_copy_lines(estimate.lines, estimate.customer)
+    # The bid's own lines only: unit prices are a rate card and an alternate
+    # becomes scope only once accepted, so neither converts (#551).
+    def _converts(line) -> bool:
+        kind = line.line_kind or "base"
+        if kind == "unit_price":
+            return False
+        if kind == "alternate" and not line.alternate_accepted:
+            return False
+        return True
+
+    kept = [ln for ln in estimate.lines if _converts(ln)]
+    copied = taxed_copy_lines(kept, estimate.customer)
     subtotal, tax_amount, total = compute_line_totals(copied, estimate.tax_rate)
     confirm_zero_total(
         total,
@@ -408,7 +559,7 @@ def convert_to_invoice(
     db.flush()
 
     new_lines = []
-    for eline, cline in zip(estimate.lines, copied):
+    for eline, cline in zip(kept, copied):
         iline = InvoiceLine(
             invoice_id=invoice.id,
             item_id=eline.item_id,
@@ -419,6 +570,9 @@ def convert_to_invoice(
             class_name=eline.class_name,
             job_id=own_job(db, estimate.customer_id, eline.job_id, left_off),
             cost_code_id=eline.cost_code_id,
+            # the cost basis the estimate carried, kept on the invoice (#551)
+            cost_type=eline.cost_type,
+            unit_cost=eline.unit_cost,
             is_taxable=cline.is_taxable,
             line_order=eline.line_order,
         )

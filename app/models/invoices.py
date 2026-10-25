@@ -150,6 +150,11 @@ class InvoiceLine(Base):
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # Per-line cost type and unit cost, carried over from the estimate a
+    # converted invoice came from (#551) so the cost basis isn't lost; NULL
+    # on an ordinary invoice line.
+    cost_type = Column(String(20), nullable=True)
+    unit_cost = Column(Numeric(12, 4), nullable=True)
     # Per-line sales tax (default: the item's flag, or taxable). A customer-
     # owned-device repair is labor with no tax; the part on the same invoice
     # is taxed.
