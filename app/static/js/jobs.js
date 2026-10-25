@@ -36,6 +36,14 @@ const JobsPage = {
     },
     TAB_LABELS: { overview: 'Overview', costs: 'Cost Detail', budget: 'Budget', transactions: 'Transactions', time: 'Time' },
 
+    // The detail tabs, with the Contract tab folded in (after Budget) only in
+    // construction mode (#552); other companies see today's five tabs exactly.
+    tabLabels() {
+        if (!Terms.isConstruction()) return JobsPage.TAB_LABELS;
+        const { overview, costs, budget, ...rest } = JobsPage.TAB_LABELS;
+        return { overview, costs, budget, contract: 'Contract', ...rest };
+    },
+
     // =====================================================================
     // List page
     // =====================================================================
@@ -206,7 +214,7 @@ const JobsPage = {
                 </div>
             </div>
             <div class="toolbar" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                ${Object.entries(JobsPage.TAB_LABELS).map(([t, label]) => `
+                ${Object.entries(JobsPage.tabLabels()).map(([t, label]) => `
                     <button class="btn btn-sm ${JobsPage._tab === t ? 'btn-primary' : 'btn-secondary'}" data-jobtab="${t}" onclick="JobsPage.setTab('${t}')">${label}</button>`).join('')}
                 <span style="margin-left:auto; font-size:11px; display:flex; gap:6px; align-items:center;">
                     Period <input type="date" id="job-period-start" aria-label="Period start" value="${JobsPage._period.start}" onchange="JobsPage.setPeriod()">
@@ -274,6 +282,7 @@ const JobsPage = {
             switch (JobsPage._tab) {
                 case 'costs': return await JobsPage.costsHtml();
                 case 'budget': return await JobsPage.budgetHtml();
+                case 'contract': return await JobsPage.contractHtml();
                 case 'transactions': return await JobsPage.transactionsHtml();
                 case 'time': return await JobsPage.timeHtml();
                 default: return await JobsPage.overviewHtml();
@@ -561,6 +570,218 @@ const JobsPage = {
             toast('Budget loaded from the estimate');
             JobsPage._tree = null;
             await JobsPage.setTab('budget');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Contract (construction mode only, #552) -------------------------------
+    // The owner's side of the job: the contract terms, the summary tiles and
+    // the schedule of values. The SOV must balance to the contract sum — the
+    // balance line stays highlighted until it does.
+    SOV_KINDS: { work: 'Work', allowance: 'Allowance', contingency: 'Contingency', fee: 'Fee', general_conditions: 'General conditions' },
+    CONTRACT_TYPES: { lump_sum: 'Lump sum', gmp: 'GMP (guaranteed max)', cost_plus: 'Cost-plus' },
+
+    async contractHtml() {
+        const job = JobsPage._job;
+        const [data, estimates] = await Promise.all([
+            API.get(`/jobs/${job.id}/contract`),
+            API.get(`/estimates?customer_id=${job.customer_id}`).catch(() => []),
+        ]);
+        JobsPage._contract = data;
+        const packages = (TradePackages._list || []);
+        const codes = await API.get('/cost-codes').catch(() => []);
+        JobsPage._sovCodes = codes;
+        const hasAccepted = (estimates || []).some(e => e.job_id === job.id && e.status === 'accepted');
+        return JobsPage.contractTermsHtml(data.contract)
+            + JobsPage.contractTilesHtml(data.contract)
+            + JobsPage.sovGridHtml(data.sov, data.contract, packages, codes, hasAccepted);
+    },
+
+    // The terms block: type, sum, date, fee, cap, contingency, retainage.
+    contractTermsHtml(c) {
+        c = c || {};
+        const typeOpts = Object.entries(JobsPage.CONTRACT_TYPES)
+            .map(([k, v]) => `<option value="${k}" ${c.contract_type === k ? 'selected' : ''}>${v}</option>`).join('');
+        const v = x => (x === null || x === undefined) ? '' : x;
+        const src = c.contract_estimate_id ? `<div class="form-group"><label>Source estimate</label><div style="padding-top:6px;font-size:12px;color:var(--text-muted)">#${c.contract_estimate_id}</div></div>` : '';
+        return `<form id="contract-terms" data-write onsubmit="JobsPage.saveContract(event)">
+            <div class="form-grid">
+                <div class="form-group"><label for="c-type">Contract type</label>
+                    <select id="c-type" name="contract_type"><option value="">— none —</option>${typeOpts}</select></div>
+                <div class="form-group"><label for="c-amount">Contract sum</label>
+                    <input id="c-amount" name="contract_amount" type="number" step="0.01" min="0" value="${v(c.contract_amount)}"></div>
+                <div class="form-group"><label for="c-date">Contract date</label>
+                    <input id="c-date" name="contract_date" type="date" value="${v(c.contract_date)}"></div>
+                <div class="form-group"><label for="c-feepct">Fee %</label>
+                    <input id="c-feepct" name="fee_pct" type="number" step="0.0001" min="0" value="${v(c.fee_pct)}"></div>
+                <div class="form-group"><label for="c-feeamt">Fixed fee</label>
+                    <input id="c-feeamt" name="fee_amount" type="number" step="0.01" min="0" value="${v(c.fee_amount)}" placeholder="wins over fee %"></div>
+                <div class="form-group"><label for="c-cap">Cap / GMP max</label>
+                    <input id="c-cap" name="cap_amount" type="number" step="0.01" min="0" value="${v(c.cap_amount)}"></div>
+                <div class="form-group"><label for="c-cont">Contingency</label>
+                    <input id="c-cont" name="contingency_amount" type="number" step="0.01" min="0" value="${v(c.contingency_amount)}"></div>
+                <div class="form-group"><label for="c-ret">Retainage %</label>
+                    <input id="c-ret" name="retainage_pct" type="number" step="0.01" min="0" max="100" value="${v(c.retainage_pct)}"></div>
+                ${src}
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary">Save contract terms</button></div>
+        </form>`;
+    },
+
+    contractTilesHtml(c) {
+        c = c || {};
+        const m = JobsPage.money;
+        const tile = (label, value, title) => `<div style="min-width:120px;" title="${title || ''}">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+            <div style="font-size:16px;font-weight:700">${value}</div></div>`;
+        return `<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 18px 0">
+            ${tile('Contract sum', m(c.contract_amount))}
+            ${tile('Changes', m(c.changes), 'Revised − original (change orders, #554)')}
+            ${tile('Fee', m(c.fee))}
+            ${tile('Cost to date', m(c.cost_to_date))}
+            ${tile('Cap remaining', c.cap_remaining === null || c.cap_remaining === undefined ? '—' : m(c.cap_remaining))}
+            ${tile('Contingency left', c.contingency_remaining === null || c.contingency_remaining === undefined ? '—' : m(c.contingency_remaining))}
+            ${tile('Billed to date', m(c.billed_to_date))}
+            ${tile('Billed %', JobsPage.pct(c.billed_pct))}
+        </div>`;
+    },
+
+    // The schedule-of-values grid. Pure: it takes the lines and figures and
+    // the pickers, so a node probe can drive it without the network.
+    sovGridHtml(sov, contract, packages, codes, hasAccepted) {
+        sov = sov || [];
+        contract = contract || {};
+        const rows = sov.map((line, i) => JobsPage.sovRowHtml(line, i, packages, codes)).join('');
+        const total = sov.reduce((s, l) => s + (parseFloat(l.scheduled_value) || 0), 0);
+        const balance = (contract.contract_amount || 0) - total;
+        const balColor = Math.abs(balance) > 0.005 ? 'var(--text-danger)' : 'var(--text-success)';
+        return `<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:4px 0 6px 0">Schedule of values</h4>
+            <div class="table-container"><table class="data-table" id="sov-grid" style="font-size:12px">
+                <thead><tr>
+                    <th scope="col" style="width:52px">Item #</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Package</th>
+                    <th scope="col">Section</th>
+                    <th scope="col">Kind</th>
+                    <th scope="col" class="amount">Scheduled value</th>
+                    <th scope="col" style="width:70px"></th>
+                </tr></thead>
+                <tbody id="sov-body">${rows || '<tr><td colspan="7" style="color:var(--text-muted)">No schedule of values yet. Add rows, or build one from an accepted estimate.</td></tr>'}</tbody>
+                <tfoot>
+                    <tr><td colspan="5" style="text-align:right;font-weight:600">Total</td><td class="amount" id="sov-total" style="font-weight:600">${formatCurrency(total)}</td><td></td></tr>
+                    <tr><td colspan="5" style="text-align:right">Balance vs contract sum</td><td class="amount" id="sov-balance" style="color:${balColor};font-weight:600">${formatCurrency(balance)}</td><td></td></tr>
+                </tfoot>
+            </table></div>
+            <div class="form-actions" data-write style="justify-content:flex-start;gap:8px">
+                <button class="btn btn-sm btn-secondary" onclick="JobsPage.addSovRow()">+ Add row</button>
+                <button class="btn btn-primary" onclick="JobsPage.saveSov()">Save schedule of values</button>
+                <button class="btn btn-secondary" ${hasAccepted ? '' : 'disabled title="Accept an estimate on this job first"'} onclick="JobsPage.buildSov()">Build from accepted estimate</button>
+            </div>`;
+    },
+
+    sovRowHtml(line, i, packages, codes) {
+        line = line || {};
+        const pkgOpts = ['<option value="">—</option>'].concat((packages || []).map(p =>
+            `<option value="${p.id}" ${String(line.trade_package_id) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
+        const codeOpts = ['<option value="">—</option>'].concat((codes || []).map(c =>
+            `<option value="${c.id}" ${String(line.cost_code_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.code)}</option>`)).join('');
+        const kindOpts = Object.entries(JobsPage.SOV_KINDS).map(([k, v]) =>
+            `<option value="${k}" ${(line.kind || 'work') === k ? 'selected' : ''}>${v}</option>`).join('');
+        return `<tr class="sov-row">
+            <td><input class="sov-item" data-write maxlength="10" value="${escapeHtml(line.item_no || '')}" style="width:46px"></td>
+            <td><input class="sov-desc" data-write maxlength="200" value="${escapeHtml(line.description || '')}" style="width:100%"></td>
+            <td><select class="sov-pkg" data-write>${pkgOpts}</select></td>
+            <td><select class="sov-code" data-write>${codeOpts}</select></td>
+            <td><select class="sov-kind" data-write>${kindOpts}</select></td>
+            <td><input class="sov-value money" data-write type="number" step="0.01" min="0" value="${line.scheduled_value ?? ''}" style="width:110px;text-align:right" oninput="JobsPage.retotalSov()"></td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-sm btn-secondary" data-write title="Move up" onclick="JobsPage.moveSovRow(this,-1)">↑</button>
+                <button class="btn btn-sm btn-secondary" data-write title="Remove" onclick="JobsPage.removeSovRow(this)">✕</button>
+            </td></tr>`;
+    },
+
+    _readSov() {
+        return $$('#sov-body .sov-row').map(tr => ({
+            item_no: tr.querySelector('.sov-item').value.trim() || null,
+            description: tr.querySelector('.sov-desc').value.trim() || null,
+            trade_package_id: tr.querySelector('.sov-pkg').value ? parseInt(tr.querySelector('.sov-pkg').value) : null,
+            cost_code_id: tr.querySelector('.sov-code').value ? parseInt(tr.querySelector('.sov-code').value) : null,
+            kind: tr.querySelector('.sov-kind').value,
+            scheduled_value: parseFloat(tr.querySelector('.sov-value').value) || 0,
+        }));
+    },
+
+    retotalSov() {
+        const lines = JobsPage._readSov();
+        const total = lines.reduce((s, l) => s + (l.scheduled_value || 0), 0);
+        const contract = (JobsPage._contract && JobsPage._contract.contract) || {};
+        const balance = (contract.contract_amount || 0) - total;
+        const tEl = $('#sov-total'); if (tEl) tEl.textContent = formatCurrency(total);
+        const bEl = $('#sov-balance');
+        if (bEl) { bEl.textContent = formatCurrency(balance); bEl.style.color = Math.abs(balance) > 0.005 ? 'var(--text-danger)' : 'var(--text-success)'; }
+    },
+
+    addSovRow() {
+        const body = $('#sov-body');
+        if (!body) return;
+        const empty = body.querySelector('td[colspan]');
+        if (empty) body.innerHTML = '';
+        const codes = JobsPage._sovCodes || [];
+        const packages = TradePackages._list || [];
+        body.insertAdjacentHTML('beforeend', JobsPage.sovRowHtml({}, body.children.length, packages, codes));
+        JobsPage.retotalSov();
+    },
+
+    removeSovRow(btn) {
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+        JobsPage.retotalSov();
+    },
+
+    moveSovRow(btn, dir) {
+        const tr = btn.closest('tr');
+        if (!tr) return;
+        if (dir < 0 && tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+        if (dir > 0 && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+    },
+
+    async saveContract(e) {
+        if (e) e.preventDefault();
+        const form = $('#contract-terms');
+        const num = n => { const el = form[n]; const v = el && el.value !== '' ? parseFloat(el.value) : null; return (v === null || isNaN(v)) ? null : v; };
+        const data = {
+            contract_type: form.contract_type.value || null,
+            contract_amount: num('contract_amount'),
+            contract_date: form.contract_date.value || null,
+            fee_pct: num('fee_pct'),
+            fee_amount: num('fee_amount'),
+            cap_amount: num('cap_amount'),
+            contingency_amount: num('contingency_amount'),
+            retainage_pct: num('retainage_pct'),
+        };
+        try {
+            await API.put(`/jobs/${JobsPage._job.id}/contract`, data);
+            toast('Contract terms saved');
+            await JobsPage.setTab('contract');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async saveSov() {
+        try {
+            await API.put(`/jobs/${JobsPage._job.id}/sov`, { lines: JobsPage._readSov() });
+            toast('Schedule of values saved');
+            await JobsPage.setTab('contract');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async buildSov() {
+        if (!confirm('This replaces the schedule of values.')) return;
+        const estimates = await API.get(`/estimates?customer_id=${JobsPage._job.customer_id}`).catch(() => []);
+        const accepted = (estimates || []).find(e => e.job_id === JobsPage._job.id && e.status === 'accepted');
+        if (!accepted) { toast('No accepted estimate on this job', 'error'); return; }
+        try {
+            await API.post(`/jobs/${JobsPage._job.id}/contract/from-estimate/${accepted.id}`, {});
+            toast('Schedule of values built from the estimate');
+            await JobsPage.setTab('contract');
         } catch (err) { toast(err.message, 'error'); }
     },
 
