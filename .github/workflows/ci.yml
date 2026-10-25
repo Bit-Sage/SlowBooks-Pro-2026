@@ -189,14 +189,19 @@ jobs:
           # API sweep reaching GET /api/checks/test-print, and the bookkeeper
           # "server answers" sweep), which skip here with the other PDF tests
           # (no WeasyPrint stack on the runner) — 154 + 5.
-          # 169 for 2.29.1, PROVISIONAL: 159 (with the check stock above)
-          # plus one for each of the ten new Playwright modules (P&L detail,
-          # total drill, month columns, feed vendor, vendor bank rule, new
-          # lines taxable, account quick add, bill quick entry, review account
-          # quick add, Quick Entry add customer). #501's Postgres-only tests
-          # may add more; the integrated tree's own Windows run sets the real
-          # figure.
-          MAX_SKIPS: "169"
+          # 179 for 2.29.1, read from the integrated tree's own Windows run
+          # (40144051517 on cfb16f33: 5,243 passed, 179 skipped; 2.29.0 had
+          # 154). The 25 new skips: thirteen new Playwright modules
+          # (test_browser_ account_quick_add, bill_quick_entry, enter_moves,
+          # feed_vendor, new_lines_taxable, pl_columns, pl_detail,
+          # pl_total_drill, quick_entry_add_customer, report_refresh,
+          # review_account_quick_add, transaction_warnings, vendor_bank_rule),
+          # the four Postgres-only tests of
+          # test_postgres_races_501.py (no SLOWBOOKS_TEST_POSTGRES_URL here),
+          # and eight new PDF tests (P&L Detail, the month / quarter grid, the
+          # check test print and pre-printed stock) that skip with the other
+          # PDF tests (no WeasyPrint stack on the runner).
+          MAX_SKIPS: "179"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
