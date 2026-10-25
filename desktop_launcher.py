@@ -1639,39 +1639,95 @@ def run_in_browser(port: int, log_fh=None) -> int:
     return 0
 
 
-def _show_error_box(message: str) -> None:
+def _show_error_box(message: str, mailto: str | None = None) -> None:
     """Best-effort native popup for fatal errors -- used in --hidden mode,
     where there's no visible console to print to. No-op on unsupported
-    platforms, or if it fails for any reason."""
+    platforms, or if it fails for any reason.
+
+    When ``mailto`` is given the dialog offers an "Email support" choice that
+    opens the user's mail program with the error already written (the same
+    in-app Contact support feature, from the one place the app never started)."""
     try:
         if sys.platform == "darwin":
-            subprocess.run(
+            buttons = (
+                ' buttons {"Email support", "OK"} default button "OK"' if mailto else ""
+            )
+            result = subprocess.run(
                 [
                     "/usr/bin/osascript",
                     "-e",
                     "on run argv",
                     "-e",
-                    'display alert "SlowBooks Pro 2026" message (item 1 of argv) as critical',
+                    'display alert "SlowBooks Pro 2026" message (item 1 of argv) '
+                    "as critical" + buttons,
                     "-e",
                     "end run",
                     "--",
                     message,
                 ],
                 check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
+            if mailto and "Email support" in (result.stdout or ""):
+                subprocess.run(["open", mailto], check=False, timeout=15)
             return
         if sys.platform == "win32":
             import ctypes
 
+            if mailto:
+                MB_YESNO = 0x4
+                MB_ICONERROR = 0x10
+                IDYES = 6
+                clicked = ctypes.windll.user32.MessageBoxW(
+                    0,
+                    message + "\n\nEmail support about this now?",
+                    "SlowBooks Pro 2026",
+                    MB_YESNO | MB_ICONERROR,
+                )
+                if clicked == IDYES:
+                    os.startfile(mailto)  # noqa: S606 — a mailto we built
+                return
             MB_ICONERROR = 0x10
             ctypes.windll.user32.MessageBoxW(
                 0, message, "SlowBooks Pro 2026", MB_ICONERROR
             )
     except Exception:
         pass
+
+
+def _support_mailto(log_path) -> str | None:
+    """A mailto: to support for the fatal-error dialog, built with the same
+    subject/body as the in-app form. No DB is open (the app never started), so
+    the log tail is redacted with no name list. Best-effort: None on failure."""
+    try:
+        from urllib.parse import quote
+
+        from app import __version__
+        from app.services import support_diagnostics as sd
+
+        platform_name = sd.detect_platform()
+        deployment = sd.detect_deployment()
+        env = sd.environment_block(
+            __version__, sd.app_commit(), platform_name, sd.python_version(), deployment
+        )
+        tail, available = sd.read_log_tail(log_path) if log_path else ("", False)
+        tail = sd.redact(tail, []) if available else ""
+        subject = sd.build_subject(
+            __version__, platform_name, deployment, "App failed to start"
+        )
+        body = sd.build_body(
+            "SlowBooks Pro could not start.",
+            "The app to open normally.",
+            "",
+            env,
+            tail,
+            log_available=available,
+        )
+        return f"mailto:{sd.SUPPORT_EMAIL}?subject={quote(subject)}&body={quote(body)}"
+    except Exception:
+        return None
 
 
 def _compose_serve_banner(port: int, addresses: list[str]) -> str:
@@ -2475,7 +2531,8 @@ def main() -> int:
             log_fh.write(tb + "\n")
         _show_error_box(
             "SlowBooks Pro hit an unexpected error and could not start.\n\n"
-            f"Details were written to:\n{log_path}"
+            f"Details were written to:\n{log_path}",
+            mailto=_support_mailto(log_path),
         )
         return 1
 

@@ -793,3 +793,7 @@ All read endpoints accept `?period=month|quarter|year` (or `mtd/qtd/ytd`), or ex
 - Accessibility: WCAG 2.1 AA posture ("strive to conform") — header scopes,
   labelled icon buttons, live-region toasts, dialog focus management, AA
   contrast, and tagged (PDF/UA-1) PDFs. See docs/accessibility.md.
+- **Contact support** from inside the app (top bar, About dialog, and the
+  launcher's error dialog): Send opens your own mail program with the message,
+  the environment block and a redacted log tail written for you. The app
+  sends nothing itself. See [docs/support.md](support.md).

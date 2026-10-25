@@ -110,6 +110,9 @@ from app.routes import auth as auth_routes
 # System info + update check (desktop installs)
 from app.routes import system as system_routes
 
+# In-app "Contact support": read-only diagnostics for the mailto form
+from app.routes import support as support_routes
+
 # Phase 11: Inventory tracking + drill-down reports + saved reports
 from app.routes import saved_reports
 
@@ -1431,6 +1434,7 @@ app.include_router(company_file_routes.router)
 app.include_router(accountants_copy_routes.router)
 app.include_router(reclassify_routes.router)
 app.include_router(system_routes.router)
+app.include_router(support_routes.router)
 # Phase 6: Ambitious
 app.include_router(companies.router)
 app.include_router(employees.router)

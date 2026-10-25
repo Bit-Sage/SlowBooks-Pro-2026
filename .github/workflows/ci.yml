@@ -204,7 +204,10 @@ jobs:
           # 180 with the vendor card's payments browser test
           # (test_browser_vendor_payments_card.py, no Playwright here; read
           # from 40159680023 on 7ebfc826: 5,249 passed, 180 skipped).
-          MAX_SKIPS: "180"
+          # 181 with the Contact support form's browser test
+          # (test_browser_support_form.py, no Playwright here — one module,
+          # skipped like its siblings without the runner's Chromium).
+          MAX_SKIPS: "181"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
