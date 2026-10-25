@@ -534,26 +534,33 @@ date, percent complete, earned revenue, billed to date, over and under billing,
 retainage outstanding, cost to complete and projected gross profit — on the
 **cost-to-cost** method: percent complete is cost ÷ estimated cost (capped at
 100%), earned is the revised contract times that percent, over billing (billed −
-earned) is a liability and under billing (earned − billed) an asset. Billing
-reads from the approved pay applications' completed-to-date when the job has any,
-else the posted revenue carrying the job (`billed_basis` says which). The report
-**posts nothing** — the over/under figure is the accountant's adjusting entry
-between Billings in Excess of Costs and Estimated Earnings / Costs and Estimated
-Earnings in Excess of Billings and the earned-revenue and cost accounts, which
-the report names but never writes. **Cost to Complete** (`/reports/cost-to-complete`)
-is per job and cost code (division › section) — budget, committed, actual, cost
-to complete (remaining budget plus open commitments), projected final, variance
-and percent — a tree in JSON, flattened with the code path in PDF/CSV. **Change
+earned) is a liability and under billing (earned − billed) an asset. Every figure
+reads **as of the date** — cost and posted revenue to that day, billing and
+retainage from the applications approved by then, the revised contract with the
+change orders approved by then — and cost to complete is floored at zero so the
+projected gross profit falls below the estimated one on an overrun. Billing reads
+from the approved pay applications' completed-to-date when the job has one by the
+date, else the posted revenue carrying the job (`billed_basis` says which). The
+report **posts nothing** — the over/under figure is the accountant's adjusting
+entry between Billings in Excess of Costs and Estimated Earnings / Costs and
+Estimated Earnings in Excess of Billings and the earned-revenue and cost
+accounts, which the report names but never writes. **Cost to Complete**
+(`/reports/cost-to-complete`) is per job and cost code (division › section) —
+budget, committed, actual, cost to complete (remaining budget plus open
+commitments), projected final, variance and percent — a tree in JSON, flattened
+with the code path in PDF/CSV, the totals footing the clamped rows. **Change
 Order Log** (`/reports/change-order-log`) lists every change order per job with
-the running approved total and the contract it builds, the pending total and
-counts by status. **Buyout Report** (`/reports/buyout`) foots the per-job buyout
-across jobs (bid vs bought, variance, committed-remaining, billed, Unassigned
-kept). **Job Cost by Vendor** (`/reports/job-cost-by-vendor`) groups posted job
-cost by the transaction's vendor (a No vendor bucket for journals and job cost
-entries) with bills, paid to date, retainage held outstanding and open A/P; cost
-is period-filtered, the bill figures job-to-date. Job Profitability and Job
-Budget vs Actual gained the PDF and CSV routes they lacked. A Business or
-Nonprofit company sees none of the five. See
+the running approved total (as of the date) and the contract it builds, the
+pending total and counts by status. **Buyout Report** (`/reports/buyout`) foots
+the per-job buyout across jobs (bid vs bought, variance, committed-remaining,
+billed, Unassigned kept), as of the date. **Job Cost by Vendor**
+(`/reports/job-cost-by-vendor`) groups posted job cost by the transaction's
+vendor (a No vendor bucket for journals and job cost entries) with bills, paid to
+date, retainage held outstanding and open A/P; cost is period-filtered, the bill
+figures job-to-date and prorated by the job's share of each bill's line amounts
+(a split bill splits). Job Profitability and Job Budget vs Actual gained the PDF
+and CSV routes they lacked (honouring `customer_id` / `include_inactive`). A
+Business or Nonprofit company sees none of the five. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks

@@ -651,38 +651,49 @@ blanks. It is **cost-to-cost**: percent complete is cost to date ÷ estimated
 total cost (capped at 100%), earned revenue is the revised contract times that
 percent, and **over billing** (billed − earned, a liability — billings in excess
 of costs and estimated earnings) or **under billing** (earned − billed, an asset
-— costs and estimated earnings in excess of billings) is the difference. Billed
-to date is the sum of the approved pay applications' completed-to-date when the
-job has any (else the posted revenue carrying the job — the `billed_basis` column
-says which). **The report posts nothing**: the over/under figure is the
-adjusting entry an accountant would post between the two WIP accounts named
-above and the earned-revenue and cost accounts; the schedule names the accounts
-but never writes the journal.
+— costs and estimated earnings in excess of billings) is the difference. Every
+figure reads **as of the date**: cost to date and posted revenue to that day,
+billing and retainage from the applications approved by then, and the revised
+contract with the change orders approved by then (so the schedule reproduces the
+books on an earlier close). Billed to date is the sum of the approved pay
+applications' completed-to-date when the job has one by the date (else the posted
+revenue carrying the job — the `billed_basis` column says which). Cost to complete
+is floored at zero, so an overrun's projected final cost is max(cost, estimate)
+and the projected gross profit falls below the estimated one. **The report posts
+nothing**: the over/under figure is the adjusting entry an accountant would post
+between the two WIP accounts named above and the earned-revenue and cost
+accounts; the schedule names the accounts but never writes the journal.
 
 **Cost to complete** (`cost-to-complete`). Per job, per cost code (division ›
 section), with budget revised, committed (remaining), actual, cost to complete
 (the remaining budget plus open commitments), projected final (actual + cost to
 complete), variance to budget and percent complete by cost, with totals per job
-and grand totals. The JSON keeps the cost-code tree (`children`); the PDF and CSV
-flatten it with the code path.
+and grand totals. The totals **foot the rows** — cost to complete, projected and
+variance are the sum of the clamped per-code figures (Σ max(…) ≠ max(Σ …) once a
+code runs over), budget/committed/actual the raw sums. The JSON keeps the
+cost-code tree (`children`); the PDF and CSV flatten it with the code path.
 
 **Change order log** (`change-order-log`). Every change order per job — number,
 kind, status, title, date, funding, cost, markup, sell, approved and voided
 dates, source PCO and (for a sub CO) its commitment — with the running approved
-total and the contract it builds (original + approved changes = revised), the
-pending total and counts by status.
+total (the change orders approved by `as_of`) and the contract it builds
+(original + approved changes = revised), the pending total (as of today) and
+counts by status.
 
 **Buyout report** (`buyout`). The job buyout across jobs: each trade package's
 bid cost against what has been bought, with the variance, committed-remaining and
 billed-to-date and the commitments behind each, the Unassigned row kept, totals
-per job and grand.
+per job and grand. As of `as_of`, only commitments dated by then count and
+billed-to-date is the non-void bills dated by then.
 
 **Job cost by vendor** (`job-cost-by-vendor`). Posted job cost grouped job →
 vendor (the transaction header's vendor; a No vendor bucket holds journals and
-job cost entries), with each vendor's bills count, paid to date (the bill
-payments allocated to that vendor's bills on the job), retainage held outstanding
-(held − released on those bills) and open A/P. The cost is for the period; the
-bill figures are job-to-date.
+job cost entries), with each vendor's bills, paid to date (the bill payments
+allocated to that vendor's bills on the job), retainage held outstanding (held −
+released on those bills) and open A/P. The cost is for the period; the bill
+figures are job-to-date and **prorated by the job's share of each bill's line
+amounts** — a header-only bill counts whole, a bill split across jobs splits its
+payment, retainage, A/P and count — so a job's bills can read fractional.
 
 The existing **Job Profitability** and **Job Budget vs Actual** reports gained
 PDF and CSV routes, so every contractor report exports the same way.

@@ -11,7 +11,7 @@ construction mode only, and the pins still work.
 import json
 import shutil
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -84,6 +84,21 @@ def _post_cost(db, job_id, account, amount, when, cost_code_id=None, vendor_id=N
     if vendor_id is not None:
         txn.vendor_id = vendor_id
         db.flush()
+
+
+def _post_cost_split(db, job_amounts, vendor_id):
+    """One journal entry with a COGS debit per (job_id, amount), balanced by a
+    single credit, with the vendor on the header (as a bill posts)."""
+    cogs = _cogs(db)
+    total = sum(Decimal(str(a)) for _j, a in job_amounts)
+    lines = [
+        {"account_id": cogs.id, "debit": Decimal(str(a)), "job_id": jid}
+        for jid, a in job_amounts
+    ]
+    lines.append({"account_id": _liability(db).id, "credit": total})
+    txn = create_journal_entry(db, date(2026, 3, 1), "split cost", lines)
+    txn.vendor_id = vendor_id
+    db.flush()
 
 
 def _wip_job(db, customer):
@@ -628,11 +643,12 @@ function run(isCon){
   vm.createContext(ctx);
   vm.runInContext(src+'\\nthis.ReportsPage=ReportsPage;',ctx);
   const views=ctx.ReportsPage._cards().map(c=>c.view);
-  // pins reorder: pin one card and confirm it leads
+  // pins reorder: pin a card and confirm it precedes an unpinned one
   ctx.ReportsPage._pins=['job-cost-by-vendor'];
   const grid=ctx.ReportsPage._cardGrid();
-  const firstPinned=grid.indexOf('report-card-job-cost-by-vendor');
-  return {views, pinWorks: firstPinned>=0};
+  const pinned=grid.indexOf('report-card-job-cost-by-vendor');
+  const unpinned=grid.indexOf('report-card-wip-schedule');
+  return {views, pinned, unpinned};
 }
 console.log(JSON.stringify({con:run(true), biz:run(false)}));
 """,
@@ -665,4 +681,367 @@ console.log(JSON.stringify({con:run(true), biz:run(false)}));
         ]
         + five
     )
-    assert res["con"]["pinWorks"] is True
+    # a pinned card precedes an unpinned one in the rendered grid
+    assert res["con"]["pinned"] >= 0 and res["con"]["unpinned"] >= 0
+    assert res["con"]["pinned"] < res["con"]["unpinned"]
+
+
+# ── Fixes (#556 review round) ───────────────────────────────────────────────
+
+
+def test_wip_as_of_before_billing_reads_zero(db_session, seed_accounts):
+    """As of a day before the cost, the billing and the change order, the row
+    shows no changes, no billing and no over-billing."""
+    customer = _customer(db_session)
+    ensure_default_cost_types(db_session)
+    job = Job(
+        customer_id=customer.id,
+        name="Early",
+        status="in_progress",
+        contract_type="lump_sum",
+        contract_amount=Decimal("110000"),  # after the CO below
+        original_contract_amount=Decimal("100000"),
+        retainage_pct=Decimal("10"),
+    )
+    db_session.add(job)
+    db_session.flush()
+    db_session.add(
+        JobBudget(
+            job_id=job.id,
+            cost_type="material",
+            amount=Decimal("80000"),
+            source="manual",
+        )
+    )
+    _post_cost(db_session, job.id, _cogs(db_session), "44000", date(2026, 3, 1))
+    # an owner, contract-funded CO approved after the as_of date
+    _co(
+        db_session,
+        job,
+        "CO-1",
+        "owner",
+        "approved",
+        "contract",
+        [("8000", "10000", "material")],
+        approved_at=datetime(2026, 4, 1, 9, 0),
+    )
+    # an approved application billing 60,000, dated after the as_of date
+    sov = SovLine(
+        job_id=job.id,
+        line_no=1,
+        item_no="01",
+        kind="work",
+        scheduled_value=Decimal("110000"),
+    )
+    db_session.add(sov)
+    db_session.flush()
+    app = PayApplication(
+        job_id=job.id,
+        application_no=1,
+        number="E-1",
+        status="approved",
+        retainage_pct=Decimal("10"),
+        date=date(2026, 3, 31),
+    )
+    db_session.add(app)
+    db_session.flush()
+    db_session.add(
+        PayApplicationLine(
+            pay_application_id=app.id,
+            sov_line_id=sov.id,
+            line_no=1,
+            scheduled_value=Decimal("110000"),
+            this_period=Decimal("60000"),
+            stored=Decimal("0"),
+        )
+    )
+    db_session.commit()
+
+    r = job_reports.wip_schedule(db_session, as_of=date(2026, 2, 1))["rows"][0]
+    assert r["billed_to_date"] == 0.0
+    assert r["over_billing"] == 0.0
+    assert r["under_billing"] == 0.0  # nothing earned yet either
+    assert r["approved_change_orders"] == 0.0
+    assert r["revised_contract"] == 100000.0  # the CO is backed out as of the date
+    assert r["cost_to_date"] == 0.0
+    assert r["billed_basis"] == "posted_revenue"
+
+    # and as of today it reads the full, current figures
+    today = job_reports.wip_schedule(db_session)["rows"][0]
+    assert today["approved_change_orders"] == 10000.0
+    assert today["revised_contract"] == 110000.0
+    assert today["billed_to_date"] == 60000.0
+    assert today["billed_basis"] == "pay_applications"
+
+
+def test_wip_overrun_projected_gp_diverges(db_session, seed_accounts):
+    customer = _customer(db_session)
+    ensure_default_cost_types(db_session)
+    job = Job(
+        customer_id=customer.id,
+        name="Overrun2",
+        status="in_progress",
+        contract_type="lump_sum",
+        contract_amount=Decimal("100000"),
+        original_contract_amount=Decimal("100000"),
+    )
+    db_session.add(job)
+    db_session.flush()
+    db_session.add(
+        JobBudget(
+            job_id=job.id,
+            cost_type="material",
+            amount=Decimal("50000"),
+            source="manual",
+        )
+    )
+    _post_cost(db_session, job.id, _cogs(db_session), "60000", date(2026, 3, 1))
+    db_session.commit()
+    r = job_reports.wip_schedule(db_session, as_of=date(2026, 6, 1))["rows"][0]
+    assert r["percent_complete"] == 100.0
+    assert r["cost_to_complete"] == 0.0  # floored
+    assert r["estimated_gross_profit"] == 50000.0  # revised 100k − estimate 50k
+    assert r["projected_gross_profit"] == 40000.0  # revised 100k − cost 60k
+    assert r["projected_gross_profit"] != r["estimated_gross_profit"]
+
+
+def test_wip_zero_budget_row(db_session, seed_accounts):
+    customer = _customer(db_session)
+    ensure_default_cost_types(db_session)
+    job = Job(
+        customer_id=customer.id,
+        name="NoBudget",
+        status="in_progress",
+        contract_type="lump_sum",
+        contract_amount=Decimal("20000"),
+        original_contract_amount=Decimal("20000"),
+    )
+    db_session.add(job)
+    db_session.flush()
+    _post_cost(db_session, job.id, _cogs(db_session), "5000", date(2026, 3, 1))
+    db_session.commit()
+    r = job_reports.wip_schedule(db_session, as_of=date(2026, 6, 1))["rows"][0]
+    assert r["estimated_total_cost"] == 0.0
+    assert r["percent_complete"] == 0.0
+    assert r["cost_to_complete"] == 0.0  # floored, no budget to finish against
+    assert r["projected_gross_profit"] == 15000.0  # 20,000 − 5,000 cost
+
+
+def _division(db, code, name):
+    c = CostCode(code=code, name=name, cost_type="material", level="division")
+    db.add(c)
+    db.flush()
+    return c
+
+
+def _section(db, code, name, parent):
+    c = CostCode(
+        code=code, name=name, cost_type="material", level="section", parent_id=parent.id
+    )
+    db.add(c)
+    db.flush()
+    return c
+
+
+def test_cost_to_complete_empty_sibling_and_footed_totals(db_session, seed_accounts):
+    """Two divisions, one with an empty sibling section: no crash, and the job
+    totals foot the clamped rows (0 + 8,000 = 8,000; variance −5,000)."""
+    customer = _customer(db_session)
+    ensure_default_cost_types(db_session)
+    div_a = _division(db_session, "03", "Concrete")
+    a1 = _section(db_session, "03 30 00", "Cast-in-Place", div_a)
+    _section(db_session, "03 40 00", "Precast", div_a)  # empty sibling
+    div_b = _division(db_session, "26", "Electrical")
+    b1 = _section(db_session, "26 05 00", "Basic Materials", div_b)
+    job = Job(customer_id=customer.id, name="Two", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    # division A: no budget, 5,000 actual → over, cost to complete 0
+    _post_cost(db_session, job.id, _cogs(db_session), "5000", date(2026, 3, 1), a1.id)
+    # division B: 8,000 budget, no actual → cost to complete 8,000
+    db_session.add(
+        JobBudget(
+            job_id=job.id,
+            cost_code_id=b1.id,
+            cost_type="material",
+            amount=Decimal("8000"),
+            source="manual",
+        )
+    )
+    db_session.commit()
+
+    data = job_reports.cost_to_complete(db_session, as_of=date(2026, 6, 1))
+    job_data = data["jobs"][0]
+    # the empty sibling is dropped, not crashed on
+    div_a_node = next(n for n in job_data["tree"] if n["code"] == "03")
+    assert [c["code"] for c in div_a_node["children"]] == ["03 30 00"]
+    t = job_data["totals"]
+    assert t["budget_revised"] == 8000.0
+    assert t["actual"] == 5000.0
+    assert t["cost_to_complete"] == 8000.0  # 0 (div A) + 8,000 (div B)
+    assert t["variance"] == -5000.0  # −5,000 (div A) + 0 (div B)
+    # grand totals (one job) match
+    assert data["totals"]["cost_to_complete"] == 8000.0
+    assert data["totals"]["variance"] == -5000.0
+
+
+def test_job_cost_by_vendor_prorates_a_split_bill(db_session, seed_accounts):
+    customer = _customer(db_session)
+    j1 = Job(customer_id=customer.id, name="J1", status="in_progress")
+    j2 = Job(customer_id=customer.id, name="J2", status="in_progress")
+    db_session.add_all([j1, j2])
+    db_session.flush()
+    vendor = Vendor(name="Split Co")
+    db_session.add(vendor)
+    db_session.flush()
+    # one bill split 6,000 to J1 and 4,000 to J2 (header carries no job)
+    bill = Bill(
+        bill_number="S-1",
+        vendor_id=vendor.id,
+        status=BillStatus.PARTIAL,
+        date=date(2026, 3, 1),
+        subtotal=Decimal("10000"),
+        total=Decimal("10000"),
+        amount_paid=Decimal("5000"),
+        balance_due=Decimal("10000"),
+        retainage_held=Decimal("1000"),
+        retainage_released=Decimal("0"),
+    )
+    db_session.add(bill)
+    db_session.flush()
+    db_session.add(BillLine(bill_id=bill.id, amount=Decimal("6000"), job_id=j1.id))
+    db_session.add(BillLine(bill_id=bill.id, amount=Decimal("4000"), job_id=j2.id))
+    payment = BillPayment(
+        vendor_id=vendor.id, date=date(2026, 3, 15), amount=Decimal("5000")
+    )
+    db_session.add(payment)
+    db_session.flush()
+    db_session.add(
+        BillPaymentAllocation(
+            bill_payment_id=payment.id, bill_id=bill.id, amount=Decimal("5000")
+        )
+    )
+    # posted cost, one JE with a line per job, the bill's vendor on the header
+    _post_cost_split(db_session, [(j1.id, "6000"), (j2.id, "4000")], vendor.id)
+    db_session.commit()
+
+    data = job_reports.job_cost_by_vendor(
+        db_session, start_date=date(2026, 1, 1), end_date=date(2026, 12, 31)
+    )
+    by_job = {j["job_name"]: j for j in data["jobs"]}
+    r1 = by_job["J1"]["rows"][0]
+    r2 = by_job["J2"]["rows"][0]
+    assert r1["bills_count"] == 0.6 and r2["bills_count"] == 0.4
+    assert r1["paid_to_date"] == 3000.0 and r2["paid_to_date"] == 2000.0
+    assert r1["retainage_outstanding"] == 600.0 and r2["retainage_outstanding"] == 400.0
+    assert r1["open_ap"] == 6000.0 and r2["open_ap"] == 4000.0
+    # the grand totals foot the whole bill
+    g = data["totals"]
+    assert g["cost"] == 10000.0
+    assert g["bills_count"] == 1.0
+    assert g["paid_to_date"] == 5000.0
+    assert g["retainage_outstanding"] == 1000.0
+    assert g["open_ap"] == 10000.0
+
+
+def test_existing_report_csv_figures_agree_with_json(client, db_session, seed_accounts):
+    """The Job Profitability CSV carries the same money figures the JSON does,
+    including a negative-margin job (income under cost)."""
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Loser", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    # income 10,000, cost 44,000 → net −34,000, margin negative
+    create_journal_entry(
+        db_session,
+        date(2026, 3, 1),
+        "revenue",
+        [
+            {"account_id": _liability(db_session).id, "debit": Decimal("10000")},
+            {
+                "account_id": _income(db_session).id,
+                "credit": Decimal("10000"),
+                "job_id": job.id,
+            },
+        ],
+    )
+    _post_cost(db_session, job.id, _cogs(db_session), "44000", date(2026, 3, 1))
+    db_session.commit()
+
+    jp = client.get(
+        "/api/reports/job-profitability?start_date=2026-01-01&end_date=2026-12-31"
+    ).json()
+    row = next(r for r in jp["jobs"] if r["job_name"] == "Loser")
+    assert row["net_income"] == -34000.0
+    assert row["margin_pct"] is not None and row["margin_pct"] < 0
+    csv = client.get(
+        "/api/reports/job-profitability/csv?start_date=2026-01-01&end_date=2026-12-31"
+    ).text
+    assert "-34000.00" in csv  # the net money cell, not just the header word
+    assert "10000.00" in csv  # income
+
+
+def test_budget_vs_actual_csv_figure_agrees_with_service(
+    client, db_session, seed_accounts
+):
+    from app.services.job_costing import budget_vs_actual_all_jobs
+
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="BVA", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    db_session.add(
+        JobBudget(
+            job_id=job.id,
+            cost_type="material",
+            amount=Decimal("12000"),
+            source="manual",
+        )
+    )
+    _post_cost(db_session, job.id, _cogs(db_session), "3000", date(2026, 3, 1))
+    db_session.commit()
+
+    svc = budget_vs_actual_all_jobs(db_session, date(2026, 1, 1), date(2026, 12, 31))
+    row = next(r for r in svc if r["job_name"] == "BVA")
+    assert row["revised"] == 12000.0 and row["actual"] == 3000.0
+    csv = client.get(
+        "/api/reports/job-budget-vs-actual/csv?start_date=2026-01-01&end_date=2026-12-31"
+    ).text
+    assert "12000.00" in csv and "3000.00" in csv
+
+
+def test_budget_vs_actual_exports_honour_customer_filter(
+    client, db_session, seed_accounts
+):
+    c1 = _customer(db_session, "C1")
+    c2 = _customer(db_session, "C2")
+    j1 = Job(customer_id=c1.id, name="C1 Job", status="in_progress")
+    j2 = Job(customer_id=c2.id, name="C2 Job", status="in_progress")
+    db_session.add_all([j1, j2])
+    db_session.flush()
+    db_session.add(
+        JobBudget(
+            job_id=j1.id, cost_type="material", amount=Decimal("7777"), source="manual"
+        )
+    )
+    db_session.add(
+        JobBudget(
+            job_id=j2.id, cost_type="material", amount=Decimal("8888"), source="manual"
+        )
+    )
+    db_session.commit()
+    csv = client.get(
+        f"/api/reports/job-budget-vs-actual/csv?start_date=2026-01-01&end_date=2026-12-31&customer_id={c1.id}"
+    ).text
+    assert "7777.00" in csv
+    assert "8888.00" not in csv  # the other customer's job is filtered out
+
+
+def test_job_cost_by_vendor_reversed_dates_refused(client, db_session, seed_accounts):
+    _customer(db_session)
+    db_session.commit()
+    for ext in ("", "/csv"):
+        r = client.get(
+            f"/api/reports/job-cost-by-vendor{ext}?start_date=2026-12-31&end_date=2026-01-01"
+        )
+        assert r.status_code == 400, (ext, r.text)
