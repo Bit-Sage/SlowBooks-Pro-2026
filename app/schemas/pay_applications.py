@@ -27,16 +27,12 @@ class PayApplicationCreate(StrictModel):
 
 
 class PayApplicationLineIn(StrictModel):
+    # this_period / stored may be negative on a deduct SOV line (a negatively
+    # scheduled line); the route's direction-aware guard checks the sign
+    # against the line's scheduled value (#555).
     sov_line_id: int
     this_period: Decimal = Decimal("0")
     stored: Decimal = Decimal("0")
-
-    @field_validator("this_period", "stored")
-    @classmethod
-    def _non_negative(cls, v):
-        if v is not None and v < 0:
-            raise ValueError("amounts cannot be negative")
-        return v
 
 
 class PayApplicationUpdate(StrictModel):
@@ -46,6 +42,7 @@ class PayApplicationUpdate(StrictModel):
     date: Optional[dt_date] = None
     period_to: Optional[dt_date] = None
     retainage_pct: Optional[Decimal] = None
+    tax_rate: Optional[Decimal] = None
     release_retainage: Optional[Decimal] = None
     deposit_applied: Optional[Decimal] = None
     lien_waiver_status: Optional[str] = None
@@ -61,7 +58,7 @@ class PayApplicationUpdate(StrictModel):
             raise ValueError("retainage_pct must be between 0 and 100")
         return v
 
-    @field_validator("release_retainage", "deposit_applied")
+    @field_validator("tax_rate", "release_retainage", "deposit_applied")
     @classmethod
     def _non_negative(cls, v):
         if v is not None and v < 0:
@@ -90,12 +87,14 @@ class PayApplicationLineOut(BaseModel):
 class PayApplicationOut(BaseModel):
     id: int
     job_id: int
+    job_number: Optional[str] = None
     application_no: int
     number: str
     period_to: Optional[dt_date] = None
     date: Optional[dt_date] = None
     status: str
     retainage_pct: Optional[Decimal] = None
+    tax_rate: Decimal = Decimal("0")
     release_retainage: Decimal = Decimal("0")
     deposit_applied: Decimal = Decimal("0")
     lien_waiver_status: Optional[str] = None

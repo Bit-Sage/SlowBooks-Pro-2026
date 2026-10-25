@@ -328,12 +328,13 @@ def contract_summary(
     from app.services.pay_applications import (
         billed_to_date as pa_billed_to_date,
         deposits_figures,
-        has_any_application,
         retainage_held_to_date,
         retainage_released_to_date,
     )
 
-    if has_any_application(db, job.id):
+    # Only an approved application moves billed-to-date; a draft leaves the
+    # posted revenue figure standing (#555 review).
+    if _has_approved_application(db, job.id):
         billed = pa_billed_to_date(db, job.id)
     deposits = deposits_figures(db, job.id)
     ret_held = retainage_held_to_date(db, job.id)

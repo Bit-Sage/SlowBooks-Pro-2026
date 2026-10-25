@@ -48,6 +48,9 @@ class PayApplication(Base):
     status = Column(String(10), nullable=False, default="draft")
     # Copied from the job at creation, editable while draft.
     retainage_pct = Column(Numeric(5, 2), nullable=True)
+    # Sales-tax rate (a fraction, like the invoice's), defaulted from the job's
+    # accepted estimate at creation; approve taxes the billed work with it.
+    tax_rate = Column(Numeric(7, 4), nullable=False, default=0)
     # Retainage previously held that this application bills back (<= held).
     release_retainage = Column(Numeric(15, 2), nullable=False, default=0)
     # Owner deposit applied to this application's current due.
@@ -56,6 +59,11 @@ class PayApplication(Base):
     lien_waiver_status = Column(String(16), nullable=True)
     invoice_id = Column(
         Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
+    )
+    # The deposit payment approve created when a deposit applied, so void can
+    # find exactly it (not some other deposit-method payment) to reverse.
+    deposit_payment_id = Column(
+        Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
     )
     approved_at = Column(DateTime(timezone=True), nullable=True)
     voided_at = Column(DateTime(timezone=True), nullable=True)

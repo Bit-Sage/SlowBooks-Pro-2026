@@ -47,6 +47,9 @@ def upgrade() -> None:
         ),
         sa.Column("retainage_pct", sa.Numeric(5, 2), nullable=True),
         sa.Column(
+            "tax_rate", sa.Numeric(7, 4), nullable=False, server_default="0"
+        ),
+        sa.Column(
             "release_retainage", sa.Numeric(15, 2), nullable=False, server_default="0"
         ),
         sa.Column(
@@ -54,6 +57,7 @@ def upgrade() -> None:
         ),
         sa.Column("lien_waiver_status", sa.String(length=16), nullable=True),
         sa.Column("invoice_id", sa.Integer(), nullable=True),
+        sa.Column("deposit_payment_id", sa.Integer(), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("voided_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
@@ -66,6 +70,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["job_id"], ["jobs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["invoice_id"], ["invoices.id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["deposit_payment_id"], ["payments.id"], ondelete="SET NULL"
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("number", name="uq_pay_app_number"),

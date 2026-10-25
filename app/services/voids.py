@@ -35,6 +35,7 @@ from app.models.credit_memos import CreditMemo
 from app.models.in_kind import InKindGift
 from app.models.invoices import Invoice
 from app.models.job_costing import JobCost
+from app.models.job_deposits import JobDeposit
 from app.models.nonprofit import FunctionalAllocation, RestrictionRelease
 from app.models.payments import Payment
 from app.models.payroll import PayRun
@@ -71,6 +72,7 @@ DOCUMENT_KEYED_VOIDS = {
     "credit_memo_void": (CreditMemo, CreditMemo.id, CreditMemo.transaction_id),
     "vendor_credit_void": (VendorCredit, VendorCredit.id, VendorCredit.transaction_id),
     "job_cost_void": (JobCost, JobCost.id, JobCost.transaction_id),
+    "job_deposit_void": (JobDeposit, JobDeposit.id, JobDeposit.transaction_id),
     "payroll_void": (
         PayRun,
         PayRun.id,

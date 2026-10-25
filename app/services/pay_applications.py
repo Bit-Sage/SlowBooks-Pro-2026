@@ -116,97 +116,99 @@ def _approved(db: Session, job_id: int, before_no=None):
     return q.order_by(PayApplication.application_no).all()
 
 
-def previous_by_sov_line(db: Session, job_id: int, before_no=None) -> dict:
-    """SOV line id → Σ this_period on earlier approved applications (the
-    `previous` column)."""
-    out: dict = {}
+def _history(db: Session, job_id: int, before_no=None) -> dict:
+    """One oldest-first pass over this job's approved applications numbered
+    below `before_no` (all of them when None). Accumulates, with the pure
+    `application_totals` and no recursion, the state an application reads from
+    its history:
+
+    - `previous`  — SOV line id → Σ this_period billed so far;
+    - `stored`    — SOV line id → the latest approved application's stored;
+    - `prev_retainage` — the latest approved application's retainage_to_date;
+    - `prev_certificates` — Σ of the approved applications' current_due;
+    - `billed`    — Σ of the approved applications' completed_to_date.
+
+    One pass keeps the list and the next approve linear, not exponential — the
+    old code recursed into application_figures per prior (#555 review)."""
+    previous: dict = {}
+    stored: dict = {}
+    prev_ret = _ZERO
+    prev_cert = _ZERO
+    billed = _ZERO
     for app in _approved(db, job_id, before_no):
-        for ln in app.lines:
-            if ln.sov_line_id is None:
-                continue
-            out[ln.sov_line_id] = _q(
-                out.get(ln.sov_line_id, _ZERO) + _q(ln.this_period)
-            )
-    return out
-
-
-def stored_by_sov_line(db: Session, job_id: int, before_no=None) -> dict:
-    """SOV line id → the stored value on the most recent earlier approved
-    application (for the billing stored-delta)."""
-    out: dict = {}
-    for app in _approved(db, job_id, before_no):  # oldest first, last wins
-        for ln in app.lines:
-            if ln.sov_line_id is None:
-                continue
-            out[ln.sov_line_id] = _q(ln.stored)
-    return out
-
-
-def application_figures(db: Session, app) -> dict:
-    """Full totals for one application, with its lines' `previous` filled
-    from history and the history scalars resolved. Reads live, so it is
-    correct whether the application is draft or approved."""
-    prev = previous_by_sov_line(db, app.job_id, app.application_no)
-    rows = []
-    for ln in app.lines:
-        rows.append(
+        rows = [
             _Row(
                 scheduled_value=ln.scheduled_value,
-                previous=prev.get(ln.sov_line_id, _ZERO),
+                previous=previous.get(ln.sov_line_id, _ZERO),
                 this_period=ln.this_period,
                 stored=ln.stored,
             )
+            for ln in app.lines
+        ]
+        totals = application_totals(
+            rows,
+            retainage_pct=app.retainage_pct,
+            previous_retainage=prev_ret,
+            previous_certificates=prev_cert,
+            release_retainage=app.release_retainage,
+            deposit_applied=app.deposit_applied,
         )
-    return application_totals(
-        rows,
-        retainage_pct=app.retainage_pct,
-        previous_retainage=previous_retainage(db, app),
-        previous_certificates=previous_certificates(db, app),
-        release_retainage=app.release_retainage,
-        deposit_applied=app.deposit_applied,
-    )
+        for ln in app.lines:
+            if ln.sov_line_id is None:
+                continue
+            previous[ln.sov_line_id] = _q(
+                previous.get(ln.sov_line_id, _ZERO) + _q(ln.this_period)
+            )
+            stored[ln.sov_line_id] = _q(ln.stored)
+        prev_ret = totals["retainage_to_date"]
+        prev_cert = _q(prev_cert + totals["current_due"])
+        billed = _q(billed + totals["completed_to_date"])
+    return {
+        "previous": previous,
+        "stored": stored,
+        "prev_retainage": prev_ret,
+        "prev_certificates": prev_cert,
+        "billed": billed,
+    }
 
 
-def previous_retainage(db: Session, app) -> Decimal:
-    """The prior approved application's retainage_to_date (the latest one
-    numbered below this application)."""
-    prior = _approved(db, app.job_id, app.application_no)
-    if not prior:
-        return _ZERO
-    return _retainage_to_date(db, prior[-1])
+def previous_by_sov_line(db: Session, job_id: int, before_no=None) -> dict:
+    """SOV line id → Σ this_period on earlier approved applications."""
+    return _history(db, job_id, before_no)["previous"]
 
 
-def _retainage_to_date(db: Session, app) -> Decimal:
-    prev = previous_by_sov_line(db, app.job_id, app.application_no)
+def stored_by_sov_line(db: Session, job_id: int, before_no=None) -> dict:
+    """SOV line id → the latest earlier approved application's stored value."""
+    return _history(db, job_id, before_no)["stored"]
+
+
+def application_figures(db: Session, app) -> dict:
+    """Full totals for one application, with its lines' `previous` filled from
+    one history pass. Reads live, so it is correct whether draft or approved."""
+    h = _history(db, app.job_id, app.application_no)
     rows = [
         _Row(
             scheduled_value=ln.scheduled_value,
-            previous=prev.get(ln.sov_line_id, _ZERO),
+            previous=h["previous"].get(ln.sov_line_id, _ZERO),
             this_period=ln.this_period,
             stored=ln.stored,
         )
         for ln in app.lines
     ]
-    return _q(
-        sum((line_computed(r, app.retainage_pct)["retainage"] for r in rows), _ZERO)
+    return application_totals(
+        rows,
+        retainage_pct=app.retainage_pct,
+        previous_retainage=h["prev_retainage"],
+        previous_certificates=h["prev_certificates"],
+        release_retainage=app.release_retainage,
+        deposit_applied=app.deposit_applied,
     )
 
 
-def previous_certificates(db: Session, app) -> Decimal:
-    """Σ current_due of the approved applications numbered below this one."""
-    total = _ZERO
-    for prior in _approved(db, app.job_id, app.application_no):
-        total += application_figures(db, prior)["current_due"]
-    return _q(total)
-
-
 def retainage_held_to_date(db: Session, job_id: int) -> Decimal:
-    """Owner retainage held to date — the retainage_to_date of the latest
-    approved application (cumulative)."""
-    apps = _approved(db, job_id)
-    if not apps:
-        return _ZERO
-    return _retainage_to_date(db, apps[-1])
+    """Owner retainage held to date — the latest approved application's
+    retainage_to_date (cumulative)."""
+    return _history(db, job_id)["prev_retainage"]
 
 
 def retainage_released_to_date(db: Session, job_id: int) -> Decimal:
@@ -240,34 +242,17 @@ def deposits_figures(db: Session, job_id: int) -> dict:
 
 def billed_to_date(db: Session, job_id: int) -> Decimal:
     """Σ approved applications' completed_to_date — owner billing to date."""
-    return _q(
-        sum(
-            (
-                application_figures(db, a)["completed_to_date"]
-                for a in _approved(db, job_id)
-            ),
-            _ZERO,
-        )
-    )
+    return _history(db, job_id)["billed"]
 
 
 def billed_completed_by_sov_line(db: Session, job_id: int) -> dict:
     """SOV line id → completed_to_date billed across approved applications
     (Σ this_period of all approved + the latest approved application's
     stored). What a line cannot be dropped or shrunk below (#555)."""
-    prev = previous_by_sov_line(db, job_id)  # Σ this_period, all approved
-    stored = stored_by_sov_line(db, job_id)  # latest approved stored
+    h = _history(db, job_id)
+    prev, stored = h["previous"], h["stored"]
     keys = set(prev) | set(stored)
     return {k: _q(prev.get(k, _ZERO) + stored.get(k, _ZERO)) for k in keys}
-
-
-def has_any_application(db: Session, job_id: int) -> bool:
-    from app.models.pay_applications import PayApplication
-
-    return (
-        db.query(PayApplication.id).filter(PayApplication.job_id == job_id).first()
-        is not None
-    )
 
 
 class _Row:

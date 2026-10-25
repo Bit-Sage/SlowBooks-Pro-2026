@@ -25,6 +25,7 @@ from app.models.jobs import Job, SovLine
 from app.models.pay_applications import PayApplication, PayApplicationLine
 from app.schemas.pay_applications import (
     PayApplicationCreate,
+    PayApplicationLineOut,
     PayApplicationOut,
     PayApplicationUpdate,
 )
@@ -52,6 +53,38 @@ router = APIRouter(prefix="/api/pay-applications", tags=["pay-applications"])
 
 _ZERO = Decimal("0")
 _OPEN = ("draft", "submitted")
+
+
+class _LineInput:
+    """A line for the pure math: a stored line with its history `previous`."""
+
+    __slots__ = ("scheduled_value", "previous", "this_period", "stored")
+
+    def __init__(self, previous, ln):
+        self.scheduled_value = ln.scheduled_value
+        self.previous = previous
+        self.this_period = ln.this_period
+        self.stored = ln.stored
+
+
+def _signed(account_id, amount, description, natural, **extra):
+    """A journal leg that puts `amount` on its account's natural side (debit
+    or credit) and flips to the other side when it is negative. None when the
+    amount rounds to zero, so the caller can drop it."""
+    amount = _q(amount)
+    if amount == 0:
+        return None
+    if (natural == "debit") == (amount > 0):
+        debit, credit = abs(amount), _ZERO
+    else:
+        debit, credit = _ZERO, abs(amount)
+    return {
+        "account_id": account_id,
+        "debit": debit,
+        "credit": credit,
+        "description": description,
+        **extra,
+    }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -88,32 +121,24 @@ def _sub_waivers(db: Session, job_id: int, period_to) -> dict:
     return {"bills": bills, "missing": len(bills)}
 
 
+def _line_obj(prev, ln):
+    return _LineInput(prev.get(ln.sov_line_id, _ZERO), ln)
+
+
 def _out(db: Session, app: PayApplication) -> PayApplicationOut:
     prev = previous_by_sov_line(db, app.job_id, app.application_no)
     lines = []
     for ln in app.lines:
-        row = line_computed(
-            type(
-                "L",
-                (),
-                {
-                    "scheduled_value": ln.scheduled_value,
-                    "previous": prev.get(ln.sov_line_id, _ZERO),
-                    "this_period": ln.this_period,
-                    "stored": ln.stored,
-                },
-            ),
-            app.retainage_pct,
-        )
+        row = line_computed(_line_obj(prev, ln), app.retainage_pct)
         lines.append(
-            {
-                "id": ln.id,
-                "sov_line_id": ln.sov_line_id,
-                "line_no": ln.line_no,
-                "item_no": ln.item_no,
-                "description": ln.description,
+            PayApplicationLineOut(
+                id=ln.id,
+                sov_line_id=ln.sov_line_id,
+                line_no=ln.line_no,
+                item_no=ln.item_no,
+                description=ln.description,
                 **row,
-            }
+            )
         )
     totals = {
         k: (float(v) if isinstance(v, Decimal) else v)
@@ -122,6 +147,7 @@ def _out(db: Session, app: PayApplication) -> PayApplicationOut:
     out = PayApplicationOut.model_validate(app)
     out.lines = lines
     out.totals = totals
+    out.job_number = app.job.job_number if app.job else None
     out.invoice_number = app.invoice.invoice_number if app.invoice else None
     out.sub_waivers = _sub_waivers(db, app.job_id, app.period_to)
     out.unapplied_deposits = float(deposits_figures(db, app.job_id)["unapplied"])
@@ -136,19 +162,24 @@ def _out(db: Session, app: PayApplication) -> PayApplicationOut:
 
 def _validate(db: Session, app: PayApplication) -> None:
     """The per-line and header guards (422): a line billed past its scheduled
-    value, a release past the held-to-date, a deposit past what is unapplied."""
+    value (in its own direction — a deduct line bills down), a release past
+    the held-to-date, a deposit past what is unapplied or past the current due."""
     prev = previous_by_sov_line(db, app.job_id, app.application_no)
     for ln in app.lines:
+        scheduled = _q(ln.scheduled_value)
         completed = _q(
             prev.get(ln.sov_line_id, _ZERO) + _q(ln.this_period) + _q(ln.stored)
         )
-        if completed > _q(ln.scheduled_value):
+        # Direction-aware: a positive line can't bill past its scheduled value;
+        # a negative (deduct) line can't be credited past it the other way.
+        over = completed > scheduled if scheduled >= _ZERO else completed < scheduled
+        if over:
             raise HTTPException(
                 status_code=422,
                 detail=(
                     f"{ln.item_no or ''} {ln.description or ''}".strip()
                     + f": completed to date {completed:.2f} is more than the "
-                    f"scheduled value {_q(ln.scheduled_value):.2f}."
+                    f"scheduled value {scheduled:.2f}."
                 ),
             )
     held = retainage_held_to_date(db, app.job_id)
@@ -162,17 +193,53 @@ def _validate(db: Session, app: PayApplication) -> None:
             ),
         )
     unapplied = deposits_figures(db, app.job_id)["unapplied"]
-    if _q(app.deposit_applied) > unapplied:
+    deposit = _q(app.deposit_applied)
+    if deposit > unapplied:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Deposit applied {_q(app.deposit_applied):.2f} is more than the "
+                f"Deposit applied {deposit:.2f} is more than the "
                 f"{unapplied:.2f} of unapplied deposits."
+            ),
+        )
+    current_due = application_figures(db, app)["current_due"]
+    if deposit > current_due:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Deposit applied {deposit:.2f} is more than the current payment "
+                f"due {current_due:.2f} on this pay application."
             ),
         )
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────
+
+
+def _estimate_tax_rate(db: Session, job: Job) -> Decimal:
+    """The job's accepted estimate's tax rate (the contract estimate, else an
+    accepted estimate on the job), else 0 — what a pay application taxes with."""
+    from app.models.estimates import Estimate, EstimateStatus
+
+    est = (
+        db.get(Estimate, job.contract_estimate_id) if job.contract_estimate_id else None
+    )
+    if est is None:
+        est = (
+            db.query(Estimate)
+            .filter(
+                Estimate.job_id == job.id, Estimate.status == EstimateStatus.ACCEPTED
+            )
+            .order_by(Estimate.id.desc())
+            .first()
+        )
+    return _q4(est.tax_rate) if est and est.tax_rate else _ZERO
+
+
+def _q4(value) -> Decimal:
+    from app.services.accounting import quantize_to
+
+    return quantize_to(value, Decimal("0.0001"))
 
 
 @router.get("", response_model=list[PayApplicationOut])
@@ -217,7 +284,9 @@ def create_pay_application(data: PayApplicationCreate, db: Session = Depends(get
         .first()
     )
     no = (last.application_no if last else 0) + 1
-    number = f"PA-{job.job_number or job.id}-{no:02d}"
+    # The number keys on the job id (unique), not the job_number (which two
+    # jobs can share); the job_number shows beside it (#555 review).
+    number = f"PA-{job.id}-{no:02d}"
     app = PayApplication(
         job_id=job.id,
         application_no=no,
@@ -228,6 +297,7 @@ def create_pay_application(data: PayApplicationCreate, db: Session = Depends(get
         retainage_pct=(
             data.retainage_pct if data.retainage_pct is not None else job.retainage_pct
         ),
+        tax_rate=_estimate_tax_rate(db, job),
         notes=data.notes,
     )
     db.add(app)
@@ -325,10 +395,9 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
             status_code=409,
             detail="Only a draft or submitted pay application can be approved.",
         )
+    # jobs.customer_id is NOT NULL, so the customer always resolves.
     job = db.get(Job, app.job_id)
-    customer = db.get(Customer, job.customer_id) if job else None
-    if customer is None:
-        raise HTTPException(status_code=422, detail="The job has no customer to bill.")
+    customer = db.get(Customer, job.customer_id)
     when = app.date or dt_date.today()
     check_closing_date(db, when)
     _validate(db, app)
@@ -340,6 +409,7 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
     # This period's billable amount per line: this_period + the stored delta
     # (this application's stored − the prior approved application's stored),
     # so stored materials are billed when stored and reversed when installed.
+    # A deduct line may be negative.
     prior_stored = _prior_stored(db, app)
     invoice_lines = []  # (description, amount, cost_code_id)
     for ln in app.lines:
@@ -353,10 +423,26 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
         )
         invoice_lines.append((desc, amount, sov.cost_code_id if sov else None))
 
+    deposit = _q(app.deposit_applied)
+    # Nothing to bill, hold, release or apply — refuse rather than post an
+    # empty invoice (#555 review).
+    if (
+        not invoice_lines
+        and retainage_held == 0
+        and retainage_released == 0
+        and deposit == 0
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="This pay application has nothing to bill, hold, release or apply.",
+        )
+
     taxable = customer.is_taxable is not False
     subtotal = _q(sum((a for _d, a, _c in invoice_lines), _ZERO))
-    tax_rate = _ZERO  # a pay application carries no sales-tax rate of its own
-    tax_amount = _ZERO
+    # Tax over the taxable work at the application's rate (from the accepted
+    # estimate), the way the invoice routes tax a line.
+    tax_rate = _q4(app.tax_rate)
+    tax_amount = _q(subtotal * tax_rate) if (taxable and tax_rate) else _ZERO
     total = _q(subtotal + tax_amount)
 
     invoice = _create_invoice(
@@ -380,7 +466,6 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
     app.invoice_id = invoice.id
     db.flush()
 
-    deposit = _q(app.deposit_applied)
     if deposit > 0:
         _apply_deposit(db, app, invoice, customer, deposit, when)
     else:
@@ -472,55 +557,49 @@ def _create_invoice(
             )
         )
 
+    # Signed legs: a figure lands on its account's natural side, and flips to
+    # the other side when it is negative — so a dropped retainage percent
+    # credits 1150 and a deduct line debits income, and the entry still
+    # balances (#555 review).
     journal_lines = [
-        {
-            "account_id": ar_id,
-            "debit": _q(total - retainage_held + retainage_released),
-            "credit": _ZERO,
-            "description": f"{pay_application.number} - {customer.name}",
-            "job_id": job.id,
-        }
+        _signed(
+            ar_id,
+            total - retainage_held + retainage_released,
+            f"{pay_application.number} - {customer.name}",
+            "debit",
+            job_id=job.id,
+        ),
+        _signed(
+            retainage_recv,
+            retainage_held,
+            f"Retainage withheld - {pay_application.number}",
+            "debit",
+            job_id=job.id,
+        ),
+        _signed(
+            retainage_recv,
+            -retainage_released,
+            f"Retainage released - {pay_application.number}",
+            "debit",
+            job_id=job.id,
+        ),
     ]
-    if retainage_held > 0:
-        journal_lines.append(
-            {
-                "account_id": retainage_recv,
-                "debit": retainage_held,
-                "credit": _ZERO,
-                "description": f"Retainage withheld - {pay_application.number}",
-                "job_id": job.id,
-            }
-        )
-    if retainage_released > 0:
-        journal_lines.append(
-            {
-                "account_id": retainage_recv,
-                "debit": _ZERO,
-                "credit": retainage_released,
-                "description": f"Retainage released - {pay_application.number}",
-                "job_id": job.id,
-            }
-        )
     for desc, amount, cost_code_id in lines:
         journal_lines.append(
-            {
-                "account_id": income_id,
-                "debit": _ZERO,
-                "credit": amount,
-                "description": desc,
-                "job_id": job.id,
-                "cost_code_id": cost_code_id,
-            }
+            _signed(
+                income_id,
+                amount,
+                desc,
+                "credit",
+                job_id=job.id,
+                cost_code_id=cost_code_id,
+            )
         )
-    if tax_amount > 0:
+    if tax_amount != 0:
         journal_lines.append(
-            {
-                "account_id": get_sales_tax_account_id(db),
-                "debit": _ZERO,
-                "credit": tax_amount,
-                "description": "Sales tax",
-            }
+            _signed(get_sales_tax_account_id(db), tax_amount, "Sales tax", "credit")
         )
+    journal_lines = [line for line in journal_lines if line is not None]
     txn = create_journal_entry(
         db,
         when,
@@ -553,7 +632,9 @@ def _apply_deposit(db, app, invoice, customer, amount, when):
         notes=f"Deposit applied — {app.number}",
         allocations=[PaymentAllocationCreate(invoice_id=invoice.id, amount=amount)],
     )
-    create_payment(data, db)  # commits
+    resp = create_payment(data, db)  # commits
+    app.deposit_payment_id = resp.id
+    db.commit()
 
 
 # ── Void ────────────────────────────────────────────────────────────────────
@@ -568,8 +649,8 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
         )
     invoice = db.get(Invoice, app.invoice_id) if app.invoice_id else None
     if invoice is not None:
-        _refuse_if_truly_paid(db, invoice)
-        dep = _deposit_payment(db, invoice)
+        _refuse_if_truly_paid(db, app, invoice)
+        dep = _deposit_payment(db, app, invoice)
         if dep is not None:
             from app.routes.payments import void_payment
 
@@ -585,34 +666,49 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
     return _out(db, app)
 
 
-def _deposit_payment(db, invoice):
-    """The deposit payment this invoice's approval created, if any."""
+def _deposit_payment(db, app, invoice):
+    """The deposit payment this application's approval created: the one it
+    recorded on `deposit_payment_id`, else (older rows) a deposit-method
+    payment to Customer Deposits (2210) allocated to the invoice."""
     from app.models.payments import Payment, PaymentAllocation
 
+    if app.deposit_payment_id:
+        dep = db.get(Payment, app.deposit_payment_id)
+        if dep is not None and not dep.is_voided:
+            return dep
+    # No deposit was applied → there is no own deposit payment, so any payment
+    # on the invoice (even a deposit-method one) is somebody else's.
+    if _q(app.deposit_applied) <= 0:
+        return None
+    deposits_acct = ensure_construction_accounts(db)["2210"].id
     return (
         db.query(Payment)
         .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
         .filter(
             PaymentAllocation.invoice_id == invoice.id,
             Payment.method == "deposit",
+            Payment.deposit_to_account_id == deposits_acct,
             Payment.is_voided.is_(False),
         )
         .first()
     )
 
 
-def _refuse_if_truly_paid(db, invoice):
-    """409 invoice_paid when the invoice carries a payment other than the
-    deposit application — a real receipt has to be voided first."""
+def _refuse_if_truly_paid(db, app, invoice):
+    """409 invoice_paid when the invoice carries a payment that is not this
+    application's own deposit payment — a real receipt has to be voided first.
+    An unrelated deposit-method payment counts, so matching is by id."""
     from app.models.payments import Payment, PaymentAllocation
 
+    own = _deposit_payment(db, app, invoice)
+    own_id = own.id if own is not None else None
     others = (
         db.query(Payment)
         .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
         .filter(
             PaymentAllocation.invoice_id == invoice.id,
             Payment.is_voided.is_(False),
-            Payment.method != "deposit",
+            Payment.id != own_id,
         )
         .first()
     )

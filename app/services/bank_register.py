@@ -123,6 +123,10 @@ _LINKS = {
     # document it voided (its source_id is that document's).
     "job_cost": "/#/job-costs/{id}",
     "job_cost_void": "/#/job-costs/{id}",
+    # An owner deposit (#555) is held under its job's Pay apps tab; its void
+    # links to the same job. {job} is the posting's job_id.
+    "job_deposit": "/#/jobs/{job}",
+    "job_deposit_void": "/#/jobs/{job}",
     "payroll": "/#/payroll/{id}",
     "payroll_void": "/#/payroll/{id}",
     "credit_memo": "/#/credit-memos/{id}",
@@ -245,6 +249,8 @@ def source_link(txn: Transaction) -> str | None:
     pattern = _LINKS.get(txn.source_type or "")
     if not pattern:
         return None
+    if "{job}" in pattern:
+        return pattern.format(job=txn.job_id) if txn.job_id else None
     if "{id}" in pattern:
         return pattern.format(id=txn.source_id) if txn.source_id else None
     return pattern.format(txn=txn.id)
