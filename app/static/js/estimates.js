@@ -285,13 +285,20 @@ const EstimatesPage = {
     // Switching a line to Alternate lifts the rate's min=0 so a deduct can be
     // keyed (a deduct is a negative amount); switching back restores it.
     kindChanged(sel) {
-        const row = sel.closest('tr');
-        const rate = row && row.querySelector('.line-rate');
-        if (rate) {
-            if (sel.value === 'alternate') rate.removeAttribute('min');
-            else rate.setAttribute('min', '0');
-        }
+        EstimatesPage.liftAlternateMins();
         EstimatesPage.recalc();
+    },
+    // Every rate box renders with min=0 (the sales forms share that markup);
+    // an Alternate row loses it here, after render and on each kind change,
+    // and gets it back when the kind changes to anything else.
+    liftAlternateMins() {
+        $$('#est-lines tr').forEach(row => {
+            const kind = row.querySelector('.line-kind');
+            const rate = row.querySelector('.line-rate');
+            if (!kind || !rate) return;
+            if (kind.value === 'alternate') rate.removeAttribute('min');
+            else rate.setAttribute('min', '0');
+        });
     },
     unitCell(line) {
         if (!Terms.isConstruction()) return '';
@@ -435,7 +442,7 @@ const EstimatesPage = {
             ${EstimatesPage.pkgCell(line)}${EstimatesPage.kindCell(line)}${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
             <td><input class="line-unit-cost money" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
             ${EstimatesPage.unitCell(line)}<td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
-            <td><input class="line-rate money" type="number" step="0.0001" ${(Terms.isConstruction() && (line.line_kind === 'alternate')) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
+            <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked(line)} onchange="EstimatesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
             <td><button type="button" class="btn btn-sm btn-danger" aria-label="Remove line" onclick="EstimatesPage.removeLine(${idx})">X</button></td>
@@ -469,6 +476,7 @@ const EstimatesPage = {
     },
 
     recalc() {
+        if (Terms.isConstruction()) EstimatesPage.liftAlternateMins();
         TaxExempt.enforce(EstimatesPage._customers, $('#est-customer-select')?.value, $('#est-lines'));
         const t = SalesLines.totals($('#est-lines'), $('#est-form [name="tax_rate"]')?.value);
         SalesLines.show(t, ['est-subtotal', 'est-tax', 'est-total']);

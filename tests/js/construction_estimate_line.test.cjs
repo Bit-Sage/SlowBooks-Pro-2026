@@ -65,21 +65,32 @@ test('a business line row carries none of the construction cells', () => {
 
 test('a construction alternate line lifts the rate min so a deduct can be keyed', () => {
     const ctx = estimatesContext(true);
-    const base = ctx.EstimatesPage.lineRowHtml(0, { line_kind: 'base' }, []);
+    // the markup itself keeps min=0 (the sales forms share it); the lift runs after render
     const alt = ctx.EstimatesPage.lineRowHtml(1, { line_kind: 'alternate' }, []);
-    assert.match(base, /class="line-rate money"[^>]*min="0"/); // base keeps min=0
-    assert.doesNotMatch(alt, /class="line-rate money"[^>]*min="0"/); // alternate lifts it
+    assert.match(alt, /class="line-rate money"[^>]*min="0"/);
+    const calls = [];
+    const row = (kindValue) => ({
+        querySelector: (sel) => sel === '.line-kind' ? { value: kindValue }
+            : { setAttribute: (k, v) => calls.push([kindValue, 'set', v]), removeAttribute: () => calls.push([kindValue, 'removed']) },
+    });
+    ctx.$$ = () => [row('base'), row('alternate')];
+    ctx.EstimatesPage.liftAlternateMins();
+    assert.deepEqual(calls, [['base', 'set', '0'], ['alternate', 'removed']]);
 });
 
 test('switching the kind to Alternate and back toggles the rate min', () => {
     const ctx = estimatesContext(true);
     ctx.EstimatesPage.recalc = () => {};
     let min = '0';
+    const kind = { value: 'base' };
     const rate = { setAttribute: (k, v) => { min = v; }, removeAttribute: () => { min = null; } };
-    const row = { querySelector: (s) => (s === '.line-rate' ? rate : null) };
-    ctx.EstimatesPage.kindChanged({ value: 'alternate', closest: () => row });
+    const row = { querySelector: (s) => (s === '.line-rate' ? rate : s === '.line-kind' ? kind : null) };
+    ctx.$$ = () => [row];
+    kind.value = 'alternate';
+    ctx.EstimatesPage.kindChanged(kind);
     assert.equal(min, null); // lifted — a deduct's negative amount is allowed
-    ctx.EstimatesPage.kindChanged({ value: 'base', closest: () => row });
+    kind.value = 'base';
+    ctx.EstimatesPage.kindChanged(kind);
     assert.equal(min, '0'); // restored
 });
 
