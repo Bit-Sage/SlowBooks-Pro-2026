@@ -63,6 +63,8 @@ def list_pos(
         resp = POResponse.model_validate(po)
         if po.vendor:
             resp.vendor_name = po.vendor.name
+        if po.trade_package:
+            resp.trade_package_name = po.trade_package.name
         results.append(resp)
     return results
 
@@ -75,6 +77,8 @@ def get_po(po_id: int, db: Session = Depends(get_db)):
     resp = POResponse.model_validate(po)
     if po.vendor:
         resp.vendor_name = po.vendor.name
+    if po.trade_package:
+        resp.trade_package_name = po.trade_package.name
     return resp
 
 
@@ -108,6 +112,10 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
             total=total,
             notes=data.notes,
             job_id=data.job_id,
+            commitment_type=data.commitment_type,
+            trade_package_id=data.trade_package_id,
+            retainage_pct=data.retainage_pct,
+            scope_notes=data.scope_notes,
         )
         db.add(po)
         try:
@@ -144,6 +152,8 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
     db.refresh(po)
     resp = POResponse.model_validate(po)
     resp.vendor_name = vendor_name
+    if po.trade_package:
+        resp.trade_package_name = po.trade_package.name
     return resp
 
 
@@ -203,6 +213,8 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
     resp = POResponse.model_validate(po)
     if po.vendor:
         resp.vendor_name = po.vendor.name
+    if po.trade_package:
+        resp.trade_package_name = po.trade_package.name
     return resp
 
 
@@ -269,7 +281,11 @@ def convert_to_bill(
     from app.models.bills import Bill, BillLine, BillStatus
     from app.models.items import Item as ItemModel
     from app.routes.invoices.helpers import _due_date_from_terms
-    from app.services.accounting import create_journal_entry, get_ap_account_id
+    from app.services.accounting import (
+        create_journal_entry,
+        ensure_construction_accounts,
+        get_ap_account_id,
+    )
     from app.services.closing_date import check_closing_date
     from app.services.inventory_service import (
         get_inventory_asset_account_id,
@@ -294,7 +310,13 @@ def convert_to_bill(
             ),
         )
 
+    # The dialog's choices per line: the account to post to, and this period's
+    # amount (#553 partial billing). An amount left out bills the line's full
+    # remaining (amount - billed_amount), which is the whole line the first
+    # time — so a plain PO with no amounts given bills in full as it always
+    # did and closes.
     chosen: dict[int, int] = {}
+    asked: dict[int, Decimal] = {}
     po_line_ids = {ln.id for ln in po.lines}
     for pick in data.lines if data else []:
         if pick.line_id not in po_line_ids:
@@ -305,23 +327,74 @@ def convert_to_bill(
                     "Open the order again and choose the accounts from there."
                 ),
             )
-        chosen[pick.line_id] = pick.account_id
+        if pick.account_id is not None:
+            chosen[pick.line_id] = pick.account_id
+        if pick.amount is not None:
+            asked[pick.line_id] = _q(pick.amount)
+
+    # This period's amount per line. With no amounts given at all (the
+    # business To Bill dialog, or no body), every line bills its full
+    # remaining (amount − billed_amount), as it always did. Once any amount is
+    # given, the request is choosing lines explicitly: a line with an amount
+    # bills it (422 if ≤ 0 or more than remaining); a line with no amount is
+    # left for a later period.
+    lines = list(po.lines)
+    partial_request = bool(asked)
+    this_period: dict[int, Decimal] = {}
+    for poline in lines:
+        remaining = _q(Decimal(str(poline.amount or 0))) - _q(
+            Decimal(str(poline.billed_amount or 0))
+        )
+        if poline.id in asked:
+            amt = asked[poline.id]
+            if amt <= 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Line amount {amt:.2f} must be more than zero.",
+                )
+            if amt > remaining:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Line amount {amt:.2f} is more than the "
+                        f"{remaining:.2f} left to bill on that line."
+                    ),
+                )
+            this_period[poline.id] = amt
+        elif partial_request:
+            this_period[poline.id] = Decimal("0")
+        else:
+            this_period[poline.id] = remaining if remaining > 0 else Decimal("0")
+
+    billable = [ln for ln in lines if this_period[ln.id] > 0]
+    if not billable:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{po.po_number} has nothing left to bill — every line is "
+                "already billed in full."
+            ),
+        )
 
     vendor = po.vendor
     terms = (vendor.terms if vendor else None) or "Net 30"
     ap_id = get_ap_account_id(db)  # a missing A/P account is said first (#119)
 
-    # Round per line so the bill's JE debit matches the rounded AP credit
-    # rebuilt from po.total below.
-    lines = list(po.lines)
-    amounts = [_q(Decimal(str(ln.quantity)) * Decimal(str(ln.rate))) for ln in lines]
-    tax_amount = _q(po.tax_amount or 0)
+    # The bill's money comes from this period's amounts, not the whole PO, so
+    # a partial bill posts only what is billed now. Tax follows the subtotal
+    # at the PO's rate (POs have no per-line tax flag); for a full first bill
+    # this reproduces the PO's own subtotal/tax/total exactly.
+    amounts = [this_period[ln.id] for ln in billable]
+    subtotal = _q(sum(amounts, Decimal("0")))
+    tax_rate = Decimal(str(po.tax_rate or 0))
+    tax_amount = _q(subtotal * tax_rate)
+    total = _q(subtotal + tax_amount)
     tax_shares = spread(tax_amount, amounts)
 
-    # Where each line posts, decided before anything is written so a
-    # refused line leaves no bill behind.
+    # Where each line posts, decided before anything is written so a refused
+    # line leaves no bill behind.
     plan = []
-    for i, poline in enumerate(lines):
+    for i, poline in enumerate(billable):
         amt = amounts[i]
         item = (
             db.query(ItemModel).filter(ItemModel.id == poline.item_id).first()
@@ -338,7 +411,7 @@ def convert_to_bill(
                         "asset account and no #1300 is seeded."
                     ),
                 )
-        elif amt > 0 or chosen.get(poline.id):
+        else:
             posting_acct = expense_account_for(
                 db,
                 line_no=i + 1,
@@ -347,10 +420,6 @@ def convert_to_bill(
                 item=item,
                 vendor=vendor,
                 fix_hint="Choose an account for it when you turn the order into a bill",
-            )
-        else:
-            posting_acct = (item.expense_account_id if item else None) or (
-                vendor.default_expense_account_id if vendor else None
             )
         plan.append((poline, item, amt, tax_shares[i], posting_acct))
 
@@ -367,6 +436,14 @@ def convert_to_bill(
     while bill_number in taken:
         n += 1
         bill_number = f"{base}-{n}"
+
+    # Retainage: a commitment with a retainage_pct holds that percent of this
+    # bill's subtotal back on Retainage Payable (2050) instead of A/P, so Pay
+    # Bills pays only the net. #555 releases it (a debit to 2050).
+    retainage_held = Decimal("0")
+    if po.retainage_pct:
+        retainage_held = _q(subtotal * Decimal(str(po.retainage_pct)) / Decimal("100"))
+
     bill = Bill(
         bill_number=bill_number,
         vendor_id=po.vendor_id,
@@ -377,11 +454,12 @@ def convert_to_bill(
         # had "Net 30" and no due date, so it never aged (macbase1 F10).
         terms=terms,
         due_date=_due_date_from_terms(po.date, terms),
-        subtotal=po.subtotal,
+        subtotal=subtotal,
         tax_rate=po.tax_rate,
         tax_amount=tax_amount,
-        total=po.total,
-        balance_due=po.total,
+        total=total,
+        retainage_held=retainage_held,
+        balance_due=_q(total - retainage_held),
         notes=f"From {po.po_number}",
         job_id=po.job_id,
     )
@@ -391,26 +469,27 @@ def convert_to_bill(
     journal_lines: list[dict] = []
     inv_receipts: list[tuple] = []
     for poline, item, amt, share, posting_acct in plan:
-        if item and item.track_inventory and poline.quantity and poline.quantity > 0:
-            inv_receipts.append(
-                (
-                    item,
-                    Decimal(str(poline.quantity)),
-                    unit_cost_with_tax(amt, share, poline.quantity, poline.rate),
-                )
-            )
+        full_amt = _q(Decimal(str(poline.amount or 0)))
+        # Bill line keeps the PO line's quantity/rate when it bills the line
+        # in one go; a partial draw stores the dollars as a single unit.
+        is_whole = amt == full_amt and not poline.billed_amount
+        qty = Decimal(str(poline.quantity)) if is_whole else Decimal("1")
+        rate = Decimal(str(poline.rate)) if is_whole else amt
+        if item and item.track_inventory and qty and qty > 0:
+            inv_receipts.append((item, qty, unit_cost_with_tax(amt, share, qty, rate)))
         db.add(
             BillLine(
                 bill_id=bill.id,
                 job_id=poline.job_id or po.job_id,
                 cost_code_id=poline.cost_code_id,
                 cost_type=poline.cost_type,
+                purchase_order_line_id=poline.id,
                 item_id=poline.item_id,
                 account_id=posting_acct,
                 description=poline.description,
-                quantity=poline.quantity,
-                rate=poline.rate,
-                amount=poline.amount,
+                quantity=qty,
+                rate=rate,
+                amount=amt,
                 line_order=poline.line_order,
             )
         )
@@ -428,14 +507,25 @@ def convert_to_bill(
             )
 
     if journal_lines:
+        # A/P takes the net; retainage held rides on 2050 (#553).
         journal_lines.append(
             {
                 "account_id": ap_id,
                 "debit": Decimal("0"),
-                "credit": Decimal(str(bill.total)),
+                "credit": _q(total - retainage_held),
                 "description": f"From PO {po.po_number}",
             }
         )
+        if retainage_held > 0:
+            retainage_acct = ensure_construction_accounts(db)["2050"]
+            journal_lines.append(
+                {
+                    "account_id": retainage_acct.id,
+                    "debit": Decimal("0"),
+                    "credit": retainage_held,
+                    "description": f"Retainage held - {po.po_number}",
+                }
+            )
         txn = create_journal_entry(
             db,
             po.date,
@@ -461,6 +551,16 @@ def convert_to_bill(
             txn_date=po.date,
         )
 
-    po.status = POStatus.CLOSED
+    # Tally what each line has now billed, and close the commitment when every
+    # line is fully billed; while anything remains it is partial.
+    for poline in billable:
+        poline.billed_amount = _q(
+            Decimal(str(poline.billed_amount or 0)) + this_period[poline.id]
+        )
+    fully_billed = all(
+        _q(Decimal(str(ln.amount or 0))) - _q(Decimal(str(ln.billed_amount or 0))) <= 0
+        for ln in lines
+    )
+    po.status = POStatus.CLOSED if fully_billed else POStatus.PARTIAL
     db.commit()
     return {"bill_id": bill.id, "message": f"Bill created from {po.po_number}"}

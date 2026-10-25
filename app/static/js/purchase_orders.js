@@ -6,16 +6,25 @@ const PurchaseOrdersPage = {
     showAll() { PurchaseOrdersPage._showAll = true; App.navigate(location.hash); },
 
     async render() {
+        if (Terms.isConstruction()) await TradePackages.load();
         const { rows: pos, note: capNote } = await listRows(PurchaseOrdersPage, '/purchase-orders', 'PurchaseOrdersPage.showAll()', 'purchase orders');
+        // Construction shows a commitment's type and its package; a business
+        // company keeps today's columns.
+        const con = Terms.isConstruction();
+        const columns = con
+            ? ['#', 'Vendor', 'Type', 'Package', 'Date', 'Status', { label: 'Total', cls: 'amount' }, 'Actions']
+            : ['#', 'Vendor', 'Date', 'Status', { label: 'Total', cls: 'amount' }, 'Actions'];
         return renderListPage({
             title: 'Purchase Orders',
             headerHtml: `<button class="btn btn-primary" onclick="PurchaseOrdersPage.showForm()">+ New PO</button>` + capNote,
             empty: '<p>No purchase orders yet</p>',
-            columns: ['#', 'Vendor', 'Date', 'Status', { label: 'Total', cls: 'amount' }, 'Actions'],
+            columns,
             items: pos,
             row: po => `<tr>
                     <td><strong>${escapeHtml(po.po_number)}</strong></td>
                     <td>${escapeHtml(po.vendor_name || '')}</td>
+                    ${con ? `<td>${po.commitment_type === 'subcontract' ? 'Subcontract' : 'Purchase order'}</td>` : ''}
+                    ${con ? `<td>${escapeHtml(po.trade_package_name || '—')}</td>` : ''}
                     <td>${formatDate(po.date)}</td>
                     <td>${statusBadge(po.status)}</td>
                     <td class="amount">${formatCurrency(po.total)}</td>
@@ -33,19 +42,33 @@ const PurchaseOrdersPage = {
     // seen or sent — W-L19).
     async view(id) {
         const po = await API.get(`/purchase-orders/${id}`);
-        const linesHtml = po.lines.map(l =>
-            `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${l.quantity}</td>
-             <td class="amount">${formatCurrency(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`
-        ).join('');
+        // In construction a commitment's lines are its schedule of values —
+        // scheduled value, billed to date and what remains.
+        const con = Terms.isConstruction();
+        const head = con
+            ? `<tr><th scope="col">Description</th><th scope="col" class="amount">Scheduled value</th><th scope="col" class="amount">Billed to date</th><th scope="col" class="amount">Remaining</th></tr>`
+            : `<tr><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr>`;
+        const linesHtml = po.lines.map(l => {
+            if (con) {
+                const rem = (Number(l.amount) || 0) - (Number(l.billed_amount) || 0);
+                return `<tr><td>${escapeHtml(l.description || '')}</td>
+                    <td class="amount">${formatCurrency(l.amount)}</td>
+                    <td class="amount">${formatCurrency(l.billed_amount)}</td>
+                    <td class="amount">${formatCurrency(rem)}</td></tr>`;
+            }
+            return `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${l.quantity}</td>
+             <td class="amount">${formatCurrency(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`;
+        }).join('');
+        const conMeta = con ? `<br><strong>Type:</strong> ${po.commitment_type === 'subcontract' ? 'Subcontract' : 'Purchase order'}${po.trade_package_name ? ` · <strong>Package:</strong> ${escapeHtml(po.trade_package_name)}` : ''}${(po.retainage_pct !== null && po.retainage_pct !== undefined) ? ` · <strong>Retainage:</strong> ${po.retainage_pct}%` : ''}` : '';
         openModal(`Purchase Order ${po.po_number}`, `
             <div style="margin-bottom:12px;">
                 <strong>Vendor:</strong> ${escapeHtml(po.vendor_name || '')}<br>
                 <strong>Date:</strong> ${formatDate(po.date)}<br>
                 ${po.expected_date ? `<strong>Expected:</strong> ${formatDate(po.expected_date)}<br>` : ''}
-                <strong>Status:</strong> ${statusBadge(po.status)}
+                <strong>Status:</strong> ${statusBadge(po.status)}${conMeta}
             </div>
             <div class="table-container"><table>
-                <thead><tr><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr></thead>
+                <thead>${head}</thead>
                 <tbody>${linesHtml}</tbody>
             </table></div>
             <div class="invoice-totals">
@@ -82,12 +105,18 @@ const PurchaseOrdersPage = {
             ship_to: '',
             tax_rate: 0,
             notes: '',
+            commitment_type: 'po',
+            trade_package_id: null,
+            retainage_pct: null,
+            scope_notes: '',
             lines: [],
         };
         if (id) po = await API.get(`/purchase-orders/${id}`);
         if (po.lines.length === 0) po.lines = [{ item_id: '', description: '', quantity: 1, rate: 0 }];
         PurchaseOrdersPage.lineCount = po.lines.length;
+        PurchaseOrdersPage._vendors = vendors;
 
+        if (Terms.isConstruction()) await TradePackages.load();
         const jobGroup = await jobFormGroupHtml(po.job_id || null);
         await CostCodes.load();
         await CostTypes.load();
@@ -100,7 +129,7 @@ const PurchaseOrdersPage = {
             <form id="po-form" onsubmit="PurchaseOrdersPage.save(event, ${id})">
                 <div class="form-grid">
                     <div class="form-group"><label>Vendor *</label>
-                        <select name="vendor_id" required><option value="">Select...</option>${vendorOpts}</select></div>
+                        <select name="vendor_id" required onchange="PurchaseOrdersPage.refreshVendorNote()"><option value="">Select...</option>${vendorOpts}</select></div>
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${po.date}"></div>
                     <div class="form-group"><label>Expected Date</label>
@@ -110,7 +139,9 @@ const PurchaseOrdersPage = {
                             oninput="PurchaseOrdersPage.recalc()"
                             title="Sales tax the vendor charges, if any. It becomes part of what the goods cost."></div>
                     ${jobGroup}
+                    ${PurchaseOrdersPage.commitmentFieldsHtml(po)}
                 </div>
+                ${PurchaseOrdersPage.vendorNoteHtml(po)}
                 <h3 style="margin:12px 0 8px;font-size:14px;">Line Items</h3>
                 <table class="line-items-table">
                     <thead><tr><th scope="col">Item</th><th scope="col">Description</th>${CostCodes.headHtml()}${CostTypes.headHtml()}<th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" class="col-amount">Amount</th></tr></thead>
@@ -143,6 +174,53 @@ const PurchaseOrdersPage = {
             <td><input class="line-rate money" type="number" step="0.0001" value="${line.rate || 0}" oninput="PurchaseOrdersPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1)*(line.rate||0))}</td>
         </tr>`;
+    },
+
+    // Construction commitment fields (#553): type, package, retainage and
+    // scope. A business company sees none of this — a PO is just a PO.
+    commitmentFieldsHtml(po) {
+        if (!Terms.isConstruction()) return '';
+        const sel = (v, val) => v === val ? 'selected' : '';
+        const t = po.commitment_type || 'po';
+        const pkgOpts = ['<option value="">Unassigned</option>'].concat(
+            (TradePackages._list || []).map(p =>
+                `<option value="${p.id}" ${String(po.trade_package_id) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
+        const ret = (po.retainage_pct === null || po.retainage_pct === undefined) ? '' : po.retainage_pct;
+        return `
+            <div class="form-group"><label>Type</label>
+                <select name="commitment_type" onchange="PurchaseOrdersPage.refreshVendorNote()">
+                    <option value="po" ${sel(t, 'po')}>Purchase order</option>
+                    <option value="subcontract" ${sel(t, 'subcontract')}>Subcontract</option>
+                </select></div>
+            <div class="form-group"><label>Package</label>
+                <select name="trade_package_id">${pkgOpts}</select></div>
+            <div class="form-group"><label>Retainage %</label>
+                <input name="retainage_pct" type="number" step="0.01" min="0" max="100" value="${ret}"
+                    title="Held back on every bill from this commitment, posted to Retainage Payable."></div>
+            <div class="form-group" style="grid-column:1/-1"><label>Scope notes</label>
+                <textarea name="scope_notes">${escapeHtml(po.scope_notes || '')}</textarea></div>`;
+    },
+
+    // A subcontract to a vendor not marked a Sub is allowed, but its license
+    // and insurance aren't tracked — say so, don't block.
+    vendorNoteHtml(po) {
+        return `<div id="po-vendor-note" style="margin:4px 0 8px;font-size:12px;color:var(--text-muted)">${PurchaseOrdersPage._vendorNote(po.vendor_id, po.commitment_type)}</div>`;
+    },
+
+    _vendorNote(vendorId, type) {
+        if (!Terms.isConstruction() || type !== 'subcontract' || !vendorId) return '';
+        const v = (PurchaseOrdersPage._vendors || []).find(x => String(x.id) === String(vendorId));
+        if (v && v.vendor_type !== 'sub') {
+            return "Vendor is not marked a Sub; its license and insurance aren't tracked.";
+        }
+        return '';
+    },
+
+    refreshVendorNote() {
+        const el = $('#po-vendor-note');
+        const form = $('#po-form');
+        if (!el || !form) return;
+        el.textContent = PurchaseOrdersPage._vendorNote(form.vendor_id.value, form.commitment_type ? form.commitment_type.value : 'po');
     },
 
     addLine() {
@@ -205,6 +283,12 @@ const PurchaseOrdersPage = {
             notes: form.notes.value || null,
             lines,
         };
+        if (Terms.isConstruction()) {
+            data.commitment_type = form.commitment_type ? form.commitment_type.value : 'po';
+            data.trade_package_id = form.trade_package_id && form.trade_package_id.value ? parseInt(form.trade_package_id.value) : null;
+            data.retainage_pct = form.retainage_pct && form.retainage_pct.value !== '' ? parseFloat(form.retainage_pct.value) : null;
+            data.scope_notes = form.scope_notes ? (form.scope_notes.value || null) : null;
+        }
         if (!(await TxnWarn.ok(form, { editing: !!id }))) return;
         try {
             if (id) { await API.put(`/purchase-orders/${id}`, data); toast('PO updated'); }
@@ -232,8 +316,12 @@ const PurchaseOrdersPage = {
         const itemById = Object.fromEntries(items.map(i => [i.id, i]));
         const posting = PurchaseAccounts.filter(accounts);
         PurchaseOrdersPage._convAccounts = posting;
+        // Construction bills in parts: an amount-this-period column, prefilled
+        // with the line's remaining. A business company keeps today's dialog.
+        const partial = Terms.isConstruction();
         const rows = po.lines.map((l, n) => {
             const item = l.item_id ? itemById[l.item_id] : null;
+            const remaining = (Number(l.amount) || 0) - (Number(l.billed_amount) || 0);
             let cell;
             if (item && item.track_inventory) {
                 cell = '<span style="color:var(--text-muted);">Inventory (stock item)</span>';
@@ -244,19 +332,26 @@ const PurchaseOrdersPage = {
                 cell = AccountQuickAdd.picker(`<select class="po-conv-account" data-line="${l.id}" aria-label="Account for line ${n + 1}">
                         <option value="">Choose an account...</option>${PurchaseAccounts.options(posting, pick)}</select>`, 'po-convert');
             }
+            const amtCol = partial
+                ? `<td class="amount"><input type="number" step="0.01" min="0" class="po-conv-amount" data-line="${l.id}" value="${remaining.toFixed(2)}" style="width:90px" aria-label="Amount this period for line ${n + 1}"></td>`
+                : '';
             return `<tr><td>${escapeHtml(l.description || (item ? item.name : ''))}</td>
-                <td class="amount">${formatCurrency(l.amount)}</td><td>${cell}</td></tr>`;
+                <td class="amount">${formatCurrency(l.amount)}</td>${partial ? `<td class="amount">${formatCurrency(l.billed_amount)}</td>` : ''}${amtCol}<td>${cell}</td></tr>`;
         }).join('');
         const taxNote = Number(po.tax_amount)
             ? `<p class="form-hint">The ${formatCurrency(po.tax_amount)} of tax on this order is part of what these goods cost: it is added to each line's account, not to Sales Tax Payable.</p>`
             : '';
+        const retNote = partial && Number(po.retainage_pct)
+            ? `<p class="form-hint">${po.retainage_pct}% retainage is held back on this bill and posted to Retainage Payable.</p>`
+            : '';
         openModal(`Turn ${po.po_number} into a bill`, `
             <p style="margin-bottom:8px;">Choose where each line is recorded. The bill is dated ${formatDate(po.date)} and takes ${escapeHtml(vendor.name)}'s terms (${escapeHtml(vendor.terms || 'Net 30')}).</p>
             <div class="table-container"><table>
-                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Amount</th><th scope="col">Account</th></tr></thead>
+                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Billed</th><th scope="col" class="amount">This period</th>' : ''}<th scope="col">Account</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             ${taxNote}
+            ${retNote}
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="PurchaseOrdersPage.doConvert(${po.id})">Create Bill</button>
@@ -272,6 +367,19 @@ const PurchaseOrdersPage = {
                 return;
             }
             lines.push({ line_id: parseInt(sel.dataset.line), account_id: parseInt(sel.value) });
+        }
+        // This period's amount per line, when the construction dialog offered
+        // it. An amount of zero means skip the line this period, so only
+        // positive amounts are sent; once any is sent the server bills just
+        // those lines.
+        const byLine = Object.fromEntries(lines.map(l => [l.line_id, l]));
+        for (const inp of $$('.po-conv-amount')) {
+            const lid = parseInt(inp.dataset.line);
+            const amt = parseFloat(inp.value);
+            if (!isNaN(amt) && amt > 0) {
+                if (!byLine[lid]) { byLine[lid] = { line_id: lid }; lines.push(byLine[lid]); }
+                byLine[lid].amount = amt;
+            }
         }
         try {
             const result = await API.post(`/purchase-orders/${id}/convert-to-bill`, { lines });

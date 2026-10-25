@@ -990,11 +990,17 @@ def job_cost_tree(
 
     # committed: open PO lines on this job, by code
     line_job = sqlfunc.coalesce(PurchaseOrderLine.job_id, PurchaseOrder.job_id)
+    # committed = the remaining, unbilled part of each open commitment line
+    # (amount − billed_amount), so the number stays "open PO value not yet
+    # billed" as partial bills draw it down (#553).
     committed_rows = (
         db.query(
             PurchaseOrderLine.cost_code_id,
             PurchaseOrderLine.cost_type,
-            sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.amount), 0),
+            sqlfunc.coalesce(
+                sqlfunc.sum(PurchaseOrderLine.amount - PurchaseOrderLine.billed_amount),
+                0,
+            ),
         )
         .select_from(PurchaseOrderLine)
         .join(PurchaseOrder, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
@@ -1157,13 +1163,24 @@ def job_cost_tree(
     for t in type_nodes:
         for r in t["codes"]:
             strip(r)
+    totals = _finish(grand)
+    # committed_total / billed_to_date ride alongside the committed (remaining)
+    # figure, additive (#553): committed stays "not yet billed", while these
+    # two carry the whole commitment and what has been billed against it.
+    from app.services.jobs_service import commitment_figures
+
+    cf = commitment_figures(db, [job_id]).get(
+        job_id, {"committed_total": 0.0, "billed_to_date": 0.0}
+    )
+    totals["committed_total"] = cf["committed_total"]
+    totals["billed_to_date"] = cf["billed_to_date"]
     return {
         "job_id": job_id,
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
         "types": type_nodes,
         "job_level_budget": _finish(job_level),
-        "totals": _finish(grand),
+        "totals": totals,
     }
 
 

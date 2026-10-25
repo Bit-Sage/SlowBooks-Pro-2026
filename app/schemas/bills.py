@@ -33,6 +33,7 @@ class BillLineCreate(StrictModel):
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
     cost_type: Optional[str] = None
+    purchase_order_line_id: Optional[int] = None
     function: Optional[str] = None
     is_billable: bool = False
     description: Optional[str] = None
@@ -73,6 +74,30 @@ def _cents(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+LIEN_WAIVER_STATUSES = ("not_required", "pending", "conditional", "unconditional")
+
+
+def _check_lien_waiver(v):
+    if v is None:
+        return v
+    v = v.strip().lower()
+    if v not in LIEN_WAIVER_STATUSES:
+        raise ValueError(
+            f"lien_waiver_status must be one of {', '.join(LIEN_WAIVER_STATUSES)}"
+        )
+    return v
+
+
+class VendorCompliance(BaseModel):
+    """What a Sub vendor's paperwork looks like at pay time (#553). Warn-only:
+    nothing here blocks a payment."""
+
+    is_sub: bool = False
+    w9_on_file: bool = False
+    coi_expires: Optional[dt_date] = None
+    coi_expired: bool = False
+
+
 class BillLineResponse(BaseModel):
     id: int
     item_id: Optional[int] = None
@@ -81,6 +106,7 @@ class BillLineResponse(BaseModel):
     class_id: Optional[int] = None
     cost_code_id: Optional[int] = None
     cost_type: Optional[str] = None
+    purchase_order_line_id: Optional[int] = None
     function: Optional[str] = None
     is_billable: bool = False
     description: Optional[str] = None
@@ -110,7 +136,21 @@ class BillCreate(StrictModel):
     job_id: Optional[int] = None
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
+    # Construction (#553): retainage held on a hand-entered bill, and the
+    # sub's lien-waiver status. 0 <= retainage_held <= subtotal (checked in
+    # the route, which knows the subtotal).
+    retainage_held: Decimal = Decimal("0")
+    lien_waiver_status: Optional[str] = None
     lines: list[BillLineCreate] = []
+
+    _lien = field_validator("lien_waiver_status")(_check_lien_waiver)
+
+    @field_validator("retainage_held")
+    @classmethod
+    def _retainage_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("retainage_held cannot be negative")
+        return v
 
     @field_validator("lines")
     @classmethod
@@ -136,7 +176,18 @@ class BillUpdate(StrictModel):
     job_id: Optional[int] = None
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
+    retainage_held: Optional[Decimal] = None
+    lien_waiver_status: Optional[str] = None
     lines: Optional[list[BillLineCreate]] = None
+
+    _lien = field_validator("lien_waiver_status")(_check_lien_waiver)
+
+    @field_validator("retainage_held")
+    @classmethod
+    def _retainage_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("retainage_held cannot be negative")
+        return v
 
 
 class BillResponse(BaseModel):
@@ -156,12 +207,17 @@ class BillResponse(BaseModel):
     total: Decimal = Decimal("0")
     amount_paid: Decimal = Decimal("0")
     balance_due: Decimal = Decimal("0")
+    retainage_held: Decimal = Decimal("0")
+    lien_waiver_status: Optional[str] = None
     notes: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
     lines: list[BillLineResponse] = []
+    # Set by the route from the bill's vendor (#553); the list and Pay Bills
+    # read it to flag a Sub's missing W-9 or expired COI.
+    vendor_compliance: Optional[VendorCompliance] = None
     created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
 

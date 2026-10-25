@@ -46,6 +46,7 @@ from app.services.job_costing import (
     job_cost_tree,
 )
 from app.services.jobs_service import (
+    commitment_figures,
     committed_cost,
     find_job,
     job_profitability,
@@ -154,6 +155,11 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         }
     )
     summary["committed_cost"] = committed_cost(db, [job_id]).get(job_id, 0.0)
+    # The commitment roll-up rides alongside (#553): the whole commitment and
+    # what has been billed, additive to the remaining figure above.
+    cf = commitment_figures(db, [job_id]).get(job_id, {})
+    summary["committed_total"] = cf.get("committed_total", 0.0)
+    summary["billed_to_date"] = cf.get("billed_to_date", 0.0)
     base = _to_response(job)
     # The contract roll-up rides along, additive (#552); the SPA shows it in
     # construction mode only, but the summary is harmless for anyone. The cost
@@ -515,6 +521,17 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(job)
     return ContractSummary(**contract_summary(db, job))
+
+
+@router.get("/{job_id}/buyout")
+def get_buyout(job_id: int, db: Session = Depends(get_db)):
+    """Bid vs buyout per trade package (#553): the bid cost from the accepted
+    estimate, what has been bought on the job, the variance, and the
+    commitments behind each package with their compliance flags."""
+    from app.services.buyout import job_buyout
+
+    job = _get(db, job_id)
+    return job_buyout(db, job)
 
 
 @router.post("", response_model=JobResponse, status_code=201)

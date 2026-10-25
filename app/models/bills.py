@@ -63,6 +63,12 @@ class Bill(Base):
     amount_paid = Column(Numeric(15, 2), default=0)
     balance_due = Column(Numeric(15, 2), default=0)
 
+    # Construction (#553): retainage held back on this bill (credited to
+    # Retainage Payable, 2050, instead of A/P), and the sub's lien-waiver
+    # status for the period. Retainage release is #555.
+    retainage_held = Column(Numeric(15, 2), nullable=False, default=0)
+    lien_waiver_status = Column(String(16), nullable=True)
+
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
 
@@ -112,6 +118,13 @@ class BillLine(Base):
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
     # Per-line cost type; NULL falls back to the cost code's default.
     cost_type = Column(String(20), nullable=True)
+    # Construction (#553): the commitment line this bill line draws on, so
+    # partial billing can tally billed-to-date per schedule-of-values line.
+    purchase_order_line_id = Column(
+        Integer,
+        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     function = Column(String(20), nullable=True)  # nonprofit function
     # Cost billable to the job's customer; set when it is pulled onto an invoice
     is_billable = Column(Boolean, nullable=False, default=False)

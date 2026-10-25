@@ -1066,7 +1066,7 @@ const App = {
         'CreditMemosPage.doApply', 'PaymentsPage.void', 'PaymentsPage.showApplyCredit', 'DepositsPage.voidDeposit',
         'DepositsPage.makeDeposit', 'DepositsPage.editDeposit', 'DepositsPage.saveEdit', 'JournalPage.editEntry',
         'BillsPage.void', 'BillsPage.voidBillPayment', 'BillsPage.uploadAttachment',
-        'BillsPage.deleteAttachment', 'BillsPage.showPayForm', 'VendorCreditsPage.void', 'VendorCreditsPage.showApply',
+        'BillsPage.deleteAttachment', 'BillsPage.showPayForm', 'BillsPage.saveLienWaiver', 'VendorCreditsPage.void', 'VendorCreditsPage.showApply',
         'VendorCreditsPage.doApply', 'PurchaseOrdersPage.convertToBill', 'PurchaseOrdersPage.doConvert',
         'ExpensesPage.void', 'ExpensesPage.uploadAttachment', 'ExpensesPage.deleteAttachment', 'CCChargesPage.voidCharge',
         'JournalPage.void', 'JournalPage.uploadAttachment', 'JournalPage.deleteAttachment',

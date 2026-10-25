@@ -106,7 +106,9 @@ class JobSummary(BaseModel):
     gross_profit: float = 0.0
     net_income: float = 0.0
     margin_pct: Optional[float] = None
-    committed_cost: float = 0.0
+    committed_cost: float = 0.0  # remaining open commitment (not yet billed)
+    committed_total: float = 0.0  # Σ of every non-draft commitment (#553)
+    billed_to_date: float = 0.0  # Σ billed against commitments (#553)
 
 
 def _check_contract_type(v):

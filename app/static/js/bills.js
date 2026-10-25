@@ -659,6 +659,34 @@ const BillsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // A Sub's missing W-9 or expired/missing COI, as a compact flag (#553).
+    // Warn-only; nothing here blocks a payment.
+    LIEN_WAIVERS: { not_required: 'Not required', pending: 'Pending', conditional: 'Conditional', unconditional: 'Unconditional' },
+
+    complianceFlagHtml(c) {
+        if (!c || !c.is_sub) return '';
+        const bits = [];
+        if (!c.w9_on_file) bits.push('W-9 missing');
+        if (c.coi_expired) bits.push('COI expired');
+        if (!bits.length) return '';
+        return ` <span class="compliance-flag" style="color:var(--text-danger);font-size:11px">(${bits.join(', ')})</span>`;
+    },
+
+    lienWaiverSelectHtml(b) {
+        const cur = b.lien_waiver_status || '';
+        const opts = ['<option value="">—</option>'].concat(
+            Object.entries(BillsPage.LIEN_WAIVERS).map(([k, v]) =>
+                `<option value="${k}" ${cur === k ? 'selected' : ''}>${v}</option>`)).join('');
+        return `<select class="lien-waiver" data-write data-bill="${b.id}" onchange="BillsPage.saveLienWaiver(${b.id}, this.value)" aria-label="Lien waiver for bill ${escapeHtml(b.bill_number)}">${opts}</select>`;
+    },
+
+    async saveLienWaiver(billId, value) {
+        try {
+            await API.put(`/bills/${billId}`, { lien_waiver_status: value || null });
+            toast('Lien waiver status saved');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     // `vendorId`: only that vendor's open bills, from the vendor's own page
     // (#223, NEW-21); the list says so and offers every vendor's.
     async showPayForm(vendorId = null) {
@@ -675,17 +703,22 @@ const BillsPage = {
         const vendorOpts = vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('');
         const acctOpts = accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
 
+        // Construction shows a Sub's compliance flags and a lien-waiver select
+        // (#553); warn-only, nothing blocks a payment. Other companies keep
+        // today's six columns.
+        const con = Terms.isConstruction();
         let billRows = openBills.map(b => `
             <tr>
                 <td><input type="checkbox" class="pay-check" data-bill="${b.id}" data-balance="${b.balance_due}" aria-label="Pay bill ${escapeHtml(b.bill_number)}"></td>
-                <td>${escapeHtml(b.bill_number)}</td>
+                <td>${escapeHtml(b.bill_number)}${con ? BillsPage.complianceFlagHtml(b.vendor_compliance) : ''}</td>
                 <td>${escapeHtml(b.vendor_name || '')}</td>
                 <td>${formatDate(b.due_date)}</td>
                 <td class="amount">${formatCurrency(b.balance_due)}</td>
                 <td><input type="number" step="0.01" class="pay-amount money" data-bill="${b.id}" data-vendor="${b.vendor_id}" data-vendor-name="${escapeHtml(b.vendor_name || '')}" value="0" style="width:80px;"></td>
+                ${con ? `<td>${BillsPage.lienWaiverSelectHtml(b)}</td>` : ''}
             </tr>`).join('');
 
-        if (!billRows) billRows = '<tr><td colspan="6" style="color:var(--text-muted);">No open bills</td></tr>';
+        if (!billRows) billRows = `<tr><td colspan="${con ? 7 : 6}" style="color:var(--text-muted);">No open bills</td></tr>`;
         const onlyNote = onlyVendor
             ? `<p id="pay-only-vendor" style="margin:0 0 8px; font-size:12px; color:var(--text-muted);">${escapeHtml(onlyVendor)}'s open bills. <a href="javascript:void(0)" onclick="BillsPage.showPayForm()">Show every vendor's</a></p>`
             : '';
@@ -708,7 +741,7 @@ const BillsPage = {
                 ${onlyNote}
                 <div class="table-container" style="margin-top:12px;"><table>
                     <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Bill #</th><th scope="col">Vendor</th><th scope="col">Due</th>
-                    <th scope="col" class="amount">Balance</th><th scope="col" class="amount">Payment</th></tr></thead>
+                    <th scope="col" class="amount">Balance</th><th scope="col" class="amount">Payment</th>${con ? '<th scope="col">Lien waiver</th>' : ''}</tr></thead>
                     <tbody>${billRows}</tbody>
                 </table></div>
                 <div class="form-actions">

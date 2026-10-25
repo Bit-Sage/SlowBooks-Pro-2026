@@ -41,7 +41,8 @@ const JobsPage = {
     tabLabels() {
         if (!Terms.isConstruction()) return JobsPage.TAB_LABELS;
         const { overview, costs, budget, ...rest } = JobsPage.TAB_LABELS;
-        return { overview, costs, budget, contract: 'Contract', ...rest };
+        // Contract (the owner's side), then Buyout (the sub/supplier side, #553).
+        return { overview, costs, budget, contract: 'Contract', buyout: 'Buyout', ...rest };
     },
 
     // =====================================================================
@@ -283,6 +284,7 @@ const JobsPage = {
                 case 'costs': return await JobsPage.costsHtml();
                 case 'budget': return await JobsPage.budgetHtml();
                 case 'contract': return await JobsPage.contractHtml();
+                case 'buyout': return await JobsPage.buyoutHtml();
                 case 'transactions': return await JobsPage.transactionsHtml();
                 case 'time': return await JobsPage.timeHtml();
                 default: return await JobsPage.overviewHtml();
@@ -806,6 +808,69 @@ const JobsPage = {
             toast('Schedule of values built from the estimate');
             await JobsPage.setTab('contract');
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Buyout (construction mode only, #553) ---------------------------------
+    // The sub/supplier side of the job: bid vs buyout per trade package, with
+    // the commitments behind each and their compliance flags. Read-only here;
+    // commitments are created and billed on the Purchase Orders page.
+    async buyoutHtml() {
+        const data = await API.get(`/jobs/${JobsPage._job.id}/buyout`);
+        return JobsPage.buyoutTableHtml(data);
+    },
+
+    // Pure: takes the buyout payload and returns the table, so a node probe
+    // can drive it without the network.
+    buyoutTableHtml(data) {
+        data = data || {};
+        const rows = data.rows || [];
+        const m = JobsPage.money;
+        if (!rows.length) {
+            return `<div class="empty-state"><p>No commitments or bid yet. Create a purchase order or subcontract on the Purchase Orders page, tag it to this job and a package.</p></div>`;
+        }
+        const flag = (c) => {
+            if (!c || !c.is_sub) return '';
+            const bits = [];
+            if (!c.w9_on_file) bits.push('W-9 missing');
+            if (c.coi_expired) bits.push('COI expired');
+            return bits.length ? ` <span style="color:var(--text-danger);font-size:11px">(${bits.join(', ')})</span>` : '';
+        };
+        const body = rows.map(r => {
+            const commits = (r.commitments || []).map(c =>
+                `<div style="font-size:11px;padding-left:8px">
+                    <a href="#/purchase-orders" onclick="PurchaseOrdersPage.view(${c.id});return false;">${escapeHtml(c.number)}</a>
+                    · ${escapeHtml(c.vendor_name)} · ${c.type === 'subcontract' ? 'Subcontract' : 'PO'}
+                    · ${m(c.total)} (${m(c.billed)} billed) · ${escapeHtml(c.status)}${flag(c.compliance)}
+                </div>`).join('');
+            return `<tr>
+                <td>${escapeHtml(r.package_name)}${commits ? `<div style="margin-top:4px">${commits}</div>` : ''}</td>
+                <td class="amount">${m(r.bid_cost)}</td>
+                <td class="amount">${m(r.bought)}</td>
+                <td class="amount" style="${r.variance < 0 ? 'color:var(--text-danger)' : ''}">${m(r.variance)}</td>
+                <td class="amount">${m(r.committed_remaining)}</td>
+                <td class="amount">${m(r.billed_to_date)}</td>
+            </tr>`;
+        }).join('');
+        const t = data.totals || {};
+        return `<div class="table-container"><table class="data-table" id="buyout-table" style="font-size:12px">
+            <thead><tr>
+                <th scope="col">Package</th>
+                <th scope="col" class="amount">Bid</th>
+                <th scope="col" class="amount">Bought</th>
+                <th scope="col" class="amount">Variance</th>
+                <th scope="col" class="amount">Committed left</th>
+                <th scope="col" class="amount">Billed to date</th>
+            </tr></thead>
+            <tbody>${body}</tbody>
+            <tfoot><tr style="font-weight:700">
+                <td>Total</td>
+                <td class="amount">${m(t.bid_cost)}</td>
+                <td class="amount">${m(t.bought)}</td>
+                <td class="amount" style="${t.variance < 0 ? 'color:var(--text-danger)' : ''}">${m(t.variance)}</td>
+                <td class="amount">${m(t.committed_remaining)}</td>
+                <td class="amount">${m(t.billed_to_date)}</td>
+            </tr></tfoot>
+        </table></div>`;
     },
 
     // ---- Transactions (flat) -------------------------------------------------------
