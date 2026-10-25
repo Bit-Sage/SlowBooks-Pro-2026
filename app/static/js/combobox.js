@@ -450,6 +450,13 @@ class ComboBox {
             if (open) { e.preventDefault(); this._move(e.key === 'PageDown' ? 10 : -10); }
             return;
         case 'Enter':
+            // With "Enter key moves between fields" on, a closed box with
+            // nothing half-typed (a name chosen, or empty) leaves Enter to the
+            // form, which moves on (utils.js _ownsEnter); an open list keeps
+            // it to take the highlighted name. A line's Item and Account
+            // pickers stopped the walk otherwise.
+            if (!open && !this.editing && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+                && typeof DataEntryPrefs !== 'undefined' && DataEntryPrefs.enter_moves) return;
             // A select never sent its form on Enter, and the box doesn't either.
             e.preventDefault();
             if (!open) this.open('');

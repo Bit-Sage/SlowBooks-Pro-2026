@@ -189,3 +189,59 @@ def test_a_read_only_sign_in_is_not_offered_bill_entry(browser, company, books):
     assert got["readonly"] == {"topbar": 0, "sidebar": 0, "note": 1, "adds": 0}
     assert got["admin"]["topbar"] == 1 and got["admin"]["sidebar"] == 1
     assert got["admin"]["note"] == 0 and got["admin"]["adds"] == 1
+
+
+# Where the keyboard is: the line cell's field class, and whether it is a
+# type-ahead box.
+WHERE = """() => { const a = document.activeElement;
+    const c = a.closest('.cbx');
+    const s = c && c.querySelector('select');
+    return { cls: s ? s.className.split(' ')[0] : (a.className || '').split(' ')[0],
+        combobox: a.getAttribute('role') === 'combobox',
+        open: a.getAttribute('aria-expanded') === 'true' }; }"""
+
+
+def test_enter_walks_a_line_past_its_type_ahead_pickers(browser, company, books):
+    """With Enter-moves on, Enter on a line's Item or Account picker opened
+    and closed its list and never moved on, so Enter couldn't walk a line.
+    A closed picker, empty or with a name chosen, now moves on; an open one
+    takes the highlighted name and stays."""
+    before = set(_bills(company))
+    page, handled = _open_at(browser, company, "#/bill-entry")
+    page.wait_for_selector("#bqe-form")
+    settle(page, handled)
+    try:
+        page.evaluate("() => { DataEntryPrefs.enter_moves = true; }")
+        walk = []
+        page.locator(f"{ROW1} .cbx--line-item .cbx-input").focus()
+        walk.append(page.evaluate(WHERE))
+        page.keyboard.press("Enter")  # the Item, empty and closed: on
+        walk.append(page.evaluate(WHERE))
+        page.keyboard.type("6400")  # the Account's list opens as it is typed
+        page.wait_for_function(
+            "() => { const l = document.querySelector('#cbx-listbox [aria-selected=true]');"
+            " return l && l.textContent.trim().startsWith('6400'); }"
+        )
+        page.keyboard.press("Enter")  # open: takes the name, stays
+        walk.append(page.evaluate(WHERE))
+        account = page.evaluate(
+            f"() => document.querySelector('{ROW1} select.line-account').value"
+        )
+        page.keyboard.press("Enter")  # closed, a name chosen: on
+        walk.append(page.evaluate(WHERE))
+        page.keyboard.press("Enter")  # the description: on
+        walk.append(page.evaluate(WHERE))
+        bills = set(_bills(company))
+    finally:
+        page.close()
+
+    assert [(w["cls"], w["combobox"]) for w in walk] == [
+        ("line-item", True),
+        ("line-account", True),
+        ("line-account", True),
+        ("line-desc", False),
+        ("line-amt", False),
+    ], walk
+    assert not walk[2]["open"]
+    assert account and account.isdigit()
+    assert bills == before  # nothing saved on the way

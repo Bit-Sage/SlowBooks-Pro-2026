@@ -112,8 +112,9 @@ toast for all of them after Add all — which makes the vendor and names it on
 the entry. The entry stores its vendor (`transactions.vendor_id`, migration
 `d7e8f9a0b1c2`), so the vendor's page lists its bank and card entries under
 Payments beside its bill payments, its paid this year and all time count them,
-and its payments CSV has them as "Bank entry" rows. A transfer names no vendor, and a line added as a transfer (or
-with no payee) is not offered as one.
+and its payments CSV has them as "Bank entry" rows. A transfer names no
+vendor, and a line added as a transfer (or with no payee) is not offered as
+one.
 
 **A bank-feed rule from the vendor form** (#493). A bank rule could be made
 from the feed or on the Bank Rules page, but not from the vendor, and the rule
@@ -346,9 +347,12 @@ each person's own and both off unless they are turned on:
 - *Enter key moves between fields*: Enter goes to the next field, and only
   Enter in the last field, or on Save, saves. The register's new-entry row
   works the same way: Enter walks Date, Payee, Memo, Ref, Category and the two
-  amounts, and posts from the last amount. A type-ahead picker keeps its own
-  Enter (open the list, take the name) and a memo box its new line. Off, Enter
-  saves a form and posts the register row from any of its fields, as before.
+  amounts, and posts from the last amount. A type-ahead picker keeps Enter
+  only while its list is open, to take the highlighted name; closed, with a
+  name chosen or empty, it moves on, so Enter walks a bill's or an invoice's
+  lines past their Item and Account pickers. A memo box keeps its new line.
+  Off, Enter saves a form and posts the register row from any of its fields,
+  as before.
 - *Automatically place the decimal point*: 12345 typed in an amount is
   $123.45, and 5 is $0.05. A decimal point you type yourself is kept, and an
   amount already on a saved document is never divided. It covers the amounts

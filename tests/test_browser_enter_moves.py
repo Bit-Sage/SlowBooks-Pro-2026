@@ -6,7 +6,8 @@ decimal point", per user, both off by default.
   posts the register's quick row from any of its fields.
 - On, Enter in a field moves to the next field; Enter in the last field
   (or on Save) saves. A text area keeps its new line and a type-ahead box
-  keeps its own Enter (it opens the list, or takes the highlighted name).
+  keeps Enter while its list is open (to take the highlighted name);
+  closed, with a name chosen or empty, it moves on like any field.
   The register's quick row follows the same rule: Enter walks Date, Payee,
   Memo, Ref, Category, the two amounts, and only Enter in the last amount
   posts.
@@ -147,20 +148,18 @@ def test_on_enter_walks_the_fields_and_the_last_one_saves(browser):
             page.evaluate("() => document.activeElement.getAttribute('role')")
             == "combobox"
         )
-        # the picker keeps its own Enter: it opens the list, and takes the
-        # highlighted name, never moving on by itself
-        page.keyboard.press("Enter")
-        assert (
-            page.evaluate("() => document.activeElement.getAttribute('role')")
-            == "combobox"
-        )
-        page.keyboard.press("ArrowDown")
+        # the picker keeps Enter while its list is open, to take the
+        # highlighted name; closed, with a name chosen, Enter moves on
+        page.keyboard.press("ArrowDown")  # opens the list
+        page.keyboard.press("ArrowDown")  # past "Choose…" to a customer
         page.keyboard.press("Enter")
         assert page.evaluate("() => document.getElementById('p-customer').value") != ""
         assert (
             page.evaluate("() => document.activeElement.getAttribute('role')")
             == "combobox"
         )
+        page.keyboard.press("Enter")
+        assert page.evaluate(ACTIVE) == "p-memo"
         assert page.evaluate("() => window._probeSubmits") == 0
 
         # the text area keeps its new line

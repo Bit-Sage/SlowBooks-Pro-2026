@@ -435,3 +435,52 @@ def test_a_purchase_order_line_can_add_a_stock_item_at_its_cost(
     assert item["income_account_id"] is None and float(item["cost"]) == 14
     assert float(rate) == 14
     assert focus == {"cls": "cbx-input", "row": 1, "value": "Proofing basket"}
+
+
+def test_enter_moves_past_an_invoice_lines_item_picker(browser, company, books):
+    """With Enter-moves on, Enter on an invoice line's closed Item picker
+    goes on to the next field instead of opening the list; an open list
+    keeps Enter to take the highlighted item."""
+    page, handled = _open_at(browser, company, "#/invoices")
+    page.evaluate("async () => { await InvoicesPage.showForm(); }")
+    page.wait_for_function(MODAL_SHOWN, timeout=5000)
+    settle(page, handled)
+    try:
+        page.evaluate("() => { DataEntryPrefs.enter_moves = true; }")
+        box = page.locator("#inv-lines tr:nth-child(1) .cbx--line-item .cbx-input")
+        box.focus()
+        page.keyboard.press("Enter")
+        moved = page.evaluate(
+            """() => { const a = document.activeElement;
+                return { item: !!a.closest('.cbx--line-item'), row: !!a.closest('#inv-lines tr:nth-child(1)'),
+                    open: !document.getElementById('cbx-popup') || !document.getElementById('cbx-popup').hidden }; }"""
+        )
+        # back on the picker: a name typed opens the list, Enter takes the
+        # highlighted item and stays
+        name = _ok(company.get("/api/items"))[0]["name"]
+        box.focus()
+        page.keyboard.type(name)
+        page.wait_for_function(
+            "(name) => { const l = document.querySelector('#cbx-listbox [aria-selected=true]');"
+            " return l && l.textContent.trim().startsWith(name); }",
+            arg=name,
+        )
+        page.keyboard.press("Enter")
+        picked = page.evaluate(
+            """() => { const a = document.activeElement;
+                return { item: !!a.closest('.cbx--line-item'), expanded: a.getAttribute('aria-expanded'),
+                    value: document.querySelector('#inv-lines tr:nth-child(1) select.line-item').value }; }"""
+        )
+        page.keyboard.press("Enter")
+        after = page.evaluate(
+            "() => !!document.activeElement.closest('.cbx--line-item')"
+        )
+        shown = page.evaluate(MODAL_SHOWN)
+    finally:
+        page.close()
+
+    assert moved["item"] is False and moved["row"] is True, moved
+    assert (
+        picked["item"] is True and picked["expanded"] == "false" and picked["value"]
+    ), picked
+    assert after is False and shown is True

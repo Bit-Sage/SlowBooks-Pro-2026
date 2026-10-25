@@ -774,11 +774,16 @@ function _enterFields(root) {
 }
 
 // Whether Enter in this control is the control's own: a text area's new
-// line, a type-ahead box's pick, a button's press. Those never move.
+// line, a type-ahead box's pick while its list is open, a button's press.
+// Those never move. A type-ahead box whose list is closed moves on, as a
+// select does (the box's own handler has already taken an Enter it needed:
+// it prevents it, and the form's handler leaves a prevented key alone).
 function _ownsEnter(el) {
     if (!el || !el.tagName) return true;
     if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
-    if (el.getAttribute && el.getAttribute('role') === 'combobox') return true;
+    if (el.getAttribute && el.getAttribute('role') === 'combobox') {
+        return el.getAttribute('aria-expanded') === 'true' || !el.closest('.cbx');
+    }
     if (el.tagName !== 'INPUT' && el.tagName !== 'SELECT') return true;
     return el.tagName === 'INPUT' && /^(button|submit|reset|image|file)$/.test(el.type);
 }
@@ -790,6 +795,7 @@ function _ownsEnter(el) {
 function enterMovesOn(e, root) {
     if (!DataEntryPrefs.enter_moves || e.key !== 'Enter') return false;
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return false;
+    if (e.defaultPrevented) return false;  // a control took it (a pick from an open list)
     const el = e.target;
     if (_ownsEnter(el) || !root || !root.contains(el)) return false;
     const fields = _enterFields(root);
