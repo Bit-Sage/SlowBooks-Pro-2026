@@ -521,6 +521,41 @@ Payments (409), and a negative this-period or stored that would take completed
 to date below zero is refused (422). See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**Construction job reports** (#556, @ContractorKeith). Five reports lead the
+Report Center in a Construction group — the three that always existed (Job
+Profitability, Job Budget vs Actual, P&L by Job) and then these five, which show
+in construction mode only. Each is a plain grid with a JSON route, a PDF and a
+CSV like P&L by Job, and takes an `as_of` date (or `start_date`/`end_date` where
+a period applies) with optional `job_id`, `customer_id`, `status` and
+`include_closed`; closed and not-awarded jobs are left out by default. The **WIP
+Schedule** (`/reports/wip-schedule`) lists each job with a contract — contract
+sum, approved changes, revised contract, estimated cost and gross profit, cost to
+date, percent complete, earned revenue, billed to date, over and under billing,
+retainage outstanding, cost to complete and projected gross profit — on the
+**cost-to-cost** method: percent complete is cost ÷ estimated cost (capped at
+100%), earned is the revised contract times that percent, over billing (billed −
+earned) is a liability and under billing (earned − billed) an asset. Billing
+reads from the approved pay applications' completed-to-date when the job has any,
+else the posted revenue carrying the job (`billed_basis` says which). The report
+**posts nothing** — the over/under figure is the accountant's adjusting entry
+between Billings in Excess of Costs and Estimated Earnings / Costs and Estimated
+Earnings in Excess of Billings and the earned-revenue and cost accounts, which
+the report names but never writes. **Cost to Complete** (`/reports/cost-to-complete`)
+is per job and cost code (division › section) — budget, committed, actual, cost
+to complete (remaining budget plus open commitments), projected final, variance
+and percent — a tree in JSON, flattened with the code path in PDF/CSV. **Change
+Order Log** (`/reports/change-order-log`) lists every change order per job with
+the running approved total and the contract it builds, the pending total and
+counts by status. **Buyout Report** (`/reports/buyout`) foots the per-job buyout
+across jobs (bid vs bought, variance, committed-remaining, billed, Unassigned
+kept). **Job Cost by Vendor** (`/reports/job-cost-by-vendor`) groups posted job
+cost by the transaction's vendor (a No vendor bucket for journals and job cost
+entries) with bills, paid to date, retainage held outstanding and open A/P; cost
+is period-filtered, the bill figures job-to-date. Job Profitability and Job
+Budget vs Actual gained the PDF and CSV routes they lacked. A Business or
+Nonprofit company sees none of the five. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

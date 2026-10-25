@@ -280,8 +280,9 @@ contract amount, the budget and the sub commitments together, with the rule
 that work paid for out of an allowance carries no markup. Progress billing
 (#555, see *Progress billing and retainage* below) turns the SOV into an owner
 pay application — previous / this period / stored / retainage / balance per
-line — holding retainage back and releasing it at the end. Job reports (#556)
-will add the WIP schedule with over- and under-billing.
+line — holding retainage back and releasing it at the end. Job reports (#556,
+see *Job reports* below) add the WIP schedule with over- and under-billing,
+cost-to-complete, the change-order log, the buyout report and job cost by vendor.
 
 ## Buyout and commitments
 
@@ -342,7 +343,7 @@ it), with the **variance**, the committed-remaining, the billed-to-date and the
 commitments behind each package linked through. Packages bid but not yet bought
 show with nothing bought; commitments with no package gather under
 *Unassigned*. `GET /api/jobs/{id}/buyout` is the data, and the seam the buyout
-report and job-cost-by-vendor (#556) will build on.
+report and job-cost-by-vendor (#556, see *Job reports* below) are built on.
 
 **Compliance flags.** Bills and Pay Bills carry each Sub vendor's paperwork —
 whether a **W-9** is on file and whether the **certificate of insurance** has
@@ -362,8 +363,8 @@ bill in a closed period, since it posts nothing.
 revise a commitment the way owner change orders revise the contract.
 **Progress billing** (#555, see *Progress billing and retainage* below) bills a
 commitment's schedule of values as a sub pay application and releases retainage
-on both sides. **Reports** (#556) will add the buyout report and job cost by
-vendor.
+on both sides. **Reports** (#556, see *Job reports* below) add the buyout report
+and job cost by vendor.
 
 ## Change orders
 
@@ -483,7 +484,7 @@ draft → pending → promoted (asking to *promote* rather than approve).
 change order's schedule-of-values line (#555, below), that change order can no
 longer be voided — the void answers 409 `co_billed`, the same guard a sub
 change order's billed commitment line already carried. The change-order **log
-report** (#556) will list every change order and its effect.
+report** (#556, see *Job reports* below) lists every change order and its effect.
 
 ## Progress billing and retainage
 
@@ -627,9 +628,64 @@ schedule of values, it can no longer be rebuilt from the estimate (409
 (422), and a billed change order cannot be voided (409 `co_billed`). New lines
 can still be added.
 
-**What comes next.** The WIP schedule with over- and under-billing,
-cost-to-complete, the change-order log, the buyout report and job cost by
-vendor (#556) read these figures; this issue leaves those reports' seams open.
+**The job reports read these figures.** The WIP schedule, cost-to-complete, the
+change-order log, the buyout report and job cost by vendor (#556, see *Job
+reports* below) are built on the contract, the cost tree, the commitments, the
+change orders and the pay applications above.
+
+## Job reports
+
+Five reports sit on the Report Center for a construction company (they lead the
+grid; a Business or Nonprofit company never sees them), each a plain grid with a
+JSON route, a PDF and a CSV like P&L by Job. Each takes an `as_of` date (or
+`start_date`/`end_date` where a period applies) and optional `job_id`,
+`customer_id`, `status` and `include_closed`; by default closed and not-awarded
+jobs are left out.
+
+**WIP schedule** (`wip-schedule`). The work-in-progress schedule lists every job
+with a contract — contract sum, approved change orders, revised contract,
+estimated total cost and gross profit, cost to date, percent complete, earned
+revenue, billed to date, over and under billing, retainage outstanding, cost to
+complete and projected gross profit; a job with no contract terms is listed with
+blanks. It is **cost-to-cost**: percent complete is cost to date ÷ estimated
+total cost (capped at 100%), earned revenue is the revised contract times that
+percent, and **over billing** (billed − earned, a liability — billings in excess
+of costs and estimated earnings) or **under billing** (earned − billed, an asset
+— costs and estimated earnings in excess of billings) is the difference. Billed
+to date is the sum of the approved pay applications' completed-to-date when the
+job has any (else the posted revenue carrying the job — the `billed_basis` column
+says which). **The report posts nothing**: the over/under figure is the
+adjusting entry an accountant would post between the two WIP accounts named
+above and the earned-revenue and cost accounts; the schedule names the accounts
+but never writes the journal.
+
+**Cost to complete** (`cost-to-complete`). Per job, per cost code (division ›
+section), with budget revised, committed (remaining), actual, cost to complete
+(the remaining budget plus open commitments), projected final (actual + cost to
+complete), variance to budget and percent complete by cost, with totals per job
+and grand totals. The JSON keeps the cost-code tree (`children`); the PDF and CSV
+flatten it with the code path.
+
+**Change order log** (`change-order-log`). Every change order per job — number,
+kind, status, title, date, funding, cost, markup, sell, approved and voided
+dates, source PCO and (for a sub CO) its commitment — with the running approved
+total and the contract it builds (original + approved changes = revised), the
+pending total and counts by status.
+
+**Buyout report** (`buyout`). The job buyout across jobs: each trade package's
+bid cost against what has been bought, with the variance, committed-remaining and
+billed-to-date and the commitments behind each, the Unassigned row kept, totals
+per job and grand.
+
+**Job cost by vendor** (`job-cost-by-vendor`). Posted job cost grouped job →
+vendor (the transaction header's vendor; a No vendor bucket holds journals and
+job cost entries), with each vendor's bills count, paid to date (the bill
+payments allocated to that vendor's bills on the job), retainage held outstanding
+(held − released on those bills) and open A/P. The cost is for the period; the
+bill figures are job-to-date.
+
+The existing **Job Profitability** and **Job Budget vs Actual** reports gained
+PDF and CSV routes, so every contractor report exports the same way.
 
 ## The words
 
@@ -661,10 +717,12 @@ W-9 on file is a fact you record, not a default, so it stays No.
 
 ## The reports
 
-The Report Center leads with the contractor reports that already exist:
-**Job Profitability**, **Job Budget vs Actual** and **P&L by Job**. Committed
-Costs and Job Cost by Vendor are not standalone reports yet, so they do not
-appear. Every other report stays where it is.
+The Report Center leads with a **Construction** group: the three reports that
+always existed — **Job Profitability**, **Job Budget vs Actual** and **P&L by
+Job** — then the five added in #556: **WIP Schedule**, **Cost to Complete**,
+**Change Order Log**, **Buyout Report** and **Job Cost by Vendor** (see *Job
+reports* above). The five show in construction mode only. Every other report
+stays where it is.
 
 ## What this mode does not do yet
 
@@ -672,9 +730,6 @@ appear. Every other report stays where it is.
   new company file; Construction is chosen in Settings afterward, as
   Nonprofit is. A "what kind of company is this?" step at creation is a
   later issue.
-- **No job reports yet.** Progress billing with retainage (#555) is in, but the
-  WIP schedule with over- and under-billing, cost-to-complete, the change-order
-  log, the buyout report and job cost by vendor (#556) are still later steps.
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
@@ -682,6 +737,8 @@ appear. Every other report stays where it is.
 - **The estimate references trade packages** (#551), **the contract on the
   job** (#552) is set with its schedule of values, sub commitments bill
   against a package (#553), **change orders** (#554, see *Change orders* above)
-  revise the contract, budget and commitments, and **progress billing** (#555,
+  revise the contract, budget and commitments, **progress billing** (#555,
   see *Progress billing and retainage* above) bills the schedule with retainage
-  on both sides; WIP and the other job reports (#556) are still later steps.
+  on both sides, and the **job reports** (#556, see *Job reports* above) add the
+  WIP schedule, cost-to-complete, the change-order log, the buyout report and
+  job cost by vendor.
