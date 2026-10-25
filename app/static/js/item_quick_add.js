@@ -105,12 +105,14 @@ const ItemQuickAdd = {
         // recorded in, and, for a product or material, whether it is stock.
         // The stock box keeps its own width: the line table's `input { width:
         // 100% }` stretched it across the row and its label stacked a word a
-        // line, out of the panel (2.29.0 gate, macbase1 NEW-176).
+        // line, out of the panel (2.29.0 gate, macbase1 NEW-176). Its layout
+        // lives in the stylesheet (.iqa-stock-row): an inline display would
+        // outrank the [hidden] rule and draw the box on a service item.
         const money = purchase
             ? '<input class="iqa-cost" type="number" step="0.0001" placeholder="Cost" aria-label="Item cost" style="width:100%; margin-bottom:4px;">'
             : '<input class="iqa-rate" type="number" step="0.0001" placeholder="Rate" aria-label="Item rate" style="width:100%; margin-bottom:4px;">';
         const account = purchase
-            ? `<label class="iqa-stock-row" style="display:flex; align-items:center; gap:4px; font-size:11px; margin-bottom:4px;"><input type="checkbox" class="iqa-stock" style="width:auto; flex:0 0 auto; margin:0;"><span style="white-space:nowrap;">Track quantity on hand (stock)</span></label>
+            ? `<label class="iqa-stock-row"><input type="checkbox" class="iqa-stock" style="width:auto; flex:0 0 auto; margin:0;"><span style="white-space:nowrap;">Track quantity on hand (stock)</span></label>
                 <select class="iqa-account" aria-label="Cost of goods account" data-no-search style="width:100%; margin-bottom:4px;"><option value="">-- None --</option></select>`
             : `<select class="iqa-account iqa-income" aria-label="${T('Income')} account" data-no-search style="width:100%; margin-bottom:4px;"><option value="">-- None --</option></select>`;
         cell.insertAdjacentHTML('beforeend', `

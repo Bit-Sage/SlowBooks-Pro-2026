@@ -393,14 +393,22 @@ def test_a_purchase_order_line_can_add_a_stock_item_at_its_cost(
         service = page.evaluate(
             f"""() => {{ const b = document.querySelector('{PO_ROW} .iqa-form');
                 const s = b.querySelector('.iqa-account');
-                return [b.querySelector('.iqa-stock-row').hidden,
+                const row = b.querySelector('.iqa-stock-row');
+                const x = row.getBoundingClientRect();
+                return [row.hidden, getComputedStyle(row).display, x.width, x.height,
                     s.options[s.selectedIndex].textContent]; }}"""
         )
         page.select_option(f"{PO_ROW} .iqa-type", "product")
         page.check(f"{PO_ROW} .iqa-stock")
+        # the row is laid out (a flex row with a box), and the tick stays
         product = page.evaluate(
-            f"""() => {{ const s = document.querySelector('{PO_ROW} .iqa-account');
-                return s.options[s.selectedIndex].textContent; }}"""
+            f"""() => {{ const b = document.querySelector('{PO_ROW} .iqa-form');
+                const s = b.querySelector('.iqa-account');
+                const row = b.querySelector('.iqa-stock-row');
+                const x = row.getBoundingClientRect();
+                return [row.hidden, getComputedStyle(row).display, x.height > 0,
+                    b.querySelector('.iqa-stock').checked,
+                    s.options[s.selectedIndex].textContent]; }}"""
         )
         page.fill(f"{PO_ROW} .iqa-cost", "14")
         page.click(f"{PO_ROW} .iqa-save")
@@ -414,8 +422,10 @@ def test_a_purchase_order_line_can_add_a_stock_item_at_its_cost(
     finally:
         page.close()
 
-    assert service == [True, "5300 - Subcontractor Costs"]
-    assert product == "5000 - Cost of Goods Sold"
+    # a Service item's stock row is not drawn: the stylesheet's [hidden]
+    # rule is not beaten by an inline display, so it takes no space at all
+    assert service == [True, "none", 0, 0, "5300 - Subcontractor Costs"]
+    assert product == [False, "flex", True, True, "5000 - Cost of Goods Sold"]
     made = _ok(company.get("/api/items", params={"q": "Proofing basket"}))
     assert len(made) == 1, made
     item = made[0]

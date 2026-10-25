@@ -62,7 +62,9 @@ quantity or rate. Save & Next (or Ctrl+Enter) saves the bill, lists it in this
 batch's log under the form with a running count and total, and starts the
 next bill with the vendor, date and terms kept and the focus back on the
 vendor. A line's Account can add a new account and its Item a new item, as on
-Enter Bill. A read-only or accountant sign-in is not offered the page.
+Enter Bill; the item's "Track quantity on hand (stock)" box shows only for a
+product or material, not a service or labor item. A read-only or accountant
+sign-in is not offered the page.
 
 **A new account from the bill line that needs it** (#485). The Account cell on
 an Enter Bill line has an Add button beside the picker, as the bank register's

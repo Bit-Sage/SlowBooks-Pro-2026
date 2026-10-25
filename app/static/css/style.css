@@ -753,7 +753,10 @@ body {
    import's Apply before Preview (2.29.0 gate, macbase1 NEW-175), and the
    locked opening balance's reason field. Per component, as .cbx[hidden]. */
 .btn[hidden], .form-group[hidden] { display: none; }
-/* the item quick add's stock row is drawn with an inline display:flex */
+/* The item quick add's stock row: its layout is here, not inline, so the
+   [hidden] rule below can hide it on a service or labor item (an inline
+   display outranks any stylesheet rule). */
+.iqa-stock-row { display: flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 4px; }
 .iqa-stock-row[hidden] { display: none; }
 
 .btn:hover:not(:disabled) {
