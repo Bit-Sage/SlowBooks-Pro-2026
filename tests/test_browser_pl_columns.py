@@ -81,3 +81,49 @@ def test_columns_by_month_on_the_grid(browser, company, books):
         assert page.evaluate(TITLE) == "Profit & Loss"
     finally:
         page.close()
+
+
+# Where the dialog's left edge sits against the sidebar's right, and what a
+# click at the middle of the Dates control would reach.
+CLEAR = """() => { const m = document.getElementById('modal').getBoundingClientRect();
+    const s = document.getElementById('sidebar').getBoundingClientRect();
+    const d = document.getElementById('report-period-select');
+    const r = d.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { left: m.left, sidebar: s.right, reached: !!hit && (hit === d || d.contains(hit)),
+        raised: document.body.classList.contains('dialog-addressed') }; }"""
+
+
+@pytest.mark.parametrize("by", ["month", "quarter"])
+def test_switching_to_columns_leaves_the_sidebar_clear_of_the_wide_dialog(
+    browser, company, books, by
+):
+    """Columns → Month widens the dialog after the comparison's sync had
+    measured it narrow and raised the sidebar over it: the sidebar covered
+    the title, the Dates control and the account names, and a click on the
+    Dates control landed on a sidebar link. The widened dialog is measured
+    again."""
+    page, handled = _open_at(browser, company, URL)
+    try:
+        page.wait_for_selector("#report-content table")
+        before = page.evaluate(CLEAR)
+        page.select_option("#report-columns-select", by)
+        page.wait_for_selector("#report-content table.pivot-grid")
+        settle(page, handled)
+        after = page.evaluate(CLEAR)
+        hash_before = _hash(page)
+        # a real click where the Dates control is drawn
+        box = page.locator("#report-period-select").bounding_box()
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.keyboard.press("Escape")
+        clicked = {
+            "hash": _hash(page),
+            "focus": page.evaluate("() => document.activeElement.id"),
+        }
+    finally:
+        page.close()
+
+    assert before["reached"] is True, before
+    assert after["left"] < after["sidebar"], after  # the wide dialog reaches under it
+    assert after["raised"] is False and after["reached"] is True, after
+    assert clicked == {"hash": hash_before, "focus": "report-period-select"}, clicked

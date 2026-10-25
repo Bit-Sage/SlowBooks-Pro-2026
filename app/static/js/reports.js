@@ -1557,6 +1557,9 @@ const ReportsPage = {
         if (box) { box.checked = false; box.disabled = true; box.title = `Off while the ${T('P&L')} has a column per month or quarter`; }
         const modal = $('#modal');
         if (modal) modal.classList.add('modal--wide');
+        // _cmpSync measured the dialog narrow and raised the sidebar over
+        // it; measured again wide, the sidebar stays under the grid.
+        if (window.App && App.syncBack) App.syncBack();
         const qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._sortQs(params)}&columns=${by}`;
         const data = await API.get(`/reports/profit-loss?${qs}`);
         ReportsPage._viewReturn['profit-loss'] = { ...ReportsPage._cmpKeep(params), start_date: range.start, end_date: range.end };

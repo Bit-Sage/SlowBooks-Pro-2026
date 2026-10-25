@@ -41,7 +41,9 @@ An amount opens that account's lines for that month, a subtotal or family
 total the lines behind it. The choice rides on the address and a saved
 report; the PDF prints the grid landscape and the CSV is the grid (a
 sub-account indented beneath its parent) or one row per account and month. The
-prior-year comparison is off while the columns are on.
+prior-year comparison is off while the columns are on. Switching to Month or
+Quarter widens the dialog with the sidebar kept beneath it, so the title, the
+Dates control and the account names stay in reach.
 
 **The Profit & Loss CSV carries the sub-account families** (#489). The
 export was flat, one row per account by its full path, so a spreadsheet lost
