@@ -204,7 +204,7 @@ def test_the_question_only_gets_asked_on_windows(monkeypatch):
 # The launcher process never sets SLOWBOOKS_DESKTOP / SLOWBOOKS_SERVER_MODE
 # (those go only into the server child's env), so the deployment must be
 # passed in — otherwise a crashed native install would mail "Deployment:
-# Docker".
+# self-managed".
 # ---------------------------------------------------------------------------
 
 
@@ -213,11 +213,11 @@ def test_support_mailto_labels_a_native_crash_native(monkeypatch):
     monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
     mailto = dl._support_mailto(None, "native")
     assert mailto and mailto.startswith("mailto:support@slowbookspro.com")
-    assert "native" in mailto and "Docker" not in mailto
+    assert "native" in mailto and "self-managed" not in mailto
 
 
 def test_support_mailto_labels_a_serve_lan_crash_server_edition(monkeypatch):
     monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
     monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
     mailto = dl._support_mailto(None, "Server Edition")
-    assert mailto and "Server%20Edition" in mailto and "Docker" not in mailto
+    assert mailto and "Server%20Edition" in mailto and "self-managed" not in mailto

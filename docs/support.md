@@ -24,7 +24,8 @@ file in your mail program if they help.
 The body carries your text plus:
 
 - an **environment block** — version and commit, platform, Python version,
-  deployment kind (native / Server Edition / Docker), and the browser when
+  deployment kind (native / Server Edition / self-managed, which covers
+  Docker and a plain source run), and the browser when
   relevant; and
 - the **last ~50 lines of the log** (`launcher.log` on a native desktop
   install), **redacted before it is placed**: emails, personal and company
@@ -36,7 +37,7 @@ The body carries your text plus:
 > not every possible one. **Read the message before you send it** and remove
 > anything sensitive it missed.
 
-**Server Edition and Docker** log to the console (your terminal or the
+**Server Edition and self-managed installs** log to the console (your terminal or the
 container logs), not to `launcher.log`, so there is no file for the form to
 read. On those deployments the form says so and asks you to copy the recent
 server output into your email yourself.
@@ -46,7 +47,7 @@ to keep the body short. Use **Copy diagnostics** to copy the full,
 untrimmed block to the clipboard and paste it into your email yourself.
 
 On a native desktop install, **Reveal log file** opens the log's folder in
-Finder or Explorer. The button is hidden on Server Edition and Docker, where
+Finder or Explorer. The button is hidden on Server Edition and self-managed installs, where
 there is no local folder to open.
 
 > Support emails, including any logs you attach, are stored in our private

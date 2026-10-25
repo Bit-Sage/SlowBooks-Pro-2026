@@ -225,7 +225,7 @@ def test_deployment_detection_by_flags(monkeypatch):
 
     monkeypatch.delenv("SLOWBOOKS_DESKTOP", raising=False)
     monkeypatch.delenv("SLOWBOOKS_SERVER_MODE", raising=False)
-    assert sd.detect_deployment() == "Docker"
+    assert sd.detect_deployment() == "self-managed"
 
 
 def test_environment_block_includes_browser_when_given():
