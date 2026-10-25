@@ -246,6 +246,31 @@ and bill it as owner pay applications with retainage held and released (#555).
 A Business or Nonprofit job is exactly as it was. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**Buyout and commitments** (#553, @ContractorKeith). A commitment is a
+purchase order: in construction mode a PO is either a **purchase order** or a
+**subcontract**, its lines are its schedule of values, and it bills in parts.
+The PO form grows a Type select, a Package, a Retainage % and scope notes
+(construction only; a business company's PO is unchanged), and a subcontract
+to a vendor not marked a Sub is allowed with a one-line note that its license
+and insurance aren't tracked. `POST /api/purchase-orders/{id}/convert-to-bill`
+now takes an optional `lines: [{line_id, amount}]` so a commitment bills a
+period at a time: each line tracks billed-to-date, the PO goes **partial**
+while anything remains and **closed** when fully billed. A commitment with a
+**retainage %** holds that percent of each bill's subtotal on **Retainage
+Payable** (2050) instead of A/P, so Pay Bills pays the net; a hand-entered bill
+can hold retainage the same way. Committed cost now means the **remaining**
+(unbilled) open commitment, with **committed total** and **billed to date**
+alongside it in the job overview and cost tree. A new **Buyout** tab on the job
+(and `GET /api/jobs/{id}/buyout`) pairs each trade package's bid against what
+has been bought — variance, committed-remaining, billed-to-date and the
+commitments behind it. Bills and Pay Bills carry each Sub vendor's compliance
+(`vendor_compliance`: W-9 on file, COI expiry) as warn-only flags, and Pay
+Bills offers a per-bill lien-waiver status saved through `PUT /api/bills/{id}`.
+Sub change orders (#554), progress billing with retainage released (#555) and
+the buyout report / job cost by vendor (#556) build on this. A Business or
+Nonprofit company sees none of it. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

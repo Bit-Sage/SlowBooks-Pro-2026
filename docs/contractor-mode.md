@@ -277,6 +277,61 @@ reports (#556) will add the WIP schedule with over- and under-billing. This
 issue sets the contract and builds the schedule; it leaves those seams open
 rather than filling them.
 
+## Buyout and commitments
+
+The contract is the money coming in; the **buyout** is the money going out — what
+the subs and suppliers are committed to. A **commitment is a purchase order**
+(#553). There is no new document type: in construction mode a PO is either a
+plain **purchase order** or a **subcontract**, chosen with a Type select, and
+it can carry a **trade package**, a **retainage %** and **scope notes**. A
+subcontract to a vendor not marked a Sub is allowed — the form just notes that
+its license and insurance aren't tracked; nothing is blocked.
+
+**The schedule of values is the lines.** A commitment's lines are its schedule
+of values: each line's amount is its scheduled value, and the commitment bills
+against those lines a period at a time. **Partial billing** — *To Bill* on a
+commitment opens the usual convert dialog with an amount-this-period column
+prefilled with each line's remaining (scheduled value less what's already
+billed). Bill some or all of it: each line tallies its billed-to-date, the
+commitment reads **partial** while anything remains and **closed** once every
+line is fully billed. A business company's PO bills in one go exactly as before.
+
+**Retainage held.** When the commitment carries a retainage percent, that
+percent of each bill's subtotal is held back: the bill credits Accounts Payable
+for the net and **Retainage Payable** (2050) for the retainage, and its balance
+due is the net, so Pay Bills pays only what's owed now. A bill entered by hand
+can hold retainage the same way. Releasing retainage (a debit back to 2050) is
+progress billing's job (#555); for now the figure is the retainage held to date.
+
+**What committed and billed mean now.** *Committed* cost is the **remaining**
+open commitment — the scheduled value of every issued, not-yet-closed
+commitment, less what has been billed — so it keeps meaning "ordered but not
+yet in the ledger". Beside it the job now carries **committed total** (the
+whole of every issued commitment) and **billed to date** (what has been billed
+against them), in the job overview and the cost tree totals.
+
+**Bid vs buyout.** A **Buyout** tab on the job (after Contract, construction
+mode only) pairs each trade package's **bid** — the accepted estimate's cost
+for that package — against what has been **bought** (the commitments tagged to
+it), with the **variance**, the committed-remaining, the billed-to-date and the
+commitments behind each package linked through. Packages bid but not yet bought
+show with nothing bought; commitments with no package gather under
+*Unassigned*. `GET /api/jobs/{id}/buyout` is the data, and the seam the buyout
+report and job-cost-by-vendor (#556) will build on.
+
+**Compliance flags.** Bills and Pay Bills carry each Sub vendor's paperwork —
+whether a **W-9** is on file and whether the **certificate of insurance** has
+expired (or is missing). The Pay Bills rows and the Buyout tab's commitments
+show a compact flag for a Sub that's short either one, and Pay Bills offers a
+**lien waiver** status per bill (not required / pending / conditional /
+unconditional). Every flag is a warning: nothing here blocks a payment.
+
+**What comes next.** Sub **change orders** (#554) will revise a commitment the
+way owner change orders revise the contract. **Progress billing** (#555) will
+turn a commitment's schedule of values into a sub pay application and release
+retainage on both sides. **Reports** (#556) will add the buyout report and job
+cost by vendor. This issue sets the commitments and leaves those seams open.
+
 ## The words
 
 A contractor keeps almost every business word — Customer, Invoice, Estimate,

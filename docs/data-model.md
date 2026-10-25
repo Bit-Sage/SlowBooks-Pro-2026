@@ -167,6 +167,34 @@ billed to date) is computed, not stored — `app/services/contracts.py`.
 Migration `e2a4c6d8f0b1_construction_contract` (additive and
 nullable/defaulted; downgrade reverses).
 
+## Buyout and commitments (#553)
+
+A commitment is a purchase order — no new table. Additive columns:
+
+- `purchase_orders.commitment_type` String(12) NOT NULL default `po`
+  (`po` | `subcontract`), `trade_package_id` (FK `trade_packages.id`, SET
+  NULL), `retainage_pct` Numeric(5,2) (held on every bill from the
+  commitment), `scope_notes` Text.
+- `purchase_order_lines.billed_amount` Numeric(15,2) NOT NULL default 0 — how
+  much of the line (whose `amount` is its scheduled value) has been billed;
+  remaining = `amount − billed_amount`. `received_qty` is left untouched.
+- `bills.retainage_held` Numeric(15,2) NOT NULL default 0 (credited to
+  Retainage Payable, 2050, not A/P; `balance_due` is the net), and
+  `lien_waiver_status` String(16) (`not_required` | `pending` | `conditional`
+  | `unconditional`).
+- `bill_lines.purchase_order_line_id` (FK `purchase_order_lines.id`, SET
+  NULL) — the back link partial billing tallies against.
+
+`committed_cost` is now Σ `(amount − billed_amount)` over non-draft, non-closed
+commitment lines (the remaining open value); `commitment_figures` adds
+`committed_total` (Σ amount of non-draft commitments) and `billed_to_date` (Σ
+billed) — `app/services/jobs_service.py`. The buyout table (bid vs bought per
+package) is computed in `app/services/buyout.py`; `vendor_compliance` (Sub
+W-9 / COI flags) is computed from the vendor. Migration
+`f3b5d7e9a2c4_construction_buyout` (additive; backfills a closed PO's billed
+lines from its bill; downgrade reverses). Retainage release (a debit back to
+2050) is #555.
+
 ## Job cost model (milestone 3)
 
 | table | purpose |
