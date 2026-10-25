@@ -203,6 +203,12 @@ from app.services.terminology import Terms as _Terms  # noqa: E402
 
 _jinja_env.globals["terms"] = _Terms()
 
+# The construction estimate PDF (#551) groups and totals the bid through the
+# same pure function the route and tests use.
+from app.services.estimating import estimate_totals as _estimate_totals  # noqa: E402
+
+_jinja_env.globals["estimate_totals"] = _estimate_totals
+
 
 def _render(template_name: str, company_settings: dict, **context) -> str:
     """Render a template with the company settings and its vocabulary

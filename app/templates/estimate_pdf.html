@@ -75,6 +75,80 @@
         </div>
     </div>
 
+    {% if terms.is_construction %}
+    {# Construction bid (#551): lines grouped by package with the section code
+       in the description column, then allowances, alternates and unit prices
+       in their own blocks, then the bid total. Markups are not itemised for
+       the customer — the contract step decides that. #}
+    {% set totals = estimate_totals(est) %}
+    <table class="line-items">
+        <thead><tr><th>Description</th><th class="r" style="width:60px;">Qty</th><th class="r" style="width:80px;">Rate</th><th class="r" style="width:80px;">Amount</th></tr></thead>
+        <tbody>
+        {% for pkg in totals.by_package %}
+            {% set pkg_lines = [] %}
+            {% for line in est.lines %}
+                {% set kind = line.line_kind or 'base' %}
+                {% set pkg_name = line.trade_package.name if line.trade_package else 'Unassigned' %}
+                {% if pkg_name == pkg.package_name and (kind == 'base' or (kind == 'alternate' and line.alternate_accepted)) %}
+                    {% set _ = pkg_lines.append(line) %}
+                {% endif %}
+            {% endfor %}
+            {% if pkg_lines %}
+            <tr><td colspan="4" style="background:#eef3f8; font-weight:700; color:#003366;">{{ pkg.package_name }}</td></tr>
+            {% for line in pkg_lines %}
+            <tr>
+                <td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }}</td>
+                <td class="r">{{ line.quantity | qty }}{% if line.unit %} {{ line.unit }}{% endif %}</td>
+                <td class="r">{{ line.rate | rate }}</td>
+                <td class="r">{{ line.amount | currency }}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {% set allowances = [] %}
+    {% for line in est.lines %}{% if (line.line_kind or 'base') == 'allowance' %}{% set _ = allowances.append(line) %}{% endif %}{% endfor %}
+    {% if allowances %}
+    <table class="line-items">
+        <thead><tr><th>Allowances</th><th class="r" style="width:80px;">Amount</th></tr></thead>
+        <tbody>
+        {% for line in allowances %}
+            <tr><td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }}</td><td class="r">{{ line.amount | currency }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if totals.alternates %}
+    <table class="line-items">
+        <thead><tr><th>Alternates</th><th class="r" style="width:100px;">Add / Deduct</th></tr></thead>
+        <tbody>
+        {% for alt in totals.alternates %}
+            <tr><td>{{ alt.description or '' }}{% if alt.accepted %} <span style="font-size:8px;color:#003366;">(accepted)</span>{% endif %}</td><td class="r">{{ alt.amount | currency }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if totals.unit_prices %}
+    <table class="line-items">
+        <thead><tr><th>Unit prices</th><th class="r" style="width:60px;">Unit</th><th class="r" style="width:80px;">Rate</th></tr></thead>
+        <tbody>
+        {% for up in totals.unit_prices %}
+            <tr><td>{{ up.description or '' }}</td><td class="r">{{ up.unit or '' }}</td><td class="r">{{ up.rate | rate }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="totals">
+        <table>
+            <tr><td class="label grand">Bid Total</td><td class="r grand">{{ totals.bid_total | currency }}</td></tr>
+        </table>
+    </div>
+    {% else %}
     <table class="line-items">
         <thead><tr><th>Description</th><th class="r" style="width:60px;">Qty</th><th class="r" style="width:80px;">Rate</th><th class="r" style="width:80px;">Amount</th></tr></thead>
         <tbody>
@@ -98,6 +172,7 @@
             <tr><td class="label grand">Total</td><td class="r grand">{{ est.total | currency }}</td></tr>
         </table>
     </div>
+    {% endif %}
 
     {% if est.notes %}
     <div class="notes"><strong>Notes:</strong> {{ est.notes }}</div>
