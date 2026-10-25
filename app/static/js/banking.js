@@ -866,9 +866,15 @@ const BankingPage = {
     // A feed line added with a payee no vendor has (#491): the entry
     // posted with the payee as text, and a toast offers to make it a
     // vendor and name it on the entry, as the register's quick row does
-    // (payeeTyped). Money out only; a name is asked once a session.
+    // (payeeTyped). Money out only; a name is asked once a session. A
+    // transfer (a line categorised to a bank or card account) names nobody
+    // and the server makes no vendor of it, so it is not offered; nor is a
+    // line with no payee.
     _offerFeedVendors(lines) {
+        const transfer = (t) => (BankingPage._reviewAccounts || [])
+            .some(a => a.bank_kind && String(a.id) === String(t.category_account_id));
         const want = lines.filter(t => t && !t.vendor_id && parseFloat(t.amount) < 0 && (t.payee || '').trim()
+            && !transfer(t)
             && !BankingPage._payeesAsked.has(t.payee.trim().toLowerCase()));
         if (!want.length) return;
         want.forEach(t => BankingPage._payeesAsked.add(t.payee.trim().toLowerCase()));

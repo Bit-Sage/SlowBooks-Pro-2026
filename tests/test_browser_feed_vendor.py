@@ -36,7 +36,7 @@ def _line(id_, payee, **extra):
     }
 
 
-def _page(browser, lines, vendor_for):
+def _page(browser, lines, vendor_for, chart=CHART):
     calls = []
 
     def _transactions(route):
@@ -68,7 +68,7 @@ def _page(browser, lines, vendor_for):
     page.route("**/api/banking/check-register*", lambda r: r.fulfill(json=REGISTER))
     page.route("**/api/banking/overview*", lambda r: r.fulfill(json=OVERVIEW))
     page.route("**/api/banking/transactions**", _transactions)
-    page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+    page.route("**/api/accounts*", lambda r: r.fulfill(json=chart))
     page.route("**/api/vendors*", lambda r: r.fulfill(json=[]))
     page.goto(page.url.split("#")[0] + "#/banking/1")
     page.wait_for_selector("text=To review")
@@ -94,6 +94,47 @@ def test_a_payee_matched_to_a_vendor_is_not_asked_about(browser):
     try:
         page.click('button[onclick^="BankingPage.addLine"]')
         page.wait_for_selector("text=Added to the books for City Water")
+        assert page.locator("text=as a vendor?").count() == 0
+        assert not [c for c in calls if c[0] == "vendors"]
+    finally:
+        page.close()
+
+
+SAVINGS = {
+    "id": 9,
+    "name": "Savings",
+    "account_number": "1010",
+    "account_type": "asset",
+    "bank_kind": "bank",
+}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # a transfer: categorised to a bank account, it names nobody
+        _line(
+            11,
+            "Online transfer to Savings",
+            category_account_id=9,
+            category_name="Savings",
+            amount=-25.0,
+        ),
+        # no payee to add
+        _line(12, "   "),
+        _line(13, None),
+    ],
+    ids=["transfer", "blank-payee", "no-payee"],
+)
+def test_a_transfer_or_a_line_with_no_payee_is_not_offered(browser, line):
+    """A line added as a transfer to Savings was offered as a vendor, and
+    the offer's Add answered "Linked to 0 vendors": the server makes no
+    vendor of a transfer. Nor is there anything to add with no payee."""
+    page, calls = _page(browser, [line], {}, chart=CHART + [SAVINGS])
+    try:
+        page.click('button[onclick^="BankingPage.addLine"]')
+        page.wait_for_selector("text=Added to the books")
+        page.wait_for_timeout(300)
         assert page.locator("text=as a vendor?").count() == 0
         assert not [c for c in calls if c[0] == "vendors"]
     finally:

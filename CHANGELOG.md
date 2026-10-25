@@ -112,7 +112,8 @@ toast for all of them after Add all — which makes the vendor and names it on
 the entry. The entry stores its vendor (`transactions.vendor_id`, migration
 `d7e8f9a0b1c2`), so the vendor's page lists its bank and card entries, its paid
 this year and all time count them, and its payments CSV has them as "Bank
-entry" rows. A transfer names no vendor.
+entry" rows. A transfer names no vendor, and a line added as a transfer (or
+with no payee) is not offered as one.
 
 **A bank-feed rule from the vendor form** (#493). A bank rule could be made
 from the feed or on the Bank Rules page, but not from the vendor, and the rule
