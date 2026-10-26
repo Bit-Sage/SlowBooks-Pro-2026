@@ -70,6 +70,17 @@ Make Deposits, because it isn't in Undeposited Funds. Settings → Online
 Payments carries the toggle and the two account pickers on each provider's
 card. (Recording the payout and matching it to the bank feed is step 2, #584.)
 
+**The register keeps the last entry's date, and the date keys move it**
+(#566, from discussion #561, @ContractorKeith). After a post, the register's
+entry row and the + Entry dialog open on the date of the entry just posted
+rather than snapping back to today — each register keeps its own, for the
+page's life; sign-in starts over; no preference. In any date box, + and −
+step the date a day, T is today, M and H are the first and last day of its
+month, Y and R the first and last day of its year — QuickBooks-style keys,
+one handler for every date box in the app. The "date far from today"
+question (#481) is asked when the date is typed or moved, not again for a
+date carried over from the last entry.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its

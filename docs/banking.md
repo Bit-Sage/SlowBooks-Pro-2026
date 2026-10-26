@@ -110,7 +110,11 @@ sign-in posts and voids journal entries but does not edit them, so it is
 offered no Edit on these rows.
 
 The entry row at the foot of the register posts the same way (Enter or
-Post). A payee typed there, or in + Entry, that is not already a customer's
+Post). After a post the row (and + Entry) opens on the date just posted,
+each register its own, until the page is left or signed in again; in the
+date box, as in any date box, + and − step a day, T is today, M / H and
+Y / R jump to the ends of the month and the year (QuickBooks-style keys).
+A payee typed there, or in + Entry, that is not already a customer's
 or a vendor's name is offered as one — a customer for money in (a deposit),
 a vendor for money out, matching the categorized import — with Add / Not
 now; the entry posts either way, and Add names the party so the entry's
