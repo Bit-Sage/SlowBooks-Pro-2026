@@ -124,7 +124,13 @@ def processing_fee(payment: dict) -> Optional[Decimal]:
     total_cents = 0
     found = False
     for entry in fees:
-        amount = (entry.get("amount_money") or {}).get("amount")
+        money = entry.get("amount_money") or {}
+        # Online checkout is USD-only today; a fee in another currency can't be
+        # booked against a USD clearing account, so skip it (handled at #584).
+        currency = money.get("currency")
+        if currency is not None and currency != "USD":
+            continue
+        amount = money.get("amount")
         if amount is not None:
             total_cents += amount
             found = True
@@ -277,21 +283,31 @@ class SquareProvider(PaymentProvider):
     # -- fee -------------------------------------------------------------
 
     def _poll_fee(self, order: dict, settings: Mapping[str, str]) -> Optional[Decimal]:
-        """Square's fee isn't on the order — the order's tender names a
-        payment id, and the payment carries processing_fee. One extra GET;
-        any failure returns None and never blocks recording the payment."""
+        """Square's fee isn't on the order — each tender names a payment, and
+        the payment carries processing_fee. Fetch every tender's payment (a
+        split tender has more than one) and sum their fees. Only the tender's
+        `payment_id` is a payment; the tender `id` is the tender's own id, so
+        never use it. Any failure returns None and never blocks recording."""
         try:
-            tenders = order.get("tenders") or []
-            payment_id = next(
-                (t.get("payment_id") or t.get("id") for t in tenders if t), None
-            )
-            if not payment_id:
+            payment_ids = [
+                t.get("payment_id")
+                for t in (order.get("tenders") or [])
+                if t and t.get("payment_id")
+            ]
+            if not payment_ids:
                 return None
-            resp = _http.send(build_get_payment_request(payment_id, settings))
-            if resp.status_code != 200:
-                return None
-            payment = resp.json().get("payment") or {}
-            return processing_fee(payment)
+            total = Decimal("0")
+            found = False
+            for payment_id in payment_ids:
+                resp = _http.send(build_get_payment_request(payment_id, settings))
+                if resp.status_code != 200:
+                    return None
+                payment = resp.json().get("payment") or {}
+                fee = processing_fee(payment)
+                if fee is not None:
+                    total += fee
+                    found = True
+            return total if found else None
         except Exception:
             logger.warning(
                 "Square fee lookup failed; recording gross only", exc_info=True

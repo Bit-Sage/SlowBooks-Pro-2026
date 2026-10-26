@@ -310,10 +310,17 @@ def _order_invoice_id(order: dict) -> Optional[int]:
 def _capture_fee(capture: dict) -> Optional[Decimal]:
     """The PayPal fee on a single capture resource (webhook shape)."""
     breakdown = capture.get("seller_receivable_breakdown") or {}
-    value = (breakdown.get("paypal_fee") or {}).get("value")
+    paypal_fee = breakdown.get("paypal_fee") or {}
+    # Online checkout is USD-only today; a fee in another currency can't be
+    # booked against a USD clearing account, so don't guess — leave it to #584.
+    currency = paypal_fee.get("currency_code")
+    if currency is not None and currency != "USD":
+        return None
+    value = paypal_fee.get("value")
     try:
+        # ArithmeticError covers InvalidOperation for a non-numeric value.
         return Decimal(value) if value is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, ArithmeticError):
         return None
 
 

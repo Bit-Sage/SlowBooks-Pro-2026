@@ -183,38 +183,70 @@ def _guard_closing_period(request: Request, db: Session, fields: dict):
         )
 
 
+def _clearing_account_for_save(db, provider: str, value: str):
+    """Resolve and validate a chosen account id from the settings form, or
+    raise a 400. Shared shape for the clearing and fee pickers."""
+    from app.models.accounts import Account
+
+    try:
+        acct_id = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{provider.title()} account id must be a number.",
+        )
+    acct = db.query(Account).filter(Account.id == acct_id).first()
+    if acct is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The chosen {provider.title()} account does not exist.",
+        )
+    if acct.is_active is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The chosen {provider.title()} account is inactive.",
+        )
+    return acct
+
+
 def _guard_clearing_accounts(db: Session, cleaned: dict) -> None:
-    """A chosen online-payment clearing account must be an ordinary asset
-    account — not a bank-feed account (deposits land there at payout, #584),
-    and not a non-asset account the payment can't post into. Refuse with a
-    400 at save rather than letting a bad id post nowhere later."""
-    from app.models.accounts import Account, AccountType
+    """A chosen online-payment clearing account must be an ordinary, active
+    asset account — not a bank-feed account (deposits land there at payout,
+    #584) and not a control account (1100 A/R, 1200 Undeposited Funds, …,
+    which the posting code resolves by number). The fee account must be an
+    active expense account. Refuse with a 400 at save rather than letting a
+    bad id post nowhere later."""
+    from app.models.accounts import AccountType
+    from app.services.control_accounts import is_control
 
     for provider in ("stripe", "paypal", "square"):
         value = cleaned.get(f"{provider}_clearing_account_id")
-        if not value:  # "" clears the override and uses the default account
-            continue
-        try:
-            acct_id = int(value)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail=f"{provider.title()} clearing account id must be a number.",
-            )
-        acct = db.query(Account).filter(Account.id == acct_id).first()
-        if acct is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"The chosen {provider.title()} clearing account does not exist.",
-            )
-        if acct.account_type != AccountType.ASSET or acct.bank_kind:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"The {provider.title()} clearing account must be an asset "
-                    "account that is not a bank or credit-card account."
-                ),
-            )
+        if value:  # "" clears the override and uses the default account
+            acct = _clearing_account_for_save(db, provider, value)
+            if (
+                acct.account_type != AccountType.ASSET
+                or acct.bank_kind
+                or is_control(acct.account_number, acct.account_type)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"The {provider.title()} clearing account must be an "
+                        "ordinary asset account — not a bank, credit-card or "
+                        "control account."
+                    ),
+                )
+        fee_value = cleaned.get(f"{provider}_fee_account_id")
+        if fee_value:
+            fee_acct = _clearing_account_for_save(db, provider, fee_value)
+            if fee_acct.account_type != AccountType.EXPENSE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"The {provider.title()} fee account must be an "
+                        "expense account."
+                    ),
+                )
 
 
 @router.put("")

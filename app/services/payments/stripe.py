@@ -154,5 +154,7 @@ class StripeProvider(PaymentProvider):
                 return None
             return Decimal(fee_cents) / Decimal("100")
         except Exception:
-            logger.warning("Stripe fee lookup failed; recording gross only", exc_info=True)
+            logger.warning(
+                "Stripe fee lookup failed; recording gross only", exc_info=True
+            )
             return None

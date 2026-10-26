@@ -54,16 +54,30 @@ const SettingsPage = {
     // ahead of the render function (the unsaved-changes guard test slices
     // the file at the first backtick-returning statement).
     _clearingAccountOptions(accounts, selectedId, type, defaultLabel) {
+        // The same filter the settings save enforces: an active, ordinary
+        // account of the right type — not a bank-feed or a control account
+        // (A/R, Undeposited Funds, …).
         const pick = (Array.isArray(accounts) ? accounts : []).filter(a =>
-            a.account_type === type && !a.bank_kind && a.is_active !== false);
+            a.account_type === type && !a.bank_kind && a.is_active !== false
+            && !a.is_control);
         const sel = selectedId ? String(selectedId) : '';
         let html = '<option value=""' + (sel ? '' : ' selected') + '>' +
             escapeHtml(defaultLabel) + '</option>';
+        let matched = false;
         for (const a of pick) {
             const label = (a.account_number ? a.account_number + ' ' : '') + a.name;
-            html += '<option value="' + a.id + '"' +
-                (String(a.id) === sel ? ' selected' : '') + '>' +
-                escapeHtml(label) + '</option>';
+            const isSel = String(a.id) === sel;
+            if (isSel) matched = true;
+            html += '<option value="' + a.id + '"' + (isSel ? ' selected' : '') +
+                '>' + escapeHtml(label) + '</option>';
+        }
+        // A saved id that isn't in the list (the chart failed to load, or the
+        // account went inactive or changed type): keep it selected so Save
+        // doesn't silently blank the setting; the recorder falls back to the
+        // default account until it's fixed here.
+        if (sel && !matched) {
+            html += '<option value="' + escapeHtml(sel) + '" selected>(unavailable) #' +
+                escapeHtml(sel) + '</option>';
         }
         return html;
     },

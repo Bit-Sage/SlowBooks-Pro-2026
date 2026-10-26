@@ -22,11 +22,10 @@ from app.services.accounting import (
 )
 from app.services.payments.clearing import (
     clearing_account_id,
-    clearing_enabled,
+    clearing_enabled_db,
     fee_account_id,
 )
 from app.services.donor_documents import document_label
-from app.services.settings_service import get_all_settings
 from app.services.terminology import terms_from_db
 
 
@@ -70,7 +69,8 @@ def record_provider_payment(
         return "invoice_already_settled"
 
     # Cap at balance due
-    if amount > invoice.balance_due:
+    capped = amount > invoice.balance_due
+    if capped:
         amount = invoice.balance_due
 
     payment = Payment(
@@ -98,7 +98,7 @@ def record_provider_payment(
     customer_name = invoice.customer.name if invoice.customer else "Customer"
     ar_id = get_ar_account_id(db)
 
-    if clearing_enabled(get_all_settings(db), provider_name):
+    if clearing_enabled_db(db, provider_name):
         # Clearing on: gross posts to the provider's clearing account (not
         # Undeposited Funds), and the reported fee — if any — posts to the
         # fee account in the same entry. The clearing balance is gross − fee;
@@ -118,7 +118,11 @@ def record_provider_payment(
                 "description": f"{provider_display_name} payment from {customer_name}",
             },
         ]
-        if fee is not None and fee > 0:
+        # A capped overpayment means the reported fee was charged on a larger
+        # gross than we posted; booking it here would push the clearing
+        # balance negative. Leave the fee to the payout step (#584), which
+        # reconciles against the real net, and post the gross only.
+        if fee is not None and fee > 0 and not capped:
             fee_id = fee_account_id(db, provider_name)
             journal_lines += [
                 {
