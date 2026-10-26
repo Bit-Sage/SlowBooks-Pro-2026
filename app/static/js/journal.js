@@ -458,7 +458,9 @@ const JournalPage = {
             await API.post(`/journal/${id}/void`);
             toast('Journal entry voided');
             closeModal();
-            App.navigate('#/journal');
+            // opened from a register (App.openOver), Close put its address
+            // back: the register is redrawn, not Journal Entries
+            App.navigate(location.hash.startsWith('#/banking') ? location.hash : '#/journal');
         } catch (err) { toast(err.message, 'error'); }
     },
 };

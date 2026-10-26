@@ -281,9 +281,11 @@ def test_the_views_the_links_open():
     assert "paid ahead" not in gone["text"]
 
     # a register line with no document of its own opens its journal entry;
-    # the register reads oldest to newest (2.23.5, #329)
+    # the register reads oldest to newest (2.23.5, #329); each opens over
+    # the register (App.openOver), so Close comes back to it
+    over = "onclick=\"return App.openOver(event, this.getAttribute('href'))\""
     assert got["register"] == [
-        '<td><a href="/#/deposits/31">Deposit to Checking</a></td>',
-        '<td><a href="#/journal/57">Sales tax payment</a></td>',
-        '<td><a href="#/journal/58">View entry</a></td>',
+        f'<td><a href="/#/deposits/31" {over}>Deposit to Checking</a></td>',
+        f'<td><a href="#/journal/57" {over}>Sales tax payment</a></td>',
+        f'<td><a href="#/journal/58" {over}>View entry</a></td>',
     ]

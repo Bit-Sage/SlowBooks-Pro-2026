@@ -106,6 +106,6 @@ const cells = (html) => (html.match(/<tbody>[\s\S]*?<\/tbody>/g) || []).map((bod
     out[`bill payment ${id}`] = { title: modal.title, buttons: buttons(modal.html), rows: cells(modal.html)[0] || [], text: flat(modal.html.replace(/<[^>]*>/g, ' ')) };
   }
   const reg = await ctx.BankingPage.renderRegister('5');
-  out.register = (reg.match(/<td><a href="[^"]*">[^<]*<\/a><\/td>/g) || []);
+  out.register = (reg.match(/<td><a href="[^"]*"[^>]*>[^<]*<\/a><\/td>/g) || []);
   console.log(JSON.stringify(out));
 })();
