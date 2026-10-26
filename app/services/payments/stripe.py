@@ -4,6 +4,7 @@
 # refactor; the SDK calls are unchanged.
 # ============================================================================
 
+import logging
 from decimal import Decimal
 from typing import Mapping, Optional
 
@@ -11,8 +12,11 @@ import stripe
 
 from app.models.invoices import Invoice
 from app.services.payments.base import CheckoutSession, PaymentProvider, PaymentResult
+from app.services.payments.clearing import clearing_enabled
 from app.services.donor_documents import document_label
 from app.services.terminology import document_reference, terms_for
+
+logger = logging.getLogger(__name__)
 
 # The SDK otherwise creates a persistent telemetry ID and sends it, platform
 # details, and previous-request metrics alongside operator-initiated API calls.
@@ -27,6 +31,9 @@ class StripeProvider(PaymentProvider):
         "stripe_publishable_key",
         "stripe_secret_key",
         "stripe_webhook_secret",
+        "stripe_clearing_enabled",
+        "stripe_clearing_account_id",
+        "stripe_fee_account_id",
     )
     secret_keys = ("stripe_secret_key", "stripe_webhook_secret")
 
@@ -96,6 +103,7 @@ class StripeProvider(PaymentProvider):
             external_id=session["id"],
             amount=Decimal(amount_cents) / Decimal("100"),
             invoice_id=int(session["metadata"]["invoice_id"]),
+            fee=self._maybe_fee(session, settings),
             raw=dict(session),
         )
 
@@ -116,5 +124,37 @@ class StripeProvider(PaymentProvider):
             external_id=external_id,
             amount=Decimal(amount_cents) / Decimal("100") if paid else None,
             invoice_id=invoice_id,
+            fee=self._maybe_fee(session, settings) if paid else None,
             raw=dict(session),
         )
+
+    # -- fee -------------------------------------------------------------
+
+    def _maybe_fee(self, session, settings: Mapping[str, str]) -> Optional[Decimal]:
+        """The Stripe processing fee for this checkout, or None.
+
+        Only fetched when the clearing setting is on. The fee lives on the
+        balance transaction behind the session's PaymentIntent, so it takes
+        one extra retrieve with the charge and balance transaction expanded.
+        Any failure returns None and never blocks recording the payment."""
+        if not clearing_enabled(settings, self.name):
+            return None
+        try:
+            pi_id = session.get("payment_intent")
+            if not pi_id:
+                return None
+            stripe.api_key = settings["stripe_secret_key"]
+            intent = stripe.PaymentIntent.retrieve(
+                pi_id, expand=["latest_charge.balance_transaction"]
+            )
+            charge = intent.get("latest_charge")
+            balance_txn = charge.get("balance_transaction") if charge else None
+            fee_cents = balance_txn.get("fee") if balance_txn else None
+            if fee_cents is None:
+                return None
+            return Decimal(fee_cents) / Decimal("100")
+        except Exception:
+            logger.warning(
+                "Stripe fee lookup failed; recording gross only", exc_info=True
+            )
+            return None

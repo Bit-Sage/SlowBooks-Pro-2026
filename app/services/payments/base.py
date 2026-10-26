@@ -34,6 +34,11 @@ class PaymentResult:
     external_id: str  # idempotency key (session id / order id)
     amount: Optional[Decimal] = None  # gross amount actually captured
     invoice_id: Optional[int] = None  # set when the provider payload carries it
+    # The provider's processing fee for this capture, filled only when the
+    # provider's clearing setting is on (#583). None when unknown — either
+    # clearing is off, or the fetch failed, or the provider reports it late
+    # (Square); the recorder then posts the gross only.
+    fee: Optional[Decimal] = None
     raw: dict = field(default_factory=dict)
 
 

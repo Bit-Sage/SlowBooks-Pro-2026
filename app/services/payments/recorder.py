@@ -9,6 +9,7 @@
 
 from datetime import date
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,11 @@ from app.services.accounting import (
     create_journal_entry,
     get_ar_account_id,
     get_undeposited_funds_id,
+)
+from app.services.payments.clearing import (
+    clearing_account_id,
+    clearing_enabled_db,
+    fee_account_id,
 )
 from app.services.donor_documents import document_label
 from app.services.terminology import terms_from_db
@@ -30,6 +36,7 @@ def record_provider_payment(
     invoice_id: int,
     external_id: str,
     amount: Decimal,
+    fee: Optional[Decimal] = None,
 ) -> str:
     """Record a captured online payment against an invoice.
 
@@ -62,7 +69,8 @@ def record_provider_payment(
         return "invoice_already_settled"
 
     # Cap at balance due
-    if amount > invoice.balance_due:
+    capped = amount > invoice.balance_due
+    if capped:
         amount = invoice.balance_due
 
     payment = Payment(
@@ -87,12 +95,67 @@ def record_provider_payment(
     else:
         invoice.status = InvoiceStatus.PARTIAL
 
-    # Journal entry: DR Undeposited Funds, CR A/R
+    customer_name = invoice.customer.name if invoice.customer else "Customer"
     ar_id = get_ar_account_id(db)
+
+    if clearing_enabled_db(db, provider_name):
+        # Clearing on: gross posts to the provider's clearing account (not
+        # Undeposited Funds), and the reported fee — if any — posts to the
+        # fee account in the same entry. The clearing balance is gross − fee;
+        # the net payout lands against it at #584.
+        clearing_id = clearing_account_id(db, provider_name)
+        journal_lines = [
+            {
+                "account_id": clearing_id,
+                "debit": amount,
+                "credit": Decimal("0"),
+                "description": f"{provider_display_name} payment from {customer_name}",
+            },
+            {
+                "account_id": ar_id,
+                "debit": Decimal("0"),
+                "credit": amount,
+                "description": f"{provider_display_name} payment from {customer_name}",
+            },
+        ]
+        # A capped overpayment means the reported fee was charged on a larger
+        # gross than we posted; booking it here would push the clearing
+        # balance negative. Leave the fee to the payout step (#584), which
+        # reconciles against the real net, and post the gross only.
+        if fee is not None and fee > 0 and not capped:
+            fee_id = fee_account_id(db, provider_name)
+            journal_lines += [
+                {
+                    "account_id": fee_id,
+                    "debit": fee,
+                    "credit": Decimal("0"),
+                    "description": f"{provider_display_name} fee",
+                },
+                {
+                    "account_id": clearing_id,
+                    "debit": Decimal("0"),
+                    "credit": fee,
+                    "description": f"{provider_display_name} fee",
+                },
+            ]
+        txn = create_journal_entry(
+            db,
+            date.today(),
+            f"{provider_display_name} payment — "
+            f"{document_label(invoice, terms_from_db(db))} #{invoice.invoice_number}",
+            journal_lines,
+            source_type="payment",
+            source_id=payment.id,
+            reference=external_id,
+        )
+        payment.transaction_id = txn.id
+        db.commit()
+        return "payment_recorded"
+
+    # Clearing off: DR Undeposited Funds, CR A/R (unchanged).
     deposit_id = get_undeposited_funds_id(db)
 
     if ar_id and deposit_id:
-        customer_name = invoice.customer.name if invoice.customer else "Customer"
         journal_lines = [
             {
                 "account_id": deposit_id,
