@@ -533,3 +533,58 @@ def export_sales_receipts(db: Session, date_from=None, date_to=None) -> str:
                 ]
             )
     return output.getvalue()
+
+
+def export_vendor_payments(
+    db: Session, vendor_id: int, date_from=None, date_to=None
+) -> str:
+    """A vendor's payment history (#335, #569): bill payments, direct
+    expenses and bank-feed entries in date order with a running total,
+    voided rows marked and left out of the totals, a total line last.
+    No dates is all time; the vendor page sends year to date."""
+    from app.services.vendor_payments import vendor_payment_history
+
+    vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+    history = vendor_payment_history(db, vendor_id, date_from, date_to)
+    output = io.StringIO()
+    writer = _SafeWriter(output)  # formula guard; amounts stay numbers
+    writer.writerow(["Vendor", vendor.name if vendor else ""])
+    writer.writerow(["Period", f"{date_from or 'start'} to {date_to or 'today'}"])
+    writer.writerow([])
+    writer.writerow(VENDOR_PAYMENT_COLUMNS)
+    for r in history["rows"]:
+        writer.writerow(
+            [
+                r["date"],
+                VENDOR_PAYMENT_KINDS[r["kind"]],
+                r["method"],
+                _Identifier(r["reference"]),
+                _money_cell(r["amount"]),
+                _money_cell(r["running_total"]),
+                r["paid_from"],
+                r["memo"],
+                "yes" if r["is_voided"] else "",
+            ]
+        )
+    writer.writerow(
+        ["", "", "", "Total paid", _money_cell(history["total"]), "", "", "", ""]
+    )
+    return output.getvalue()
+
+
+VENDOR_PAYMENT_COLUMNS = [
+    "Date",
+    "Type",
+    "Method",
+    "Check # / Ref",
+    "Amount",
+    "Running total",
+    "Paid from",
+    "Notes",
+    "Voided",
+]
+VENDOR_PAYMENT_KINDS = {
+    "bill_payment": "Bill payment",
+    "expense": "Expense",
+    "bank_entry": "Bank entry",
+}

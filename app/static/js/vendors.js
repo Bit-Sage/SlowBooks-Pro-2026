@@ -72,18 +72,18 @@ const VendorsPage = {
     // Row-click destination, the mirror of CustomersPage.showDetails: what
     // we know about the vendor on one screen — contact, address, terms, the
     // default account, 1099, NOTES (editable inline), what's owed, the last
-    // 10 bills, the last 10 payments, and credits not applied yet.
+    // 10 bills, the payment history (#569), and credits not applied yet.
     async showDetails(id) {
-        let vendor, bills, payments, credits, accounts, entries;
+        let vendor, bills, credits, accounts, history;
         try {
-            [vendor, bills, payments, credits, accounts, entries] = await Promise.all([
+            [vendor, bills, credits, accounts, history] = await Promise.all([
                 API.get(`/vendors/${id}`),
                 fetchAllPages(`/bills?vendor_id=${id}`).catch(() => []),
-                API.get(`/bill-payments?vendor_id=${id}`).catch(() => []),
                 API.get(`/vendor-credits?vendor_id=${id}`).catch(() => []),
                 API.get('/accounts').catch(() => []),
-                // lines added from a bank feed that name this vendor (#491)
-                API.get(`/vendors/${id}/bank-entries`).catch(() => []),
+                // every payment to the vendor, year to date (#569): bill
+                // payments, direct expenses and bank-feed entries (#491)
+                API.get(`/vendors/${id}/payment-history`).catch(() => null),
             ]);
         } catch (err) {
             toast(err.message, 'error');
@@ -98,7 +98,7 @@ const VendorsPage = {
         const acct = accounts.find(a => a.id === vendor.default_expense_account_id);
         const acctLabel = acct ? `${acct.account_number ? acct.account_number + ' - ' : ''}${acct.name}` : '';
 
-        // -- Bills + payments — last 10 each, newest first, click-through --
+        // -- Bills — last 10, newest first, click-through --
         // a row opens the document at its own address, the page's address
         // kept behind it so Back returns here with focus on the link
         // (NEW-38's rule, the vendor's side; NEW-23 review); the row is
@@ -114,47 +114,6 @@ const VendorsPage = {
                 <td class="amount">${formatCurrency(b.total)}</td>
                 <td class="amount">${formatCurrency(b.balance_due)}</td>
             </tr>`).join('');
-        const payRows = payments.slice(0, 10).map(p =>
-            `<tr style="cursor:pointer" onclick="${hop(`#/bill-payments/${p.id}`)}">
-                <td>${rowLink(`#/bill-payments/${p.id}`, `bill-payment:${p.id}`, formatDate(p.date))}</td>
-                <td>${escapeHtml(p.method || '')}${p.is_voided ? ' <span style="color:var(--text-danger)">(void)</span>' : ''}</td>
-                <td>${escapeHtml(p.check_number || '')}</td>
-                <td class="amount">${formatCurrency(p.amount)}</td>
-            </tr>`).join('');
-
-        // -- Credits the vendor owes us, not yet applied to a bill --
-        // paid to date (#335): this year and all time, voided payments aside
-        // bill payments and bank-feed entries both: what was paid to them
-        const thisYear = String(new Date().getFullYear());
-        const live = payments.filter(p => !p.is_voided).concat(entries.filter(e => !e.is_voided));
-        const paidAllTime = live.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
-        const paidThisYear = live.filter(p => String(p.date || '').startsWith(thisYear)).reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
-        const entryRows = entries.slice(0, 10).map(e => {
-            const href = (e.link || '').replace(/^\/(?=#)/, '');
-            return `<tr style="cursor:pointer" onclick="${hop(href)}">
-                <td>${rowLink(href, `bank-entry:${e.transaction_id}`, formatDate(e.date))}</td>
-                <td>${escapeHtml(e.account_name || '')}${e.is_voided ? ' <span style="color:var(--text-danger)">(void)</span>' : ''}</td>
-                <td>${escapeHtml(e.memo || '')}</td>
-                <td class="amount">${formatCurrency(e.amount)}</td>
-            </tr>`;
-        }).join('');
-        // Payments are both kinds, under the paid-to-date line that counts
-        // them both: bill payments, then bank and card entries (a vendor paid
-        // only through the feed read "Paid this year: $57.00" over "No
-        // payments yet").
-        const subHead = 'font-size:11px;color:var(--text-muted);margin:8px 0 4px 0;font-weight:600';
-        const payHtml = payments.length === 0 ? '' : `
-                <h5 style="${subHead}">Bill payments (${payments.length})</h5>
-                <table class="data-table" style="font-size:12px">
-                    <thead><tr><th scope="col">Date</th><th scope="col">Method</th><th scope="col">Check #</th><th scope="col" class="amount">Amount</th></tr></thead>
-                    <tbody>${payRows}</tbody>
-                </table>`;
-        const entriesHtml = entries.length === 0 ? '' : `
-                <h5 style="${subHead}">Bank and card entries (${entries.length})</h5>
-                <table class="data-table" style="font-size:12px">
-                    <thead><tr><th scope="col">Date</th><th scope="col">Account</th><th scope="col">Memo</th><th scope="col" class="amount">Amount</th></tr></thead>
-                    <tbody>${entryRows}</tbody>
-                </table>`;
         const open = credits.filter(c => c.status !== 'void' && parseFloat(c.balance_remaining) > 0);
         const creditsHtml = open.length === 0 ? '' : `
             <div style="margin-bottom:14px">
@@ -238,18 +197,85 @@ const VendorsPage = {
                     </table>`}
             </div>
 
-            <!-- payments: bill payments and bank entries -->
-            <div>
-                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Payments (${payments.length + entries.length})</h4>
-                <p style="font-size:12px; margin:0 0 6px 0;">Paid this year: <strong>${formatCurrency(paidThisYear)}</strong> &middot; all time: <strong>${formatCurrency(paidAllTime)}</strong>
-                    <a class="btn btn-sm btn-secondary" style="margin-left:8px;" href="/api/vendors/${vendor.id}/payments/csv" download>Save CSV</a></p>
-                ${payments.length + entries.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;margin:0">No payments yet</p>' : payHtml + entriesHtml}
-            </div>`;
+            <!-- payment history (#569): the three kinds in one list -->
+            <div id="vend-history-${id}">${VendorsPage._historyHtml(id, history)}</div>`;
 
         // The page's own address (#/vendors/3, App.routes): Back from a
         // report opened below returns here, a reload keeps the page.
         openModal(`Vendor — ${vendor.name}`, html);
         App.documentAddress(`#/vendors/${vendor.id}`);  // after the dialog: it marks it as its own
+    },
+
+    // Payment history (#569): every bill payment, direct expense and bank
+    // or card entry to the vendor in the range, oldest first with a running
+    // total, voided rows marked and left out of the totals. The range is
+    // year to date until changed; Export CSV carries the same range through
+    // the CSV export service. "Paid this year" reads so only while the range
+    // is the default, else it names the dates.
+    _KINDS: { bill_payment: 'Bill payment', expense: 'Expense', bank_entry: 'Bank entry' },
+
+    _historyHtml(id, h) {
+        const head = 'font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0';
+        if (!h) {
+            return `<h4 style="${head}">Payment history</h4>
+                <p style="color:var(--text-muted);font-size:13px;margin:0">Could not load the payments.</p>`;
+        }
+        const rows = h.rows || [];
+        const start = h.start_date || '', end = h.end_date || '';
+        const today = new Date();
+        const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const ytd = start === `${today.getFullYear()}-01-01` && end === iso(today);
+        const label = ytd ? 'this year'
+            : start && end ? `${formatDate(start)} to ${formatDate(end)}`
+            : start ? `from ${formatDate(start)}` : end ? `through ${formatDate(end)}` : 'all time';
+        const csv = `/api/vendors/${id}/payments/csv?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+        const hop = (href) => `ReportsPage._leaveFrom(this);closeModal({ keepAddress: true });App.navigate('${href}')`;
+        const body = rows.map(r => {
+            const href = (r.link || '').replace(/^\/(?=#)/, '');
+            const words = escapeHtml([r.reference, r.memo].filter(Boolean).join(' · '));
+            return `<tr style="cursor:pointer${r.is_voided ? ';opacity:.6' : ''}" onclick="${hop(href)}">
+                <td><a href="${href}" data-row-key="${r.kind}:${r.id}" style="color:var(--text-link); text-decoration:none;" onclick="event.preventDefault()">${formatDate(r.date)}</a></td>
+                <td>${VendorsPage._KINDS[r.kind] || escapeHtml(r.kind)}${r.kind === 'bill_payment' && r.method ? ` <span style="color:var(--text-muted)">${escapeHtml(r.method)}</span>` : ''}${r.is_voided ? ' <span style="color:var(--text-danger)">(void)</span>' : ''}</td>
+                <td>${escapeHtml(r.paid_from || '')}</td>
+                <td>${words}</td>
+                <td class="amount">${formatCurrency(r.amount)}</td>
+                <td class="amount">${r.is_voided ? '' : formatCurrency(r.running_total)}</td>
+            </tr>`;
+        }).join('');
+        return `
+            <h4 style="${head}">Payment history (${rows.length})</h4>
+            <div role="group" aria-label="Payment history range" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;margin:0 0 6px 0">
+                <label>From <input type="date" id="vend-hist-from-${id}" value="${escapeHtml(start)}" style="font-size:12px"></label>
+                <label>To <input type="date" id="vend-hist-to-${id}" value="${escapeHtml(end)}" style="font-size:12px"></label>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="VendorsPage._reloadHistory(${id})">Show</button>
+                <a class="btn btn-sm btn-secondary" href="${csv}" download>Export CSV</a>
+            </div>
+            <p style="font-size:12px; margin:0 0 6px 0;">Paid ${escapeHtml(label)}: <strong>${formatCurrency(h.total)}</strong> &middot; all time: <strong>${formatCurrency(h.all_time)}</strong></p>
+            ${rows.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;margin:0">No payments yet</p>' : `
+            <table class="data-table" style="font-size:12px">
+                <thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Paid from</th><th scope="col">Ref / memo</th><th scope="col" class="amount">Amount</th><th scope="col" class="amount">Running total</th></tr></thead>
+                <tbody>${body}</tbody>
+            </table>`}`;
+    },
+
+    async _reloadHistory(id) {
+        const box = document.getElementById(`vend-history-${id}`);
+        if (!box) return;
+        const from = document.getElementById(`vend-hist-from-${id}`);
+        const to = document.getElementById(`vend-hist-to-${id}`);
+        const q = [];
+        if (from && from.value) q.push(`start_date=${from.value}`);
+        if (to && to.value) q.push(`end_date=${to.value}`);
+        let h = null;
+        try {
+            h = await API.get(`/vendors/${id}/payment-history${q.length ? '?' + q.join('&') : ''}`);
+        } catch (err) {
+            toast(err.message, 'error');
+            return;
+        }
+        box.innerHTML = VendorsPage._historyHtml(id, h);
+        const btn = box.querySelector('button');
+        if (btn) btn.focus();
     },
 
     // Reports for this vendor (#238), each through the report's own address

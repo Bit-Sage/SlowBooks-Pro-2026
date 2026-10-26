@@ -1,8 +1,9 @@
 """A vendor's card says one thing about what was paid (#491), in a real
 browser with the API stubbed: paid this year and all time count bill
-payments and bank-feed entries both, and the section under it lists both,
-so a vendor paid only through the feed no longer reads "Paid this year:
-$57.00" over "No payments yet". With nothing paid it says so once."""
+payments and bank-feed entries both, and the payment history under it
+(#569) lists both, so a vendor paid only through the feed no longer reads
+"Paid this year: $57.00" over "No payments yet". With nothing paid it says
+so once."""
 
 import datetime as dt
 
@@ -19,9 +20,12 @@ VENDOR = {"id": 7, "name": "QA Paper Co", "balance": "0", "is_active": True}
 
 def _entry(tid, amount):
     return {
-        "transaction_id": tid,
+        "kind": "bank_entry",
+        "id": tid,
         "date": f"{YEAR}-03-0{tid % 9 + 1}",
-        "account_name": "Checking",
+        "method": "Bank entry",
+        "reference": "",
+        "paid_from": "Checking",
         "memo": "",
         "amount": amount,
         "is_voided": False,
@@ -29,12 +33,35 @@ def _entry(tid, amount):
     }
 
 
+def _history(rows):
+    """What /payment-history answers for the rows, year to date."""
+    total = 0.0
+    for r in rows:
+        total += float(r["amount"])
+        r["running_total"] = f"{total:.2f}"
+    return {
+        "vendor_id": 7,
+        "start_date": f"{YEAR}-01-01",
+        "end_date": dt.date.today().isoformat(),
+        "rows": rows,
+        "totals": {
+            "bill_payment": "0.00",
+            "expense": "0.00",
+            "bank_entry": f"{total:.2f}",
+        },
+        "total": f"{total:.2f}",
+        "all_time": f"{total:.2f}",
+    }
+
+
 def _card(browser, payments, entries):
     page = _open(browser, 1280, 900, "#/")
-    page.route("**/api/vendors/7/bank-entries*", lambda r: r.fulfill(json=entries))
+    page.route(
+        "**/api/vendors/7/payment-history*",
+        lambda r: r.fulfill(json=_history(payments + entries)),
+    )
     page.route("**/api/vendors/7", lambda r: r.fulfill(json=VENDOR))
     page.route("**/api/bills?*", lambda r: r.fulfill(json=[]))
-    page.route("**/api/bill-payments?*", lambda r: r.fulfill(json=payments))
     page.route("**/api/vendor-credits?*", lambda r: r.fulfill(json=[]))
     page.route("**/api/accounts*", lambda r: r.fulfill(json=[]))
     page.evaluate("() => VendorsPage.showDetails(7)")
@@ -51,8 +78,8 @@ def test_feed_entries_are_the_payments_the_paid_line_counts(browser):
     text, heads = _card(browser, [], [_entry(1, "45.00"), _entry(2, "12.00")])
     assert "Paid this year: $57.00" in text
     assert "No payments yet" not in text
-    assert "Payments (2)" in heads
-    assert "Bank and card entries (2)" in heads
+    assert "Payment history (2)" in heads
+    assert text.count("Bank entry") == 2
     assert not any(h.startswith("Recent payments") for h in heads)
 
 
@@ -60,4 +87,4 @@ def test_nothing_paid_says_so_once(browser):
     text, heads = _card(browser, [], [])
     assert "Paid this year: $0.00" in text
     assert text.count("No payments yet") == 1
-    assert "Payments (0)" in heads
+    assert "Payment history (0)" in heads

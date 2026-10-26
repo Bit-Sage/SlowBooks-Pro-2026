@@ -200,7 +200,8 @@ def test_the_vendor_page_and_payments_csv_include_feed_postings(
 
 def test_the_vendor_details_dialog_reads_the_bank_entries():
     js = (ROOT / "app/static/js/vendors.js").read_text(encoding="utf-8")
-    assert "/bank-entries" in js and "Bank and card entries" in js
+    # the page lists them in its payment history (#569), typed "Bank entry"
+    assert "/payment-history" in js and "bank_entry: 'Bank entry'" in js
     banking = (ROOT / "app/static/js/banking.js").read_text(encoding="utf-8")
     assert "_offerFeedVendors" in banking and "/banking/transactions/vendors" in banking
 

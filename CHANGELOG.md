@@ -35,6 +35,25 @@ family's total has no drill-down yet (the #479 set drill-down reads a
 period's lines, not a balance to date). The API's `groups[].tree` and
 `tree.equity` carry the rows; the flat lists stay for the drill-down.
 
+**Vendors: search the list, and a payment history per vendor with CSV export**
+(#569, @ContractorKeith). A vendor's page has a **Payment history** section
+in place of the two payment lists: every bill payment, direct expense (Enter
+Expenses) and bank-feed entry to the vendor in one list, oldest first with a
+running total, over a date range that starts as year to date (From / To /
+Show), the paid-in-range and all-time figures above it, voided rows listed,
+marked and left out of the totals, and **Export CSV** for the same range
+(Date, Type, Method, Check # / Ref, Amount, Running total, Paid from, Notes,
+Voided, a Total paid line last), now built by the CSV export service like the
+other exports. `GET /api/vendors/{id}/payment-history` answers the page
+(`rows`, `totals` by kind, `total`, `all_time`; no dates is year to date, one
+date leaves the other side open); `GET /api/vendors/{id}/payments/csv` keeps
+its address and its all-time default. The bill-payment subtotal is summed by
+the 1099 query itself, so for a 1099 vendor over a year it is the vendor's
+1099-NEC figure; direct expenses and bank entries, which the 1099 leaves out,
+are subtotalled beside it rather than folded in. The list's search box
+(#335) stays as it was — name, company, phone, email — and the list route's
+`search` parameter now covers the same four fields instead of the name alone.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its
