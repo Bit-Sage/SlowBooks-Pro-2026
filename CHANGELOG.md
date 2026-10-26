@@ -18,6 +18,23 @@ you back to the register too. Opening a document by its address
 (a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
 in a new tab.
 
+**Balance Sheet: sub-accounts beneath their parents, a total per family**
+(#565, from Discussion #562, @ContractorKeith). The Balance Sheet now prints a
+parent's family together, as the P&L has since #416: the parent as a heading,
+its sub-accounts indented beneath it, the parent's own postings as "Direct
+postings to …" and a "Total …" for the family, inside each Current / Fixed /
+Other Assets and Current / Long Term Liabilities group and in Equity — on the
+screen, in the PDF (the accountant's package included) and in the CSV, with
+and without the prior-year comparison, where each family total has its
+Current, Prior Year, $ Change and % Change. A parent gathers only the
+sub-accounts that print in its own group; a sub-account placed in another
+group by its detail type prints there, flat, by its full path. Every line
+prints once, no figure or subtotal moves, and a chart with no sub-accounts
+prints exactly as before. An account line still opens its transactions; a
+family's total has no drill-down yet (the #479 set drill-down reads a
+period's lines, not a balance to date). The API's `groups[].tree` and
+`tree.equity` carry the rows; the flat lists stay for the drill-down.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its
