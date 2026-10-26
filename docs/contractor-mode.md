@@ -118,52 +118,50 @@ the cost posts. A unit of measure (SF, LF, EA, CY…) sits beside the quantity.
 
 **Line kinds.** A line is one of four:
 
-- **Base** — ordinary scope; its price joins the bid, and its cost (quantity ×
-  unit cost) is what the markups build on.
-- **Allowance** — a budgeted figure for work not yet designed. Its price is in
-  the bid, but it carries no markup.
-- **Alternate** — an add or deduct the customer can choose. Its price is in no
-  total until it is **accepted**; a deduct carries a negative amount, so it
-  subtracts.
+- **Base** — ordinary scope. A base line that carries a unit cost is priced
+  **at cost** (its rate mirrors the unit cost, so its amount is quantity ×
+  unit cost) and its cost is what the markups build on. A base line with no
+  unit cost is **priced direct** — its rate is its price, and it is never
+  marked up.
+- **Allowance** — a budgeted figure for work not yet designed. Its amount is
+  in the subtotal but carries no markup, and on accept it budgets its amount
+  as cost (a budgeted figure is spent, not margined).
+- **Alternate** — an add or deduct the customer can choose. Its amount is in
+  no total until it is **accepted**; a deduct carries a negative amount, so it
+  subtracts. An alternate that carries a unit cost is shown to the customer at
+  its **marked-up price** (cost × the markup factor); one with no cost shows
+  its rate price. Accepting it moves it into the scope (at cost, with its
+  markups in the markup rows) and adds its cost to the markup base; the
+  Alternates block then offers only the ones not yet taken.
 - **Unit price** — a rate card (a price per unit for work whose quantity is
   unknown, like rock excavation). It is never in the bid and never seeds a
-  budget, but it is still repriced from cost like any priced line.
+  budget.
 
-**The bid is the sum of the prices.** What the customer pays is the total of
-the included line prices — base lines, accepted alternates and allowances —
-and the estimate foots it as any estimate does: Subtotal, Tax, Total. Tax
-applies to the bid like any other estimate; unit-price lines and un-accepted
-alternates are in no total and are not taxed. The bid total is **pre-tax**:
-the owner's contract sum and schedule of values (a later step) are pre-tax,
-and tax is added on each invoice — so the totals carry the pre-tax bid beside
-its tax and tax-inclusive total.
-
-**The markups are the cost view beside the bid.** Four percents build a
-cost-based *target* for the markup-able scope (base lines and accepted
-alternates that carry a unit cost), compounding in order — each figured on the
-running total before it. Worked example — a $100,000 base cost at
-8 / 1.5 / 5 / 1 percent:
+**The lines stay at cost; the markups are their own figures under the
+subtotal.** The subtotal is the sum of the included line amounts — base lines
+(at cost), accepted alternates and allowances. Beside the subtotal, four
+percents are figured on the markup base (the base and accepted-alternate lines
+that carry a unit cost) and **compound in order** — each figured on the
+running total before it. Worked example — a $100,000 cost of work, no
+allowances, at 8 / 1.5 / 5 / 1 percent:
 
 | Step | Figured on | Amount |
 | --- | --- | --- |
+| Subtotal | lines at cost | 100,000.00 |
 | General conditions (8%) | 100,000 | 8,000.00 |
 | Insurance (1.5%) | 108,000 | 1,620.00 |
 | Fee (5%) | 109,620 | 5,481.00 |
 | Bond (1%) | 115,101 | 1,151.01 |
-| **Markup target** | base cost + the four | **116,252.01** |
+| **Bid total** | subtotal + the four | **116,252.01** |
 
-Allowances carry no markup; lines priced directly (a rate with no unit cost)
-are counted on their own as **priced direct**. The totals panel shows the
-**drift** — bid − allowances − priced-direct − markup target — so any gap
-between the priced bid and the cost-built target is visible. (Markups are not
-printed on the customer PDF; the contract step decides whether to show them.)
-
-**Price from cost.** The **Price from cost** button sets every cost-based line's
-rate (base lines and all alternates, accepted or not) to its unit cost times
-the markup factor `(1+gc)(1+ins)(1+fee)(1+bond)`, so the sell price carries the
-markup and the drift closes to the rounding. Lines with no unit cost keep their
-rate; allowances and unit-price lines are left alone. It is refused once the
-estimate is accepted or converted.
+The **bid total** is the subtotal plus the markups, and it is **pre-tax**: the
+owner's contract sum and schedule of values (a later step, #552) are pre-tax,
+and tax is added on each invoice. Tax covers the lines and the markups
+together — the tax rate times the taxable line subtotal plus the markups —
+when any included line is taxable; an exempt customer pays no tax on anything.
+The **Total** is subtotal + markups + tax. The markups are a construction-mode
+field: a Business or Nonprofit estimate stores 0 for all four whatever an API
+caller sends, so its totals are the plain Subtotal / Tax / Total.
 
 **Accept locks the budget.** Accepting an estimate (it needs a job) seeds the
 job budget from the bought scope — a budget row you edited by hand still wins —
@@ -175,10 +173,14 @@ not accept a second, and a settled estimate refuses edits to its lines,
 markups, customer, job and tax (its notes and expiration still edit). **There
 is no unlock** — a new estimate or, later, a change order is how a locked
 budget moves. The customer PDF groups the bid by package with the section code,
-then blocks the allowances, alternates (accepted ones marked) and unit prices,
-and foots Subtotal / Tax / Total. Converting an accepted estimate to an invoice
-drops the unit-price lines and any un-accepted alternate and carries each
-line's cost type and unit cost onto the invoice.
+then blocks the allowances, the alternates not yet taken (at their marked-up
+price) and unit prices, and foots Subtotal, a row per non-zero markup, Bid
+total, Tax and Total. The seeded budget distributes the markups across the rows'
+revenue pro rata to each row's share of the markup base, so the budgeted
+revenue foots to the bid. Converting an accepted estimate to an invoice drops
+the unit-price lines and any un-accepted alternate, carries each line's cost
+type and unit cost onto the invoice, and adds one invoice line per non-zero
+markup (on the job) so the invoice foots to the bid.
 
 **Change orders come later.** A change order (a later issue) will be how a
 locked budget moves — a numbered document that revises the contract amount and
@@ -226,9 +228,9 @@ appear. Every other report stays where it is.
   new company file; Construction is chosen in Settings afterward, as
   Nonprofit is. A "what kind of company is this?" step at creation is a
   later issue.
-- **No new accounting.** No change orders, draws (AIA-style pay
-  applications) or progress-billing screens; the accounts are there to post
-  to by hand until those land.
+- **No new accounting.** No change orders, draws (pay applications) or
+  progress-billing screens; the accounts are there to post to by hand until
+  those land.
 - **No COI-expiry warning** in Pay Bills — a later issue.
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);

@@ -8,11 +8,10 @@
 # route, the PDF and the tests all read, with no database of its own — it
 # reads only the estimate's own lines and markup percents.
 #
-# The bid the customer sees is the sum of the LINE PRICES — what they pay.
-# The markups are the contractor's own view of how a cost-based price was
-# built; "Price from cost" writes them into the rates, and the totals panel
-# shows cost → markups → target against the priced total so any drift is
-# visible. Tax applies to the bid like any estimate.
+# The lines stay AT COST. The four markups are their own figures under the
+# subtotal — on the PDF, in the app, and (later, #552) as their own
+# schedule-of-values lines. The bid total is subtotal + the markups, pre-tax;
+# tax covers the lines and the markups together.
 # ============================================================================
 
 from decimal import Decimal
@@ -51,9 +50,12 @@ def line_cost(line) -> Decimal:
     return _q(qty * Decimal(str(line.unit_cost)))
 
 
-# A line's price is its stored amount (quantity × rate), already to the cent.
+# A line's price is quantity × rate, to the cent (an ORM line's stored amount
+# equals this; a request-schema line has no settled amount, so compute it).
 def line_price(line) -> Decimal:
-    return _q(line.amount or 0)
+    qty = Decimal(str(getattr(line, "quantity", 0) or 0))
+    rate = Decimal(str(getattr(line, "rate", 0) or 0))
+    return _q(qty * rate)
 
 
 def _pct(value) -> Decimal:
@@ -64,13 +66,16 @@ def _pct(value) -> Decimal:
 # A base line or an accepted alternate is markup-able scope; allowances and
 # everything excluded are not.
 def _markupable(line) -> bool:
-    kind = line.line_kind or "base"
-    return kind == "base" or (kind == "alternate" and line.alternate_accepted)
+    kind = getattr(line, "line_kind", None) or "base"
+    return kind == "base" or (
+        kind == "alternate" and getattr(line, "alternate_accepted", False)
+    )
 
 
-def reprice_factor(estimate) -> Decimal:
-    """The multiplier that turns a line's unit cost into a marked-up rate:
-    (1+gc)(1+ins)(1+fee)(1+bond). Unrounded — the caller rounds the rate."""
+def markup_factor(estimate) -> Decimal:
+    """The multiplier that turns a line's unit cost into a marked-up price:
+    (1+gc)(1+ins)(1+fee)(1+bond). Unrounded — the caller rounds the price.
+    Used to show an alternate's marked-up price to the customer."""
     one = Decimal("1")
     return (
         (one + _pct(estimate.gc_pct))
@@ -80,38 +85,101 @@ def reprice_factor(estimate) -> Decimal:
     )
 
 
+def _markups(markup_base, gc_pct, insurance_pct, fee_pct, bond_pct):
+    """The four markups compounding in order on the markup base, each rounded
+    to the cent: gc on the base, insurance on base+gc, fee on base+gc+ins,
+    bond on base+gc+ins+fee. Returns (gc, insurance, fee, bond)."""
+    gc = _q(markup_base * _pct(gc_pct))
+    insurance = _q((markup_base + gc) * _pct(insurance_pct))
+    fee = _q((markup_base + gc + insurance) * _pct(fee_pct))
+    bond = _q((markup_base + gc + insurance + fee) * _pct(bond_pct))
+    return gc, insurance, fee, bond
+
+
+def estimate_document_totals(
+    lines, tax_rate, gc_pct, insurance_pct, fee_pct, bond_pct
+) -> tuple[Decimal, Decimal, Decimal]:
+    """The stored (subtotal, tax_amount, total) for an estimate, lines at cost
+    with the markups as their own figures under the subtotal.
+
+    - subtotal = Σ price of the included lines (base + accepted alternates +
+      allowances), each price being quantity × rate (an ORM line's amount).
+    - the four markups compound in order on the markup base (Σ price of base /
+      accepted-alternate lines that carry a unit cost); markup_total is their
+      sum.
+    - tax covers the lines AND the markups: tax_rate × (taxable line subtotal +
+      markup_total) when at least one included line is taxable, else 0 (an
+      exempt customer pays no tax on anything).
+    - total = subtotal + markup_total + tax.
+
+    Works on both ORM lines and the request-schema lines (both carry quantity,
+    rate, unit_cost, line_kind, alternate_accepted, is_taxable); price is
+    computed from quantity × rate, so a schema line needs no stored amount.
+    """
+    included = [ln for ln in lines if is_included_line(ln)]
+    subtotal = _q(sum((line_price(ln) for ln in included), Decimal("0")))
+    markup_base = _q(
+        sum(
+            (
+                line_price(ln)
+                for ln in included
+                if _markupable(ln) and ln.unit_cost is not None
+            ),
+            Decimal("0"),
+        )
+    )
+    gc, insurance, fee, bond = _markups(
+        markup_base, gc_pct, insurance_pct, fee_pct, bond_pct
+    )
+    markup_total = gc + insurance + fee + bond
+
+    taxable_lines = [
+        ln for ln in included if getattr(ln, "is_taxable", None) is not False
+    ]
+    if taxable_lines:
+        taxable_base = _q(sum((line_price(ln) for ln in taxable_lines), Decimal("0")))
+        tax_amount = _q((taxable_base + markup_total) * Decimal(str(tax_rate or 0)))
+    else:
+        tax_amount = Decimal("0")
+
+    total = _q(subtotal + markup_total + tax_amount)
+    return subtotal, tax_amount, total
+
+
 def estimate_totals(estimate) -> dict:
     """Every bid figure for an estimate, from its own lines and markups.
 
-    The bid the customer pays is the sum of the included line PRICES:
+    The lines stay at cost; the markups are their own figures under the
+    subtotal:
 
-        bid_total = Σ amount of base lines + accepted alternates + allowances
-
-    The contractor's cost view sits beside it:
-
-    - cost_subtotal — Σ qty×unit_cost over the markup-able lines (base +
-      accepted alternates) that HAVE a unit cost; allowances never count.
-    - the four markups compound in order on cost_subtotal (gc on it,
-      insurance on cost+gc, fee on cost+gc+ins, bond on cost+gc+ins+fee).
-    - markup_target — cost_subtotal + the four markups (what a cost-based
-      price should foot to).
-    - priced_direct — Σ amount of base / accepted-alternate lines priced with
+    - markup_base — Σ price of base + accepted-alternate lines that HAVE a
+      unit cost (priced at cost, so this is the cost the markups build on);
+      allowances never count.
+    - the four markups compound in order on markup_base; markup_total is their
+      sum.
+    - subtotal — Σ price of the included lines (base + accepted alternates +
+      allowances).
+    - priced_direct — Σ price of base / accepted-alternate lines priced with
       NO unit cost (a flat price, never marked up).
-    - drift — bid_total − allowance_total − priced_direct − markup_target:
-      the gap between the priced bid and the cost-built target, which
-      "Price from cost" closes to the rounding.
+    - allowance_total — Σ price of the allowance lines.
+    - bid_total — subtotal + markup_total (the PRE-TAX contract sum #552 uses).
+    - bid_tax / bid_total_with_tax mirror the estimate's stored tax and total
+      (total − tax == bid_total).
 
-    by_package carries price and cost per package (allowances contribute
-    price only, never a unit cost); alternates and unit_prices list the lines
-    held out of the bid so the customer can choose them.
+    by_package carries price and cost per package (allowances contribute price
+    only, never a unit cost); alternates and unit_prices list the lines held
+    out of the bid so the customer can choose them. An alternate that carries
+    a unit cost shows its MARKED-UP price (cost × the markup factor); one with
+    no cost shows its rate price.
     """
-    bid_total = Decimal("0")
+    subtotal = Decimal("0")
     allowance_total = Decimal("0")
-    cost_subtotal = Decimal("0")
+    markup_base = Decimal("0")
     priced_direct = Decimal("0")
     by_package: dict = {}
     alternates: list = []
     unit_prices: list = []
+    factor = markup_factor(estimate)
 
     for line in estimate.lines:
         kind = line.line_kind or "base"
@@ -131,11 +199,14 @@ def estimate_totals(estimate) -> dict:
             continue
 
         if kind == "alternate":
+            # An alternate with a unit cost is shown at its marked-up price;
+            # one with no cost is shown at its rate price.
+            shown = _q(cost * factor) if line.unit_cost is not None else price
             alternates.append(
                 {
                     "id": line.id,
                     "description": line.description,
-                    "amount": price,
+                    "amount": shown,
                     "accepted": bool(line.alternate_accepted),
                 }
             )
@@ -143,14 +214,14 @@ def estimate_totals(estimate) -> dict:
                 continue
 
         # From here the line is included (base, allowance, or accepted alt).
-        bid_total += price
+        subtotal += price
         if kind == "allowance":
             allowance_total += price
         else:  # base or accepted alternate
             if line.unit_cost is None:
                 priced_direct += price
             else:
-                cost_subtotal += cost
+                markup_base += price
 
         key = line.trade_package_id if line.trade_package_id is not None else UNASSIGNED
         bucket = by_package.get(key)
@@ -172,12 +243,15 @@ def estimate_totals(estimate) -> dict:
         bucket["price"] += price
         bucket["line_count"] += 1
 
-    gc = _q(cost_subtotal * _pct(estimate.gc_pct))
-    insurance = _q((cost_subtotal + gc) * _pct(estimate.insurance_pct))
-    fee = _q((cost_subtotal + gc + insurance) * _pct(estimate.fee_pct))
-    bond = _q((cost_subtotal + gc + insurance + fee) * _pct(estimate.bond_pct))
-    markup_target = cost_subtotal + gc + insurance + fee + bond
-    drift = bid_total - allowance_total - priced_direct - markup_target
+    gc, insurance, fee, bond = _markups(
+        markup_base,
+        estimate.gc_pct,
+        estimate.insurance_pct,
+        estimate.fee_pct,
+        estimate.bond_pct,
+    )
+    markup_total = gc + insurance + fee + bond
+    bid_total = subtotal + markup_total
 
     # Named packages by name, the unassigned bucket last.
     packages = sorted(
@@ -186,7 +260,7 @@ def estimate_totals(estimate) -> dict:
     )
 
     return {
-        "cost_subtotal": cost_subtotal,
+        "markup_base": markup_base,
         "gc_pct": Decimal(str(estimate.gc_pct or 0)),
         "insurance_pct": Decimal(str(estimate.insurance_pct or 0)),
         "fee_pct": Decimal(str(estimate.fee_pct or 0)),
@@ -195,14 +269,14 @@ def estimate_totals(estimate) -> dict:
         "insurance": insurance,
         "fee": fee,
         "bond": bond,
-        "markup_target": markup_target,
+        "markup_total": markup_total,
         "priced_direct": priced_direct,
         "allowance_total": allowance_total,
-        "drift": drift,
+        "subtotal": subtotal,
         # The contract sum and schedule of values (#552) are PRE-TAX, so
-        # bid_total is the pre-tax price sum; tax is added on each invoice.
+        # bid_total is subtotal + the markups; tax rides each invoice.
         # bid_tax / bid_total_with_tax mirror the estimate's stored tax and
-        # total (what the recompute put there over the included lines).
+        # total (total − tax == bid_total).
         "bid_total": bid_total,
         "bid_tax": _q(getattr(estimate, "tax_amount", 0) or 0),
         "bid_total_with_tax": _q(getattr(estimate, "total", 0) or 0),

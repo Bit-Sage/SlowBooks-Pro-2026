@@ -168,24 +168,25 @@ yet (bids and commitments are later steps). A prompt to collect a Sub's W-9
 is a follow-up. See [docs/contractor-mode.md](docs/contractor-mode.md).
 
 **Construction estimating** (#551, @ContractorKeith). The construction
-estimate becomes a real bid. Its lines now belong to the trade packages (#550)
-a general contractor awards, each line is a plain base line, an **allowance**,
-an add/deduct **alternate**, or a **unit price** (a rate card, not part of the
-total), and each carries a unit of measure. The bid is the sum of the included
-line prices — base lines, accepted alternates and allowances — and foots
-Subtotal / Tax / Total like any estimate (unit prices and un-accepted
-alternates are in no total and aren't taxed). Beside it, four markups
-**compound in order** — general conditions, then insurance, then fee, then
-bond — each figured on the running total before it, to a cost-based target: on
-a $100,000 base cost at 8 / 1.5 / 5 / 1 percent that is $8,000 GC, $1,620
-insurance, $5,481 fee and $1,151.01 bond, a $116,252.01 target. The totals
-panel shows the **drift** between the priced bid and that target; **Price from
-cost** sets every cost-based line's rate from its unit cost and the markup
-factor in one click, closing it to the rounding. The customer PDF groups the
-lines by package with the section code, then the allowances, alternates and
-unit prices in their own blocks, and foots Subtotal / Tax / Total — the markups
-are the contractor's to keep, so they are not itemised there (they are in the
-app's totals panel).
+estimate becomes a commercial bid. Its lines now belong to the trade packages
+(#550) a general contractor awards, each line is a plain base line, an
+**allowance**, an add/deduct **alternate**, or a **unit price** (a rate card,
+not part of the total), and each carries a unit of measure. The **lines stay
+at cost** — a base or alternate line with a unit cost is priced at cost, one
+with no unit cost is priced direct and never marked up — and the four markups
+are their own figures **under the subtotal**, **compounding in order**:
+general conditions, then insurance, then fee, then bond, each figured on the
+running total before it. On a $100,000 cost of work at 8 / 1.5 / 5 / 1 percent
+that is $8,000 GC, $1,620 insurance, $5,481 fee and $1,151.01 bond, a
+**$116,252.01 bid total**. The bid total is pre-tax; tax covers the lines and
+the markups together (nothing when the customer is exempt), and the Total is
+subtotal + markups + tax. An alternate with a unit cost is shown at its
+marked-up price, and accepting it adds its cost to the markup base; an
+allowance budgets its amount as cost. The customer PDF groups the lines by
+package with the section code, then the allowances, alternates (marked-up
+price) and unit prices in their own blocks, and foots Subtotal, a row per
+non-zero markup, Bid total, Tax and Total. Converting carries the markups onto
+the invoice as their own lines, so it foots to the bid.
 
 Accepting an estimate **locks the job budget to it**: the estimate seeds the
 budget from the bought scope (a row you edited by hand still wins), and those

@@ -190,6 +190,23 @@ _jinja_env.filters["rate"] = _format_rate
 _jinja_env.filters["qty"] = _format_qty
 _jinja_env.filters["tax_percent"] = _format_tax_percent
 _jinja_env.filters["fdate"] = _format_date
+
+
+def _format_pct_label(value):
+    """A markup percent as it reads on a label: 8, 1.5, 10 — the stored value
+    (8 = 8%) with any trailing zeros dropped (#551)."""
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        s = format(Decimal(str(value or 0)), "f")
+    except (InvalidOperation, ValueError):
+        s = "0"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
+_jinja_env.filters["pct_label"] = _format_pct_label
 _jinja_env.globals["document_currency_code"] = document_currency_code
 
 from app.services.addresses import city_line, country_line  # noqa: E402

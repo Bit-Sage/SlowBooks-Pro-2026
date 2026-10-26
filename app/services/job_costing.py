@@ -785,29 +785,54 @@ def allocate_cost(
 def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[JobBudget]:
     """One budget row per cost code on the estimate: cost = qty × unit cost
     (0 when no cost is entered — budgeting the sale price as cost would
-    hide the margin), revenue = the line amount. Lines without a code roll
-    into a whole-job row. Re-seeding replaces the estimate rows; a row the
-    operator edited by hand (source "manual") wins and is left alone."""
+    hide the margin), revenue = the line amount plus the row's share of the
+    markups. An ALLOWANCE line budgets its amount as cost (a budgeted figure
+    for undesigned work is spent, not marked up), even with no unit cost.
+
+    Construction lines are priced at cost, so the markups (general conditions,
+    insurance, fee, bond) are the only budgeted margin; they are distributed
+    across the rows' revenue pro rata to each row's share of the markup base
+    (rows with no markup-able cost get none), with the rounding remainder on
+    the last such row, so Σ revenue == the pre-tax bid total.
+
+    Lines without a code roll into a whole-job row. Re-seeding replaces the
+    estimate rows; a row the operator edited by hand (source "manual") wins and
+    is left alone."""
     # Key on (cost_code_id, cost_type): a line carries its own type (#550), and
     # the budget's unique key allows both a code and a type on one row. Only
     # the bought scope seeds a budget — a unit-price line is a rate card and an
     # un-accepted alternate is not scope yet (#551).
-    from app.services.estimating import included_lines
+    from app.services.estimating import (
+        _markupable,
+        estimate_totals,
+        included_lines,
+        line_price,
+    )
 
+    # bucket: [cost, revenue, markup_base]
     totals: dict[tuple, list[Decimal]] = {}
     for ln in included_lines(estimate):
         qty = Decimal(str(ln.quantity or 0))
-        cost = (
-            _q(qty * Decimal(str(ln.unit_cost)))
-            if ln.unit_cost is not None
+        kind = ln.line_kind or "base"
+        if kind == "allowance":
+            cost = _q(ln.amount or 0)
+        elif ln.unit_cost is not None:
+            cost = _q(qty * Decimal(str(ln.unit_cost)))
+        else:
+            cost = Decimal("0")
+        rev = _q(ln.amount or 0)
+        base = (
+            line_price(ln)
+            if (_markupable(ln) and ln.unit_cost is not None)
             else Decimal("0")
         )
-        rev = _q(ln.amount or 0)
         bucket = totals.setdefault(
-            (ln.cost_code_id, ln.cost_type), [Decimal("0"), Decimal("0")]
+            (ln.cost_code_id, ln.cost_type),
+            [Decimal("0"), Decimal("0"), Decimal("0")],
         )
         bucket[0] += cost
         bucket[1] += rev
+        bucket[2] += base
     db.query(JobBudget).filter(
         JobBudget.job_id == job.id, JobBudget.source == "estimate"
     ).delete()
@@ -821,16 +846,35 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
         )
         .all()
     }
+    # The rows that will seed (manual-owned codes are left alone), in order.
+    seeded = [
+        (code_id, ctype, cost, rev, base)
+        for (code_id, ctype), (cost, rev, base) in totals.items()
+        if code_id not in manual_codes
+    ]
+    # Distribute the markups across the seeded rows pro rata to their share of
+    # the markup base; the last row with a base takes the rounding remainder.
+    markup_total = estimate_totals(estimate)["markup_total"]
+    base_total = sum((s[4] for s in seeded), Decimal("0"))
+    markup_rev = [Decimal("0")] * len(seeded)
+    if markup_total and base_total:
+        with_base = [i for i, s in enumerate(seeded) if s[4] > 0]
+        assigned = Decimal("0")
+        for n, i in enumerate(with_base):
+            if n == len(with_base) - 1:
+                markup_rev[i] = markup_total - assigned
+            else:
+                share = _q(markup_total * seeded[i][4] / base_total)
+                markup_rev[i] = share
+                assigned += share
     rows = []
-    for (code_id, ctype), (cost, rev) in totals.items():
-        if code_id in manual_codes:
-            continue
+    for i, (code_id, ctype, cost, rev, _base) in enumerate(seeded):
         row = JobBudget(
             job_id=job.id,
             cost_code_id=code_id,
             cost_type=ctype,
             amount=cost,
-            revenue_amount=rev,
+            revenue_amount=_q(rev + markup_rev[i]),
             source="estimate",
             estimate_id=estimate.id,
         )

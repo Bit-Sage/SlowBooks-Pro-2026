@@ -27,9 +27,10 @@ from app.services.audit import audited_bulk_delete
 from app.services.job_costing import line_cost_type, budgets_from_estimate
 from app.services.estimating import (
     estimate_totals,
-    reprice_factor,
+    estimate_document_totals,
     is_included_line,
 )
+from app.services.terminology import terms_from_db
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.contacts import Customer
@@ -62,8 +63,8 @@ router = APIRouter(prefix="/api/estimates", tags=["estimates"])
 
 _ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
 
-# The one message a settled (accepted/converted) estimate gives when something
-# tries to re-price or re-scope it; reprice and the edit guard share it (#551).
+# The one message a settled (accepted/converted) estimate gives when an edit
+# tries to re-price or re-scope it — its numbers are the locked budget (#551).
 _SETTLED_MSG = "A settled estimate can't be repriced or re-scoped; make a new one or a change order."
 
 # Fields frozen once an estimate is settled (notes/expiration stay editable).
@@ -80,6 +81,32 @@ _FROZEN_ON_SETTLE = {
 
 def _customer_bill_to(customer) -> dict:
     return {f"bill_{k}": getattr(customer, f"bill_{k}", None) for k in _ADDRESS_PARTS}
+
+
+def _fmt_pct(pct) -> str:
+    """A markup percent as it reads on a line description: 8, 1.5, 10 — the
+    stored value with any trailing zeros dropped (#551)."""
+    s = format(Decimal(str(pct or 0)), "f")
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
+_MARKUP_PCTS = ("gc_pct", "insurance_pct", "fee_pct", "bond_pct")
+
+
+def _enforce_at_cost(lines, is_construction: bool) -> None:
+    """In a construction company the estimate lines stay AT COST (#551): a
+    base or alternate line that carries a unit cost gets rate = unit cost, so
+    its amount is quantity × unit cost and the markups are the only margin.
+    Allowances and unit-price lines keep their rate. Business and Nonprofit
+    estimates are untouched — their Cost column is the budget side and the
+    rate is what they charge."""
+    if not is_construction:
+        return
+    for ln in lines:
+        if ln.line_kind in ("base", "alternate") and ln.unit_cost is not None:
+            ln.rate = Decimal(str(ln.unit_cost))
 
 
 def _estimate_response(est: Estimate) -> EstimateResponse:
@@ -214,11 +241,26 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
     # never filled, so its PDF and the invoice it became had no address.
     bill_to = _customer_bill_to(customer)
     resolve_line_taxable(db, data.lines, customer)
-    # The document totals (and its tax) cover the bought scope only: a
-    # unit-price line is a rate card and an un-accepted alternate is not in
-    # the bid, so neither is taxed (#551).
-    subtotal, tax_amount, total = compute_line_totals(
-        [ln for ln in data.lines if is_included_line(ln)], data.tax_rate
+    # The markups are a construction-mode field: a Business or Nonprofit
+    # estimate stores 0 whatever an API caller sent, so its totals, PDF and
+    # the pure bid math all agree without a company gate inside the math.
+    is_construction = terms_from_db(db).is_construction
+    if not is_construction:
+        for name in _MARKUP_PCTS:
+            setattr(data, name, Decimal("0"))
+    # Construction lines stay at cost before anything is totalled (#551).
+    _enforce_at_cost(data.lines, is_construction)
+    # The document totals cover the bought scope and the four markups: lines
+    # at cost, the markups under the subtotal, tax on both. A unit-price line
+    # is a rate card and an un-accepted alternate is not in the bid, so the
+    # helper leaves them out (#551).
+    subtotal, tax_amount, total = estimate_document_totals(
+        data.lines,
+        data.tax_rate,
+        data.gc_pct,
+        data.insurance_pct,
+        data.fee_pct,
+        data.bond_pct,
     )
 
     estimate = None
@@ -340,6 +382,13 @@ def update_estimate(
     for key, val in changes.items():
         setattr(estimate, key, val)
 
+    # The markups are a construction-mode field: a Business or Nonprofit
+    # estimate keeps them at 0 whatever an API caller sent (#551).
+    is_construction = terms_from_db(db).is_construction
+    if not is_construction:
+        for name in _MARKUP_PCTS:
+            setattr(estimate, name, Decimal("0"))
+
     if data.lines is not None:
         # Each line's tax is settled before it is stored, the way create does
         # it: a non-taxable customer's lines are never taxable, and a line
@@ -351,6 +400,8 @@ def update_estimate(
         # 2.17.3 exploratory fixes). The customer is the one the estimate
         # has after this edit.
         resolve_line_taxable(db, data.lines, db.get(Customer, estimate.customer_id))
+        # construction lines stay at cost before they are stored (#551)
+        _enforce_at_cost(data.lines, is_construction)
         # each old line leaves a DELETE event with its amounts (#289)
         audited_bulk_delete(
             db, db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id)
@@ -372,6 +423,13 @@ def update_estimate(
                     db, line_data.cost_code_id, line_data.cost_type
                 ),
                 unit_cost=line_data.unit_cost,
+                # the bid shape rides the edit too (#551): without these a PUT
+                # stored every line as a base/unassigned line and dropped an
+                # accept, while the totals were computed from the sent kinds
+                trade_package_id=line_data.trade_package_id,
+                line_kind=line_data.line_kind,
+                unit=line_data.unit,
+                alternate_accepted=line_data.alternate_accepted,
                 is_taxable=(
                     line_data.is_taxable if line_data.is_taxable is not None else True
                 ),
@@ -380,21 +438,32 @@ def update_estimate(
             db.add(line)
 
         tax_rate = data.tax_rate if data.tax_rate is not None else estimate.tax_rate
-        subtotal, tax_amount, total = compute_line_totals(
-            [ln for ln in data.lines if is_included_line(ln)], tax_rate
+        subtotal, tax_amount, total = estimate_document_totals(
+            data.lines,
+            tax_rate,
+            estimate.gc_pct,
+            estimate.insurance_pct,
+            estimate.fee_pct,
+            estimate.bond_pct,
         )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
-    elif "tax_rate" in changes or "customer_id" in changes:
-        # A new rate or a new customer without resending the lines: the
-        # stored lines are re-totalled (a rate-only edit left the old tax and
-        # total in place), and a non-taxable customer's exemption covers them.
+    elif any(k in changes for k in ("tax_rate", "customer_id", *_MARKUP_PCTS)):
+        # A new rate, customer or markup percent without resending the lines:
+        # the stored lines are re-totalled (a rate- or markup-only edit left
+        # the old tax and total in place), and a non-taxable customer's
+        # exemption covers them.
         stored = list(estimate.lines)
         if "customer_id" in changes:
             resolve_line_taxable(db, stored, db.get(Customer, estimate.customer_id))
-        subtotal, tax_amount, total = compute_line_totals(
-            [ln for ln in stored if is_included_line(ln)], estimate.tax_rate
+        subtotal, tax_amount, total = estimate_document_totals(
+            stored,
+            estimate.tax_rate,
+            estimate.gc_pct,
+            estimate.insurance_pct,
+            estimate.fee_pct,
+            estimate.bond_pct,
         )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
@@ -409,43 +478,6 @@ def update_estimate(
             _accept_estimate(db, estimate, estimate.job_id)
         else:
             estimate.status = EstimateStatus.ACCEPTED
-
-    db.commit()
-    db.refresh(estimate)
-    return _estimate_response(estimate)
-
-
-@router.post("/{estimate_id}/reprice", response_model=EstimateResponse)
-def reprice_from_cost(estimate_id: int, db: Session = Depends(get_db)):
-    """Price from cost (#551): set each base / accepted-alternate line's rate
-    to its unit cost times the markup factor (1+gc)(1+ins)(1+fee)(1+bond), to
-    the cent, and recompute the line and document totals the way an edit
-    does. Lines without a unit cost keep their rate; allowances and unit-price
-    lines are never repriced. Refused once the estimate is accepted or
-    converted — its numbers are settled then."""
-    estimate = db.query(Estimate).filter(Estimate.id == estimate_id).first()
-    if not estimate:
-        raise HTTPException(status_code=404, detail="Estimate not found")
-    if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
-        raise HTTPException(status_code=409, detail=_SETTLED_MSG)
-
-    factor = reprice_factor(estimate)
-    for line in estimate.lines:
-        kind = line.line_kind or "base"
-        # Base lines and every alternate (an alternate is priced before the
-        # customer decides it) reprice; allowances and unit-price lines never
-        # do, and a line with no unit cost keeps its rate.
-        if kind in ("allowance", "unit_price") or line.unit_cost is None:
-            continue
-        line.rate = _q(Decimal(str(line.unit_cost)) * factor)
-        line.amount = _q(Decimal(str(line.quantity or 0)) * Decimal(str(line.rate)))
-
-    subtotal, tax_amount, total = compute_line_totals(
-        [ln for ln in estimate.lines if is_included_line(ln)], estimate.tax_rate
-    )
-    estimate.subtotal = subtotal
-    estimate.tax_amount = tax_amount
-    estimate.total = total
 
     db.commit()
     db.refresh(estimate)
@@ -531,13 +563,40 @@ def convert_to_invoice(
 
     # A new invoice gets the customer's CURRENT tax treatment, computed —
     # not the estimate's stored tax (see taxed_copy_lines).
-    from app.services.accounting import compute_line_totals, taxed_copy_lines
+    from types import SimpleNamespace
+
+    from app.services.accounting import taxed_copy_lines
 
     # The bid's own lines only: unit prices are a rate card and an alternate
     # becomes scope only once accepted, so neither converts (#551).
     kept = [ln for ln in estimate.lines if is_included_line(ln)]
     copied = taxed_copy_lines(kept, estimate.customer)
-    subtotal, tax_amount, total = compute_line_totals(copied, estimate.tax_rate)
+    # The four markups ride the invoice as their own lines under the copied
+    # scope, so the invoice foots to the bid (#551): one line per non-zero
+    # markup, taxed with the lines (taxable when any copied line is taxable).
+    mt = estimate_totals(estimate)
+    markups_taxable = any(cline.is_taxable for cline in copied)
+    markup_specs = (
+        ("General conditions", mt["gc_pct"], mt["gc"]),
+        ("Insurance", mt["insurance_pct"], mt["insurance"]),
+        ("Fee", mt["fee_pct"], mt["fee"]),
+        ("Bond", mt["bond_pct"], mt["bond"]),
+    )
+    markup_lines = [
+        SimpleNamespace(
+            description=f"{label} ({_fmt_pct(pct)}%)",
+            amount=amt,
+            is_taxable=markups_taxable,
+        )
+        for label, pct, amt in markup_specs
+        if amt and amt != 0
+    ]
+    for ml in markup_lines:
+        ml.quantity = Decimal("1")
+        ml.rate = ml.amount
+    subtotal, tax_amount, total = compute_line_totals(
+        list(copied) + markup_lines, estimate.tax_rate
+    )
     confirm_zero_total(
         total,
         bool(data and data.allow_zero_total),
@@ -583,6 +642,10 @@ def convert_to_invoice(
     # stored on the estimate (books from before the rule) is left off,
     # and the response says which (NEW-36).
     left_off: list[str] = []
+    header_job_id = own_job(db, estimate.customer_id, estimate.job_id, left_off)
+    # The markup lines carry the header's job and the scope's class, so their
+    # income posts under the job (not "No job") in P&L by Job (#551).
+    markup_class = next((ln.class_name for ln in kept if ln.class_name), None)
     invoice = Invoice(
         invoice_number=invoice_number,
         customer_id=estimate.customer_id,
@@ -596,7 +659,7 @@ def convert_to_invoice(
         total=total,
         balance_due=total,
         class_id=estimate.class_id,
-        job_id=own_job(db, estimate.customer_id, estimate.job_id, left_off),
+        job_id=header_job_id,
         # the estimate's own notes; else what a new invoice starts with (#392)
         notes=estimate.notes
         or default_message_body(db)
@@ -627,6 +690,28 @@ def convert_to_invoice(
         )
         db.add(iline)
         new_lines.append(iline)
+
+    # Each non-zero markup becomes its own invoice line after the scope, so
+    # the invoice's subtotal / tax / total foot to the bid; an item-less line
+    # posts to the default income account (#551).
+    next_order = max((ln.line_order for ln in kept), default=-1) + 1
+    for ml in markup_lines:
+        iline = InvoiceLine(
+            invoice_id=invoice.id,
+            item_id=None,
+            description=ml.description,
+            quantity=ml.quantity,
+            rate=ml.rate,
+            amount=_q(ml.amount),
+            class_name=markup_class,
+            job_id=header_job_id,
+            cost_code_id=None,
+            is_taxable=ml.is_taxable,
+            line_order=next_order,
+        )
+        db.add(iline)
+        new_lines.append(iline)
+        next_order += 1
 
     estimate.status = EstimateStatus.CONVERTED
     estimate.converted_invoice_id = invoice.id

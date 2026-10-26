@@ -53,6 +53,10 @@ class EstimateLineCreate(StrictModel):
         # so the non-negative rule skips alternates; every other kind keeps it.
         if self.line_kind != "alternate":
             validate_non_negative_line(self.quantity, self.rate)
+            # a line priced at cost would otherwise store a negative line from
+            # a negative unit cost; a deduct alternate keeps its negative cost
+            if self.unit_cost is not None and self.unit_cost < 0:
+                raise ValueError("unit_cost must not be negative")
         return self
 
 
@@ -146,11 +150,11 @@ class EstimateUnitPriceOut(BaseModel):
 
 
 class EstimateTotals(BaseModel):
-    """The bid math (#551): the base cost the markups compound on, the four
-    markups in order, the allowances added after markup, the bid total, and
-    the package / alternate / unit-price breakdowns."""
+    """The bid math (#551): the lines stay at cost, the four markups are their
+    own figures under the subtotal, the bid total is subtotal + markups
+    (pre-tax), and the package / alternate / unit-price breakdowns."""
 
-    cost_subtotal: Decimal
+    markup_base: Decimal
     gc_pct: Decimal
     insurance_pct: Decimal
     fee_pct: Decimal
@@ -159,10 +163,10 @@ class EstimateTotals(BaseModel):
     insurance: Decimal
     fee: Decimal
     bond: Decimal
-    markup_target: Decimal
+    markup_total: Decimal
     priced_direct: Decimal
     allowance_total: Decimal
-    drift: Decimal
+    subtotal: Decimal
     bid_total: Decimal
     bid_tax: Decimal
     bid_total_with_tax: Decimal

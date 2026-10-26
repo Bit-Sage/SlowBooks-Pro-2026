@@ -1,7 +1,7 @@
-"""The estimate PDF in construction mode (#551): lines grouped by package
-with the section code, then the allowances, alternates and unit-price blocks,
-and the bid footing as any estimate does — Subtotal / Tax / Total over the
-priced lines. Markups are the contractor's own and are not itemised here.
+"""The estimate PDF in construction mode (#551): lines AT COST grouped by
+package with the section code, then the allowances, alternates and unit-price
+blocks, and the totals footing Subtotal, a row per non-zero markup, Bid total,
+Tax and Total.
 
 These render the PDF template (app/templates/estimate_pdf.html) through the
 same renderer the PDF endpoint uses. The HTML stage is deterministic and
@@ -45,6 +45,7 @@ def _html(db_session, est_id, company_type):
 def test_construction_pdf_groups_blocks_and_foots_with_tax(
     client, db_session, seed_customer
 ):
+    client.put("/api/settings", json={"company_type": "construction"})
     conc = _section(client, "03 30 00", "Cast-in-Place Concrete")
     pkg = client.post(
         "/api/trade-packages", json={"name": "Concrete", "section_ids": [conc["id"]]}
@@ -92,9 +93,11 @@ def test_construction_pdf_groups_blocks_and_foots_with_tax(
     assert "Allowances" in html and "Flooring allowance" in html
     assert "Alternates" in html and "Skylight alternate" in html
     assert "Unit prices" in html and "Rock excavation" in html
-    # the bid foots like a plain estimate: Subtotal / Tax / Total, no Bid Total
-    assert "Subtotal" in html and "Total" in html and "Bid Total" not in html
-    assert re.search(r"Tax \(7", html)  # tax is charged on the bid
+    # the totals foot Subtotal, the non-zero markups, Bid total, Tax, Total
+    assert "Subtotal" in html and "Total" in html and "Bid total" in html
+    assert "General conditions (10%)" in html  # percent without trailing zeros
+    assert "Fee (5%)" in html
+    assert re.search(r"Tax \(7", html)  # tax is charged on the bid and markups
 
     # the priced lines (base + allowance; unit price + pending alt excluded)
     # sum to the stored subtotal the PDF prints
@@ -102,6 +105,33 @@ def test_construction_pdf_groups_blocks_and_foots_with_tax(
     db_est = db_session.get(Estimate, est["id"])
     printed = sum((line_price(ln) for ln in included_lines(db_est)), Decimal("0"))
     assert printed == Decimal(str(full["subtotal"]))
+
+
+def test_an_accepted_alternate_is_not_listed_again_as_an_alternate(
+    client, db_session, seed_customer
+):
+    # an accepted alternate is in the scope table (at cost); the Alternates
+    # block offers only the ones not yet taken, so it never double-prints
+    client.put("/api/settings", json={"company_type": "construction"})
+    est = _estimate(
+        client,
+        seed_customer.id,
+        [
+            {"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 1000},
+            {
+                "description": "Upgrade alt",
+                "quantity": 1,
+                "rate": 0,
+                "unit_cost": 500,
+                "line_kind": "alternate",
+                "alternate_accepted": True,
+            },
+        ],
+        gc_pct=10,
+    )
+    html = _html(db_session, est["id"], "construction")
+    assert "Upgrade alt" in html  # once, in the scope table
+    assert "Alternates" not in html  # the only alternate is accepted → no block
 
 
 def test_a_pre_551_estimate_has_no_construction_blocks(
@@ -120,7 +150,7 @@ def test_a_pre_551_estimate_has_no_construction_blocks(
     assert "Allowances" not in html
     assert "Alternates" not in html
     assert "Unit prices" not in html
-    assert "Bid Total" not in html
-    # the plain totals block is present and foots the one line
-    assert "Subtotal" in html and "Total" in html
+    # no markups, so no markup rows; Bid total equals the subtotal
+    assert "General conditions" not in html
+    assert "Subtotal" in html and "Bid total" in html and "Total" in html
     assert "$500.00" in html

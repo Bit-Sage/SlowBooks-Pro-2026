@@ -107,22 +107,62 @@ test('the Accept button shows only for a pending estimate with a job', () => {
     assert.equal(page.acceptButtonHtml({ id: 5, job_id: 3, status: 'accepted' }), '');
 });
 
-test('Accept and Price-from-cost are registered write actions (hidden for read-only)', () => {
+test('Accept is a registered write action (hidden for read-only)', () => {
     const app = fs.readFileSync(path.join(__dirname, '../../app/static/js/app.js'), 'utf8');
     const block = app.slice(app.indexOf('WRITE_ACTIONS:'), app.indexOf('hideWriteControls(root)'));
     assert.match(block, /'EstimatesPage\.accept'/);
-    assert.match(block, /'EstimatesPage\.repriceFromCost'/);
+    // Price from cost is gone (#551): the lines stay at cost, no reprice action
+    assert.doesNotMatch(block, /repriceFromCost/);
+});
+
+test('syncRatesToCost mirrors the unit cost into the rate box and locks it', () => {
+    const ctx = estimatesContext(true);
+    const makeCell = (kind, uc) => ({
+        '.line-kind': { value: kind },
+        '.line-unit-cost': { value: uc },
+        '.line-rate': { value: '', readOnly: false, title: '' },
+    });
+    const atCost = makeCell('base', '250');
+    const noCost = makeCell('base', '');
+    const allowance = makeCell('allowance', '400');
+    const rows = [atCost, noCost, allowance].map(cells => ({ querySelector: s => cells[s] || null }));
+    ctx.$$ = () => rows;
+    ctx.EstimatesPage.syncRatesToCost();
+    // a base row with a unit cost: the rate mirrors it and is read-only
+    assert.equal(atCost['.line-rate'].value, '250');
+    assert.equal(atCost['.line-rate'].readOnly, true);
+    assert.match(atCost['.line-rate'].title, /At cost/);
+    // a base row with no cost stays editable
+    assert.equal(noCost['.line-rate'].readOnly, false);
+    // an allowance keeps an editable rate even with a cost typed
+    assert.equal(allowance['.line-rate'].readOnly, false);
+});
+
+test('bidTotals puts the compounding markups under the subtotal (lines at cost)', () => {
+    const ctx = estimatesContext(true);
+    // one base line at cost 100,000, gc 10% (the withFakeDom form), lines at cost
+    const rows = [makeRow(0, { kind: 'base', qty: 1, uc: 100000, rate: 100000, accepted: false })];
+    withFakeDom(ctx, rows);
+    const t = ctx.EstimatesPage.bidTotals();
+    assert.equal(t.markupBase, 100000);
+    assert.equal(t.gc, 10000);
+    assert.equal(t.markupTotal, 10000);
+    assert.equal(t.subtotal, 100000);
+    assert.equal(t.bid, 110000); // subtotal + markups, pre-tax
+    assert.equal(t.tax, 0); // no taxable line
+    assert.equal(t.total, 110000);
 });
 
 // bidTotals()/toggleAlternate use the stable data-eline index, so removing a
 // row never shifts which alternate an Accept checkbox toggles.
-function makeRow(eline, { kind, qty, uc, rate, accepted, desc, unit }) {
+function makeRow(eline, { kind, qty, uc, rate, accepted, desc, unit, taxable }) {
     const cells = {
         '.line-kind': { value: kind },
         '.line-qty': { value: String(qty) },
         '.line-unit-cost': { value: uc == null ? '' : String(uc) },
         '.line-rate': { value: String(rate) },
         '.line-alt-accepted': { checked: !!accepted },
+        '.line-taxable': { checked: !!taxable },
         '.line-desc': { value: desc || '' },
         '.line-unit': { value: unit || '' },
     };
@@ -130,7 +170,7 @@ function makeRow(eline, { kind, qty, uc, rate, accepted, desc, unit }) {
 }
 
 function withFakeDom(ctx, rows) {
-    const form = { gc_pct: { value: '10' }, insurance_pct: { value: '0' }, fee_pct: { value: '0' }, bond_pct: { value: '0' } };
+    const form = { gc_pct: { value: '10' }, insurance_pct: { value: '0' }, fee_pct: { value: '0' }, bond_pct: { value: '0' }, tax_rate: { value: '10' } };
     ctx.$ = (sel) => {
         if (sel === '#est-form') return form;
         const m = String(sel).match(/\[data-eline="(\d+)"\]/);
@@ -157,4 +197,19 @@ test('bidTotals and toggleAlternate ride the stable data-eline, not the row posi
     ctx.EstimatesPage.toggleAlternate(t.alternates[0].idx, true);
     assert.equal(rows[1].querySelector('.line-alt-accepted').checked, true); // row with data-eline 2
     assert.equal(rows[0].querySelector('.line-alt-accepted').checked, false); // base row untouched
+});
+
+test('bidTotals taxes the markups when any included line is taxable (server rule)', () => {
+    const ctx = estimatesContext(true);
+    // a non-taxable cost line makes the markups; a taxable priced-direct line
+    // with a $0 amount has no taxable subtotal but makes the bid taxable
+    const rows = [
+        makeRow(0, { kind: 'base', qty: 1, uc: 100000, rate: 100000, taxable: false }),
+        makeRow(1, { kind: 'base', qty: 1, uc: null, rate: 0, taxable: true }),
+    ];
+    withFakeDom(ctx, rows); // form tax_rate 10%, gc 10%
+    const t = ctx.EstimatesPage.bidTotals();
+    assert.equal(t.markupTotal, 10000);
+    // tax = 10% × (0 taxable subtotal + 10,000 markups) = 1,000 — not 0
+    assert.equal(t.tax, 1000);
 });

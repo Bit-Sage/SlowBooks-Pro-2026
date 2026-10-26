@@ -101,23 +101,32 @@ const EstimatesPage = {
                 <thead><tr><th scope="col">Allowances</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${allowances.map(l => `<tr><td>${escapeHtml(l.description || '')}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`).join('')}</tbody>
             </table></div>` : '';
-        const altBlock = t.alternates.length
-            ? `<div style="margin-top:12px;"><strong>Alternates</strong> <span style="color:var(--gray-500);">(add / deduct)</span>${t.alternates.map(a =>
-                `<div>${escapeHtml(a.description || '(alternate)')} — ${formatCurrency(a.amount)}${a.accepted ? ' <em>(accepted)</em>' : ''}</div>`).join('')}</div>` : '';
+        // an accepted alternate is in the scope above; the block offers the rest
+        const pendingAlts = t.alternates.filter(a => !a.accepted);
+        const altBlock = pendingAlts.length
+            ? `<div style="margin-top:12px;"><strong>Alternates</strong> <span style="color:var(--gray-500);">(add / deduct)</span>${pendingAlts.map(a =>
+                `<div>${escapeHtml(a.description || '(alternate)')} — ${formatCurrency(a.amount)}</div>`).join('')}</div>` : '';
         const upBlock = t.unit_prices.length
             ? `<div style="margin-top:12px;"><strong>Unit prices</strong>${t.unit_prices.map(u =>
                 `<div>${escapeHtml(u.description || '(unit price)')} — ${SalesLines.rate(u.rate)}${u.unit ? ' / ' + escapeHtml(u.unit) : ''}</div>`).join('')}</div>` : '';
-        // The customer sees the bid foot like any estimate: Subtotal / Tax /
-        // Total over the priced lines. The markups are the contractor's own
-        // and live in the edit form's totals panel, not here.
+        // Lines at cost, then the four markups as their own rows under the
+        // subtotal, the pre-tax Bid total, Tax (when charged) and Total (#551).
+        const pctLabel = v => String(+Number(v || 0));
+        const mRow = (label, pct, amt) => (Number(amt) ? `<div class="total-row"><span class="label">${label} (${pctLabel(pct)}%)</span><span class="value">${formatCurrency(amt)}</span></div>` : '');
+        const taxRow = Number(est.tax_amount) ? `<div class="total-row"><span class="label">Tax</span><span class="value">${formatCurrency(est.tax_amount)}</span></div>` : '';
         return `<div class="table-container"><table>
                 <thead><tr><th scope="col">Description</th><th scope="col" class="amount">Qty</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>${groupsHtml}</tbody>
             </table></div>
             ${allowBlock}${altBlock}${upBlock}
             <div class="invoice-totals">
-                <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatCurrency(est.subtotal)}</span></div>
-                <div class="total-row"><span class="label">Tax</span><span class="value">${formatCurrency(est.tax_amount)}</span></div>
+                <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatCurrency(t.subtotal)}</span></div>
+                ${mRow('General conditions', t.gc_pct, t.gc)}
+                ${mRow('Insurance', t.insurance_pct, t.insurance)}
+                ${mRow('Fee', t.fee_pct, t.fee)}
+                ${mRow('Bond', t.bond_pct, t.bond)}
+                <div class="total-row"><span class="label">Bid total</span><span class="value">${formatCurrency(t.bid_total)}</span></div>
+                ${taxRow}
                 <div class="total-row grand-total"><span class="label">Total</span><span class="value">${formatCurrency(est.total)}</span></div>
             </div>`;
     },
@@ -246,13 +255,12 @@ const EstimatesPage = {
                     </tbody>
                 </table></div>
                 <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="EstimatesPage.addLine()">+ Add Line</button>
-                ${EstimatesPage.repriceButtonHtml(id)}
                 ${EstimatesPage.markupsBlockHtml(est)}
-                <div class="invoice-totals" id="est-totals">
+                ${Terms.isConstruction() ? '' : `<div class="invoice-totals" id="est-totals">
                     <div class="total-row"><span class="label">Subtotal</span><span class="value" id="est-subtotal">$0.00</span></div>
                     <div class="total-row"><span class="label">Tax</span><span class="value" id="est-tax">$0.00</span></div>
                     <div class="total-row grand-total"><span class="label">Total</span><span class="value" id="est-total">$0.00</span></div>
-                </div>
+                </div>`}
                 ${EstimatesPage.bidTotalsPanelHtml()}
                 <div class="form-group" style="margin-top:12px;"><label>Notes</label>
                     <textarea name="notes">${escapeHtml(est.notes || '')}</textarea></div>
@@ -305,11 +313,6 @@ const EstimatesPage = {
         return `<td><input class="line-unit" style="width:48px" value="${escapeHtml(line.unit || '')}" placeholder="EA"></td>`;
     },
 
-    repriceButtonHtml(id) {
-        if (!Terms.isConstruction() || !id) return '';
-        return `<button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="EstimatesPage.repriceFromCost(${id})" title="Set each cost-based line's rate from its unit cost and the markups">Price from cost</button>`;
-    },
-
     markupsBlockHtml(est) {
         if (!Terms.isConstruction()) return '';
         const f = (name, val, label) =>
@@ -327,16 +330,17 @@ const EstimatesPage = {
         if (!Terms.isConstruction()) return '';
         const row = (label, id) => `<div class="total-row"><span class="label">${label}</span><span class="value" id="${id}">$0.00</span></div>`;
         return `<div class="invoice-totals" id="est-bid-totals" style="margin-top:8px;">
-            ${row('Base cost', 'est-bid-cost')}
+            ${row('Cost of work', 'est-bid-cost')}
+            ${row('Priced direct', 'est-bid-direct')}
+            ${row('Allowances', 'est-bid-allow')}
+            ${row('Subtotal', 'est-bid-subtotal')}
             ${row('General conditions', 'est-bid-gc')}
             ${row('Insurance', 'est-bid-ins')}
             ${row('Fee', 'est-bid-fee')}
             ${row('Bond', 'est-bid-bond')}
-            ${row('Markup target', 'est-bid-target')}
-            ${row('Priced direct', 'est-bid-direct')}
-            ${row('Allowances', 'est-bid-allow')}
-            ${row('Drift', 'est-bid-drift')}
-            <div class="total-row grand-total"><span class="label">Bid total</span><span class="value" id="est-bid-total">$0.00</span></div>
+            ${row('Bid total', 'est-bid-total')}
+            ${row('Tax', 'est-bid-tax')}
+            <div class="total-row grand-total"><span class="label">Total</span><span class="value" id="est-bid-grand">$0.00</span></div>
             <div id="est-bid-alternates" style="margin-top:8px; font-size:11px;"></div>
             <div id="est-bid-unitprices" style="margin-top:4px; font-size:11px;"></div>
         </div>`;
@@ -345,14 +349,16 @@ const EstimatesPage = {
     _r(x) { return Math.round((Number(x) + Number.EPSILON) * 100) / 100; },
 
     // The bid math the server computes (app/services/estimating.py), mirrored
-    // for the live form panel. Reads the current rows and markup inputs. The
-    // bid is the sum of line prices; cost / markups / target / drift are the
-    // contractor's cost view beside it.
+    // for the live form panel. Lines stay at cost; the four markups are their
+    // own figures under the subtotal, and tax covers the lines and the markups
+    // together. Reads the current rows and markup inputs (#551).
     bidTotals() {
         const pct = v => (Number(v) || 0) / 100;
         const form = $('#est-form');
         const m = n => pct(form && form[n] ? form[n].value : 0);
-        let costSubtotal = 0, allowanceTotal = 0, pricedDirect = 0, bid = 0;
+        // the marked-up factor an alternate's shown price uses
+        const factor = (1 + m('gc_pct')) * (1 + m('insurance_pct')) * (1 + m('fee_pct')) * (1 + m('bond_pct'));
+        let markupBase = 0, allowanceTotal = 0, pricedDirect = 0, subtotal = 0, taxableSubtotal = 0, anyTaxable = false;
         const alternates = [], unitPrices = [];
         $$('#est-lines tr').forEach(row => {
             // the stable line index is the data attribute, not the row's
@@ -365,33 +371,45 @@ const EstimatesPage = {
             const cost = hasCost ? EstimatesPage._r(qty * Number(ucRaw)) : 0;
             const rate = Number(row.querySelector('.line-rate')?.value) || 0;
             const amount = EstimatesPage._r(qty * rate);
+            const taxable = row.querySelector('.line-taxable')?.checked || false;
             const accepted = row.querySelector('.line-alt-accepted')?.checked || false;
             const desc = row.querySelector('.line-desc')?.value || '';
             const unit = row.querySelector('.line-unit')?.value || '';
             if (kind === 'unit_price') { unitPrices.push({ idx: eline, desc, unit, rate }); return; }
-            if (kind === 'alternate') { alternates.push({ idx: eline, desc, amount, accepted }); if (!accepted) return; }
-            bid += amount;
+            if (kind === 'alternate') {
+                // an alternate with a cost shows its marked-up price; one with
+                // no cost shows its rate price
+                const shown = hasCost ? EstimatesPage._r(cost * factor) : amount;
+                alternates.push({ idx: eline, desc, amount: shown, accepted });
+                if (!accepted) return;
+            }
+            subtotal += amount;
+            if (taxable) { taxableSubtotal += amount; anyTaxable = true; }
             if (kind === 'allowance') allowanceTotal += amount;
-            else if (hasCost) costSubtotal += cost;
+            else if (hasCost) markupBase += cost;
             else pricedDirect += amount;
         });
-        const gc = EstimatesPage._r(costSubtotal * m('gc_pct'));
-        const insurance = EstimatesPage._r((costSubtotal + gc) * m('insurance_pct'));
-        const fee = EstimatesPage._r((costSubtotal + gc + insurance) * m('fee_pct'));
-        const bond = EstimatesPage._r((costSubtotal + gc + insurance + fee) * m('bond_pct'));
-        const markupTarget = costSubtotal + gc + insurance + fee + bond;
-        const drift = EstimatesPage._r(bid - allowanceTotal - pricedDirect - markupTarget);
-        return { costSubtotal, gc, insurance, fee, bond, markupTarget, pricedDirect, allowanceTotal, drift, bid, alternates, unitPrices };
+        const gc = EstimatesPage._r(markupBase * m('gc_pct'));
+        const insurance = EstimatesPage._r((markupBase + gc) * m('insurance_pct'));
+        const fee = EstimatesPage._r((markupBase + gc + insurance) * m('fee_pct'));
+        const bond = EstimatesPage._r((markupBase + gc + insurance + fee) * m('bond_pct'));
+        const markupTotal = gc + insurance + fee + bond;
+        const bid = EstimatesPage._r(subtotal + markupTotal);
+        // tax covers the lines and the markups when any included line is
+        // taxable (the server's rule); an exempt estimate taxes nothing
+        const tax = anyTaxable ? EstimatesPage._r((taxableSubtotal + markupTotal) * m('tax_rate')) : 0;
+        const total = EstimatesPage._r(bid + tax);
+        return { markupBase, gc, insurance, fee, bond, markupTotal, pricedDirect, allowanceTotal, subtotal, bid, tax, total, alternates, unitPrices };
     },
 
     renderBidTotals() {
         if (!Terms.isConstruction() || !$('#est-bid-totals')) return;
         const t = EstimatesPage.bidTotals();
         const set = (id, v) => { const el = $(`#${id}`); if (el) el.textContent = formatCurrency(v); };
-        set('est-bid-cost', t.costSubtotal); set('est-bid-gc', t.gc); set('est-bid-ins', t.insurance);
-        set('est-bid-fee', t.fee); set('est-bid-bond', t.bond); set('est-bid-target', t.markupTarget);
-        set('est-bid-direct', t.pricedDirect); set('est-bid-allow', t.allowanceTotal);
-        set('est-bid-drift', t.drift); set('est-bid-total', t.bid);
+        set('est-bid-cost', t.markupBase); set('est-bid-direct', t.pricedDirect); set('est-bid-allow', t.allowanceTotal);
+        set('est-bid-subtotal', t.subtotal); set('est-bid-gc', t.gc); set('est-bid-ins', t.insurance);
+        set('est-bid-fee', t.fee); set('est-bid-bond', t.bond); set('est-bid-total', t.bid);
+        set('est-bid-tax', t.tax); set('est-bid-grand', t.total);
         const alt = $('#est-bid-alternates');
         if (alt) alt.innerHTML = t.alternates.length
             ? '<strong>Alternates</strong> <span style="color:var(--gray-500)">(add / deduct)</span>' + t.alternates.map(a =>
@@ -409,14 +427,6 @@ const EstimatesPage = {
         const box = row && row.querySelector('.line-alt-accepted');
         if (box) box.checked = checked;
         EstimatesPage.recalc();
-    },
-
-    async repriceFromCost(id) {
-        try {
-            await API.post(`/estimates/${id}/reprice`);
-            toast('Priced from cost');
-            EstimatesPage.showForm(id);
-        } catch (err) { toast(err.message, 'error'); }
     },
 
     acceptButtonHtml(est) {
@@ -440,7 +450,7 @@ const EstimatesPage = {
                 ${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             ${EstimatesPage.pkgCell(line)}${EstimatesPage.kindCell(line)}${CostCodes.cellHtml('line-cost-code', line.cost_code_id || null)}${CostTypes.cellHtml('line-cost-type', line.cost_type || null)}
-            <td><input class="line-unit-cost money" type="number" step="0.01" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost (budget side); rate is what you charge"></td>
+            <td><input class="line-unit-cost money" type="number" step="0.0001" value="${line.unit_cost ?? ''}" placeholder="cost" title="Unit cost; in construction mode a base or alternate line is priced at cost (the markups are rows under the subtotal)" oninput="EstimatesPage.recalc()"></td>
             ${EstimatesPage.unitCell(line)}<td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="EstimatesPage.recalc()"></td>
             <td><input class="line-rate money" type="number" step="0.0001" min="0" value="${Number(line.rate) || 0}" oninput="EstimatesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked(line)} onchange="EstimatesPage.recalc()"></td>
@@ -476,12 +486,42 @@ const EstimatesPage = {
     },
 
     recalc() {
-        if (Terms.isConstruction()) EstimatesPage.liftAlternateMins();
+        if (Terms.isConstruction()) { EstimatesPage.liftAlternateMins(); EstimatesPage.syncRatesToCost(); }
         TaxExempt.enforce(EstimatesPage._customers, $('#est-customer-select')?.value, $('#est-lines'));
         const t = SalesLines.totals($('#est-lines'), $('#est-form [name="tax_rate"]')?.value);
-        SalesLines.show(t, ['est-subtotal', 'est-tax', 'est-total']);
-        EstimatesPage.renderBidTotals();
+        // Construction replaces the plain Subtotal/Tax/Total panel with the
+        // bid panel (lines at cost, markups under the subtotal, #551); the
+        // business form keeps the standard panel.
+        if (Terms.isConstruction()) EstimatesPage.renderBidTotals();
+        else SalesLines.show(t, ['est-subtotal', 'est-tax', 'est-total']);
         return t;
+    },
+
+    // In construction mode a base/alternate row that carries a unit cost is
+    // priced AT COST: the rate box mirrors the cost, is read-only, and the
+    // amount follows (#551). Clearing the cost makes the rate editable again.
+    // Allowance and unit-price rows keep an editable rate. Runs after render,
+    // inside recalc, like liftAlternateMins — the pinned rate markup is
+    // untouched; everything here is a runtime change.
+    syncRatesToCost() {
+        $$('#est-lines tr').forEach(row => {
+            const kind = row.querySelector('.line-kind')?.value || 'base';
+            const rate = row.querySelector('.line-rate');
+            const ucEl = row.querySelector('.line-unit-cost');
+            if (!rate || !ucEl) return;
+            const atCost = (kind === 'base' || kind === 'alternate') && ucEl.value !== '' && ucEl.value != null;
+            if (atCost) {
+                rate.value = ucEl.value;
+                rate.readOnly = true;
+                rate.title = 'At cost; the markups are lines under the subtotal';
+            } else {
+                // clearing the cost drops the mirrored rate to 0 before it
+                // unlocks, so the old cost is not left behind as a price
+                if (rate.readOnly) rate.value = '0';
+                rate.readOnly = false;
+                rate.title = '';
+            }
+        });
     },
 
     async save(e, id) {
