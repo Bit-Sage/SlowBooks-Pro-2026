@@ -810,6 +810,7 @@ const BankingPage = {
                 <td>${AccountQuickAdd.picker(`<select id="cat-${t.id}" class="review-cat" data-write data-current="${t.category_account_id || ''}" aria-label="Category" onchange="BankingPage.setCategory(${t.id}, this)"><option value="">${t.category_name ? escapeHtml(t.category_name) : 'Pick a category…'}</option></select>`, 'review', { ctx: accountId })}</td>
                 <td style="white-space:nowrap;" data-write>
                     <button class="btn btn-sm btn-primary" onclick="BankingPage.addLine(${t.id}, ${accountId})">Add</button>
+                    ${t.suggested_payout ? `<button class="btn btn-sm btn-secondary" onclick="BankingPage.showPayout(${t.id}, ${accountId})" title="Record this deposit as a ${escapeHtml(t.suggested_payout.display_name)} payout, clearing the clearing account">Payout…</button>` : ''}
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.showMatch(${t.id}, ${accountId})">Match</button>
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.excludeLine(${t.id}, ${accountId})">Exclude</button>
                     <button class="btn btn-sm btn-secondary" onclick="BankingPage.ruleFromLine(${t.id}, ${accountId})" title="A bank rule from this payee and the category chosen">Rule…</button>
@@ -861,6 +862,70 @@ const BankingPage = {
             toast(added.vendor_name ? `Added to the books for ${added.vendor_name}` : 'Added to the books');
             BankingPage.go(`#/banking/${accountId}`);
             BankingPage._offerFeedVendors([added]);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Record a provider payout from the review queue (#584): the deposit
+    // net clears the clearing account for the gross and books any fee, the
+    // same split the register uses. Net is the statement amount (read-only);
+    // gross prefills to the net (fee 0) and the user raises it to book the
+    // fee the clearing balance still carries. Posts through the normal Add
+    // path so the line links and voids/reconciliation behave as usual.
+    showPayout(lineId, accountId) {
+        const t = (BankingPage._reviewLines || {})[lineId];
+        if (!t || !t.suggested_payout) return;
+        const net = Math.abs(parseFloat(t.amount) || 0);
+        const bal = parseFloat(t.suggested_payout.clearing_balance) || 0;
+        const name = t.suggested_payout.display_name;
+        openModal(`Record ${escapeHtml(name)} payout`, `
+            <form onsubmit="BankingPage.submitPayout(event, ${lineId}, ${accountId})">
+                <p style="font-size:12px; margin:0 0 8px;">
+                    This ${escapeHtml(formatCurrency(net))} deposit clears the ${escapeHtml(name)} clearing
+                    account (${escapeHtml(formatCurrency(bal))} awaiting payout). Raise the gross to book the
+                    fee the processor took out.
+                </p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Gross cleared</label>
+                        <input id="payout-gross" type="number" step="0.01" min="0" value="${net.toFixed(2)}"
+                            oninput="BankingPage._payoutFee()"></div>
+                    <div class="form-group"><label>Fee</label>
+                        <input id="payout-fee" type="number" step="0.01" min="0" value="0.00" readonly></div>
+                    <div class="form-group"><label>Net to bank</label>
+                        <input id="payout-net" type="number" value="${net.toFixed(2)}" readonly></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Record payout</button>
+                </div>
+            </form>`);
+    },
+
+    // Fee = gross − net, recomputed as the gross changes; never negative.
+    _payoutFee() {
+        const gross = parseFloat($('#payout-gross').value) || 0;
+        const net = parseFloat($('#payout-net').value) || 0;
+        $('#payout-fee').value = Math.max(0, gross - net).toFixed(2);
+    },
+
+    async submitPayout(e, lineId, accountId) {
+        e.preventDefault();
+        const t = (BankingPage._reviewLines || {})[lineId];
+        const sp = t && t.suggested_payout;
+        if (!sp) return;
+        const gross = parseFloat($('#payout-gross').value) || 0;
+        const net = parseFloat($('#payout-net').value) || 0;
+        const fee = Math.round((gross - net) * 100) / 100;
+        if (fee < 0) { toast('The fee cannot be negative', 'error'); return; }
+        const splits = [{ category_account_id: sp.clearing_account_id, amount: gross.toFixed(2) }];
+        if (fee > 0) splits.push({ category_account_id: sp.fee_account_id, amount: (-fee).toFixed(2) });
+        try {
+            const added = await API.post(`/banking/transactions/${lineId}/add`, {
+                payee: `${sp.display_name} payout`, splits,
+            });
+            closeModal();
+            toast('Payout recorded');
+            BankingPage.go(`#/banking/${accountId}`);
+            void added;
         } catch (err) { toast(err.message, 'error'); }
     },
 

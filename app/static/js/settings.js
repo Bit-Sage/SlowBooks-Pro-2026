@@ -113,6 +113,20 @@ const SettingsPage = {
             SettingsPage._clearingAccountOptions(accounts, feeSel, 'expense',
                 'Default (Merchant Account Fees)') + '</select></div>';
         h += '</div>';  // close .form-grid
+        // Awaiting payout (#584): the clearing account's balance and a link
+        // to its register, plus Record payout for a payout with no feed.
+        const clearingAcct = (Array.isArray(accounts) ? accounts : []).find(a =>
+            clearingSel ? String(a.id) === String(clearingSel) : a.name === label + ' Clearing');
+        if (clearingAcct) {
+            const bal = formatCurrency(parseFloat(clearingAcct.balance) || 0);
+            const href = App.accountRegisterHref({ id: clearingAcct.id, bank_kind: null });
+            h += '<div style="font-size:11px; margin:6px 0;">Awaiting payout: ';
+            h += '<strong>' + escapeHtml(bal) + '</strong> ';
+            h += '<a href="' + href + '">view register</a> ';
+            h += '<button type="button" class="btn btn-sm btn-secondary" data-write ';
+            h += 'onclick="SettingsPage.showProviderPayout(\'' + provider + '\', \'' +
+                label + '\')" style="margin-left:6px;">Record payout</button></div>';
+        }
         h += '</div>';  // close #<provider>-clearing-fields
         h += '</div>';  // close the provider group
         return h;
@@ -1701,6 +1715,52 @@ const SettingsPage = {
         const keep = (SettingsPage._hiddenMenuStored || []).filter(k => !offered.has(k));
         const hide = boxes.filter(b => !b.checked).map(b => b.dataset.showMenu);
         return [...new Set([...keep, ...hide])];
+    },
+
+    // Record a provider payout that arrived without a bank feed (#584):
+    // date, bank account, net and fee. Posts to the provider payout route,
+    // which clears the clearing account for net + fee and books the fee.
+    async showProviderPayout(provider, label) {
+        const accounts = await API.get('/accounts?bank=1&active_only=true').catch(() => []);
+        const opts = (Array.isArray(accounts) ? accounts : [])
+            .map(a => `<option value="${a.id}">${escapeHtml(accountLabel(a))}</option>`).join('');
+        const today = new Date().toISOString().slice(0, 10);
+        openModal(`Record ${escapeHtml(label)} payout`, `
+            <form onsubmit="SettingsPage.submitProviderPayout(event, '${provider}')">
+                <div class="form-grid">
+                    <div class="form-group"><label>Date</label>
+                        <input id="pp-date" type="date" value="${today}" required></div>
+                    <div class="form-group"><label>Deposited to</label>
+                        <select id="pp-bank" required>${opts}</select></div>
+                    <div class="form-group"><label>Net to bank</label>
+                        <input id="pp-net" type="number" step="0.01" min="0" required></div>
+                    <div class="form-group"><label>Fee</label>
+                        <input id="pp-fee" type="number" step="0.01" min="0" value="0.00"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Record payout</button>
+                </div>
+            </form>`);
+    },
+
+    async submitProviderPayout(e, provider) {
+        e.preventDefault();
+        const net = parseFloat(document.getElementById('pp-net').value) || 0;
+        const fee = parseFloat(document.getElementById('pp-fee').value) || 0;
+        if (fee < 0) { toast('The fee cannot be negative', 'error'); return; }
+        try {
+            await API.post(`/payments/${provider}/payout`, {
+                date: document.getElementById('pp-date').value,
+                bank_account_id: parseInt(document.getElementById('pp-bank').value, 10),
+                net: net.toFixed(2),
+                fee: fee.toFixed(2),
+            });
+            closeModal();
+            toast('Payout recorded');
+            // Refresh the awaiting-payout balance, but not over unsaved edits.
+            if (!SettingsPage.isDirty()) App.navigate('#/settings');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     async save(e) {

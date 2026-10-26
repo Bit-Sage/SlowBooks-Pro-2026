@@ -54,6 +54,20 @@ are subtotalled beside it rather than folded in. The list's search box
 (#335) stays as it was — name, company, phone, email — and the list route's
 `search` parameter now covers the same four fields instead of the name alone.
 
+**Record a provider payout and match it to the bank feed** (#584,
+@ContractorKeith). Step 2 of the clearing-account feature (#583). When a
+provider's net payout lands in the bank, the deposit line in the bank
+review queue offers a **Payout…** button for any deposit whose payee names
+Stripe, PayPal or Square and whose provider has clearing on. It posts a
+split that credits the provider's clearing account for the gross, debits
+Merchant Account Fees for any fee the payout still carries, and leaves the
+net in the bank — through the normal Add path, so the statement line links
+and voids/reconciliation behave like any bank entry. A payout that arrives
+without a feed is recorded from the provider's settings card with **Record
+payout** (date, bank account, net, fee), which posts the same split. Each
+provider's card shows the clearing balance awaiting payout with a link to
+its register; it returns to zero once every payout is in.
+
 **A clearing account per payment provider, with the processing fee** (#583,
 @ContractorKeith). Each online-payment provider (Stripe, PayPal, Square) gets
 an optional clearing-account setting, off by default. With it off, a captured

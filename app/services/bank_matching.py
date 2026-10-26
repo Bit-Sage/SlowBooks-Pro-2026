@@ -236,24 +236,38 @@ def add(
     class_id: int | None = None,
     job_id: int | None = None,
     vendor_id: int | None = None,
+    splits: list | None = None,
 ) -> BankTransaction:
     """Post the statement line as a register entry and link it. The entry
     names the vendor asked for, or the one whose name is the payee (#491);
     a payee no vendor has is left as text, and the review row offers to
-    make it one (`attach_vendors`)."""
+    make it one (`attach_vendors`).
+
+    With `splits` ([(account, amount, memo[, dims]), …] adding up to the
+    statement amount, #584) the other side is several accounts — a provider
+    payout clears its clearing account and books the fee. Splits replace the
+    single category; the two are mutually exclusive."""
     acct = _feed_account(db, bt)
     if bt.transaction_line_id or bt.match_status == "added":
         raise HTTPException(
             status_code=400, detail="Statement line is already in the books"
         )
-    cat_id = category_account_id or bt.category_account_id
-    if not cat_id:
-        raise HTTPException(
-            status_code=400, detail="Pick a category (account) to add this line"
-        )
-    category = db.query(Account).filter(Account.id == cat_id).first()
-    if not category:
-        raise HTTPException(status_code=404, detail="Category account not found")
+    if splits:
+        if category_account_id:
+            raise HTTPException(
+                status_code=400,
+                detail="A split line replaces the category; pick one, not both",
+            )
+        category = splits[0][0]  # for post_bank_entry's account/transfer checks
+    else:
+        cat_id = category_account_id or bt.category_account_id
+        if not cat_id:
+            raise HTTPException(
+                status_code=400, detail="Pick a category (account) to add this line"
+            )
+        category = db.query(Account).filter(Account.id == cat_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category account not found")
     check_closing_date(db, bt.date)
     payee = payee or bt.payee
     vendor = _entry_vendor(db, bt, payee, vendor_id)
@@ -269,6 +283,7 @@ def add(
         class_id=class_id,
         job_id=job_id,
         source_id=bt.id,
+        splits=splits,
     )
     if vendor is not None and txn.source_type == "bank_entry":
         # a transfer between two bank or card accounts has no vendor

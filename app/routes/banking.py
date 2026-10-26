@@ -300,6 +300,8 @@ def post_legacy_balance(
 # Bank Transactions
 def _statement_out(rows: list, db: Session) -> list[dict]:
     from app.services.bank_matching import entry_vendors
+    from app.services.bank_rules_engine import payout_suggestion
+    from app.services.settings_service import get_all_settings
 
     ids = {r.category_account_id for r in rows if r.category_account_id}
     names = (
@@ -308,6 +310,15 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
         else {}
     )
     vendors = entry_vendors(db, rows)
+    # A payout suggestion (#584) is offered only on an unmatched deposit, so
+    # the settings read and the per-provider lookup stay off the common path.
+    settings = get_all_settings(db)
+
+    def _payout(r):
+        if r.match_status != "unmatched" or not r.amount or r.amount <= 0:
+            return None
+        return payout_suggestion(db, settings, r.payee)
+
     return [
         {
             "id": r.id,
@@ -327,6 +338,7 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
             "created_at": r.created_at,
             "vendor_id": vendors[r.id].id if r.id in vendors else None,
             "vendor_name": vendors[r.id].name if r.id in vendors else None,
+            "suggested_payout": _payout(r),
         }
         for r in rows
     ]
@@ -398,19 +410,38 @@ def statement_unmatch(txn_id: int, db: Session = Depends(get_db)):
 def statement_add(
     txn_id: int, data: StatementAdd = None, db: Session = Depends(get_db)
 ):
-    """Post this statement line as a register entry and link it."""
+    """Post this statement line as a register entry and link it. With
+    `splits` (a provider payout, #584) the other side is several accounts
+    instead of one category, validated like a register split."""
     from app.services import bank_matching as m
 
     data = data or StatementAdd()
+    bt = _statement_line(db, txn_id)
+    splits = None
+    if data.splits:
+        # The same conversion and total check the register uses, against
+        # the statement amount; mutual exclusivity with the single category
+        # is enforced in bank_matching.add.
+        acct = m._feed_account(db, bt)
+        _, splits = _category_and_splits(
+            db,
+            acct,
+            SimpleNamespace(
+                splits=data.splits,
+                amount=bt.amount,
+                category_account_id=data.category_account_id,
+            ),
+        )
     bt = m.add(
         db,
-        _statement_line(db, txn_id),
+        bt,
         category_account_id=data.category_account_id,
         payee=data.payee,
         memo=data.memo,
         class_id=data.class_id,
         job_id=data.job_id,
         vendor_id=data.vendor_id,
+        splits=splits,
     )
     db.commit()
     db.refresh(bt)

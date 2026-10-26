@@ -9,12 +9,65 @@
 # ============================================================================
 
 import logging
+import re
+from typing import Mapping, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
 
 logger = logging.getLogger(__name__)
+
+# The display name shown for each provider a deposit can be a payout of (#584).
+_PAYOUT_DISPLAY = {"stripe": "Stripe", "paypal": "PayPal", "square": "Square"}
+
+
+def payout_suggestion(
+    db: Session, settings: Mapping[str, str], payee: Optional[str]
+) -> Optional[dict]:
+    """A deposit whose payee names Stripe, PayPal or Square (whole word,
+    case-insensitive), on a company with that provider's clearing on, can
+    be recorded as a payout of that provider (#584).
+
+    Advisory only: it writes no category and posts nothing. Returns the
+    accounts and the clearing balance the payout modal pre-fills with, or
+    None. The caller gates on a deposit (amount > 0) and an unmatched line;
+    this only decides provider and reads the clearing balance.
+
+    The provider's clearing and fee accounts are created on demand here (as
+    they are when a payment clears, #583) and committed, so the ids the
+    modal posts the split with are real before the payout POST looks them
+    up."""
+    from datetime import date as _date
+
+    from app.models.accounts import Account
+    from app.services.bank_register import balance_as_of
+    from app.services.payments.clearing import (
+        PROVIDER_NAMES,
+        clearing_account_id,
+        clearing_enabled,
+        fee_account_id,
+    )
+
+    text = (payee or "").lower()
+    for provider in PROVIDER_NAMES:
+        if not re.search(rf"\b{re.escape(provider)}\b", text):
+            continue
+        if not clearing_enabled(settings, provider):
+            continue
+        clearing_id = clearing_account_id(db, provider)
+        fee_id = fee_account_id(db, provider)
+        db.commit()  # the on-demand accounts must persist for the payout POST
+        acct = db.get(Account, clearing_id)
+        balance, _ = balance_as_of(db, acct, _date.today())
+        return {
+            "provider": provider,
+            "display_name": _PAYOUT_DISPLAY[provider],
+            "clearing_account_id": clearing_id,
+            "fee_account_id": fee_id,
+            "clearing_balance": balance,
+        }
+    return None
 
 
 def _matches(rule_type: str, pattern: str, payee: str) -> bool:

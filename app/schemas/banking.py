@@ -180,6 +180,11 @@ class BankTransactionResponse(BaseModel):
     # the vendor the added line's entry names (#491)
     vendor_id: Optional[int] = None
     vendor_name: Optional[str] = None
+    # a provider payout this deposit could be (#584): advisory only, nothing
+    # posts. {provider, display_name, clearing_account_id, fee_account_id,
+    # clearing_balance}; null unless the payee names a provider whose
+    # clearing is on.
+    suggested_payout: Optional[dict] = None
 
     model_config = {"from_attributes": True}
 
@@ -196,6 +201,11 @@ class StatementAdd(StrictModel):
     job_id: Optional[int] = None
     # the vendor the entry names (#491); left out, the payee's vendor
     vendor_id: Optional[int] = None
+    # split the line across several accounts instead of one category (#584):
+    # a provider payout clears its clearing account and books the fee. Signed
+    # like a register split; mutually exclusive with category_account_id,
+    # and the parts must add up to the statement amount.
+    splits: Optional[list[BankSplit]] = None
 
 
 class StatementVendors(StrictModel):
