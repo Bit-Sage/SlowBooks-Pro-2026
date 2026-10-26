@@ -571,8 +571,7 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/invoices/{id}/duplicate` | POST | Duplicate invoice as new draft |
 | `/api/invoices/{id}/print-preview` | GET | Browser print preview (HTML) |
 | `/api/estimates` | GET, POST, PUT | Estimate CRUD with line items; a job must be the customer's, header or line (v2.22.0) |
-| `/api/estimates/{id}/convert` | POST | Convert estimate to invoice (drops unit prices + un-accepted alternates, carries cost type + unit cost) |
-| `/api/estimates/{id}/reprice` | POST | Price from cost: set cost-based line rates from unit cost × markup factor (#551); 409 once accepted/converted |
+| `/api/estimates/{id}/convert` | POST | Convert estimate to invoice (drops unit prices + un-accepted alternates, carries cost type + unit cost, adds the markup lines) |
 | `/api/estimates/{id}/accept` | POST | Accept the estimate and lock its job budget (#551); 409 `no_job`, already accepted, or `budget_locked` |
 | `/api/estimates/{id}/print-preview` | GET | Browser print preview (HTML) |
 | `/api/payments` | GET, POST | Record payments with invoice allocation; `Idempotency-Key` header makes a POST retry-safe (v2.23.0) |
