@@ -101,9 +101,9 @@ def clearing_account_id(db: Session, provider_name: str) -> int:
             chosen,
         )
     number, name = _CLEARING_ACCOUNTS[provider_name]
-    # ensure_account find-or-creates by name; two concurrent first payments
-    # could in principle both create it, but the name is unique at the chart
-    # level and the window is tiny — left as is, same as the 3900 helper.
+    # ensure_account find-or-creates by name, which isn't unique: two
+    # concurrent first payments could both create it (or trip the number's
+    # unique constraint). The window is tiny; left as is, like the 3900 helper.
     return ensure_account(
         db, number, name, AccountType.ASSET, detail_type="other_current_asset"
     ).id
