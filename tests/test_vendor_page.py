@@ -5,8 +5,8 @@ click at all, only Edit, while a customer row opened the customer's page.
 Now a vendor row opens the vendor's page: contact, address, terms, the
 default account, 1099, notes, what's owed, the last ten bills and payments,
 and credits not yet applied. The page reads only what already exists
-(`/api/vendors/{id}`, `/api/bills?vendor_id=`, `/api/bill-payments?vendor_id=`,
-`/api/vendor-credits?vendor_id=`): no new route, no schema change.
+(`/api/vendors/{id}`, `/api/bills?vendor_id=`, `/api/vendor-credits?vendor_id=`)
+and, since #569, its payment history (`/api/vendors/{id}/payment-history`).
 
 The page's source is pinned here; the browser tests at the end open it on
 the shared books (tests/test_theme_contrast.py) and skip where playwright or
@@ -50,8 +50,8 @@ def test_the_page_reads_what_exists_and_shows_the_whole_vendor():
     for call in (
         "API.get(`/vendors/${id}`)",
         "fetchAllPages(`/bills?vendor_id=${id}`)",
-        "API.get(`/bill-payments?vendor_id=${id}`)",
         "API.get(`/vendor-credits?vendor_id=${id}`)",
+        "API.get(`/vendors/${id}/payment-history`)",  # #569
     ):
         assert call in details, call
     for shown in (
@@ -64,7 +64,7 @@ def test_the_page_reads_what_exists_and_shows_the_whole_vendor():
         "b.balance_due",
         "hop(`#/bills/${b.id}`)",
         "rowLink(`#/bills/${b.id}`, `bill:${b.id}`",
-        "hop(`#/bill-payments/${p.id}`)",
+        "VendorsPage._historyHtml(id, history)",
         "VendorCreditsPage.view(${c.id})",
         'onclick="VendorsPage.showForm(${id})">Edit',
     ):
@@ -288,5 +288,60 @@ def test_the_page_s_enter_bill_and_pay_bills_carry_the_vendor(browser, company, 
         page.click("#pay-only-vendor a")
         settle(page, handled)
         assert page.locator("#pay-only-vendor").count() == 0  # every vendor's again
+    finally:
+        page.close()
+
+
+def test_the_search_box_narrows_the_list_and_the_page_has_the_history(
+    browser, company, books
+):
+    """#569: the list's box filters as you type (name, company, phone,
+    email), and the vendor's page lists its payment history — the books'
+    direct expense to the mill, year to date, with a running total — and
+    offers it as a CSV for the range shown."""
+    page, handled = _start(browser, company)
+    try:
+        _visit(page, handled, "#/vendors")
+        rows = "#page-content tr.vendor-row"
+        total = page.locator(rows).count()
+        assert total >= 3
+        page.fill("#vendors-filter", "flour")
+        shown = page.evaluate(
+            "() => [...document.querySelectorAll('#page-content tr.vendor-row')].filter(r => r.style.display !== 'none').map(r => r.querySelector('td').innerText.trim())"
+        )
+        assert shown == ["Cascade Flour Mill"], shown
+        assert (
+            page.inner_text("#vendors-filter-note").strip() == f"1 of {total} vendors"
+        )
+        page.fill("#vendors-filter", "")
+        assert page.inner_text("#vendors-filter-note").strip() == ""
+
+        page.locator(rows, has_text="Cascade Flour Mill").locator("td").first.click()
+        page.wait_for_function(OPEN, timeout=5000)
+        settle(page, handled)
+        body = page.inner_text("#modal-body")
+        folded = body.casefold()
+        assert "payment history (1)" in folded, body[-600:]
+        # the mill's expense, typed, with its reference and the running total
+        assert "Expense" in body and "rcpt 1187" in body
+        assert body.count("$30.30") >= 2  # amount and running total
+        assert "Paid this year: $30.30" in body
+        year = page.evaluate("() => new Date().getFullYear()")
+        assert page.input_value(f"#vend-hist-from-{books['vendor']}") == f"{year}-01-01"
+        href = page.get_attribute("#modal-body a:has-text('Export CSV')", "href")
+        assert (
+            f"/api/vendors/{books['vendor']}/payments/csv?start_date={year}-01-01&end_date="
+            in href
+        )
+        # a range before the expense shows nothing, and says so
+        page.fill(f"#vend-hist-to-{books['vendor']}", f"{year}-01-31")
+        page.click("#modal-body button:has-text('Show')")
+        page.wait_for_function(
+            "() => document.getElementById('modal-body').innerText.includes('No payments yet')",
+            timeout=5000,
+        )
+        assert f"Paid Jan 1, {year} to Jan 31, {year}: $0.00" in page.inner_text(
+            "#modal-body"
+        )
     finally:
         page.close()

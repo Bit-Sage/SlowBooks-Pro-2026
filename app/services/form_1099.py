@@ -72,14 +72,32 @@ def _vendor_address(vendor: Vendor) -> str:
     return ", ".join(parts)
 
 
+def paid_bill_payments(
+    db: Session,
+    start: date | None = None,
+    end: date | None = None,
+    vendor_id: int | None = None,
+):
+    """The one definition of a bill payment that counts as money paid to a
+    vendor: not voided (#287), dated in the range. The 1099 totals below
+    and a vendor's payment history (#569) are both built on it, so the
+    history's bill-payment subtotal for a year is the vendor's 1099 figure.
+    Returns a query, for callers to sum or list."""
+    q = db.query(BillPayment).filter(BillPayment.is_voided.isnot(True))
+    if start:
+        q = q.filter(BillPayment.date >= start)
+    if end:
+        q = q.filter(BillPayment.date <= end)
+    if vendor_id is not None:
+        q = q.filter(BillPayment.vendor_id == vendor_id)
+    return q
+
+
 def _vendor_payment_totals(db: Session, year: int) -> dict[int, Decimal]:
     """Sum bill payments per vendor for the given calendar year."""
-    start = date(year, 1, 1)
-    end = date(year, 12, 31)
     rows = (
-        db.query(BillPayment.vendor_id, func.sum(BillPayment.amount))
-        .filter(BillPayment.date >= start, BillPayment.date <= end)
-        .filter(BillPayment.is_voided.isnot(True))  # not money paid (#287)
+        paid_bill_payments(db, date(year, 1, 1), date(year, 12, 31))
+        .with_entities(BillPayment.vendor_id, func.sum(BillPayment.amount))
         .group_by(BillPayment.vendor_id)
         .all()
     )
