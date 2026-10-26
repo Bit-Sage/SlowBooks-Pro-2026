@@ -127,8 +127,12 @@ const AccountQuickAdd = {
         panel.querySelector('.aqa-cancel').addEventListener('click', () => AccountQuickAdd.cancel(panel));
         panel.querySelector('.aqa-type').addEventListener('change', () => AccountQuickAdd._parents(panel));
         panel.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') {
-                e.preventDefault(); AccountQuickAdd.save(panel);
+            if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+                // Enter in a box saves; on the Type or Sub-account list it
+                // does nothing, but still must not reach the form around
+                // the panel, which would submit the bill (WebKit does).
+                e.preventDefault();
+                if (e.target.tagName !== 'SELECT') AccountQuickAdd.save(panel);
             } else if (e.key === 'Escape') {
                 e.preventDefault(); e.stopPropagation(); AccountQuickAdd.cancel(panel);
             }
