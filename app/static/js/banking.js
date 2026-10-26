@@ -1021,10 +1021,12 @@ const BankingPage = {
         const key = `onkeydown="BankingPage._quickKey(event, ${accountId})"`;
         const now = new Date();
         const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        // the date of this register's last post, while the page lives (#566)
+        const carried = BankingPage._lastDate[accountId] || '';
         // the row lives in its own <tfoot>, after the entries; every field is
         // named for the new entry, apart from the page's other fields
         return `<tfoot><tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
-                    <td><input type="date" id="qe-date" aria-label="New entry date" value="${today}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
+                    <td><input type="date" id="qe-date" aria-label="New entry date" value="${carried || today}" data-carried="${carried}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}></td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
@@ -1051,6 +1053,12 @@ const BankingPage = {
         BankingPage.postQuickEntry(accountId);
     },
 
+    // The date of the last entry posted in each register, by account id,
+    // for the quick row and + Entry to open with (#566, QuickBooks keeps
+    // it). Held in memory only: it lasts the page's life, and sign-in
+    // reloads the page. One register's date is not another's.
+    _lastDate: {},
+
     // The quick row posts through the same call as + Entry (#329): money
     // out from the left amount box, money in from the right one (a card's
     // charge and payment the same way), one of them; then the register
@@ -1069,14 +1077,18 @@ const BankingPage = {
             description: v('qe-memo') || null,
             check_number: v('qe-ref') || null,
         };
-        // a date far from today asks first, as every form does (#481)
-        if (!(await TxnWarn.ok(null, { date: data.date }))) return;
+        // a date far from today asks first, as every form does (#481),
+        // unless it is the last entry's date carried over (#566)
+        const dateBox = document.getElementById('qe-date');
+        const carried = dateBox && dateBox.dataset ? dateBox.dataset.carried : undefined;
+        if (!(await TxnWarn.ok(null, { date: data.date, carried }))) return;
         try {
             // a check number the account already has: keep it or edit it
             const posted = await CheckNumberWarn.send(
                 q => API.post('/banking/transactions', data, q ? { query: q } : undefined),
                 document.getElementById('qe-ref'));
             if (!posted) return;
+            BankingPage._lastDate[accountId] = data.date;
             toastPosted('Entry posted');
             BankingPage.payeeTyped(data.payee, inn > 0, 'qe-payee');
             await BankingPage.go(`#/banking/${accountId}`);
@@ -1123,11 +1135,14 @@ const BankingPage = {
             if (customers) BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
         }
         const classGroup = await classFormGroupHtml();
+        // a new entry opens on the register's last posted date (#566); an
+        // edit fills in its own
+        const carried = (!entry && BankingPage._lastDate[accountId]) || '';
         openModal('New Register Entry', `
             <form onsubmit="BankingPage.saveEntry(event, ${accountId})">
                 <div class="form-grid">
                     <div class="form-group"><label>Date *</label>
-                        <input name="date" type="date" required value="${todayISO()}"></div>
+                        <input name="date" type="date" required value="${carried || todayISO()}" data-carried="${carried}"></div>
                     <div class="form-group"><label>Amount *</label>
                         <input name="amount" class="money" type="number" step="0.01" required>
                         <div style="font-size:10px; color:var(--gray-500);">${isCard ? 'Negative = a charge (owe more). Positive = a payment to the card.' : 'Negative = money out (a payment). Positive = money in (a deposit).'}</div></div>
@@ -1372,6 +1387,7 @@ const BankingPage = {
                 q => API.post('/banking/transactions', data, q ? { query: q } : undefined),
                 form.check_number || null);
             if (!posted) return;
+            BankingPage._lastDate[accountId] = data.date;
             toastPosted('Entry posted');
             BankingPage.payeeTyped(data.payee, parseFloat(data.amount) > 0, 'qe-payee');
             closeModal();
