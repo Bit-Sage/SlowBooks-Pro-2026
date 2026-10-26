@@ -50,6 +50,13 @@ def _enable(db_session, provider):
     db_session.commit()
 
 
+def _make_clearing(db_session, provider):
+    """Create the provider's clearing account (so a suggestion has something
+    to offer) without a cleared payment. Balance stays 0."""
+    clearing_account_id(db_session, provider)
+    db_session.commit()
+
+
 def _net(db_session, account_id):
     lines = (
         db_session.query(TransactionLine)
@@ -106,20 +113,14 @@ def test_payout_books_the_fee_when_it_was_unknown_at_capture(
     bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
     row = _review_row(client, feed, bt.id)
     sp = row["suggested_payout"]
-    assert sp and sp["provider"] == "stripe"
+    assert sp and sp["provider"] == "stripe" and sp["display_name"] == "Stripe"
     assert Decimal(str(sp["clearing_balance"])) == Decimal("100.00")
 
-    # The modal posts gross 100.00 / fee 3.20: CR clearing 100, DR fee 3.20,
-    # DR bank 96.80.
+    # The payout route builds the split from the gross: CR clearing 100,
+    # DR fee 3.20, DR bank 96.80. The account ids stay server-side.
     r = client.post(
-        f"/api/banking/transactions/{bt.id}/add",
-        json={
-            "payee": "Stripe payout",
-            "splits": [
-                {"category_account_id": sp["clearing_account_id"], "amount": "100.00"},
-                {"category_account_id": sp["fee_account_id"], "amount": "-3.20"},
-            ],
-        },
+        f"/api/banking/transactions/{bt.id}/payout",
+        json={"provider": "stripe", "gross": "100.00"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["match_status"] == "added"
@@ -162,13 +163,8 @@ def test_payout_with_no_fee_when_it_was_booked_at_capture(
 
     # Gross equals net: one clearing split, no fee.
     r = client.post(
-        f"/api/banking/transactions/{bt.id}/add",
-        json={
-            "payee": "Stripe payout",
-            "splits": [
-                {"category_account_id": sp["clearing_account_id"], "amount": "96.80"},
-            ],
-        },
+        f"/api/banking/transactions/{bt.id}/payout",
+        json={"provider": "stripe", "gross": "96.80"},
     )
     assert r.status_code == 200, r.text
     txn_id = r.json()["transaction_id"]
@@ -188,16 +184,35 @@ def test_payout_with_no_fee_when_it_was_booked_at_capture(
 
 
 def test_suggestion_only_when_clearing_on(client, db_session, seed_accounts):
+    _enable(db_session, "stripe")
+    _make_clearing(db_session, "stripe")
     feed = _feed(client, seed_accounts)
     bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
-    # Clearing off: no suggestion.
-    assert _review_row(client, feed, bt.id)["suggested_payout"] is None
-    _enable(db_session, "stripe")
     assert _review_row(client, feed, bt.id)["suggested_payout"] is not None
+    # Clearing off: no suggestion.
+    set_setting(db_session, "stripe_clearing_enabled", "false")
+    db_session.commit()
+    assert _review_row(client, feed, bt.id)["suggested_payout"] is None
+
+
+def test_suggestion_none_when_no_clearing_account_yet(
+    client, db_session, seed_accounts
+):
+    from app.models.accounts import Account
+
+    _enable(db_session, "stripe")  # on, but nothing has cleared, so no account
+    feed = _feed(client, seed_accounts)
+    bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
+    before = db_session.query(Account).count()
+    assert _review_row(client, feed, bt.id)["suggested_payout"] is None
+    # Listing the review queue created no account (a read stays a read).
+    db_session.expire_all()
+    assert db_session.query(Account).count() == before
 
 
 def test_suggestion_only_for_deposits(client, db_session, seed_accounts):
     _enable(db_session, "stripe")
+    _make_clearing(db_session, "stripe")
     feed = _feed(client, seed_accounts)
     out = _deposit_line(db_session, feed, "-96.80", "STRIPE PAYOUT")
     assert _review_row(client, feed, out.id)["suggested_payout"] is None
@@ -205,6 +220,7 @@ def test_suggestion_only_for_deposits(client, db_session, seed_accounts):
 
 def test_suggestion_only_for_a_matching_payee(client, db_session, seed_accounts):
     _enable(db_session, "stripe")
+    _make_clearing(db_session, "stripe")
     feed = _feed(client, seed_accounts)
     other = _deposit_line(db_session, feed, "96.80", "ACME HARDWARE REFUND")
     assert _review_row(client, feed, other.id)["suggested_payout"] is None
@@ -216,6 +232,7 @@ def test_suggestion_only_for_a_matching_payee(client, db_session, seed_accounts)
 def test_suggestion_names_the_payee_provider(client, db_session, seed_accounts):
     for provider in ("paypal", "square"):
         _enable(db_session, provider)
+        _make_clearing(db_session, provider)
     feed = _feed(client, seed_accounts)
     pp = _deposit_line(db_session, feed, "40.00", "PAYPAL TRANSFER")
     sq = _deposit_line(db_session, feed, "60.00", "Square Inc payout")
@@ -275,15 +292,9 @@ def test_voided_payout_restores_clearing(client, db_session, seed_accounts, invo
     clearing_id = clearing_account_id(db_session, "stripe")
     feed = _feed(client, seed_accounts)
     bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
-    sp = _review_row(client, feed, bt.id)["suggested_payout"]
     r = client.post(
-        f"/api/banking/transactions/{bt.id}/add",
-        json={
-            "splits": [
-                {"category_account_id": sp["clearing_account_id"], "amount": "100.00"},
-                {"category_account_id": sp["fee_account_id"], "amount": "-3.20"},
-            ],
-        },
+        f"/api/banking/transactions/{bt.id}/payout",
+        json={"provider": "stripe", "gross": "100.00"},
     )
     txn_id = r.json()["transaction_id"]
     assert _net(db_session, clearing_id) == Decimal("0.00")
@@ -292,6 +303,38 @@ def test_voided_payout_restores_clearing(client, db_session, seed_accounts, invo
     assert v.status_code == 200, v.text
     db_session.expire_all()
     assert _net(db_session, clearing_id) == Decimal("100.00")
+
+
+# ── The payout route guards ──────────────────────────────────────────────
+
+
+def test_payout_route_gross_below_net_is_400(
+    client, db_session, seed_accounts, invoice
+):
+    _enable(db_session, "stripe")
+    record_provider_payment(
+        db_session, "stripe", "Stripe", invoice.id, "cs_584g", Decimal("100.00")
+    )
+    feed = _feed(client, seed_accounts)
+    bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
+    r = client.post(
+        f"/api/banking/transactions/{bt.id}/payout",
+        json={"provider": "stripe", "gross": "90.00"},  # below the 96.80 net
+    )
+    assert r.status_code == 400
+    assert "less than the net" in r.json()["detail"]
+    assert db_session.get(BankTransaction, bt.id).match_status == "unmatched"
+
+
+def test_payout_route_clearing_off_is_400(client, db_session, seed_accounts):
+    feed = _feed(client, seed_accounts)
+    bt = _deposit_line(db_session, feed, "96.80", "STRIPE PAYOUT")
+    r = client.post(
+        f"/api/banking/transactions/{bt.id}/payout",
+        json={"provider": "stripe", "gross": "96.80"},
+    )
+    assert r.status_code == 400
+    assert "clearing is off" in r.json()["detail"]
 
 
 # ── The manual Record payout endpoint ────────────────────────────────────
