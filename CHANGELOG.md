@@ -34,6 +34,29 @@ Schedule C exactly as before. A nonprofit no longer sees Schedule C; it files
 Form 990, whatever entity type it has chosen. The books never change; this is a
 tax-form matter only.
 
+**Entity-aware equity accounts, and the 1065 / 1120 / 1120-S returns** (#488
+step 2, @ContractorKeith; answers #557). The setup wizard now asks the legal
+entity in one "Legal entity" picker (an LLC's tax election folded in), and
+the equity accounts follow the entity type while the chart is still the
+untouched seed and nothing has posted: a sole proprietor keeps 3000 Owner's
+Equity, 3100 Owner's Draw and 3200 Retained Earnings; a partnership (or an
+LLC taxed as one) gets Partner 1 / Partner 2 Capital and Distributions; a C or
+S corporation (or an LLC taxed as either) gets Common Stock, Additional
+Paid-in Capital and Shareholder Distributions in place of Owner's Draw. 3000
+and 3100 are renamed in place, 3200 and 3900 Opening Balance Equity are never
+touched, nonprofit mode keeps its net-asset seed, and the chart stays yours to
+edit. Once the books have a posting, or an equity account has been renamed or
+added, changing the entity type reseeds nothing: the save says which accounts
+to rename or add under Chart of Accounts. The Tax Reports page now draws the
+return the entity files — page 1 of Form 1065, Form 1120 or Form 1120-S, from
+the P&L the way Schedule C is, with each form's own lines and summary rows,
+exported as CSV under the form's title (`GET /api/tax/return`, `/csv`);
+Schedule C is exactly as before for the entities that file it, and a
+nonprofit's Form 990 is not drawn. An S corporation sees one note under the
+entity picker, on Tax Reports and on Payroll: an active shareholder-employee
+takes reasonable compensation as W-2 wages through Payroll before any
+distribution, and a distribution is equity, never P&L.
+
 **Contact support from inside the app** (@ContractorKeith). A Help → Contact
 support form (beside About, on the About dialog, and on the desktop launcher's
 error dialog) lets a user describe what went wrong and press Send. The app

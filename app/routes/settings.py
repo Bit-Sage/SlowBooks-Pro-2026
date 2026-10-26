@@ -255,12 +255,24 @@ def update_settings(
             cleaned["llc_tax_election"] = ""
     for key, value in cleaned.items():
         set_setting(db, key, value)
+    # The equity accounts follow a newly chosen entity type while the chart
+    # is still the untouched seed and nothing has posted (#488 step 2); the
+    # answer says what happened either way.
+    equity = None
+    if "entity_type" in cleaned or "llc_tax_election" in cleaned:
+        from app.services.entity_equity import apply_entity_equity
+
+        db.flush()
+        equity = apply_entity_equity(db, entity_info(get_all_settings(db)))
     db.commit()
     if "company_name" in incoming:
         from app.services.company_service import sync_manifest_name
 
         sync_manifest_name(incoming.get("company_name"))
-    return _with_entity(db)
+    result = _with_entity(db)
+    if equity is not None:
+        result["entity_equity"] = equity
+    return result
 
 
 @router.post("/test-email")

@@ -39,7 +39,7 @@ files under `migrations/versions/`; for model code, see `app/models/`.
 | `recurring_invoices` | Recurring invoice templates |
 | `recurring_invoice_lines` | Recurring invoice line items |
 | `email_log` | Email delivery history |
-| `tax_category_mappings` | Account-to-tax-line mappings for Schedule C |
+| `tax_category_mappings` | Account-to-tax-line mappings; one string per account, read against the return the entity type files (Schedule C, Form 1065, 1120 or 1120-S) (#488) |
 | `backups` | Backup file records |
 | `companies` | Multi-company database list |
 | `employees` | Employee records for payroll |

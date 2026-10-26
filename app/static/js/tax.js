@@ -1,5 +1,6 @@
 /**
- * Tax Reports — Schedule C generation + Sales Tax Payment
+ * Tax Reports — Schedule C generation (and the entity returns: Form 1065,
+ * 1120, 1120-S, #488) + Sales Tax Payment
  * Feature 19: Generate and export Schedule C from P&L data
  * Feature 5: Pay Sales Tax
  */
@@ -20,15 +21,33 @@ const TaxPage = {
         return s.entity || { entity_type: '', label: '', return_form: '', schedule_c: false, nonprofit: false };
     },
 
+    // The entity returns this page draws besides Schedule C (#488 step 2):
+    // page 1 of each, from the same P&L lines, at /api/tax/return.
+    _ENTITY_RETURNS: ['Form 1065', 'Form 1120', 'Form 1120-S'],
+
+    // One sentence for an S corporation (#557): owner pay is W-2 wages first,
+    // and a distribution is equity, never an expense.
+    S_CORP_NOTE: 'S corporation: an active shareholder-employee takes reasonable compensation as W-2 wages through Payroll before any distribution. Distributions post to Shareholder Distributions (equity), never to the profit and loss.',
+
+    // The report the page draws: '/tax/schedule-c' (Schedule C, and an unset
+    // entity type exactly as before), '/tax/return' for an entity return, or
+    // '' when the company's return is not one this report draws (Form 990).
+    _reportPath(info) {
+        if (!info.return_form || info.schedule_c) return '/tax/schedule-c';
+        if (TaxPage._ENTITY_RETURNS.includes(info.return_form)) return '/tax/return';
+        return '';
+    },
+
     async render() {
         const year = new Date().getFullYear();
         const info = TaxPage._entityInfo();
-        // A company that files something other than Schedule C (a partnership,
-        // a corporation, or a nonprofit on Form 990) sees one sentence in
-        // place of the Schedule C controls — but the header and the Pay Sales
-        // Tax button stay, since that button is the only way to record a
-        // sales-tax payment and every entity can owe sales tax.
-        if (info.return_form && !info.schedule_c) {
+        const path = TaxPage._reportPath(info);
+        // A company that files something this page does not draw (a nonprofit
+        // on Form 990) sees one sentence in place of the report controls — but
+        // the header and the Pay Sales Tax button stay, since that button is
+        // the only way to record a sales-tax payment and every entity can owe
+        // sales tax.
+        if (!path) {
             return `
             <div class="page-header">
                 <h2>Tax Reports</h2>
@@ -38,12 +57,16 @@ const TaxPage = {
             </div>
             <p style="margin-top:12px;">This company is ${escapeHtml(info.label)}; it files ${escapeHtml(info.return_form)}, not Schedule C. Change the ${info.nonprofit ? 'company' : 'entity'} type under Settings → Company if that is wrong.</p>`;
         }
+        const form = path === '/tax/return' ? info.return_form : 'Schedule C';
         const sub = info.return_form
             ? `${escapeHtml(info.label)} &middot; files ${escapeHtml(info.return_form)}`
             : 'Profit or Loss from Business (Sole Proprietorship)';
+        const sCorpNote = info.return_form === 'Form 1120-S'
+            ? `<div style="font-size:10px;color:var(--text-muted);margin-bottom:12px;">${escapeHtml(TaxPage.S_CORP_NOTE)}</div>`
+            : '';
         return `
             <div class="page-header">
-                <h2>Tax Reports — Schedule C</h2>
+                <h2>Tax Reports — ${escapeHtml(form)}</h2>
                 <div style="font-size:10px; color:var(--text-muted);">
                     ${sub}
                 </div>
@@ -60,13 +83,31 @@ const TaxPage = {
             <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#92400e;">
                 <strong>Disclaimer:</strong> This report is for reference only. Please verify all figures with a qualified tax professional.
             </div>
+            ${sCorpNote}
             <div id="tax-results"></div>`;
+    },
+
+    // The rows under the table, from the report's own `summary` (the form's
+    // words and line numbers). Returns and cost of goods sold print as
+    // subtractions, the optional rows only when there is an amount.
+    _summaryRows(data) {
+        const row = (label, value, cls) => `<div class="total-row${cls || ''}"><span class="label">${escapeHtml(label)}</span><span class="value">${formatCurrency(value)}</span></div>`;
+        const optional = new Set(['returns_and_allowances', 'cost_of_goods_sold', 'other_income']);
+        const negative = new Set(['returns_and_allowances', 'cost_of_goods_sold']);
+        const summary = data.summary || [];
+        return summary.map((s, i) => {
+            const value = data[s.key] || 0;
+            if (optional.has(s.key) && !value) return '';
+            const last = i === summary.length - 1;
+            return row(`${s.label} (line ${s.line})`, negative.has(s.key) ? -value : value, last ? ' grand-total' : '');
+        }).join('');
     },
 
     async generate() {
         const start = $('#tax-start').value;
         const end = $('#tax-end').value;
-        const data = await API.get(`/tax/schedule-c?start_date=${start}&end_date=${end}`);
+        const path = TaxPage._reportPath(TaxPage._entityInfo()) || '/tax/schedule-c';
+        const data = await API.get(`${path}?start_date=${start}&end_date=${end}`);
         const container = $('#tax-results');
 
         let html = `<div class="table-container"><table>
@@ -79,21 +120,9 @@ const TaxPage = {
             }
         }
 
-        // Part I in the form's own order: returns, cost of goods sold and
-        // other income only when there are any.
-        const row = (label, value) => `<div class="total-row"><span class="label">${label}</span><span class="value">${formatCurrency(value)}</span></div>`;
-        const partOne = [
-            row('Gross receipts (line 1)', data.gross_receipts),
-            data.returns_and_allowances ? row('Returns and allowances (line 2)', -data.returns_and_allowances) : '',
-            data.cost_of_goods_sold ? row('Cost of goods sold (line 4)', -data.cost_of_goods_sold) : '',
-            data.other_income ? row('Other income (line 6)', data.other_income) : '',
-        ].join('');
         html += `</tbody></table></div>
             <div class="invoice-totals" style="margin-top:12px;">
-                ${partOne}
-                <div class="total-row"><span class="label">Gross Income (line 7)</span><span class="value">${formatCurrency(data.gross_income)}</span></div>
-                <div class="total-row"><span class="label">Total Expenses (line 28)</span><span class="value">${formatCurrency(data.total_expenses)}</span></div>
-                <div class="total-row grand-total"><span class="label">Net Profit (Loss) (line 31)</span><span class="value">${formatCurrency(data.net_profit)}</span></div>
+                ${TaxPage._summaryRows(data)}
             </div>`;
         container.innerHTML = html;
     },
@@ -101,7 +130,11 @@ const TaxPage = {
     exportCSV() {
         const start = $('#tax-start').value;
         const end = $('#tax-end').value;
-        window.open(`/api/tax/schedule-c/csv?start_date=${start}&end_date=${end}`, '_blank');
+        // literal paths, so the wiring audit (tests/test_wiring.py) sees both
+        const url = TaxPage._reportPath(TaxPage._entityInfo()) === '/tax/return'
+            ? `/api/tax/return/csv?start_date=${start}&end_date=${end}`
+            : `/api/tax/schedule-c/csv?start_date=${start}&end_date=${end}`;
+        window.open(url, '_blank');
     },
 
     async showPaySalesTax() {

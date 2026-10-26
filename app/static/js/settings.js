@@ -274,11 +274,12 @@ const SettingsPage = {
                             <select id="entity-type" name="entity_type" onchange="SettingsPage._onEntityTypeChange(this)">
                                 ${SettingsPage._entityOptions(s.entity_type)}
                             </select>
-                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Your company's legal form. It decides which tax return applies (and, later, the equity accounts). It never changes your books.</div>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Your company's legal form. It decides which tax return applies and, chosen before the first posting, the equity accounts: owner's equity and draw; partner capital and distributions; or common stock, paid-in capital and shareholder distributions. Once the books have postings the chart is yours to rename under Chart of Accounts; nothing is reseeded. It never changes your books.</div>
+                            <div id="s-corp-note" style="font-size:10px; color:var(--text-muted); margin-top:4px;" ${SettingsPage._isSCorp(s) ? '' : 'hidden'}>${escapeHtml(SettingsPage.S_CORP_NOTE)}</div>
                         </div>
                         <div class="form-group" id="llc-election-group" ${s.entity_type === 'llc' ? '' : 'hidden'}>
                             <label for="llc-tax-election">Taxed as</label>
-                            <select id="llc-tax-election" name="llc_tax_election">
+                            <select id="llc-tax-election" name="llc_tax_election" onchange="SettingsPage._toggleSCorpNote()">
                                 ${SettingsPage._llcElectionOptions(s.llc_tax_election)}
                             </select>
                             <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">How this LLC is taxed. A single-member LLC taxed as a sole proprietor files Schedule C; the others file a partnership or corporate return.</div>
@@ -1659,6 +1660,12 @@ const SettingsPage = {
                 App.showCompany(saved);
             }
             toast('Settings saved');
+            // A newly chosen entity type reseeds the equity accounts only
+            // while the chart is untouched and nothing has posted (#488):
+            // say what happened either way.
+            const equity = saved && saved.entity_equity;
+            if (equity && equity.applied) toast(`${T('Equity')} accounts set for ${saved.entity.label}: ${equity.accounts.join(', ')}`);
+            else if (equity && equity.note) toast(equity.note);
             SettingsPage.loadUnreadableSecrets();
         } catch (err) {
             toast(err.message, 'error');
@@ -1827,11 +1834,31 @@ const SettingsPage = {
         return opts.join('');
     },
 
+    // An S corporation's pay rule (#488 / #557), shown under the picker for
+    // an S corp or an LLC taxed as one.
+    S_CORP_NOTE: 'S corporation: an active shareholder-employee takes reasonable compensation as W-2 wages through Payroll before any distribution. Distributions post to Shareholder Distributions (equity), never to the profit and loss.',
+
+    _isSCorp(s) {
+        return s.entity_type === 's_corp' || (s.entity_type === 'llc' && s.llc_tax_election === 's_corp');
+    },
+
     // The "Taxed as" picker only applies to an LLC: show it only then.
     _onEntityTypeChange(sel) {
         const group = document.getElementById('llc-election-group');
         if (group) group.hidden = sel.value !== 'llc';
+        SettingsPage._toggleSCorpNote();
         SettingsPage._updateDirty();
+    },
+
+    _toggleSCorpNote() {
+        const note = document.getElementById('s-corp-note');
+        const type = document.getElementById('entity-type');
+        const election = document.getElementById('llc-tax-election');
+        if (!note || !type) return;
+        note.hidden = !SettingsPage._isSCorp({
+            entity_type: type.value,
+            llc_tax_election: election ? election.value : '',
+        });
     },
 
     // Company type saves on its own and reloads: the vocabulary and the
