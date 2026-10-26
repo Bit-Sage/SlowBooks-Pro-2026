@@ -11,7 +11,15 @@ from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.util import identity_key
 
-from app.models.transactions import Transaction, TransactionLine
+from app.models.transactions import (
+    BASES,
+    BASIS_ACCRUAL,
+    BASIS_CASH,
+    LEDGER_BASIS_OPTION,
+    READ_ALL,
+    Transaction,
+    TransactionLine,
+)
 from app.models.accounts import Account, AccountType
 from app.services import control_accounts
 from app.services.safe_errors import DataProblem
@@ -154,7 +162,9 @@ def reversing_lines(lines) -> list[dict]:
     description prefixed VOID:, and every dimension (job, class, cost code,
     cost type, function) carried over so the by-class, by-job and
     functional reports net to zero for the voided document instead of
-    leaving the tag on one side."""
+    leaving the tag on one side. The basis comes over too (#483): a cash
+    recognition line is undone by a cash line, an accrual one by an
+    accrual one, so each reading nets to zero."""
     return [
         {
             "account_id": ol.account_id,
@@ -166,9 +176,23 @@ def reversing_lines(lines) -> list[dict]:
             "cost_code_id": ol.cost_code_id,
             "cost_type": ol.cost_type,
             "function": ol.function,
+            "basis": ol.basis,
         }
         for ol in lines
     ]
+
+
+def all_lines(db: Session, transaction_id: int) -> list[TransactionLine]:
+    """Every line of an entry, whatever its basis (#483). The session reads
+    the accrual lines by default; a void that copies the entry it reverses,
+    or a repair, must see the cash lines too."""
+    return (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == transaction_id)
+        .order_by(TransactionLine.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+        .all()
+    )
 
 
 def apply_balance_deltas(db: Session, deltas: dict) -> None:
@@ -352,6 +376,34 @@ def create_journal_entry(
             f"by ${abs(total_debit - total_credit):,.2f}"
         )
 
+    # Which basis each line counts on (#483): the line's own word, else the
+    # entry's kind (an invoice's lines are accrual, a payment's are both).
+    # The accrual lines and the cash lines of one entry each balance among
+    # themselves, so the accrual reading and the cash reading of the
+    # ledger balance as the whole does.
+    from app.services.cash_basis import default_basis_for
+
+    default_basis = default_basis_for(source_type)
+    for i, line in enumerate(lines):
+        basis = line.get("basis") or default_basis
+        if basis not in BASES:
+            raise DataProblem(f"Line {i+1}: basis must be one of {', '.join(BASES)}")
+        line["basis"] = basis
+    for basis in (BASIS_ACCRUAL, BASIS_CASH):
+        out = sum(
+            (
+                line["debit"] - line["credit"]
+                for line in lines
+                if line["basis"] == basis
+            ),
+            Decimal("0"),
+        )
+        if out != 0:
+            raise DataProblem(
+                f"The {basis}-basis lines of this entry are out of balance "
+                f"by ${abs(out):,.2f}"
+            )
+
     # Invoice edits retain their header identity after removing old splits.
     # Reject nonempty journals so this path cannot double-post their balances.
     if existing_transaction is not None and (
@@ -414,9 +466,14 @@ def create_journal_entry(
             cost_type=line_data.get("cost_type")
             or _cost_type_of(db, line_data.get("cost_code_id")),
             is_billable=bool(line_data.get("is_billable", False)),
+            basis=line_data["basis"],
         )
         db.add(txn_line)
 
+        # The stored balance is the accrual reading (#483): a cash
+        # recognition line never moves it.
+        if line_data["basis"] == BASIS_CASH:
+            continue
         # Accumulate the balance change in the account's natural direction;
         # the atomic update is applied once per account after the loop.
         account = (

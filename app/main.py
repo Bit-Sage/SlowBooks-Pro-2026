@@ -543,6 +543,17 @@ async def lifespan(app: FastAPI):
                 print(
                     f"Recomputed {len(fixed)} stored account balance(s) from the ledger"
                 )
+            # #483: a file from before ledger lines carried a basis gets its
+            # accrual tags and the cash-basis lines of its payments once.
+            from app.services.cash_basis import backfill as cash_basis_backfill
+
+            done = cash_basis_backfill(_db)
+            if any(done.values()):
+                print(
+                    "Cash basis: tagged %d accrual line(s), wrote cash lines for "
+                    "%d payment(s) and %d bill payment(s)"
+                    % (done["tagged"], done["payments"], done["bill_payments"])
+                )
         finally:
             _db.close()
     except Exception:

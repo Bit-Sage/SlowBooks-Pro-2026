@@ -86,6 +86,7 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
                     "debit": ol.credit,  # swap debit/credit
                     "credit": ol.debit,
                     "description": void_line_memo(ol.description),
+                    "basis": ol.basis,
                 }
             )
         if reverse_lines:

@@ -19,6 +19,7 @@ from app.services.accounting import (
     get_ar_account_id,
     get_undeposited_funds_id,
 )
+from app.services import cash_basis
 from app.services.closing_date import check_closing_date
 
 router = APIRouter(prefix="/api/batch-payments", tags=["batch_payments"])
@@ -85,6 +86,7 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
             )
 
         total = sum(a.amount for a in allocs)
+        applied_home: list[tuple] = []  # (invoice, amount) for the cash basis
 
         payment = Payment(
             customer_id=customer_id,
@@ -149,6 +151,7 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
                     amount=alloc.amount,
                 )
             )
+            applied_home.append((invoice, Decimal(str(alloc.amount))))
             invoice.amount_paid += Decimal(str(alloc.amount))
             invoice.balance_due -= Decimal(str(alloc.amount))
             if invoice.balance_due < 0:
@@ -178,6 +181,14 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
                     "description": f"Batch payment from {customer.name}",
                 },
             ]
+            # the cash-basis reading of the payment (#483)
+            journal_lines += cash_basis.customer_payment_cash_lines(
+                db,
+                ar_id,
+                applied_home,
+                Decimal("0"),
+                f"Batch payment from {customer.name}",
+            )
             txn = create_journal_entry(
                 db,
                 txn_date,

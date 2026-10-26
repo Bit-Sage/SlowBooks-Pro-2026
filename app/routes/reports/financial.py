@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
+from app.services import cash_basis
 from app.services.fiscal_year import fiscal_year_start
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
@@ -136,6 +137,12 @@ _EXCLUDE_ADJUSTING = Query(
     description="Leave the adjusting entries out (#341): the figures before "
     "the accountant's corrections",
 )
+# Which basis the statement reads (#483): accrual, cash, or left out for
+# the company default (Settings → Company, `report_basis`).
+_BASIS_QUERY = Query(
+    default=None,
+    description="accrual or cash; omitted, the company's default report basis",
+)
 
 
 def _flag(value) -> bool:
@@ -155,6 +162,7 @@ def _totals_by_account(
     sort="number",
     exclude_adjusting=False,
     chart: dict | None = None,
+    basis: str = "accrual",
 ):
     """Return a list of {account_id, account_name, account_number,
     detail_type, amount} rows where amount is signed by the account type's
@@ -163,7 +171,8 @@ def _totals_by_account(
 
     `account_id` is included so the SPA can drill into /account-transactions
     for any line — Phase 11 drill-down support. `exclude_adjusting` leaves
-    the adjusting entries (#341) out, for the figures before them.
+    the adjusting entries (#341) out, for the figures before them. `basis`
+    picks the reading of the ledger (#483): accrual, or cash.
     """
     q = (
         db.query(
@@ -188,7 +197,7 @@ def _totals_by_account(
         q = q.filter(Transaction.is_adjusting == False)  # noqa: E712
     q = q.group_by(
         Account.id, Account.name, Account.account_number, Account.detail_type
-    )
+    ).execution_options(**cash_basis.reading(basis))
 
     rows = []
     chart = chart if chart is not None else _chart_index(db)
@@ -233,8 +242,10 @@ def profit_loss(
             "the period, and a Total column (#478)"
         ),
     ] = None,
+    basis: str = _BASIS_QUERY,
 ):
     _check_compare(compare)
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     columns = columns if isinstance(columns, str) and columns else None
     if columns not in (None, "month", "quarter"):
         raise HTTPException(
@@ -255,7 +266,9 @@ def profit_loss(
     chart = _chart_index(db)
 
     def period(start, end):
-        return _pl_period(db, start, end, cls, in_class, sort, exclude_adjusting, chart)
+        return _pl_period(
+            db, start, end, cls, in_class, sort, exclude_adjusting, chart, basis
+        )
 
     if columns:
         return _pl_columns(db, start_date, end_date, columns, period, sort, chart)
@@ -413,6 +426,7 @@ def _pl_columns(db, start_date, end_date, columns, period, sort, chart) -> dict:
         "class_name": whole["class_name"],
         "sort": sort,
         "exclude_adjusting": whole["exclude_adjusting"],
+        "basis": whole["basis"],
         "columns_by": columns,
         "columns": out_cols,
         "accounts": accounts,
@@ -466,43 +480,38 @@ def _grid_tree(lines, n, chart, section_of, order, key) -> list[dict]:
     return out
 
 
-def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting, chart):
+def _pl_period(
+    db,
+    start_date,
+    end_date,
+    cls,
+    in_class,
+    sort,
+    exclude_adjusting,
+    chart,
+    basis="accrual",
+):
     """One period's P&L figures, before the layout."""
+
+    def totals(acct_type):
+        return _totals_by_account(
+            db,
+            acct_type,
+            start_date,
+            end_date,
+            in_class,
+            sort,
+            exclude_adjusting,
+            chart,
+            basis,
+        )
+
     income, other_income = _split_other(
-        _totals_by_account(
-            db,
-            AccountType.INCOME,
-            start_date,
-            end_date,
-            in_class,
-            sort,
-            exclude_adjusting,
-            chart,
-        ),
-        DetailType.OTHER_INCOME,
+        totals(AccountType.INCOME), DetailType.OTHER_INCOME
     )
-    cogs = _totals_by_account(
-        db,
-        AccountType.COGS,
-        start_date,
-        end_date,
-        in_class,
-        sort,
-        exclude_adjusting,
-        chart,
-    )
+    cogs = totals(AccountType.COGS)
     expenses, other_expense = _split_other(
-        _totals_by_account(
-            db,
-            AccountType.EXPENSE,
-            start_date,
-            end_date,
-            in_class,
-            sort,
-            exclude_adjusting,
-            chart,
-        ),
-        DetailType.OTHER_EXPENSE,
+        totals(AccountType.EXPENSE), DetailType.OTHER_EXPENSE
     )
 
     return {
@@ -512,6 +521,7 @@ def _pl_period(db, start_date, end_date, cls, in_class, sort, exclude_adjusting,
         "class_name": cls.name if cls else None,
         "sort": sort,
         "exclude_adjusting": bool(exclude_adjusting),
+        "basis": basis,
         "income": income,
         "cogs": cogs,
         "expenses": expenses,
@@ -768,8 +778,10 @@ def balance_sheet(
         Optional[str],
         Query(description="prior_year adds the same date one year earlier"),
     ] = None,
+    basis: str = _BASIS_QUERY,
 ):
     _check_compare(compare)
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     sort = sort if isinstance(sort, str) else "number"
     t = terms_from_db(db)
     if not as_of_date:
@@ -780,22 +792,22 @@ def balance_sheet(
             db,
             _bs_with_prior(
                 db,
-                _bs_period(db, as_of_date, sort, t, chart),
-                _bs_period(db, _year_earlier(as_of_date), sort, t, chart),
+                _bs_period(db, as_of_date, sort, t, chart, basis),
+                _bs_period(db, _year_earlier(as_of_date), sort, t, chart, basis),
                 sort,
                 chart,
             ),
             chart,
         )
-    return _bs_layout(db, _bs_period(db, as_of_date, sort, t, chart), chart)
+    return _bs_layout(db, _bs_period(db, as_of_date, sort, t, chart, basis), chart)
 
 
-def _bs_period(db, as_of_date, sort, t, chart) -> dict:
+def _bs_period(db, as_of_date, sort, t, chart, basis="accrual") -> dict:
     """One date's Balance Sheet figures, before the layout."""
 
     def totals(acct_type, order="number"):
         return _totals_by_account(
-            db, acct_type, date_end=as_of_date, sort=order, chart=chart
+            db, acct_type, date_end=as_of_date, sort=order, chart=chart, basis=basis
         )
 
     # a default-typed sub-account prints in its parent's group (2.28.0):
@@ -845,6 +857,7 @@ def _bs_period(db, as_of_date, sort, t, chart) -> dict:
     return {
         "as_of_date": as_of_date.isoformat(),
         "sort": sort,
+        "basis": basis,
         "assets": assets,
         "liabilities": liabilities,
         "equity": equity,
@@ -1861,6 +1874,8 @@ def _period_words(data: dict) -> str:
     period = f"{data['start_date']} — {data['end_date']}"
     if data.get("exclude_adjusting"):
         period += " (adjusting entries left out)"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     return period
 
 
@@ -2219,6 +2234,8 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
     period = f"As of {data['as_of_date']}"
     if prior:
         period += f" · compared with {prior['as_of_date']}"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     return {
         "title": t("Balance Sheet"),
         "period": period,
@@ -2360,6 +2377,7 @@ def profit_loss_pdf(
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
     columns: Optional[str] = Query(default=None),
+    basis: str = _BASIS_QUERY,
 ):
     # class_id is a keyword: profit_loss takes db before it
     data = profit_loss(
@@ -2371,6 +2389,7 @@ def profit_loss_pdf(
         exclude_adjusting=exclude_adjusting,
         compare=compare,
         columns=columns,
+        basis=basis,
     )
     t = terms_from_db(db)
     if data.get("columns_by"):
@@ -2744,6 +2763,7 @@ def profit_loss_csv_route(
         default="wide",
         description="with columns: wide, the grid; long, one row per account and column",
     ),
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import profit_loss_by_class_csv, profit_loss_csv
 
@@ -2756,6 +2776,7 @@ def profit_loss_csv_route(
         exclude_adjusting=exclude_adjusting,
         compare=compare,
         columns=columns,
+        basis=basis,
     )
     t = terms_from_db(db)
     if data.get("columns_by"):
@@ -2784,10 +2805,11 @@ def balance_sheet_csv_route(
     sort: str = _SORT_QUERY,
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import balance_sheet_csv
 
-    data = balance_sheet(as_of_date, db, sort=sort, compare=compare)
+    data = balance_sheet(as_of_date, db, sort=sort, compare=compare, basis=basis)
     t = terms_from_db(db)
     return _csv_download(
         balance_sheet_csv(data, _company_name(db), t, show_changes=not hide_changes),
@@ -2803,8 +2825,9 @@ def balance_sheet_pdf(
     sort: str = _SORT_QUERY,
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
+    basis: str = _BASIS_QUERY,
 ):
-    data = balance_sheet(as_of_date, db, sort=sort, compare=compare)
+    data = balance_sheet(as_of_date, db, sort=sort, compare=compare, basis=basis)
     t = terms_from_db(db)
     return _pdf_response(
         [_bs_section(data, t, show_changes=not hide_changes)],
