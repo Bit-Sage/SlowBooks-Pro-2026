@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A clearing account per payment provider, with the processing fee** (#583,
+@ContractorKeith). Each online-payment provider (Stripe, PayPal, Square) gets
+an optional clearing-account setting, off by default. With it off, a captured
+payment keeps posting DR Undeposited Funds / CR A/R exactly as before. With it
+on, the payment posts DR the provider's clearing account (an asset created on
+demand — "Stripe Clearing" / "PayPal Clearing" / "Square Clearing", or an
+account you choose) / CR A/R gross, and the processor's fee posts DR Merchant
+Account Fees / CR clearing in the same entry — so the clearing balance is the
+net payout you'll later see land in the bank. The fee comes from the Stripe
+balance transaction, the PayPal capture's `seller_receivable_breakdown`, and
+the Square payment's `processing_fee`; when it isn't known yet (Square can
+report it late) only the gross posts. A clearing payment doesn't appear in
+Make Deposits, because it isn't in Undeposited Funds. Settings → Online
+Payments carries the toggle and the two account pickers on each provider's
+card. (Recording the payout and matching it to the bank feed is step 2, #584.)
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its
