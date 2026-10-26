@@ -139,6 +139,7 @@ async def provider_webhook(
         invoice_id,
         result.external_id,
         result.amount,
+        fee=result.fee,
     )
     return {"status": status}
 
@@ -175,6 +176,7 @@ def check_status(provider_name: str, invoice_id: int, db: Session = Depends(get_
             result.invoice_id or invoice.id,
             result.external_id,
             result.amount,
+            fee=result.fee,
         )
         return {"status": recorded, "provider_status": result.status}
     return {"status": "not_paid", "provider_status": result.status}

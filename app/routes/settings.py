@@ -183,6 +183,40 @@ def _guard_closing_period(request: Request, db: Session, fields: dict):
         )
 
 
+def _guard_clearing_accounts(db: Session, cleaned: dict) -> None:
+    """A chosen online-payment clearing account must be an ordinary asset
+    account — not a bank-feed account (deposits land there at payout, #584),
+    and not a non-asset account the payment can't post into. Refuse with a
+    400 at save rather than letting a bad id post nowhere later."""
+    from app.models.accounts import Account, AccountType
+
+    for provider in ("stripe", "paypal", "square"):
+        value = cleaned.get(f"{provider}_clearing_account_id")
+        if not value:  # "" clears the override and uses the default account
+            continue
+        try:
+            acct_id = int(value)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{provider.title()} clearing account id must be a number.",
+            )
+        acct = db.query(Account).filter(Account.id == acct_id).first()
+        if acct is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The chosen {provider.title()} clearing account does not exist.",
+            )
+        if acct.account_type != AccountType.ASSET or acct.bank_kind:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The {provider.title()} clearing account must be an asset "
+                    "account that is not a bank or credit-card account."
+                ),
+            )
+
+
 @router.put("")
 def update_settings(
     data: SettingsUpdate, request: Request, db: Session = Depends(get_db)
@@ -245,6 +279,7 @@ def update_settings(
             status_code=422,
             detail=" ".join(problems) + " Nothing was saved.",
         )
+    _guard_clearing_accounts(db, cleaned)
     # The "Taxed as" select is hidden for a non-LLC but the form still submits
     # its last value; drop a stale election so it never lingers (#488).
     if "llc_tax_election" in cleaned:

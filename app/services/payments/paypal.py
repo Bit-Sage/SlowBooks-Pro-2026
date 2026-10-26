@@ -29,6 +29,7 @@ from app.models.invoices import Invoice
 from app.services.accounting import _q
 from app.services.payments import _http
 from app.services.payments.base import CheckoutSession, PaymentProvider, PaymentResult
+from app.services.payments.clearing import clearing_enabled
 from app.services.donor_documents import document_label
 from app.services.terminology import document_reference, terms_for
 
@@ -160,6 +161,9 @@ class PayPalProvider(PaymentProvider):
         "paypal_client_id",
         "paypal_client_secret",
         "paypal_webhook_id",
+        "paypal_clearing_enabled",
+        "paypal_clearing_account_id",
+        "paypal_fee_account_id",
     )
     secret_keys = ("paypal_client_secret",)
 
@@ -244,11 +248,16 @@ class PayPalProvider(PaymentProvider):
             or resource.get("id")
             or ""
         )
+        fee = None
+        if clearing_enabled(settings, self.name):
+            # The capture resource carries the fee directly — no extra call.
+            fee = _capture_fee(resource)
         return PaymentResult(
             status="paid",
             external_id=order_id,
             amount=Decimal(amount) if amount is not None else None,
             invoice_id=int(custom_id) if custom_id else None,
+            fee=fee,
             raw=resource,
         )
 
@@ -274,11 +283,13 @@ class PayPalProvider(PaymentProvider):
                 status = order.get("status")
 
         if status == "COMPLETED":
+            fee = _order_fee(order) if clearing_enabled(settings, self.name) else None
             return PaymentResult(
                 status="paid",
                 external_id=external_id,
                 amount=_order_captured_amount(order),
                 invoice_id=_order_invoice_id(order),
+                fee=fee,
                 raw=order,
             )
         if status in ("VOIDED",):
@@ -294,6 +305,32 @@ def _order_invoice_id(order: dict) -> Optional[int]:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _capture_fee(capture: dict) -> Optional[Decimal]:
+    """The PayPal fee on a single capture resource (webhook shape)."""
+    breakdown = capture.get("seller_receivable_breakdown") or {}
+    value = (breakdown.get("paypal_fee") or {}).get("value")
+    try:
+        return Decimal(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _order_fee(order: dict) -> Optional[Decimal]:
+    """Sum the PayPal fee across a captured order's completed captures; None
+    when no capture reports one."""
+    total = Decimal("0")
+    found = False
+    for unit in order.get("purchase_units") or []:
+        captures = ((unit.get("payments") or {}).get("captures")) or []
+        for cap in captures:
+            if cap.get("status") == "COMPLETED":
+                fee = _capture_fee(cap)
+                if fee is not None:
+                    total += fee
+                    found = True
+    return total if found else None
 
 
 def _order_captured_amount(order: dict) -> Optional[Decimal]:

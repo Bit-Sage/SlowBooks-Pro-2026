@@ -135,6 +135,20 @@ DEFAULT_SETTINGS = {
     # Square signs webhooks over the EXACT notification URL registered in
     # its dashboard; set this to that URL (required for webhook verification)
     "square_notification_url": "",
+    # Per-provider clearing account (#583). Off by default: a captured
+    # payment keeps posting to Undeposited Funds. When on, it posts to the
+    # provider's clearing account and the fee to the fee account. The account
+    # id settings are "" to use the on-demand defaults ("Stripe Clearing",
+    # "Merchant Account Fees", …); a chosen id overrides.
+    "stripe_clearing_enabled": "false",
+    "stripe_clearing_account_id": "",
+    "stripe_fee_account_id": "",
+    "paypal_clearing_enabled": "false",
+    "paypal_clearing_account_id": "",
+    "paypal_fee_account_id": "",
+    "square_clearing_enabled": "false",
+    "square_clearing_account_id": "",
+    "square_fee_account_id": "",
     # SimpleFIN bank feeds (user-held bridge.simplefin.org credential).
     # access_url embeds basic-auth creds — listed in SECRET_KEYS.
     "simplefin_access_url": "",

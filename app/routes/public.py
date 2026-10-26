@@ -61,6 +61,7 @@ def _confirm_return_payment(db: Session, invoice: Invoice, provider_name: str) -
             result.invoice_id or invoice.id,
             result.external_id,
             result.amount,
+            fee=result.fee,
         )
         db.refresh(invoice)
         return True

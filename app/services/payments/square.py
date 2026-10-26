@@ -33,6 +33,7 @@ from app.models.invoices import Invoice
 from app.services.accounting import _q
 from app.services.payments import _http
 from app.services.payments.base import CheckoutSession, PaymentProvider, PaymentResult
+from app.services.payments.clearing import clearing_enabled
 from app.services.donor_documents import document_label
 from app.services.terminology import document_reference, terms_for
 
@@ -105,6 +106,31 @@ def build_get_order_request(order_id: str, settings: Mapping[str, str]) -> dict:
     }
 
 
+def build_get_payment_request(payment_id: str, settings: Mapping[str, str]) -> dict:
+    return {
+        "method": "GET",
+        "url": f"{api_base(settings)}/v2/payments/{payment_id}",
+        "headers": _auth_headers(settings),
+    }
+
+
+def processing_fee(payment: dict) -> Optional[Decimal]:
+    """Sum a Square payment's processing_fee[].amount_money (cents) to a
+    dollar Decimal; None when the fee isn't reported yet (Square can add it
+    after the payment completes)."""
+    fees = payment.get("processing_fee")
+    if not fees:
+        return None
+    total_cents = 0
+    found = False
+    for entry in fees:
+        amount = (entry.get("amount_money") or {}).get("amount")
+        if amount is not None:
+            total_cents += amount
+            found = True
+    return Decimal(total_cents) / Decimal("100") if found else None
+
+
 def webhook_signature(signature_key: str, notification_url: str, body: bytes) -> str:
     """Square's webhook signature: base64(HMAC-SHA256(key, url + body))."""
     mac = hmac.new(
@@ -126,6 +152,9 @@ class SquareProvider(PaymentProvider):
         "square_location_id",
         "square_webhook_signature_key",
         "square_notification_url",
+        "square_clearing_enabled",
+        "square_clearing_account_id",
+        "square_fee_account_id",
     )
     secret_keys = ("square_access_token", "square_webhook_signature_key")
 
@@ -193,6 +222,14 @@ class SquareProvider(PaymentProvider):
         if not order_id:
             return None
         amount_cents = (payment.get("amount_money") or {}).get("amount")
+        fee = None
+        if clearing_enabled(settings, self.name):
+            # The webhook payment object carries processing_fee once Square
+            # has settled it; absent (reported late) leaves fee None.
+            try:
+                fee = processing_fee(payment)
+            except Exception:
+                fee = None
         return PaymentResult(
             status="paid",
             external_id=order_id,
@@ -202,6 +239,7 @@ class SquareProvider(PaymentProvider):
                 else None
             ),
             invoice_id=None,  # resolved by checkout_external_id lookup
+            fee=fee,
             raw=payment,
         )
 
@@ -219,6 +257,9 @@ class SquareProvider(PaymentProvider):
             return PaymentResult(status="cancelled", external_id=external_id, raw=order)
         if _order_is_paid(order):
             amount_cents = (order.get("total_money") or {}).get("amount")
+            fee = None
+            if clearing_enabled(settings, self.name):
+                fee = self._poll_fee(order, settings)
             return PaymentResult(
                 status="paid",
                 external_id=external_id,
@@ -228,9 +269,34 @@ class SquareProvider(PaymentProvider):
                     else None
                 ),
                 invoice_id=None,
+                fee=fee,
                 raw=order,
             )
         return PaymentResult(status="pending", external_id=external_id, raw=order)
+
+    # -- fee -------------------------------------------------------------
+
+    def _poll_fee(self, order: dict, settings: Mapping[str, str]) -> Optional[Decimal]:
+        """Square's fee isn't on the order — the order's tender names a
+        payment id, and the payment carries processing_fee. One extra GET;
+        any failure returns None and never blocks recording the payment."""
+        try:
+            tenders = order.get("tenders") or []
+            payment_id = next(
+                (t.get("payment_id") or t.get("id") for t in tenders if t), None
+            )
+            if not payment_id:
+                return None
+            resp = _http.send(build_get_payment_request(payment_id, settings))
+            if resp.status_code != 200:
+                return None
+            payment = resp.json().get("payment") or {}
+            return processing_fee(payment)
+        except Exception:
+            logger.warning(
+                "Square fee lookup failed; recording gross only", exc_info=True
+            )
+            return None
 
 
 def _order_is_paid(order: dict) -> bool:
