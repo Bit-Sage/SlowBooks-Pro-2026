@@ -176,7 +176,7 @@ def reversing_lines(lines) -> list[dict]:
             "cost_code_id": ol.cost_code_id,
             "cost_type": ol.cost_type,
             "function": ol.function,
-            "basis": ol.basis,
+            "basis": getattr(ol, "basis", None),
         }
         for ol in lines
     ]

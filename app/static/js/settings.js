@@ -434,7 +434,7 @@ const SettingsPage = {
                                 <option value="a4" ${s.pdf_paper_size === 'a4' ? 'selected' : ''}>A4</option>
                             </select></div>
                         <div class="form-group"><label>Report Basis</label>
-                            <select name="report_basis" title="The basis the Profit & Loss and Balance Sheet run on unless the report says otherwise">
+                            <select name="report_basis" title="${escapeHtml(`The basis the ${T('Profit & Loss')} and ${T('Balance Sheet')} run on unless the report says otherwise`)}">
                                 <option value="accrual" ${s.report_basis !== 'cash' ? 'selected' : ''}>Accrual (income when billed)</option>
                                 <option value="cash" ${s.report_basis === 'cash' ? 'selected' : ''}>Cash (income when paid)</option>
                             </select></div>

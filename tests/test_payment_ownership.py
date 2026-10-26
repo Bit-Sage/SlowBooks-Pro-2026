@@ -102,14 +102,20 @@ def test_payment_allocation_customer_ownership(
     }
     assert balances["1100"] == Decimal("40")
     assert balances["1200"] == Decimal("60")
-    lines = [
+    entry = [
         row
         for row in after[TransactionLine.__tablename__]
         if row["transaction_id"] == payment["transaction_id"]
     ]
+    # the accrual lines (Dr 1200 / Cr 1100), and beside them the cash-basis
+    # recognition the payment writes (#483), balanced on its own
+    lines = [row for row in entry if row["basis"] != "cash"]
     assert len(lines) == 2
     assert (
         sum(row["debit"] for row in lines)
         == sum(row["credit"] for row in lines)
         == Decimal("60")
     )
+    cash = [row for row in entry if row["basis"] == "cash"]
+    assert len(cash) == 2
+    assert sum(row["debit"] for row in cash) == sum(row["credit"] for row in cash)
