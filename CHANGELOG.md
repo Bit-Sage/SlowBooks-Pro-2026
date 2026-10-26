@@ -7,6 +7,7 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+<<<<<<< HEAD
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
@@ -69,6 +70,22 @@ report it late) only the gross posts. A clearing payment doesn't appear in
 Make Deposits, because it isn't in Undeposited Funds. Settings → Online
 Payments carries the toggle and the two account pickers on each provider's
 card. (Recording the payout and matching it to the bank feed is step 2, #584.)
+=======
+**Reports on a cash basis, step 1** (#483, @ContractorKeith). The Profit &
+Loss and the Balance Sheet run on the cash basis: income when the customer's
+payment lands, a bill's expense when it is paid, each prorated over the
+document's lines (and their items' accounts, classes, jobs and sales tax)
+by the part paid, with Accounts Receivable and Accounts Payable at zero and
+a payment taken before its invoice as Unapplied Cash Payment Income (a bill
+payment's remainder as Unapplied Cash Bill Payment Expense) until applied.
+Settings → Company has a Report Basis default (accrual, as before), and
+each of the two statements a Basis choice beside Sort by (`?basis=cash` on
+their API, PDF and CSV, which say "cash basis" when they are). Every ledger
+line now carries a basis; a file from an earlier build is tagged and its
+payments' cash lines written once at the next start. Every other report,
+the registers, agings and exports stay accrual until a later step. Design:
+`docs/design/cash-basis.md`.
+>>>>>>> 9991395 (docs: cash-basis changelog, features entry and design decisions as built (#483))
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general

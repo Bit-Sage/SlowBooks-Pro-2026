@@ -117,18 +117,17 @@ entry, dated the payment:
   (cash). Both accounts are created on demand (`ensure_account`, as 3900
   and 6999 are).
 - When that remainder is later applied (`POST /api/payments/{id}/apply`),
-  a `payment_apply` entry of cash lines only moves it: Dr Unapplied Cash
-  Payment Income / Cr the invoice's recognition lines, prorated as above.
-  It is dated the later of the payment's and the invoice's date (cash
-  was in hand on the payment's date; which income it is was not known
-  until the invoice existed), or today when that date is on or before the
-  closing date, so a filed period keeps its figures and only the account
-  changes. Voiding the payment reverses it with the rest, as the FX
-  entries already are.
+  cash lines appended to the payment's own entry move it: Dr Unapplied
+  Cash Payment Income / Cr the invoice's recognition lines, prorated as
+  above. So they sit on the payment's date: the cash was in hand that
+  day, the period's cash-basis net income does not change (unapplied
+  cash income was income already), only the account it sits in, and
+  applying still posts no new transaction. Voiding the payment reverses
+  the entry whole.
 
-**Reading a basis.** `ledger_basis` is a session execution option
-(`app/services/cash_basis.py` installs one `do_orm_execute` listener on
-`Session`): every ORM select that touches `TransactionLine` — a column
+**Reading a basis.** `ledger_basis` is a session execution option (one
+`do_orm_execute` listener on `Session`, beside the model in
+`app/models/transactions.py`): every ORM select that touches `TransactionLine` — a column
 sum, a join, a subquery, a relationship load — carries
 `basis != 'cash'` unless the query asks for `ledger_basis="cash"`
 (`basis != 'accrual'`) or `"all"`. So every reader that exists today,
@@ -183,15 +182,15 @@ reading only one basis can give.
 ### The invariant
 
 For any period, in the cash view: cash-basis net income equals the change
-in cash (bank, credit card and Undeposited Funds balances) less the
+in cash (bank, credit card and Undeposited Funds balances) plus the
 change in the other balance-sheet accounts that a cash-basis book still
 carries, which is what the cash Balance Sheet says:
 
 ```
 NI_cash(period) = Δ cash
-                − Δ other assets         (fixed assets bought, inventory paid for, prepaid, retainage receivable…)
-                + Δ liabilities           (loans, cards, sales tax collected not remitted, payroll liabilities, customer deposits)
-                + Δ equity ex. net income (owner contributions and draws, opening balance equity)
+                + Δ other assets         (fixed assets bought, inventory paid for, prepaid, retainage receivable…)
+                − Δ liabilities           (loans, cards, sales tax collected not remitted, payroll liabilities, customer deposits)
+                − Δ equity ex. net income (owner contributions and draws, opening balance equity)
 ```
 
 with A/R and A/P at zero. The tests state it as: the cash Balance Sheet
@@ -222,8 +221,9 @@ basis neither the written-off income nor the bad debt ever appears.
 
 **Prepayments and unapplied cash.** QuickBooks' rule, above: Unapplied
 Cash Payment Income on the payment's date, moved to the invoice's income
-when applied. The vendor side mirrors it with Unapplied Cash Bill Payment
-Expense.
+when applied — on the payment's date too (decision 6). The vendor side
+mirrors it with Unapplied Cash Bill Payment Expense; a vendor prepayment
+has no apply-later route yet, so it stays there until step 2.
 
 **Voiding or editing a paid document.** The cash lines belong to the
 payment's entry, so voiding the payment reverses them (the void reads
@@ -269,6 +269,13 @@ pair must then prorate across the retainage held and the retainage
 released, and a bill's over 2050 Retainage Payable. Left for the
 follow-up, with the rule already in place: a release is a payment, and a
 payment writes the cash lines for what it collected.
+
+**Inventory and cost of goods.** The stock movement an invoice posts (Dr
+cost of goods / Cr inventory, under the invoice's own source) is among
+the invoice's recognition lines, so on the cash basis the cost of a sale
+lands with its income, in the paid proportion; a bill's inventory debit
+likewise lands when the bill is paid. The cash Balance Sheet carries the
+inventory paid for.
 
 **Multi-currency.** A payment relieves A/R at each invoice's booked rate
 (`ar_home_credits`), and the cash pair is built from the home-currency
@@ -349,8 +356,12 @@ package on the company default.
    basis (the cash pair does).
 4. **The backfill runs at start**, idempotent, not inside the migration.
 5. **4950 / 6990** for the two unapplied-cash accounts, created on demand.
-6. **Apply-later reclass** dated the later of payment and invoice, today
-   when that is closed.
+6. **Apply-later reclass lives in the payment's entry**, on the payment's
+   date, not in an entry of its own: `test_apply_payment_credit` holds
+   that applying a remainder posts no transaction, the period's cash net
+   income is unchanged either way, and the void then has one entry to
+   reverse. (The text above first had it dated the later of payment and
+   invoice, today when closed; dropped for that reason.)
 7. **Edits of a paid document leave earlier cash lines alone** (v1).
 8. **Independent proration per payment**; a cent may stay on a line.
 9. **Payroll and journal entries are `both`** in step 1.
