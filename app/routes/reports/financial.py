@@ -16,6 +16,7 @@ from app.services.statement_layout import (
     BS_GROUPS,
     MAX_DEPTH,
     account_chart,
+    bs_group_of,
     bs_group_totals,
     bs_groups,
     bs_print_details,
@@ -776,15 +777,17 @@ def balance_sheet(
     chart = _chart_index(db)
     if compare == "prior_year":
         return _bs_layout(
+            db,
             _bs_with_prior(
                 db,
                 _bs_period(db, as_of_date, sort, t, chart),
                 _bs_period(db, _year_earlier(as_of_date), sort, t, chart),
                 sort,
                 chart,
-            )
+            ),
+            chart,
         )
-    return _bs_layout(_bs_period(db, as_of_date, sort, t, chart))
+    return _bs_layout(db, _bs_period(db, as_of_date, sort, t, chart), chart)
 
 
 def _bs_period(db, as_of_date, sort, t, chart) -> dict:
@@ -853,18 +856,55 @@ def _bs_period(db, as_of_date, sort, t, chart) -> dict:
     }
 
 
-def _bs_layout(data: dict) -> dict:
+def _bs_layout(db, data: dict, chart: dict) -> dict:
     """The Balance Sheet's groups (#390) beside its flat lists: for assets
-    and liabilities, [{heading, total_key, lines}] in print order, so the
-    screen, the PDF and the CSV classify nothing. The flat lists stay what
-    the prior-year pairing and the drill-down read."""
-    data["groups"] = {
-        side: [
-            {"heading": heading, "total_key": key, "lines": lines}
+    and liabilities, [{heading, total_key, lines, tree}] in print order, so
+    the screen, the PDF and the CSV classify nothing. The flat lists stay
+    what the prior-year pairing and the drill-down read.
+
+    `tree` is a group's lines with sub-accounts beneath their parents, a
+    "Direct postings to …" line and a "Total …" per family (#565, as the
+    P&L has since #416), and `tree.equity` the equity side's. A parent
+    gathers only the sub-accounts that print in its own group: one placed
+    elsewhere by its detail type prints flat in that group, by its full
+    path, the way #416 treats a child of another P&L section. Built after
+    the prior-year pairing, so a family total has every column. The
+    synthetic Net Income line (no account) prints last, as it came."""
+    order = _account_order(db, data.get("sort") or "number", chart)
+    accounts = account_chart(index=chart)
+    keys = ("amount", "prior_amount") if data.get("prior") else ("amount",)
+    placed = bs_print_details(index=chart)
+    spot = {
+        aid: bs_group_of(row[3], placed.get(aid) or row[4])
+        for aid, row in chart.items()
+    }
+
+    def tree(lines, side, group=None):
+        """The rows of one group (or of the equity side, group None)."""
+        return family_rows(
+            lines,
+            accounts,
+            lambda aid: spot.get(aid, (None, None))[0] == side
+            and (group is None or spot[aid][1][0] == group),
+            keys,
+            # the detail types' order inside the group holds (Bank before
+            # Other Current Asset), then the sort choice
+            lambda aid: (spot.get(aid, (None, (0, 0)))[1], order({"account_id": aid})),
+        )
+
+    data["groups"] = {}
+    for side in BS_GROUPS:
+        headings = [heading for heading, _key, _details in BS_GROUPS[side]]
+        data["groups"][side] = [
+            {
+                "heading": heading,
+                "total_key": key,
+                "lines": lines,
+                "tree": tree(lines, side, headings.index(heading)),
+            }
             for heading, key, lines in bs_groups(data[side], side)
         ]
-        for side in BS_GROUPS
-    }
+    data["tree"] = {"equity": tree(data["equity"], "equity")}
     return data
 
 
@@ -2087,15 +2127,19 @@ def _pl_columns_title(data: dict, t) -> str:
 def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
     """Balance Sheet rows for the PDF. Assets and liabilities print under
     their groups (#390: Current / Fixed / Other Assets, Current / Long Term
-    Liabilities), each with its subtotal. With a prior-year comparison
-    (`prior` on the data) the columns are Current | Prior Year, and
-    $ Change | % Change unless show_changes is off."""
+    Liabilities), each with its subtotal, and inside a group (or the equity
+    side) sub-accounts beneath their parents with a total per family
+    (#565, the group's `tree`; the flat lines when a caller built none).
+    With a prior-year comparison (`prior` on the data) the columns are
+    Current | Prior Year, and $ Change | % Change unless show_changes is
+    off."""
     t = t or Terms()
     prior = data.get("prior")
     columns = _compare_columns(prior, show_changes)
     blank = [""] * (len(columns) - 1)
     p = prior or {}
     groups = data.get("groups") or {}
+    tree = data.get("tree") or {}
 
     def figures(cur, before):
         return _compare_figures(cur, before, prior, show_changes)
@@ -2106,6 +2150,31 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
             + figures(item["amount"], item.get("prior_amount", 0)),
             "indent": indent,
         }
+
+    def tree_row(r, indent):
+        """A printed row of a family tree (#416): an account, a parent's
+        heading, its direct postings or its family's total, `indent` the
+        level of the tree's top."""
+        indent += r["depth"]
+        if r["kind"] == "heading":
+            return {
+                "cells": [f"  {r['label']}"] + blank,
+                "style": "group",
+                "indent": indent,
+            }
+        row = {
+            "cells": [f"  {r['label']}"]
+            + figures(r["amount"], r.get("prior_amount", 0)),
+            "indent": indent,
+        }
+        if r["kind"] == "total":
+            row["style"] = "subtotal"
+        return row
+
+    def lines(items, rows, indent):
+        if rows is not None:
+            return [tree_row(r, indent) for r in rows]
+        return [line(item, indent) for item in items]
 
     rows = []
     for label, key, total_key in (
@@ -2119,7 +2188,7 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
                 rows.append(
                     {"cells": [g["heading"]] + blank, "style": "group", "indent": 1}
                 )
-                rows.extend(line(item, 2) for item in g["lines"])
+                rows.extend(lines(g["lines"], g.get("tree"), 2))
                 rows.append(
                     {
                         "cells": [f"Total {g['heading']}"]
@@ -2129,7 +2198,7 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
                     }
                 )
         else:
-            rows.extend(line(item, 1) for item in data[key])
+            rows.extend(lines(data[key], tree.get(key), 1))
         rows.append(
             {
                 "cells": [f"Total {label}"]

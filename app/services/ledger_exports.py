@@ -668,9 +668,14 @@ def balance_sheet_csv(
     """The Balance Sheet as a spreadsheet. Section is the group a line
     prints under (Current Assets, Long Term Liabilities, #390) with its
     subtotal row, and the last column, Type, the side (Assets, Liabilities,
-    Equity), so a sheet filtering on either keeps its rows. With a
-    prior-year comparison (`prior` on the data) each row also carries Prior
-    year, and $ Change and % Change unless show_changes is off."""
+    Equity), so a sheet filtering on either keeps its rows. Inside a group
+    the rows are the screen's tree (#565, as the P&L's since #489): a
+    parent's heading, its sub-accounts indented two spaces a level (still
+    the full path, the number in its own column), "Direct postings to …"
+    and the family's "Total …", so the file adds up the way the screen
+    does. With a prior-year comparison (`prior` on the data) each row also
+    carries Prior year, and $ Change and % Change unless show_changes is
+    off."""
     prior = data.get("prior")
     p_tot = prior or {}
     out = io.StringIO()
@@ -680,26 +685,27 @@ def balance_sheet_csv(
         period += f" compared with {prior['as_of_date']}"
     _preamble(w, company, words("Balance Sheet"), period)
     groups = data.get("groups") or {}
+    tree = data.get("tree") or {}
 
     def figures(cur, before):
         return _cmp_cells(cur, before, prior, show_changes)
 
-    def line(section, i, side):
-        return (
-            [
-                section,
-                i.get("account_number") or "",
-                i.get("account_path") or i["account_name"],  # W-8
-            ]
-            + figures(i["amount"], i.get("prior_amount", 0))
-            + [side]
-        )
+    header = _cmp_header(prior, show_changes)
 
-    w.writerow(
-        ["Section", "Account number", "Account name"]
-        + _cmp_header(prior, show_changes)
-        + ["Type"]
-    )
+    def rows(section, items, rows, side):
+        """One group's (or side's) rows: its tree, else the flat lines of
+        a reply with no tree (a caller that built its own)."""
+        if rows is None:
+            rows = [{**i, "kind": "account", "depth": 0} for i in items]
+        for r in rows:
+            cells = (
+                [""] * len(header)
+                if r["kind"] == "heading"
+                else figures(r["amount"], r.get("prior_amount", 0))
+            )
+            w.writerow(tree_csv_row(section, r, cells) + [side])
+
+    w.writerow(["Section", "Account number", "Account name"] + header + ["Type"])
     for label, key, total_key in (
         ("Assets", "assets", "total_assets"),
         ("Liabilities", "liabilities", "total_liabilities"),
@@ -707,16 +713,14 @@ def balance_sheet_csv(
     ):
         if key in groups:
             for g in groups[key]:
-                for i in g["lines"]:
-                    w.writerow(line(g["heading"], i, label))
+                rows(g["heading"], g["lines"], g.get("tree"), label)
                 w.writerow(
                     [g["heading"], "", f"Total {g['heading']}"]
                     + figures(data[g["total_key"]], p_tot.get(g["total_key"], 0))
                     + [label]
                 )
         else:
-            for i in data[key]:
-                w.writerow(line(label, i, label))
+            rows(label, data[key], tree.get(key), label)
         w.writerow(
             [label, "", f"Total {label}"]
             + figures(data[total_key], p_tot.get(total_key, 0))
