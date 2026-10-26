@@ -10,20 +10,20 @@ const App = {
         // address of its own (#238, R8 review): a report opened from the
         // page comes Back to the page, not the list, and a reload keeps it.
         // The list row and the report rows go there (App.documentAddress).
-        '/customers/:id': { page: 'customers',       label: 'Customer',           render: (id) => App.withDocument(() => CustomersPage.render(), () => CustomersPage.showDetails(id)) },
+        '/customers/:id': { page: 'customers',       label: 'Customer',           document: true, render: (id) => App.withDocument(() => CustomersPage.render(), () => CustomersPage.showDetails(id)) },
         '/jobs':          { page: 'jobs',            label: 'Jobs',               render: () => JobsPage.render() },
         '/jobs/:id':      { page: 'jobs',            label: 'Job',                render: (id, query) => JobsPage.renderDetail(id, query) },
         '/job-costs':     { page: 'job-costs',       label: 'Job Cost Entries',   render: () => JobCostsPage.render() },
         // A posting's own page where it has one (#241): the drill-down and
         // the register link a job cost, a pay run, a credit memo, an in-kind
         // gift, a release or an allocation to the document over its list.
-        '/job-costs/:id': { page: 'job-costs',       label: 'Job Cost Entry',     render: (id) => App.withDocument(() => JobCostsPage.render(), () => JobCostsPage.view(id)) },
+        '/job-costs/:id': { page: 'job-costs',       label: 'Job Cost Entry',     document: true, render: (id) => App.withDocument(() => JobCostsPage.render(), () => JobCostsPage.view(id)) },
         '/releases':      { page: 'releases',        label: 'Releases from Restriction', nonprofit: true, render: () => ReleasesPage.render() },
-        '/releases/:id':  { page: 'releases',        label: 'Release from Restriction', nonprofit: true, render: (id) => App.withDocument(() => ReleasesPage.render(), () => ReleasesPage.view(id)) },
+        '/releases/:id':  { page: 'releases',        label: 'Release from Restriction', nonprofit: true, document: true, render: (id) => App.withDocument(() => ReleasesPage.render(), () => ReleasesPage.view(id)) },
         '/functional-allocations': { page: 'functional-allocations', label: 'Functional Allocations', nonprofit: true, render: () => AllocationsPage.render() },
-        '/functional-allocations/:id': { page: 'functional-allocations', label: 'Functional Allocation', nonprofit: true, render: (id) => App.withDocument(() => AllocationsPage.render(), () => AllocationsPage.view(id)) },
+        '/functional-allocations/:id': { page: 'functional-allocations', label: 'Functional Allocation', nonprofit: true, document: true, render: (id) => App.withDocument(() => AllocationsPage.render(), () => AllocationsPage.view(id)) },
         '/vendors':       { page: 'vendors',         label: 'Vendor Center',      render: () => VendorsPage.render() },
-        '/vendors/:id':   { page: 'vendors',         label: 'Vendor',             render: (id) => App.withDocument(() => VendorsPage.render(), () => VendorsPage.showDetails(id)) },
+        '/vendors/:id':   { page: 'vendors',         label: 'Vendor',             document: true, render: (id) => App.withDocument(() => VendorsPage.render(), () => VendorsPage.showDetails(id)) },
         '/items':         { page: 'items',           label: 'Item List',          render: () => ItemsPage.render() },
         '/invoices':      { page: 'invoices',        label: 'Create Invoices',    render: () => InvoicesPage.render() },
         // A posting's own address (#/invoices/12, #/deposits/31): the bank
@@ -32,16 +32,16 @@ const App = {
         // link but a vendor credit's said "Page not found" (explore 2.17.3).
         // The document opens over its list (App.withDocument); a card charge
         // or a transfer opens as its journal entry.
-        '/invoices/:id':      { page: 'invoices',   label: 'Invoice',       render: (id) => App.withDocument(() => InvoicesPage.render(), () => InvoicesPage.view(id)) },
+        '/invoices/:id':      { page: 'invoices',   label: 'Invoice',       document: true, render: (id) => App.withDocument(() => InvoicesPage.render(), () => InvoicesPage.view(id)) },
         '/sales-receipts': { page: 'sales-receipts', label: 'Enter Sales Receipts', render: () => SalesReceiptsPage.render() },
         '/in-kind-gifts': { page: 'in-kind-gifts',   label: 'In-Kind Gifts',      nonprofit: true, render: () => InKindPage.render() },
-        '/in-kind-gifts/:id': { page: 'in-kind-gifts', label: 'In-Kind Gift',     nonprofit: true, render: (id) => App.withDocument(() => InKindPage.render(), () => InKindPage.view(id)) },
+        '/in-kind-gifts/:id': { page: 'in-kind-gifts', label: 'In-Kind Gift',     nonprofit: true, document: true, render: (id) => App.withDocument(() => InKindPage.render(), () => InKindPage.view(id)) },
         '/estimates':     { page: 'estimates',       label: 'Create Estimates',   render: () => EstimatesPage.render() },
         '/payments':      { page: 'payments',        label: 'Receive Payments',   render: () => PaymentsPage.render() },
-        '/payments/:id':      { page: 'payments',   label: 'Payment',       render: (id) => App.withDocument(() => PaymentsPage.render(), () => PaymentsPage.view(id)) },
+        '/payments/:id':      { page: 'payments',   label: 'Payment',       document: true, render: (id) => App.withDocument(() => PaymentsPage.render(), () => PaymentsPage.view(id)) },
         '/banking':       { page: 'banking',         label: 'Banking',            render: () => BankingPage.render() },
         '/banking/:id':   { page: 'banking',         label: 'Register',           render: (id, query) => BankingPage.renderRegister(id, query) },
-        '/banking/transfers/:id': { page: 'banking', label: 'Transfer',     render: (id) => App.withDocument(() => BankingPage.render(), () => JournalPage.view(id)) },
+        '/banking/transfers/:id': { page: 'banking', label: 'Transfer',     document: true, render: (id) => App.withDocument(() => BankingPage.render(), () => JournalPage.view(id)) },
         '/accounts':      { page: 'accounts',        label: 'Chart of Accounts',  render: () => App.renderAccounts() },
         // A class's own page and the Classes list (#234): the period, the
         // tab and the Show choice ride in the query, so a reload, a bookmark
@@ -64,12 +64,12 @@ const App = {
         '/purchase-orders': { page: 'purchase-orders', label: 'Purchase Orders',  render: () => PurchaseOrdersPage.render() },
         '/bills':         { page: 'bills',           label: 'Bills',              render: () => BillsPage.render() },
         '/bill-entry':    { page: 'bill-entry',      label: 'Bill Quick Entry',   render: () => BillQuickEntry.render() },
-        '/bills/:id':         { page: 'bills',      label: 'Bill',          render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.view(id)) },
-        '/bill-payments/:id': { page: 'bills',      label: 'Bill Payment',  render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.viewPayment(id)) },
+        '/bills/:id':         { page: 'bills',      label: 'Bill',          document: true, render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.view(id)) },
+        '/bill-payments/:id': { page: 'bills',      label: 'Bill Payment',  document: true, render: (id) => App.withDocument(() => BillsPage.render(), () => BillsPage.viewPayment(id)) },
         '/credit-memos':  { page: 'credit-memos',    label: 'Credit Memos',       render: () => CreditMemosPage.render() },
-        '/credit-memos/:id': { page: 'credit-memos', label: 'Credit Memo',        render: (id) => App.withDocument(() => CreditMemosPage.render(), () => CreditMemosPage.view(id)) },
+        '/credit-memos/:id': { page: 'credit-memos', label: 'Credit Memo',        document: true, render: (id) => App.withDocument(() => CreditMemosPage.render(), () => CreditMemosPage.view(id)) },
         '/vendor-credits':{ page: 'vendor-credits',  label: 'Vendor Credits',     render: () => VendorCreditsPage.render() },
-        '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit',  render: (id) => App.withDocument(() => VendorCreditsPage.render(), () => VendorCreditsPage.view(id)) },
+        '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit',  document: true, render: (id) => App.withDocument(() => VendorCreditsPage.render(), () => VendorCreditsPage.view(id)) },
         // Phase 3: Productivity
         '/recurring':     { page: 'recurring',       label: 'Recurring Invoices', render: () => RecurringPage.render() },
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
@@ -81,7 +81,7 @@ const App = {
         '/companies':     { page: 'companies',       label: 'Companies',          render: () => CompaniesPage.render() },
         '/employees':     { page: 'employees',       label: 'Employees',          render: () => EmployeesPage.render() },
         '/payroll':       { page: 'payroll',         label: 'Payroll',            render: () => PayrollPage.render() },
-        '/payroll/:id':   { page: 'payroll',         label: 'Pay Run',            render: (id) => App.withDocument(() => PayrollPage.render(), () => PayrollPage.view(id)) },
+        '/payroll/:id':   { page: 'payroll',         label: 'Pay Run',            document: true, render: (id) => App.withDocument(() => PayrollPage.render(), () => PayrollPage.view(id)) },
         // Tier 1/2/3: Payroll & HR
         '/hr/onboarding':   { page: 'hr-onboarding',   label: 'Onboarding',       render: () => OnboardingPage.render() },
         '/hr/time-entries': { page: 'hr-time-entries', label: 'Time Entries',      render: () => TimeEntriesPage.render() },
@@ -94,17 +94,17 @@ const App = {
         '/analytics':     { page: 'analytics',       label: 'Analytics & AI',     render: () => AnalyticsPage.render() },
         // Phase 9: Forum Bug Fixes & Missing Features
         '/journal':       { page: 'journal',         label: 'Journal Entries',    render: () => JournalPage.render() },
-        '/journal/:id':       { page: 'journal',    label: 'Journal Entry', render: (id) => App.withDocument(() => JournalPage.render(), () => JournalPage.view(id)) },
+        '/journal/:id':       { page: 'journal',    label: 'Journal Entry', document: true, render: (id) => App.withDocument(() => JournalPage.render(), () => JournalPage.view(id)) },
         '/deposits':      { page: 'deposits',        label: 'Make Deposits',      render: () => DepositsPage.render() },
-        '/deposits/:id':      { page: 'deposits',   label: 'Deposit',       render: (id) => App.withDocument(() => DepositsPage.render(), () => DepositsPage.view(id)) },
+        '/deposits/:id':      { page: 'deposits',   label: 'Deposit',       document: true, render: (id) => App.withDocument(() => DepositsPage.render(), () => DepositsPage.view(id)) },
         // The Check Register page is the Banking register now (2.10); old bookmarks land there.
         // (replaceState: Back from Banking must not land on the alias, which would send it forward again;
         // the entry keeps its state, so Back still knows what is behind it)
         '/check-register': { page: 'banking',         label: 'Banking',            render: () => { history.replaceState(history.state, '', '#/banking'); App.navigate('#/banking'); return ''; } },
         '/cc-charges':    { page: 'cc-charges',      label: 'CC Charges',         render: () => CCChargesPage.render() },
-        '/cc-charges/:id':    { page: 'cc-charges', label: 'CC Charge',     render: (id) => App.withDocument(() => CCChargesPage.render(), () => JournalPage.view(id)) },
+        '/cc-charges/:id':    { page: 'cc-charges', label: 'CC Charge',     document: true, render: (id) => App.withDocument(() => CCChargesPage.render(), () => JournalPage.view(id)) },
         '/expenses':      { page: 'expenses',        label: 'Enter Expenses',     render: () => ExpensesPage.render() },
-        '/expenses/:id':      { page: 'expenses',   label: 'Expense',       render: (id) => App.withDocument(() => ExpensesPage.render(), () => ExpensesPage.showDetail(id)) },
+        '/expenses/:id':      { page: 'expenses',   label: 'Expense',       document: true, render: (id) => App.withDocument(() => ExpensesPage.render(), () => ExpensesPage.showDetail(id)) },
         // Phase 10: Quick Wins + Medium Effort Features
         '/budgets':       { page: 'budgets',         label: 'Budget vs Actual',   render: () => BudgetsPage.render() },
         '/bank-rules':    { page: 'bank-rules',      label: 'Bank Rules',         render: () => BankRulesPage.render() },
@@ -119,13 +119,17 @@ const App = {
     // in the dialog once the page is in place. One that cannot be opened
     // (gone since the link was made) says so over the list.
     async withDocument(list, open) {
-        const html = await list();
+        // opened over the page in view (App.openOver): its list isn't drawn
+        const over = App._openOver;
+        App._openOver = null;
+        const html = over ? '' : await list();
         setTimeout(() => {
             // the dialog about to open is the address's own, over the list
-            // (App.dialogClosed)
-            App._dialogUnder = App.pageUnder(location.hash);
+            // (App.dialogClosed) — or over the page it was opened from
+            App._dialogUnder = over ? (location.hash || '#/') : App.pageUnder(location.hash);
             Promise.resolve().then(open)
                 .then(() => {
+                    if (over) App.documentAddress(over);
                     // the dialog's address is the bar's: Back stays live over
                     // it (App.editingDialog); and Back to a page left by one
                     // of its row links (a customer's page, an invoice) puts
@@ -137,6 +141,28 @@ const App = {
                 .catch(err => toast(err.message || 'Could not open this document', 'error'));
         }, 0);
         return html;
+    },
+
+    // A document a row of the page in view links to (a register line's
+    // posting), opened over that page as a list row opens its own, instead
+    // of going to the document's address: that draws the document's whole
+    // list first (for a journal entry, every entry in the company, minutes
+    // on years of imported history) and leaves the list behind when the
+    // dialog closes. Returns false when it opened the document, so an
+    // onclick can cancel the link; a modified click (new tab) or an address
+    // that isn't a document's follows the link as before.
+    openOver(event, href) {
+        if (event && (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) return true;
+        const hash = String(href || '').replace(/^\//, '');
+        const { path, query } = App.parseHash(hash);
+        const { route, param } = App.matchRoute(path);
+        if (!route || !route.document || param === null) return true;
+        App._openOver = hash;
+        Promise.resolve(route.render(param, query)).catch(err => {
+            App._openOver = null;
+            toast(err.message || 'Could not open this document', 'error');
+        });
+        return false;
     },
 
     // A dialog that is a document (a customer's page opened from its list

@@ -7,6 +7,16 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A register line opens over the register.** Clicking a line in a bank or
+card register used to go to the posting's own address, which drew that
+document's whole list first: for a journal entry, every journal entry in the
+company, which took minutes on a file with years of imported history. Closing
+it then left you on Journal Entries instead of the register. The line's
+posting now opens over the register, with nothing else loaded, and Close
+comes back to the register where you were. Opening a document by its address
+(a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
+in a new tab.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its

@@ -359,3 +359,67 @@ def test_money_out_offers_a_vendor_and_add_posts_it(browser):
         assert posted == [{"name": "Pine Street Lumber"}]
     finally:
         page.close()
+
+
+# ── a line opens over the register (Mike's report, 2026-10-26) ───────────
+
+ENTRY = {
+    "transaction_id": 42,
+    "date": "2026-10-20",
+    "description": "Deposit: Deposit Stripe",
+    "reference": "Deposit",
+    "payee": "",
+    "source_type": "qb_ledger_import",
+    "source_link": None,
+    "amount": 90.52,
+    "debit": 90.52,
+    "credit": 0,
+    "balance": 90.52,
+    "editable": False,
+    "printable": False,
+    "voided": False,
+}
+JOURNAL_42 = {
+    "id": 42,
+    "date": "2026-10-20",
+    "description": "Deposit: Deposit Stripe",
+    "reference": "",
+    "source_type": "qb_ledger_import",
+    "lines": [],
+    "total_debit": 90.52,
+    "total_credit": 90.52,
+}
+
+
+def test_a_register_line_opens_over_the_register_and_closes_back_to_it(browser):
+    page = _open(browser, 1280, 800, "#/")
+    listed = []
+
+    def journal(route):
+        url = route.request.url
+        if url.rstrip("/").endswith("/api/journal") or "/api/journal?" in url:
+            listed.append(url)  # the whole Journal Entries list: must not load
+            return route.fulfill(json=[])
+        return route.fulfill(json=JOURNAL_42)
+
+    page.route(
+        "**/api/banking/check-register*",
+        lambda r: r.fulfill(json={**REGISTER, "entries": [ENTRY], "balance": 90.52}),
+    )
+    page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+    page.route("**/api/journal**", journal)
+    page.route("**/api/attachments/**", lambda r: r.fulfill(json=[]))
+    try:
+        page.goto(page.url.split("#")[0] + "#/banking/1")
+        page.wait_for_selector("#qe-category")
+        page.click("text=Deposit: Deposit Stripe")
+        page.wait_for_selector("text=Journal Entry #42")
+        assert listed == [], listed
+        assert page.url.endswith("#/journal/42")
+        page.click("#modal-body >> button:has-text('Close')")
+        page.wait_for_function("location.hash === '#/banking/1'")
+        # the register is still the page under it, never redrawn as Journal Entries
+        assert page.is_visible("#qe-category")
+        assert listed == [], listed
+    finally:
+        page.close()

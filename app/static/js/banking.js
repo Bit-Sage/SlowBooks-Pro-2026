@@ -761,7 +761,8 @@ const BankingPage = {
         return e.source_link || `#/journal/${e.transaction_id}`;
     },
 
-    // The Memo cell: the memo, linking to what the line opens. A bank entry
+    // The Memo cell: the memo, linking to what the line opens, over the
+    // register (App.openOver), so Close comes back to it. A bank entry
     // (posted here, or from the bank feed) is edited with its row's Edit,
     // so its memo stays words and the link beside it is named for what it
     // opens — the journal posting behind the entry. A memo that itself
@@ -771,9 +772,9 @@ const BankingPage = {
     _memoCell(e) {
         const href = escapeHtml(BankingPage._entryHref(e));
         if (e.source_type !== 'bank_entry' || !e.editable) {
-            return `<a href="${href}">${escapeHtml(e.description || 'View entry')}</a>`;
+            return `<a href="${href}" onclick="return App.openOver(event, this.getAttribute('href'))">${escapeHtml(e.description || 'View entry')}</a>`;
         }
-        return `${e.description ? `${escapeHtml(e.description)} ` : ''}<a href="${href}" style="font-size:10px;" title="The journal posting behind this bank entry; use Edit to change it">Posting</a>`;
+        return `${e.description ? `${escapeHtml(e.description)} ` : ''}<a href="${href}" onclick="return App.openOver(event, this.getAttribute('href'))" style="font-size:10px;" title="The journal posting behind this bank entry; use Edit to change it">Posting</a>`;
     },
 
     // A register entry opens for editing (#388); the register says which
