@@ -197,6 +197,28 @@ def bs_groups(lines: list[dict], side: str) -> list[tuple[str, str, list[dict]]]
     return out
 
 
+def bs_group_of(account_type, detail) -> tuple[str | None, tuple[int, int]]:
+    """(side, (group, place inside it)) an account prints in on the Balance
+    Sheet, from its type and the detail type it groups under (its own, or
+    bs_print_details' for a default-typed sub-account); equity is one
+    group, and a P&L account has no side. What family_rows asks to know
+    whether a parent gathers a sub-account (#565)."""
+    from app.models.accounts import AccountType
+
+    try:
+        atype = AccountType(account_type)
+    except ValueError:
+        return None, (0, 0)
+    if atype == AccountType.EQUITY:
+        return "equity", (0, 0)
+    side = {AccountType.ASSET: "assets", AccountType.LIABILITY: "liabilities"}.get(
+        atype
+    )
+    if side is None:
+        return None, (0, 0)
+    return side, _bs_rank(side, detail)
+
+
 def bs_group_totals(lines: list[dict], side: str) -> dict:
     """Every subtotal of one side, zero for a group with no line."""
     totals = {key: Decimal("0") for _h, key, _d in BS_GROUPS[side]}

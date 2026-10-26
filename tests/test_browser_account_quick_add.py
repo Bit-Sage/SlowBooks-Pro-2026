@@ -185,6 +185,39 @@ def test_cancel_and_escape_give_the_keyboard_back_to_the_picker(
     assert "Not this one" not in names
 
 
+def test_enter_on_the_type_or_parent_list_keeps_the_bill_open(browser, company, books):
+    """Enter on the panel's Type or Sub-account list neither saves the
+    account nor submits the bill around it: the panel claims the key, so
+    the form never sees it (WebKit submits a form on Enter in a select;
+    #532 follow-up)."""
+    claimed = """(sel) => { const el = document.querySelector(sel);
+        const e = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        el.dispatchEvent(e); return e.defaultPrevented; }"""
+    page, handled = _bill_form(browser, company)
+    try:
+        bills_before = len(_ok(company.get("/api/bills")))
+        page.click(f"{ROW1} .aqa-add")
+        page.wait_for_selector(f"{ROW1} .aqa-panel .aqa-name")
+        page.fill(f"{ROW1} .aqa-name", "Not yet")
+        taken = {}
+        for sel in (".aqa-type", ".aqa-parent"):
+            page.focus(f"{ROW1} {sel}")
+            page.keyboard.press("Enter")
+            taken[sel] = page.evaluate(claimed, f"{ROW1} {sel}")
+        settle(page, handled)
+        still_open = page.evaluate(MODAL_SHOWN)
+        line = page.evaluate(LINE, 1)
+    finally:
+        page.close()
+
+    assert taken == {".aqa-type": True, ".aqa-parent": True}
+    assert still_open is True
+    assert line["panel"] is True and line["value"] == ""
+    names = [a["name"] for a in _ok(company.get("/api/accounts"))]
+    assert "Not yet" not in names
+    assert len(_ok(company.get("/api/bills"))) == bills_before
+
+
 def test_a_vendor_credit_line_and_an_expense_add_an_account_too(
     browser, company, books
 ):

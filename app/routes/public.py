@@ -47,6 +47,13 @@ def _confirm_return_payment(db: Session, invoice: Invoice, provider_name: str) -
     settings = provider_settings(db, provider)
     if not provider.is_configured(settings):
         return False
+    # Already recorded (the webhook, or an earlier return/poll, got there
+    # first): it's confirmed — skip poll_status, which with clearing on would
+    # make an extra provider call just to fetch a fee we won't post again.
+    from app.models.payments import Payment
+
+    if db.query(Payment).filter(Payment.reference == external_id).first():
+        return True
     try:
         result = provider.poll_status(external_id, settings)
     except Exception:
@@ -61,6 +68,7 @@ def _confirm_return_payment(db: Session, invoice: Invoice, provider_name: str) -
             result.invoice_id or invoice.id,
             result.external_id,
             result.amount,
+            fee=result.fee,
         )
         db.refresh(invoice)
         return True

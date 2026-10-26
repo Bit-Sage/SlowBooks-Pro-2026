@@ -48,6 +48,82 @@ const SettingsPage = {
         return names.map(opt).join('');
     },
 
+    // The clearing-account card for one provider (#583): a toggle and, when
+    // on, pickers for the clearing (asset) and fee (expense) accounts.
+    // Built with string concatenation — like _monthOptions, no backtick
+    // ahead of the render function (the unsaved-changes guard test slices
+    // the file at the first backtick-returning statement).
+    _clearingAccountOptions(accounts, selectedId, type, defaultLabel) {
+        // The same filter the settings save enforces: an active, ordinary
+        // account of the right type — not a bank-feed or a control account
+        // (A/R, Undeposited Funds, …).
+        const pick = (Array.isArray(accounts) ? accounts : []).filter(a =>
+            a.account_type === type && !a.bank_kind && a.is_active !== false
+            && !a.is_control);
+        const sel = selectedId ? String(selectedId) : '';
+        let html = '<option value=""' + (sel ? '' : ' selected') + '>' +
+            escapeHtml(defaultLabel) + '</option>';
+        let matched = false;
+        for (const a of pick) {
+            const label = (a.account_number ? a.account_number + ' ' : '') + a.name;
+            const isSel = String(a.id) === sel;
+            if (isSel) matched = true;
+            html += '<option value="' + a.id + '"' + (isSel ? ' selected' : '') +
+                '>' + escapeHtml(label) + '</option>';
+        }
+        // A saved id that isn't in the list (the chart failed to load, or the
+        // account went inactive or changed type): keep it selected so Save
+        // doesn't silently blank the setting; the recorder falls back to the
+        // default account until it's fixed here.
+        if (sel && !matched) {
+            html += '<option value="' + escapeHtml(sel) + '" selected>(unavailable) #' +
+                escapeHtml(sel) + '</option>';
+        }
+        return html;
+    },
+
+    _clearingHtml(provider, label, s, accounts) {
+        const on = s[provider + '_clearing_enabled'] === 'true';
+        const clearingSel = s[provider + '_clearing_account_id'];
+        const feeSel = s[provider + '_fee_account_id'];
+        // Its own group, labelled by the provider heading, so each provider's
+        // "Clearing Account"/"Fee Account" fields read as that provider's and
+        // not three that a screen reader can't tell apart (#198 field names).
+        let h = '<div role="group" aria-labelledby="settings-h-' + provider + '">';
+        h += '<label style="font-weight:normal; font-size:11px; display:block; margin:6px 0 2px;">';
+        h += '<input type="checkbox" data-bool name="' + provider + '_clearing_enabled"';
+        h += (on ? ' checked' : '');
+        h += ' onchange="SettingsPage._toggleClearing(\'' + provider + '\')"';
+        h += ' style="width:auto; vertical-align:middle; margin-right:6px;">';
+        h += 'Post to a clearing account</label>';
+        h += '<div style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">';
+        h += 'Payments wait in the clearing account until the payout reaches your bank; ';
+        h += "the processor's fee is booked as it's charged.</div>";
+        // A plain wrapper carries [hidden] so the pickers really disappear
+        // when the toggle is off — a .form-grid sets display:grid, which
+        // would otherwise win over the hidden attribute.
+        h += '<div id="' + provider + '-clearing-fields"' + (on ? '' : ' hidden') + '>';
+        h += '<div class="form-grid">';
+        h += '<div class="form-group"><label>Clearing Account</label>';
+        h += '<select name="' + provider + '_clearing_account_id">' +
+            SettingsPage._clearingAccountOptions(accounts, clearingSel, 'asset',
+                'Default (' + label + ' Clearing)') + '</select></div>';
+        h += '<div class="form-group"><label>Fee Account</label>';
+        h += '<select name="' + provider + '_fee_account_id">' +
+            SettingsPage._clearingAccountOptions(accounts, feeSel, 'expense',
+                'Default (Merchant Account Fees)') + '</select></div>';
+        h += '</div>';  // close .form-grid
+        h += '</div>';  // close #<provider>-clearing-fields
+        h += '</div>';  // close the provider group
+        return h;
+    },
+
+    _toggleClearing(provider) {
+        const box = document.querySelector('[name="' + provider + '_clearing_enabled"]');
+        const fields = document.getElementById(provider + '-clearing-fields');
+        if (box && fields) fields.hidden = !box.checked;
+    },
+
     // Where each encrypted setting is entered again, for the notice below.
     _SECRET_PLACES: {
         smtp_password: 'the email password, under Email (SMTP)',
@@ -197,6 +273,9 @@ const SettingsPage = {
     async render() {
         const s = await API.get('/settings');
         const logo = s.company_logo_path ? await API.get('/uploads/logo').catch(() => null) : null;
+        // The clearing-account pickers (#583) list the chart; a failed load
+        // leaves them empty rather than breaking the whole settings page.
+        const accounts = await API.get('/accounts').catch(() => []);
         // what the books hold; the closing date's state line describes this
         SettingsPage._savedClosingDate = s.closing_date || '';
         setTimeout(() => {
@@ -274,11 +353,12 @@ const SettingsPage = {
                             <select id="entity-type" name="entity_type" onchange="SettingsPage._onEntityTypeChange(this)">
                                 ${SettingsPage._entityOptions(s.entity_type)}
                             </select>
-                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Your company's legal form. It decides which tax return applies (and, later, the equity accounts). It never changes your books.</div>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Your company's legal form. It decides which tax return applies and, chosen before the first posting, the equity accounts: owner's equity and draw; partner capital and distributions; or common stock, paid-in capital and shareholder distributions. Once the books have postings the chart is yours to rename under Chart of Accounts; nothing is reseeded. It never changes your books.</div>
+                            <div id="s-corp-note" style="font-size:10px; color:var(--text-muted); margin-top:4px;" ${SettingsPage._isSCorp(s) ? '' : 'hidden'}>${escapeHtml(SettingsPage.S_CORP_NOTE)}</div>
                         </div>
                         <div class="form-group" id="llc-election-group" ${s.entity_type === 'llc' ? '' : 'hidden'}>
                             <label for="llc-tax-election">Taxed as</label>
-                            <select id="llc-tax-election" name="llc_tax_election">
+                            <select id="llc-tax-election" name="llc_tax_election" onchange="SettingsPage._toggleSCorpNote()">
                                 ${SettingsPage._llcElectionOptions(s.llc_tax_election)}
                             </select>
                             <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">How this LLC is taxed. A single-member LLC taxed as a sole proprietor files Schedule C; the others file a partnership or corporate return.</div>
@@ -511,6 +591,7 @@ const SettingsPage = {
                         <div class="form-group"><label>Webhook Secret</label>
                             <input name="stripe_webhook_secret" type="password" value="${escapeHtml(s.stripe_webhook_secret || '')}" placeholder="whsec_...">${SettingsPage._secretNote(s.stripe_webhook_secret)}</div>
                     </div>
+                    ${SettingsPage._clearingHtml('stripe', 'Stripe', s, accounts)}
                     <h4 id="settings-h-paypal" style="margin:12px 0 4px; font-size:12px;">PayPal</h4>
                     <div class="form-grid" role="group" aria-labelledby="settings-h-paypal">
                         <div class="form-group"><label>PayPal Payments</label>
@@ -531,6 +612,7 @@ const SettingsPage = {
                             <input name="paypal_webhook_id" value="${escapeHtml(s.paypal_webhook_id || '')}"
                                 placeholder="From the PayPal developer dashboard"></div>
                     </div>
+                    ${SettingsPage._clearingHtml('paypal', 'PayPal', s, accounts)}
                     <h4 id="settings-h-square" style="margin:12px 0 4px; font-size:12px;">Square</h4>
                     <div class="form-grid" role="group" aria-labelledby="settings-h-square">
                         <div class="form-group"><label>Square Payments</label>
@@ -553,6 +635,7 @@ const SettingsPage = {
                             <input name="square_notification_url" value="${escapeHtml(s.square_notification_url || '')}"
                                 placeholder="Exact URL registered in the Square dashboard"></div>
                     </div>
+                    ${SettingsPage._clearingHtml('square', 'Square', s, accounts)}
                 </div>
 
                 <div class="settings-section" id="settings-ai" role="group" aria-labelledby="settings-h-ai-insights">
@@ -1659,6 +1742,12 @@ const SettingsPage = {
                 App.showCompany(saved);
             }
             toast('Settings saved');
+            // A newly chosen entity type reseeds the equity accounts only
+            // while the chart is untouched and nothing has posted (#488):
+            // say what happened either way.
+            const equity = saved && saved.entity_equity;
+            if (equity && equity.applied) toast(`${T('Equity')} accounts set for ${saved.entity.label}: ${equity.accounts.join(', ')}`);
+            else if (equity && equity.note) toast(equity.note);
             SettingsPage.loadUnreadableSecrets();
         } catch (err) {
             toast(err.message, 'error');
@@ -1827,11 +1916,31 @@ const SettingsPage = {
         return opts.join('');
     },
 
+    // An S corporation's pay rule (#488 / #557), shown under the picker for
+    // an S corp or an LLC taxed as one.
+    S_CORP_NOTE: 'S corporation: an active shareholder-employee takes reasonable compensation as W-2 wages through Payroll before any distribution. Distributions post to Shareholder Distributions (equity), never to the profit and loss.',
+
+    _isSCorp(s) {
+        return s.entity_type === 's_corp' || (s.entity_type === 'llc' && s.llc_tax_election === 's_corp');
+    },
+
     // The "Taxed as" picker only applies to an LLC: show it only then.
     _onEntityTypeChange(sel) {
         const group = document.getElementById('llc-election-group');
         if (group) group.hidden = sel.value !== 'llc';
+        SettingsPage._toggleSCorpNote();
         SettingsPage._updateDirty();
+    },
+
+    _toggleSCorpNote() {
+        const note = document.getElementById('s-corp-note');
+        const type = document.getElementById('entity-type');
+        const election = document.getElementById('llc-tax-election');
+        if (!note || !type) return;
+        note.hidden = !SettingsPage._isSCorp({
+            entity_type: type.value,
+            llc_tax_election: election ? election.value : '',
+        });
     },
 
     // Company type saves on its own and reloads: the vocabulary and the

@@ -18,6 +18,58 @@ you back to the register too. Opening a document by its address
 (a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
 in a new tab.
 
+**Balance Sheet: sub-accounts beneath their parents, a total per family**
+(#565, from Discussion #562, @ContractorKeith). The Balance Sheet now prints a
+parent's family together, as the P&L has since #416: the parent as a heading,
+its sub-accounts indented beneath it, the parent's own postings as "Direct
+postings to …" and a "Total …" for the family, inside each Current / Fixed /
+Other Assets and Current / Long Term Liabilities group and in Equity — on the
+screen, in the PDF (the accountant's package included) and in the CSV, with
+and without the prior-year comparison, where each family total has its
+Current, Prior Year, $ Change and % Change. A parent gathers only the
+sub-accounts that print in its own group; a sub-account placed in another
+group by its detail type prints there, flat, by its full path. Every line
+prints once, no figure or subtotal moves, and a chart with no sub-accounts
+prints exactly as before. An account line still opens its transactions; a
+family's total has no drill-down yet (the #479 set drill-down reads a
+period's lines, not a balance to date). The API's `groups[].tree` and
+`tree.equity` carry the rows; the flat lists stay for the drill-down.
+
+**Vendors: search the list, and a payment history per vendor with CSV export**
+(#569, @ContractorKeith). A vendor's page has a **Payment history** section
+in place of the two payment lists: every bill payment, direct expense (Enter
+Expenses) and bank-feed entry to the vendor in one list, oldest first with a
+running total, over a date range that starts as year to date (From / To /
+Show), the paid-in-range and all-time figures above it, voided rows listed,
+marked and left out of the totals, and **Export CSV** for the same range
+(Date, Type, Method, Check # / Ref, Amount, Running total, Paid from, Notes,
+Voided, a Total paid line last), now built by the CSV export service like the
+other exports. `GET /api/vendors/{id}/payment-history` answers the page
+(`rows`, `totals` by kind, `total`, `all_time`; no dates is year to date, one
+date leaves the other side open); `GET /api/vendors/{id}/payments/csv` keeps
+its address and its all-time default. The bill-payment subtotal is summed by
+the 1099 query itself, so for a 1099 vendor over a year it is the vendor's
+1099-NEC figure; direct expenses and bank entries, which the 1099 leaves out,
+are subtotalled beside it rather than folded in. The list's search box
+(#335) stays as it was — name, company, phone, email — and the list route's
+`search` parameter now covers the same four fields instead of the name alone.
+
+**A clearing account per payment provider, with the processing fee** (#583,
+@ContractorKeith). Each online-payment provider (Stripe, PayPal, Square) gets
+an optional clearing-account setting, off by default. With it off, a captured
+payment keeps posting DR Undeposited Funds / CR A/R exactly as before. With it
+on, the payment posts DR the provider's clearing account (an asset created on
+demand — "Stripe Clearing" / "PayPal Clearing" / "Square Clearing", or an
+account you choose) / CR A/R gross, and the processor's fee posts DR Merchant
+Account Fees / CR clearing in the same entry — so the clearing balance is the
+net payout you'll later see land in the bank. The fee comes from the Stripe
+balance transaction, the PayPal capture's `seller_receivable_breakdown`, and
+the Square payment's `processing_fee`; when it isn't known yet (Square can
+report it late) only the gross posts. A clearing payment doesn't appear in
+Make Deposits, because it isn't in Undeposited Funds. Settings → Online
+Payments carries the toggle and the two account pickers on each provider's
+card. (Recording the payout and matching it to the bank feed is step 2, #584.)
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its
@@ -33,6 +85,29 @@ Schedule C API answers 409 with the same sentence. An unset entity type leaves
 Schedule C exactly as before. A nonprofit no longer sees Schedule C; it files
 Form 990, whatever entity type it has chosen. The books never change; this is a
 tax-form matter only.
+
+**Entity-aware equity accounts, and the 1065 / 1120 / 1120-S returns** (#488
+step 2, @ContractorKeith; answers #557). The setup wizard now asks the legal
+entity in one "Legal entity" picker (an LLC's tax election folded in), and
+the equity accounts follow the entity type while the chart is still the
+untouched seed and nothing has posted: a sole proprietor keeps 3000 Owner's
+Equity, 3100 Owner's Draw and 3200 Retained Earnings; a partnership (or an
+LLC taxed as one) gets Partner 1 / Partner 2 Capital and Distributions; a C or
+S corporation (or an LLC taxed as either) gets Common Stock, Additional
+Paid-in Capital and Shareholder Distributions in place of Owner's Draw. 3000
+and 3100 are renamed in place, 3200 and 3900 Opening Balance Equity are never
+touched, nonprofit mode keeps its net-asset seed, and the chart stays yours to
+edit. Once the books have a posting, or an equity account has been renamed or
+added, changing the entity type reseeds nothing: the save says which accounts
+to rename or add under Chart of Accounts. The Tax Reports page now draws the
+return the entity files — page 1 of Form 1065, Form 1120 or Form 1120-S, from
+the P&L the way Schedule C is, with each form's own lines and summary rows,
+exported as CSV under the form's title (`GET /api/tax/return`, `/csv`);
+Schedule C is exactly as before for the entities that file it, and a
+nonprofit's Form 990 is not drawn. An S corporation sees one note under the
+entity picker, on Tax Reports and on Payroll: an active shareholder-employee
+takes reasonable compensation as W-2 wages through Payroll before any
+distribution, and a distribution is equity, never P&L.
 
 **Contact support from inside the app** (@ContractorKeith). A Help → Contact
 support form (beside About, on the About dialog, and on the desktop launcher's

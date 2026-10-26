@@ -95,6 +95,10 @@ class SetupPayload(StrictModel):
     company_email: Optional[str] = Field(None, max_length=200)
     company_website: Optional[str] = Field(None, max_length=200)
     company_tax_id: Optional[str] = Field(None, max_length=50)
+    # Legal entity type and an LLC's tax election (#488): chosen here, before
+    # the first posting, the equity accounts follow it (entity_equity.py).
+    entity_type: Optional[str] = Field(None, max_length=30)
+    llc_tax_election: Optional[str] = Field(None, max_length=30)
 
     # Operator
     operator_name: Optional[str] = Field(None, max_length=200)
@@ -117,6 +121,8 @@ _SETUP_SETTINGS_KEYS = (
     "company_email",
     "company_website",
     "company_tax_id",
+    "entity_type",
+    "llc_tax_election",
     "operator_name",
     "operator_email",
     "default_terms",
@@ -384,8 +390,27 @@ def setup(
                 to_store[key] = clean_setting_value(key, value)
             except SettingValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
+    # The entity enums are the Settings page's (one list, routes/settings);
+    # an election only means something for an LLC.
+    from app.routes.settings import ENUM_SETTINGS
+
+    for key in ("entity_type", "llc_tax_election"):
+        if key in to_store and to_store[key] not in ENUM_SETTINGS[key]:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key} must be one of: "
+                + ", ".join(sorted(x for x in ENUM_SETTINGS[key] if x)),
+            )
+    if to_store.get("entity_type") != "llc":
+        to_store.pop("llc_tax_election", None)
     for key, value in to_store.items():
         set_setting(db, key, value)
+    if "entity_type" in to_store:
+        from app.services.entity_equity import apply_entity_equity
+        from app.services.settings_service import entity_info, get_all_settings
+
+        db.flush()
+        apply_entity_equity(db, entity_info(get_all_settings(db)))
 
     set_password(db, payload.password)
     # Materialize the operator as the admin user row right away (Server

@@ -139,6 +139,7 @@ async def provider_webhook(
         invoice_id,
         result.external_id,
         result.amount,
+        fee=result.fee,
     )
     return {"status": status}
 
@@ -166,6 +167,14 @@ def check_status(provider_name: str, invoice_id: int, db: Session = Depends(get_
     if not external_id:
         return {"status": "no_checkout"}
 
+    # Already recorded (the webhook, or an earlier poll, got there first):
+    # skip poll_status, which with clearing on would make an extra provider
+    # call just to fetch a fee we won't post again.
+    from app.models.payments import Payment
+
+    if db.query(Payment).filter(Payment.reference == external_id).first():
+        return {"status": "already_processed", "provider_status": "paid"}
+
     result = provider.poll_status(external_id, settings)
     if result.status == "paid" and result.amount is not None:
         recorded = record_provider_payment(
@@ -175,6 +184,7 @@ def check_status(provider_name: str, invoice_id: int, db: Session = Depends(get_
             result.invoice_id or invoice.id,
             result.external_id,
             result.amount,
+            fee=result.fee,
         )
         return {"status": recorded, "provider_status": result.status}
     return {"status": "not_paid", "provider_status": result.status}

@@ -320,6 +320,10 @@ _INTENTIONAL_BACKEND_ONLY: set[tuple[str, str]] = {
     ("POST", "/api/pto/accruals/year-end-carryover"),
     # DocumentAudit hash-chain viewer/verifier — endpoints ready, the
     # admin UI ("Compliance" tab) is future work (docs/todo.md).
+    # The vendor's bank-feed entries (#491): the page reads them inside its
+    # payment history (#569) now; the route stays for API readers and the
+    # feed tests.
+    ("GET", "/api/vendors/{vendor_id}/bank-entries"),
 }
 
 

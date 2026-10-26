@@ -472,6 +472,7 @@
                 type: "email",
                 placeholder: "Leave blank if same as yours",
             }) +
+            entityField() +
             field("auth-password", "Password", {
                 type: "password",
                 required: true,
@@ -510,6 +511,48 @@
         );
     }
 
+    // Legal entity type (#488), one picker: the entity, with an LLC's tax
+    // election folded in as "LLC taxed as …". Chosen here, before the first
+    // posting, the equity accounts follow it; "Decide later" leaves the
+    // chart as seeded and Settings → Company asks again.
+    var ENTITY_CHOICES = [
+        ["", "Decide later"],
+        ["sole_proprietor", "Sole proprietor"],
+        ["llc:disregarded", "LLC, single member (taxed as a sole proprietor)"],
+        ["llc:partnership", "LLC taxed as a partnership"],
+        ["llc:s_corp", "LLC taxed as an S corporation"],
+        ["llc:c_corp", "LLC taxed as a C corporation"],
+        ["general_partnership", "General partnership"],
+        ["limited_partnership", "Limited partnership"],
+        ["llp", "Limited liability partnership"],
+        ["s_corp", "S corporation"],
+        ["c_corp", "C corporation"],
+    ];
+
+    function entityField() {
+        var options = ENTITY_CHOICES.map(function (pair) {
+            return '<option value="' + pair[0] + '">' + pair[1] + "</option>";
+        }).join("");
+        return (
+            '<label for="entity_choice" style="' + labelStyle() + '">Legal entity</label>' +
+            '<select id="entity_choice" name="entity_choice" style="' + inputStyle() + '">' +
+            options +
+            "</select>" +
+            '<div style="font-size:11px;color:#767676;margin-top:4px;line-height:1.4;">' +
+            "Picks the tax return and the equity accounts (owner's equity and draw; partner capital; " +
+            "common stock and shareholder distributions). You can change it in Settings." +
+            "</div>"
+        );
+    }
+
+    function entityPayload(choice) {
+        if (!choice) return {};
+        var parts = choice.split(":");
+        var out = { entity_type: parts[0] };
+        if (parts[1]) out.llc_tax_election = parts[1];
+        return out;
+    }
+
     function collectSetupPayload(overlay) {
         const ids = [
             "operator_name",
@@ -522,6 +565,8 @@
         };
         const encrypt = overlay.querySelector("#auth-encrypt");
         if (encrypt && encrypt.checked) out.encrypt = true;
+        const entity = overlay.querySelector("#entity_choice");
+        if (entity) Object.assign(out, entityPayload(entity.value));
         ids.forEach(function (id) {
             const el = overlay.querySelector("#" + id);
             if (el && el.value.trim() !== "") {

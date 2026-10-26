@@ -1705,11 +1705,12 @@ const ReportsPage = {
     // a row's amount cells, `opts.call(r)` its drill-down onclick (escaped),
     // `opts.blank` the empty cells of a heading. A family's total opens the
     // family's lines when the view gives `opts.total(r, text)` (#479): it
-    // is several accounts, so a drill-down for the set.
+    // is several accounts, so a drill-down for the set. `opts.pad` is the
+    // top level's indent (24px; the Balance Sheet's groups sit deeper).
     _treeRows(rows, opts) {
         return rows.map(r => {
             const depth = r.depth || 0;
-            const pad = 24 + 18 * depth;
+            const pad = (opts.pad || 24) + 18 * depth;
             const label = escapeHtml(r.label || r.account_label || r.account_name);
             const link = (text) => r.account_id && opts.call
                 ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${opts.call(r)}">${text}</a>`
@@ -1805,14 +1806,20 @@ const ReportsPage = {
             const cols = ReportsPage._cmpCols(prior, show);
             const figures = (cur, before, item) => ReportsPage._cmpCells(cur, before, prior, show,
                 item && prior && item.account_id ? drillCall(item, prior.as_of_date) : null);
-            // A computed line (net income to date) has no account to open.
-            const name = (i) => i.account_id
-                ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;"
-                       onclick="${drillCall(i, asOf)}">${escapeHtml(i.account_label || i.account_name)}</a>`
-                : escapeHtml(i.account_name);
-            const section = (items, pad = 24) => items.map(i =>
-                `<tr><td style="padding-left:${pad}px;">${name(i)}</td>${figures(i.amount, i.prior_amount, i)}</tr>`
-            ).join("") || `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+            // Sub-accounts beneath their parents, a total per family (#565,
+            // as the P&L since #416): the server's tree for the group, else
+            // its flat lines. A computed line (net income to date) has no
+            // account to open, and a family's total no link: the #479 set
+            // drill-down reads a period, not a balance to date.
+            const section = (items, rows, pad = 24) => {
+                if (!items.length && !(rows && rows.length)) return `<tr><td colspan="${cols}" style="color:var(--gray-400);">None</td></tr>`;
+                return ReportsPage._treeRows(rows || items, {
+                    pad,
+                    blank: '<td></td>'.repeat(cols - 1),
+                    cells: (r) => figures(r.amount, r.prior_amount, r.kind === 'total' ? null : r),
+                    call: (r) => drillCall(r, asOf),
+                });
+            };
             const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
             const total = (label, cur, before, style) => `<tr style="${style}"><td>${label}</td>${figures(cur, before)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
@@ -1824,7 +1831,7 @@ const ReportsPage = {
                 if (!groups) return section(data[side]);
                 if (!groups.length) return section([]);
                 return groups.map(g => `<tr class="bs-group"><td style="padding-left:16px; font-weight:600;">${escapeHtml(g.heading)}</td>${'<td></td>'.repeat(cols - 1)}</tr>`
-                    + section(g.lines, 36)
+                    + section(g.lines, g.tree, 36)
                     + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td>${figures(data[g.total_key], p[g.total_key])}</tr>`
                 ).join('');
             };
@@ -1840,7 +1847,7 @@ const ReportsPage = {
                         ${grouped('liabilities')}
                         ${total('Total Liabilities', data.total_liabilities, p.total_liabilities, sub)}
                         ${head(T('Equity'))}
-                        ${section(data.equity)}
+                        ${section(data.equity, (data.tree || {}).equity)}
                         ${total(T('Total Equity'), data.total_equity, p.total_equity, sub)}
                         ${total(T('Liabilities + Equity'), data.total_liabilities + data.total_equity, (p.total_liabilities || 0) + (p.total_equity || 0), 'font-weight:700; background:var(--primary-light);')}
                     </tbody>

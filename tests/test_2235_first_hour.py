@@ -240,9 +240,10 @@ def test_vendor_payments_csv_is_formula_guarded_with_bom(client, db_session):
     assert r.content.startswith(b"\xef\xbb\xbf")
     rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
     assert rows[0] == ["Vendor", '\'=HYPERLINK("x")']
-    assert rows[4][1] == "'+cmd"
-    assert rows[4][3] == "-5.00"  # a number, not "'-5.00"
-    assert rows[5][3] == "-5.00"
+    # Date, Type, Method, Check # / Ref, Amount, Running total, ... (#569)
+    assert rows[4][2] == "'+cmd"
+    assert rows[4][4] == "-5.00"  # a number, not "'-5.00"
+    assert rows[5][4] == "-5.00"
 
 
 def test_vendor_payments_csv_non_latin1_name_is_not_a_500(client, db_session):

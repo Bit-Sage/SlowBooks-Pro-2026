@@ -1,7 +1,7 @@
 from datetime import date
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,6 +12,7 @@ from app.services.contact_balances import ZERO, vendor_balances
 from app.services.duplicate_detection import find_duplicates
 from app.services.form_1099 import clear_type_unless_1099
 from app.services.vendor_bank_rule import set_vendor_rule, vendor_rules
+from app.services.vendor_payments import bank_entries_for, vendor_payment_history
 
 router = APIRouter(prefix="/api/vendors", tags=["vendors"])
 
@@ -70,8 +71,16 @@ def list_vendors(
         q = q.filter(Vendor.is_active)
     if inactive_only:  # the list page's Inactive view (#210)
         q = q.filter(Vendor.is_active.is_(False))
-    if search:
-        q = q.filter(Vendor.name.ilike(f"%{search}%"))
+    if search:  # name, company, email or phone, as the list's box filters (#569)
+        like = f"%{search}%"
+        q = q.filter(
+            or_(
+                Vendor.name.ilike(like),
+                Vendor.company.ilike(like),
+                Vendor.email.ilike(like),
+                Vendor.phone.ilike(like),
+            )
+        )
     return _responses(db, q.order_by(Vendor.name).all())
 
 
@@ -154,51 +163,6 @@ def delete_vendor(vendor_id: int, db: Session = Depends(get_db)):
     return {"message": "Vendor deactivated"}
 
 
-def bank_entries_for(
-    db: Session,
-    vendor_id: int,
-    start_date: date | None = None,
-    end_date: date | None = None,
-) -> list[dict]:
-    """The register entries that name this vendor (#491) — lines added
-    from a bank feed — oldest first. `amount` is what was paid: money out
-    of the bank or onto the card is positive, a refund back negative."""
-    from app.models.transactions import Transaction
-    from app.services.bank_register import source_link, voided_transaction_ids
-
-    q = db.query(Transaction).filter(
-        Transaction.vendor_id == vendor_id, Transaction.source_type == "bank_entry"
-    )
-    if start_date:
-        q = q.filter(Transaction.date >= start_date)
-    if end_date:
-        q = q.filter(Transaction.date <= end_date)
-    txns = q.order_by(Transaction.date, Transaction.id).all()
-    voided = voided_transaction_ids(db, [t.id for t in txns])
-    out = []
-    for t in txns:
-        bank = next((ln for ln in t.lines if ln.account and ln.account.bank_kind), None)
-        if bank is None:
-            continue
-        memo = next((ln.description for ln in t.lines if ln.description), "") or ""
-        out.append(
-            {
-                "transaction_id": t.id,
-                "date": t.date.isoformat(),
-                "reference": t.reference or "",
-                "memo": memo,
-                "account_id": bank.account_id,
-                "account_name": bank.account.name,
-                "amount": str(
-                    Decimal(str(bank.credit or 0)) - Decimal(str(bank.debit or 0))
-                ),
-                "is_voided": t.id in voided,
-                "link": source_link(t),
-            }
-        )
-    return out
-
-
 @router.get("/{vendor_id}/bank-entries")
 def vendor_bank_entries(
     vendor_id: int,
@@ -207,9 +171,30 @@ def vendor_bank_entries(
     db: Session = Depends(get_db),
 ):
     """What was paid to this vendor straight from a bank or card account
-    — lines added from a bank feed (#491) — newest first."""
+    — lines added from a bank feed (#491) — newest first. The page reads
+    them through the payment history now (#569); kept for API readers."""
     get_or_404(db, Vendor, vendor_id)
     return list(reversed(bank_entries_for(db, vendor_id, start_date, end_date)))
+
+
+@router.get("/{vendor_id}/payment-history")
+def vendor_payment_history_route(
+    vendor_id: int,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Every bill payment, direct expense and bank-feed entry to the vendor
+    (#569), oldest first with a running total, subtotals by kind, and the
+    all-time total beside the range's. No dates is year to date; one date
+    leaves the other side open."""
+    get_or_404(db, Vendor, vendor_id)
+    if start_date is None and end_date is None:
+        today = date.today()
+        start_date, end_date = date(today.year, 1, 1), today
+    out = vendor_payment_history(db, vendor_id, start_date, end_date)
+    out["all_time"] = vendor_payment_history(db, vendor_id)["total"]
+    return out
 
 
 @router.get("/{vendor_id}/payments/csv")
@@ -220,72 +205,19 @@ def vendor_payments_csv(
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """The vendor's payments as a CSV, with a paid-to-date total (#335):
-    what a client asks for ("how much have we paid them this year")."""
-    import io
-
-    from app.models.bills import BillPayment
+    """The vendor's payment history as a CSV (#335, #569), through the CSV
+    export service: what a client asks for ("how much have we paid them
+    this year"). No dates is all time; the page sends its range."""
     from app.routes.csv import _csv_response
-    from app.services.csv_export import _money_cell, _SafeWriter
+    from app.services.csv_export import export_vendor_payments
     from app.services.request_utils import file_name
 
     vendor = get_or_404(db, Vendor, vendor_id)
-    q = db.query(BillPayment).filter(BillPayment.vendor_id == vendor_id)
-    if start_date:
-        q = q.filter(BillPayment.date >= start_date)
-    if end_date:
-        q = q.filter(BillPayment.date <= end_date)
-    payments = q.order_by(BillPayment.date, BillPayment.id).all()
-    # bill payments and the bank-feed entries naming the vendor (#491), by date
-    rows = [(p.date.isoformat(), 0, p.id, p) for p in payments] + [
-        (e["date"], 1, e["transaction_id"], e)
-        for e in bank_entries_for(db, vendor_id, start_date, end_date)
-    ]
-    rows.sort(key=lambda r: r[:3])
-    out = io.StringIO()
-    w = _SafeWriter(out)  # formula guard; amounts stay numbers
-    w.writerow(["Vendor", vendor.name])
-    w.writerow(["Period", f"{start_date or 'start'} to {end_date or 'today'}"])
-    w.writerow([])
-    w.writerow(["Date", "Method", "Check #", "Amount", "Paid from", "Notes", "Voided"])
-    total = Decimal("0")
-    for _, kind, _, p in rows:
-        if kind == 1:
-            amount = Decimal(p["amount"])
-            if not p["is_voided"]:
-                total += amount
-            w.writerow(
-                [
-                    p["date"],
-                    "Bank entry",
-                    p["reference"],
-                    _money_cell(amount),
-                    p["account_name"],
-                    p["memo"].replace("\n", " "),
-                    "yes" if p["is_voided"] else "",
-                ]
-            )
-            continue
-        amount = Decimal(str(p.amount or 0))
-        if not p.is_voided:
-            total += amount
-        w.writerow(
-            [
-                p.date.isoformat(),
-                p.method or "",
-                p.check_number or "",
-                _money_cell(amount),
-                (p.pay_from_account.name if p.pay_from_account else ""),
-                (p.notes or "").replace("\n", " "),
-                "yes" if p.is_voided else "",
-            ]
-        )
-    w.writerow(["", "", "Total paid", _money_cell(total), "", "", ""])
     # content_disposition makes the name safe for the header (ASCII fallback
     # plus filename*=UTF-8''…), so a non-Latin-1 vendor ("Łódź Supply") no
     # longer 500s; request lets the desktop shim get its inline header.
     return _csv_response(
-        out.getvalue(),
+        export_vendor_payments(db, vendor_id, start_date, end_date),
         file_name("Payments", vendor.name) + ".csv",
         request,
     )
