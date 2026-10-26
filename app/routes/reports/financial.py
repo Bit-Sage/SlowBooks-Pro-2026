@@ -11,6 +11,7 @@ from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
 from app.services.fiscal_year import fiscal_year_start
+from app.services.account_label import account_label
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
@@ -58,17 +59,30 @@ _SORT_QUERY = Query(
 )
 
 
-def _chart_index(db) -> dict:
+class ChartIndex(dict):
+    """{id: (number, name, parent, type, detail type)} plus `numbered`: whether
+    the company uses account numbers (#567). A plain dict built by hand (a
+    test) reads as numbered."""
+
+    numbered: bool = True
+
+
+def _chart_index(db) -> ChartIndex:
     """Every account's (number, name, parent, type, detail type), by id: one
     query a statement builds once and hands to every helper that needs the
     chart (#390 review: the compare P&L read it some sixteen times)."""
-    return {
-        a.id: (
-            a.account_number or "",
-            a.name or "",
-            a.parent_id,
-            a.account_type,
-            a.detail_type,
+    from app.services.settings_service import use_account_numbers
+
+    chart = ChartIndex(
+        (
+            a.id,
+            (
+                a.account_number or "",
+                a.name or "",
+                a.parent_id,
+                a.account_type,
+                a.detail_type,
+            ),
         )
         for a in db.query(
             Account.id,
@@ -78,7 +92,9 @@ def _chart_index(db) -> dict:
             Account.account_type,
             Account.detail_type,
         )
-    }
+    )
+    chart.numbered = use_account_numbers(db)
+    return chart
 
 
 def _chain(chart: dict, account_id) -> list:
@@ -102,11 +118,13 @@ def _account_order(db, sort="number", chart: dict | None = None):
     General Ledger take the same key: ORDER BY account_number put the
     accounts with no number first, in creation order (2.23.4 gate, W-7)."""
     chart = chart if chart is not None else _chart_index(db)
+    # a company that does not use account numbers lists by name (#567)
+    by_name = sort == "name" or not getattr(chart, "numbered", True)
 
     def level(account_id):
         number, name = chart[account_id][:2]
         name = name.lower()
-        if sort == "name":
+        if by_name:
             return (0, name, number)
         return (0, number, name) if number else (1, "", name)
 
@@ -128,7 +146,7 @@ def _account_words(chart: dict, account_id) -> tuple[str, str]:
         return "", ""
     path = ": ".join(chart[a][1] for a in chain)
     number = chart[account_id][0]
-    return path, (f"{number} - {path}" if number else path)
+    return path, account_label(number, path, getattr(chart, "numbered", True))
 
 
 _EXCLUDE_ADJUSTING = Query(

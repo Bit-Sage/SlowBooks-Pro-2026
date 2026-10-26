@@ -1277,8 +1277,8 @@ const App = {
     async showSeededCleanup() {
         let preview;
         try { preview = await API.get('/accounts/unused-seeded'); } catch (err) { toast(err.message, 'error'); return; }
-        const rows = preview.removable.map(a => `<li>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</li>`).join('');
-        const kept = preview.kept.map(a => `<li>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)} <span style="color:var(--gray-500);">— ${escapeHtml(a.reason)}</span></li>`).join('');
+        const rows = preview.removable.map(a => `<li>${accountLabel(a, null, ' ')}</li>`).join('');
+        const kept = preview.kept.map(a => `<li>${accountLabel(a, null, ' ')} <span style="color:var(--gray-500);">— ${escapeHtml(a.reason)}</span></li>`).join('');
         openModal('Remove unused seeded accounts', `
             <p style="font-size:12px; margin-bottom:8px;">Every new company starts with a seeded chart of accounts. When a real chart is imported the seeded accounts stay beside it. These seeded accounts have never been used and can go now; any with postings, sub-accounts, a register or a job in the settings stay.</p>
             ${preview.removable.length ? `<p style="font-size:12px; margin-bottom:4px;"><strong>${preview.removable.length} to remove:</strong></p><ul style="font-size:12px; columns:2; margin:0 0 8px 16px;">${rows}</ul>` : '<p style="font-size:12px;">Nothing to remove: every seeded account is in use or already gone.</p>'}
@@ -1429,6 +1429,9 @@ const App = {
         const typeNames = { asset: 'Assets', liability: 'Liabilities', equity: T('Equity'),
             income: T('Income'), cogs: 'Cost of Goods Sold', expense: 'Expenses' };
 
+        // the Number column goes when the company does not use account numbers (#567)
+        const numbers = accountNumbersOn();
+        const columns = numbers ? 5 : 4;
         let html = `
             ${skipLinkHtml('#accounts-filter', 'Skip to the account filter')}
             <div class="page-header">
@@ -1444,13 +1447,13 @@ const App = {
             </div>
             <p style="font-size:11px; color:var(--gray-500); margin:-4px 0 8px;">An account's name opens its register: the bank register for a bank or card account, this year's transactions for the rest.</p>
             <nav aria-labelledby="accounts-heading"><div class="table-container"><table>
-                <thead><tr><th scope="col" style="width:80px;">Number</th><th scope="col">Name</th><th scope="col" style="width:160px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
+                <thead><tr>${numbers ? '<th scope="col" style="width:80px;">Number</th>' : ''}<th scope="col">Name</th><th scope="col" style="width:160px;">Type</th><th scope="col" class="amount" style="width:100px;">Balance</th><th scope="col" style="width:190px;">Actions</th></tr></thead>
                 <tbody>`;
 
         for (const type of typeOrder) {
             const accts = grouped[type] || [];
             if (accts.length === 0) continue;
-            html += `<tr data-account-group="${type}" style="background:linear-gradient(180deg, #e8ecf2 0%, #dde2ea 100%);"><td colspan="5" style="font-weight:700; color:var(--qb-navy); font-size:11px; padding:4px 10px;">${typeNames[type]}</td></tr>`;
+            html += `<tr data-account-group="${type}" style="background:linear-gradient(180deg, #e8ecf2 0%, #dde2ea 100%);"><td colspan="${columns}" style="font-weight:700; color:var(--qb-navy); font-size:11px; padding:4px 10px;">${typeNames[type]}</td></tr>`;
             // A second heading per detail type under the type (#390), so an
             // account under the wrong one (a loan among the current
             // liabilities) shows in the first scroll. Number order within.
@@ -1460,7 +1463,7 @@ const App = {
             for (const { a, depth } of App._accountTreeOrder(accts)) {
                 if (a.detail_type !== detailShown) {
                     detailShown = a.detail_type;
-                    html += `<tr data-account-detail-group="${escapeHtml(a.detail_type || '')}"><td colspan="5" style="font-weight:600; color:var(--gray-600); font-size:11px; padding:3px 10px 3px 22px; background:var(--gray-50);">${escapeHtml(T(a.detail_type_label || ''))}</td></tr>`;
+                    html += `<tr data-account-detail-group="${escapeHtml(a.detail_type || '')}"><td colspan="${columns}" style="font-weight:600; color:var(--gray-600); font-size:11px; padding:3px 10px 3px 22px; background:var(--gray-50);">${escapeHtml(T(a.detail_type_label || ''))}</td></tr>`;
                 }
                 const inactive = a.is_active === false;
                 const path = tree.path(a);
@@ -1472,7 +1475,7 @@ const App = {
                 const showPath = parent && (depth === 0 || tree.collides(a));
                 const haystack = escapeHtml(`${a.account_number || ''} ${a.name} ${path}`.toLowerCase());
                 html += `<tr${inactive ? ' class="row--dim"' : ''} data-account-id="${Number(a.id)}"${parent ? ` data-parent-id="${Number(parent.id)}"` : ''} data-account-row="${haystack}" data-account-type="${type}" data-account-detail="${escapeHtml(a.detail_type || '')}">
-                    <td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>
+                    ${numbers ? `<td style="font-family:var(--font-mono);">${escapeHtml(a.account_number || '')}</td>` : ''}
                     <td style="padding-left:${10 + depth * 20}px;">${depth ? '<span aria-hidden="true" style="color:var(--gray-500);">└ </span>' : ''}<a href="${escapeHtml(App.accountRegisterHref(a))}" data-row-key="account:${Number(a.id)}" onclick="ReportsPage._leaveFrom(this)" style="font-weight:700; color:var(--text-link); text-decoration:none;" title="${escapeHtml(parent ? `Open the register: ${path}` : 'Open the register')}">${escapeHtml(a.name)}</a>${parent ? `<span class="visually-hidden">, sub-account of ${escapeHtml(tree.path(parent))}</span>` : ''}${parent ? ` <span class="account-path" aria-hidden="true"${showPath ? ' data-always="1"' : ' hidden'} style="font-size:11px; color:var(--gray-500);">${escapeHtml(path)}</span>` : ''}${a.is_control ? ` <span class="badge-control" title="${escapeHtml(a.control_purpose || 'the software finds this account by its number')}">control</span>` : ''}${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
                     <td>${escapeHtml(T(a.detail_type_label || a.account_type))}</td>
                     <td class="amount">${formatCurrency(a.balance)}</td>
@@ -1522,7 +1525,7 @@ const App = {
         const numberRequired = false;
         const lockNote = locked
             ? `<div class="form-group full-width"><div class="hint hint--locked">
-                   <strong>${escapeHtml(acct.account_number || '')} ${escapeHtml(acct.name)} is a control account.</strong>
+                   <strong>${accountLabel(acct, null, ' ')} is a control account.</strong>
                    The software finds it by its number to post ${escapeHtml(acct.control_purpose || 'part of the books')},
                    so the number and type (and its detail type) cannot change — a document that could not find it would have nowhere to post.
                    <em>You can rename it.</em>
@@ -1532,7 +1535,7 @@ const App = {
             <form onsubmit="App.saveAccount(event, ${id})">
                 <div class="form-grid">
                     ${lockNote}
-                    <div class="form-group"><label>Account Number <span style="font-weight:normal; color:var(--gray-500);">(optional)</span></label>
+                    <div class="form-group"><label>Account Number <span style="font-weight:normal; color:var(--gray-500);">${accountNumbersOn() ? '(optional)' : '(optional — account numbers are off under Settings → Company)'}</span></label>
                         <input name="account_number" value="${escapeHtml(acct.account_number || '')}"${locked ? ' readonly disabled' : ''}
                             ${numberRequired ? 'required' : ''} pattern="\\d+([.\\-]\\d+)*" maxlength="20" placeholder="e.g. 6150, or leave blank"
                             title="Optional. Digits, like 6150; a sub-account can use 6150.1 or 6150-01."></div>
@@ -1600,7 +1603,7 @@ const App = {
         // tree order, each named by its full path so two Hotels differ
         const order = App._accountTreeOrder(choices, false);
         return `<option value="">None (a top-level account)</option>` + order.map(({ a: p }) =>
-            `<option value="${Number(p.id)}"${p.id === selected ? ' selected' : ''}>${escapeHtml([p.account_number, tree.path(p)].filter(Boolean).join(' '))}</option>`
+            `<option value="${Number(p.id)}"${p.id === selected ? ' selected' : ''}>${accountLabel(p, tree.path(p), ' ')}</option>`
         ).join('');
     },
 
@@ -1913,7 +1916,7 @@ const App = {
                     // an account opens its register (#240): the bank register for a
                     // bank or card account, the drill-down for the rest
                     { key: 'accounts', label: 'Accounts', onClick: (item) => `App.openAccountRegister(${Number(item.id)}, ${item.bank_kind ? 1 : 0});closeSearchDropdown();`,
-                      text: (a) => `${a.account_number || ''} ${a.name}${a.is_active === false ? ' (inactive)' : ''}`.trim() },
+                      text: (a) => `${accountWords(a, null, ' ')}${a.is_active === false ? ' (inactive)' : ''}` },
                     // a class opens its own page (#234); only the id crosses into the attribute
                     { key: 'classes', label: T('Classes'), onClick: (item) => `App.navigate('#/classes/${Number(item.id)}');closeSearchDropdown();`,
                       text: (c) => c.is_archived ? `${c.name} (archived)` : c.name },

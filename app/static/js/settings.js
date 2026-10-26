@@ -363,6 +363,13 @@ const SettingsPage = {
                             </select>
                             <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">How this LLC is taxed. A single-member LLC taxed as a sole proprietor files Schedule C; the others file a partnership or corporate return.</div>
                         </div>
+                        <div class="form-group full-width">
+                            <label for="use-account-numbers" style="font-weight:normal;">
+                                <input type="checkbox" id="use-account-numbers" name="use_account_numbers" value="true" data-bool style="width:auto; vertical-align:middle; margin-right:6px;" ${s.use_account_numbers !== 'false' ? 'checked' : ''}>
+                                Use account numbers
+                            </label>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">On, the chart has a Number column, accounts list by number, and every picker and report names an account "6100 - Name". Off, for a business that does not number its accounts: the number is left off the chart, the pickers, the reports and the PDFs, accounts list by name within their type, and an imported account without a number stays without one. A number is optional either way; an account keeps the number it has.</div>
+                        </div>
                         <div class="form-group full-width"><label for="fiscal-year-start-month">First month of fiscal year</label>
                             <select id="fiscal-year-start-month" name="fiscal_year_start_month">
                                 ${SettingsPage._monthOptions(s.fiscal_year_start_month || '1')}
@@ -3288,7 +3295,7 @@ SettingsPage.deleteTradePackage = async function (id) {
 SettingsPage._accountsCache = null;
 SettingsPage._accountOptions = async function (selected) {
     if (!SettingsPage._accountsCache) { try { SettingsPage._accountsCache = await API.get('/accounts'); } catch (e) { SettingsPage._accountsCache = []; } }
-    return '<option value="">--</option>' + SettingsPage._accountsCache.map(a => `<option value="${a.id}" ${selected === a.id ? 'selected' : ''}>${escapeHtml((a.account_number ? a.account_number + ' ' : '') + a.name)}</option>`).join('');
+    return '<option value="">--</option>' + SettingsPage._accountsCache.map(a => `<option value="${a.id}" ${selected === a.id ? 'selected' : ''}>${accountLabel(a, null, ' ')}</option>`).join('');
 };
 
 SettingsPage.loadCostTypes = async function () {

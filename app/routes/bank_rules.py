@@ -13,6 +13,8 @@ from app.models.bank_rules import BankRule
 from app.models.contacts import Vendor
 from app.models.banking import BankTransaction
 from app.schemas.bank_rules import BankRuleCreate, BankRuleUpdate, BankRuleResponse
+from app.services.account_label import account_label
+from app.services.settings_service import use_account_numbers
 
 router = APIRouter(prefix="/api/bank-rules", tags=["bank-rules"])
 
@@ -31,14 +33,13 @@ def _out(db: Session, rules: list[BankRule]) -> list[BankRuleResponse]:
         if vendor_ids
         else {}
     )
+    numbered = use_account_numbers(db)
     out = []
     for r in rules:
         resp = BankRuleResponse.model_validate(r)
         a = accounts.get(r.account_id)
         if a is not None:
-            resp.account_name = (
-                f"{a.account_number} - {a.name}" if a.account_number else a.name
-            )
+            resp.account_name = account_label(a.account_number, a.name, numbered)
         resp.vendor_name = vendors.get(r.vendor_id)
         out.append(resp)
     return out

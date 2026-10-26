@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.services.account_label import account_label
+
 # side -> ((heading, subtotal key, detail types in print order), ...)
 BS_GROUPS = {
     "assets": (
@@ -252,22 +254,38 @@ def account_chart(db=None, index: dict | None = None) -> dict:
     chart a report has already read ({id: (number, name, parent_id, …)},
     financial._chart_index), else one query."""
     from app.models.accounts import Account
+    from app.services.settings_service import use_account_numbers
 
     if index is not None:
-        return {
-            aid: {"number": row[0], "name": row[1], "parent_id": row[2]}
+        chart = _Chart(
+            (aid, {"number": row[0], "name": row[1], "parent_id": row[2]})
             for aid, row in index.items()
-        }
-    return {
-        a.id: {
-            "number": a.account_number or "",
-            "name": a.name or "",
-            "parent_id": a.parent_id,
-        }
+        )
+        chart.numbered = getattr(index, "numbered", True)
+        return chart
+    chart = _Chart(
+        (
+            a.id,
+            {
+                "number": a.account_number or "",
+                "name": a.name or "",
+                "parent_id": a.parent_id,
+            },
+        )
         for a in db.query(
             Account.id, Account.account_number, Account.name, Account.parent_id
         )
-    }
+    )
+    chart.numbered = use_account_numbers(db)
+    return chart
+
+
+class _Chart(dict):
+    """account_chart's dict plus `numbered`: whether the company uses account
+    numbers (#567), carried from the report's index. A plain dict (a test's)
+    reads as numbered."""
+
+    numbered: bool = True
 
 
 def account_path(chart: dict, account_id) -> str:
@@ -306,7 +324,7 @@ def family_rows(
     belongs,
     keys: tuple,
     order,
-    numbered: bool = True,
+    numbered: bool | None = None,
 ) -> list[dict]:
     """A section's lines as printed rows, sub-accounts beneath their
     parents. `belongs(id)` says whether an account prints in this section
@@ -321,7 +339,11 @@ def family_rows(
       postings to …";
     - "total": the family's total, "Total …", at the heading's level.
 
-    A line with no account (a computed one) prints last, as it came."""
+    A line with no account (a computed one) prints last, as it came.
+    `numbered` False prints names alone; None reads the chart's own flag
+    (the company's setting, #567)."""
+    if numbered is None:
+        numbered = getattr(chart, "numbered", True)
     by_id = {i["account_id"]: i for i in lines if i.get("account_id") in chart}
     loose = [i for i in lines if i.get("account_id") not in by_id]
 
@@ -345,11 +367,7 @@ def family_rows(
 
     def leaf(node) -> str:
         entry = chart[node]
-        return (
-            f"{entry['number']} - {entry['name']}"
-            if numbered and entry["number"]
-            else entry["name"]
-        )
+        return account_label(entry["number"], entry["name"], numbered)
 
     def top(node) -> str:
         """At the top level the full path, as the flat P&L printed it: an
@@ -357,9 +375,7 @@ def family_rows(
         line = by_id.get(node)
         if line and line.get("account_label"):
             return line["account_label"]
-        path = account_path(chart, node)
-        number = chart[node]["number"]
-        return f"{number} - {path}" if numbered and number else path
+        return account_label(chart[node]["number"], account_path(chart, node), numbered)
 
     def sums(node) -> dict:
         total = {k: Decimal("0") for k in keys}

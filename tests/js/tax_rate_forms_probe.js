@@ -32,6 +32,8 @@ const ctx = {
     querySelector: (sel) => els[sel] || null,
   },
   escapeHtml: (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+  accountWords: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); return a.account_number ? `${a.account_number}${sep}${n}` : n; },
+  accountLabel: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); const w = a.account_number ? `${a.account_number}${sep}${n}` : n; return String(w).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); },
   formatCurrency: (n) => '$' + (Number(n) || 0).toFixed(2),
   formatDate: (s) => s || '',
   todayISO: () => '2026-09-26',

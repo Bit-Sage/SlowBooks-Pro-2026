@@ -47,6 +47,17 @@ DEFAULT_SETTINGS = {
     # llc_tax_election: disregarded | partnership | s_corp | c_corp
     "entity_type": "",
     "llc_tax_election": "",
+    # Account numbers on the chart (#567). "true" (the default) is how it
+    # always was: a label reads "6100 - Name", the chart has a Number
+    # column, accounts list by number, and the chart import hands a
+    # numberless row the next free number. "false" is for a company that
+    # does not number its accounts: every label, picker, report and PDF
+    # prints the name alone, accounts list by name within their type, the
+    # chart hides the column, and an imported row with no number stays
+    # unnumbered. A number is optional on the form either way; an account
+    # with one keeps it. The seeded chart keeps its numbers, and the
+    # control accounts are still found by theirs (control_accounts.py).
+    "use_account_numbers": "true",
     "company_address1": "",
     "company_address2": "",
     "company_city": "",

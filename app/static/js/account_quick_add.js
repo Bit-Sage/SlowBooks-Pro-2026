@@ -6,7 +6,8 @@
  * all use it.
  *
  * An Add button beside the select opens a small panel — name, type, an
- * optional parent ("Sub-account of", #416) and an optional number — and
+ * optional parent ("Sub-account of", #416) and an optional number (left
+ * off the panel when the company does not use account numbers, #567) — and
  * Save posts it to /accounts, puts it on the page's pickers and picks it
  * on the one the button sits beside. The panel is never opened by the
  * select itself: arrowing through a native select with "+ Add…" on it
@@ -105,8 +106,8 @@ const AccountQuickAdd = {
             `<input id="${key}-name" class="aqa-name" aria-required="true" maxlength="200">`)
             + field('type', 'Type', `<select id="${key}-type" class="aqa-type" data-no-search>${types}</select>`)
             + field('parent', 'Sub-account of', `<select id="${key}-parent" class="aqa-parent" data-no-search><option value="">None</option></select>`)
-            + field('number', 'Number <span class="aqa-optional">(optional)</span>',
-                `<input id="${key}-number" class="aqa-number" maxlength="20" placeholder="e.g. 6150, or leave blank">`);
+            + (accountNumbersOn() ? field('number', 'Number <span class="aqa-optional">(optional)</span>',
+                `<input id="${key}-number" class="aqa-number" maxlength="20" placeholder="e.g. 6150, or leave blank">`) : '');
         const panel = document.createElement('div');
         panel.id = key;
         panel.className = `aqa-panel${cfg.compact ? ' aqa-panel--compact' : ''}`;
@@ -180,7 +181,7 @@ const AccountQuickAdd = {
                 name,
                 account_type: f('type').value,
                 parent_id: f('parent').value ? parseInt(f('parent').value, 10) : null,
-                account_number: f('number').value.trim() || null,
+                account_number: (f('number') && f('number').value.trim()) || null,
             });
         } catch (err) {
             delete panel.dataset.saving;
@@ -197,7 +198,7 @@ const AccountQuickAdd = {
         if (cfg.change) select.dispatchEvent(new Event('change', { bubbles: true }));
         panel.remove();
         select._aqaPanel = null;
-        toast(`${made.account_number ? made.account_number + ' - ' : ''}${made.name} added to the chart`);
+        toast(`${accountWords(made)} added to the chart`);
         const next = cfg.next && cfg.next(select, ctx);
         if (next) focusFor(next, true);
         else AccountQuickAdd._focusPicker(select);

@@ -35,6 +35,7 @@ from app.schemas.accounts import (
     RetypedSubAccount,
 )
 from app.routes._helpers import get_or_404, reject_null_updates
+from app.services.settings_service import use_account_numbers
 from app.routes._roles import require_admin
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -460,10 +461,14 @@ def list_accounts(
         q = q.filter(Account.detail_type == detail_type)
     # By number, and accounts without one (a chart imported from QuickBooks
     # Online, whose accounts carry none) by name, so a sub-account named
-    # Parent:Child sits with its parent.
-    return _in_company_words(
-        db, q.order_by(nullslast(Account.account_number), Account.name).all()
-    )
+    # Parent:Child sits with its parent. A company that does not use
+    # account numbers lists by name alone (#567); the chart page and the
+    # pickers group by type, so that is by name within the type.
+    if use_account_numbers(db):
+        q = q.order_by(nullslast(Account.account_number), Account.name)
+    else:
+        q = q.order_by(Account.name, Account.id)
+    return _in_company_words(db, q.all())
 
 
 # The seeded accounts a pay run, a PTO accrual or a benefits posting finds

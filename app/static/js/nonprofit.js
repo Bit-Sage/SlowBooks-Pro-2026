@@ -212,7 +212,7 @@ const AllocationsPage = {
     async showRule(id = null) {
         await AllocationsPage._loadRefs();
         const rule = id ? AllocationsPage._rules.find(r => r.id === id) : null;
-        const acctOpts = AllocationsPage._opt(AllocationsPage._accounts, 'id', a => `${a.account_number || ''} ${a.name}`.trim(), rule?.source_account_id, 'Any expense account');
+        const acctOpts = AllocationsPage._opt(AllocationsPage._accounts, 'id', a => accountWords(a, null, ' '), rule?.source_account_id, 'Any expense account');
         const classOpts = AllocationsPage._opt(AllocationsPage._classes, 'id', c => c.name, rule?.source_class_id, `Any ${T('class')}`);
         const targets = rule?.targets?.length ? rule.targets : [{ function: 'program', weight: 70 }, { function: 'management', weight: 20 }, { function: 'fundraising', weight: 10 }];
         openModal(rule ? `Rule: ${escapeHtml(rule.name)}` : 'New Allocation Rule', `
@@ -341,7 +341,7 @@ const AllocationsPage = {
             if (!p.pool.length) { box.innerHTML = '<em>Nothing unassigned on the source for that period.</em>'; return; }
             box.innerHTML = `<div class="table-container"><table class="data-table" style="font-size:12px">
                 <thead><tr><th scope="col">Unassigned on</th><th scope="col" class="amount">Amount</th></tr></thead>
-                <tbody>${p.pool.map(r => `<tr><td>${escapeHtml(`${r.account_number || ''} ${r.account_name}`.trim())}</td><td class="amount">${formatCurrency(r.amount)}</td></tr>`).join('')}
+                <tbody>${p.pool.map(r => `<tr><td>${accountLabel(r, r.account_name, ' ')}</td><td class="amount">${formatCurrency(r.amount)}</td></tr>`).join('')}
                 <tr style="font-weight:600"><td>Total</td><td class="amount">${formatCurrency(p.total)}</td></tr></tbody></table></div>
                 <div style="margin-top:6px">Would move to: ${p.lines.map(l => `${escapeHtml([l.class_name, Nonprofit.label(l.function)].filter(Boolean).join(' / '))} ${formatCurrency(l.amount)}`).join(' · ')}</div>`;
         } catch (err) { box.textContent = err.message; }

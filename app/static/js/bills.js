@@ -63,7 +63,7 @@ const BillsPage = {
             API.get('/accounts'),
             API.get(`/bill-payments?bill_id=${id}`),
         ]);
-        const acctName = Object.fromEntries(accounts.map(a => [a.id, `${a.account_number || ''} ${a.name}`.trim()]));
+        const acctName = Object.fromEntries(accounts.map(a => [a.id, accountWords(a, null, ' ')]));
         let linesHtml = bill.lines.map(l =>
             `<tr><td>${escapeHtml(l.description || '')}</td><td>${escapeHtml(acctName[l.account_id] || '')}</td><td class="amount">${l.quantity}</td>
              <td class="amount">${formatCurrency(l.rate)}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`

@@ -107,11 +107,10 @@ def test_an_account_with_no_number_lists_last_and_by_its_name(client, seed_accou
     assert listed[-1]["name"] == "Software Subscriptions"
     assert listed[0]["account_number"]
     utils = _js("utils.js")
-    assert "function accountLabel(a, name = null)" in utils
-    assert (
-        "return number ? `${escapeHtml(number)} - ${escapeHtml(shown)}` : escapeHtml(shown);"
-        in utils
-    )
+    # accountLabel escapes accountWords, the one rule (#567 split the two)
+    assert "function accountLabel(a, name = null, sep = ' - ')" in utils
+    assert "return escapeHtml(accountWords(a, name, sep));" in utils
+    assert "return number ? `${number}${sep}${shown}` : shown;" in utils
     # every picker that printed "number - name" goes through it
     for name in (
         "bank_rules.js",

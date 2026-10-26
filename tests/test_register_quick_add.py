@@ -78,7 +78,7 @@ def test_the_parent_list_leaves_out_control_accounts():
 def test_the_new_account_goes_into_every_picker_and_is_chosen():
     save = AQA_JS[AQA_JS.index("async save(panel) {") :]
     assert "await API.post('/accounts', {" in save
-    assert "account_number: f('number').value.trim() || null" in save
+    assert "account_number: (f('number') && f('number').value.trim()) || null" in save
     assert "select.value = String(made.id);" in save
     reg = BANKING_JS[BANKING_JS.index("AccountQuickAdd.register('register', {") :]
     assert "for (const id of ['qe-category', 'entry-category'])" in reg

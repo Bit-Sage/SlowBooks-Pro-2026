@@ -219,7 +219,10 @@ def test_the_purchase_accounts_are_grouped_cost_of_goods_first():
         {"id": 3, "account_number": "", "name": "Old Asset", "account_type": "asset"},
     ]
     script = (
-        "const escapeHtml = s => String(s);\n" + helper + "\n"
+        "const escapeHtml = s => String(s);\n"
+        "const accountLabel = a => (a.account_number ? a.account_number + ' - ' : '') + a.name;\n"
+        + helper
+        + "\n"
         f"process.stdout.write(PurchaseAccounts.options({json.dumps(accounts)}, 2));"
     )
     out = subprocess.run(

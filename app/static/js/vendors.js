@@ -96,7 +96,7 @@ const VendorsPage = {
             vendor.country && vendor.country !== 'US' ? vendor.country : '',
         ].filter(Boolean).join('\n');
         const acct = accounts.find(a => a.id === vendor.default_expense_account_id);
-        const acctLabel = acct ? `${acct.account_number ? acct.account_number + ' - ' : ''}${acct.name}` : '';
+        const acctLabel = acct ? accountWords(acct) : '';
 
         // -- Bills — last 10, newest first, click-through --
         // a row opens the document at its own address, the page's address
@@ -599,7 +599,7 @@ const PurchaseAccounts = {
     // uses comes last.
     options(accounts, selectedId) {
         const opt = a => `<option value="${a.id}" ${selectedId && a.id == selectedId ? 'selected' : ''}>`
-            + `${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.name)}</option>`;
+            + `${accountLabel(a)}</option>`;
         const groups = [['cogs', 'Cost of Goods Sold'], ['expense', 'Expenses']];
         let html = '';
         for (const [type, label] of groups) {

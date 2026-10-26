@@ -323,6 +323,8 @@ function newWindow(role, answers = {}) {
     $: sel => document.querySelector(sel),
     $$: sel => document.querySelectorAll(sel),
     escapeHtml: s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]),
+    accountWords: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); return a.account_number ? `${a.account_number}${sep}${n}` : n; },
+    accountLabel: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); return String(a.account_number ? `${a.account_number}${sep}${n}` : n).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); },
     T: s => s,
     Terms: { text: s => s, isNonprofit: () => false, isConstruction: () => false },
     formatDate: s => s,

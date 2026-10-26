@@ -472,9 +472,13 @@ def get_expenses_by_category(
         except (ValueError, TypeError):
             pass
 
+    from app.services.settings_service import use_account_numbers
+
+    numbered = use_account_numbers(db)
     expenses_by_category = {}
     for number, name, amount in AnalyticsEngine(db).expenses_by_account(sd, ed):
-        category_name = account_label(number, name)  # as the page names it
+        # as the page names it
+        category_name = account_label(number, name, numbered)
         expenses_by_category[category_name] = _to_float(
             Decimal(str(expenses_by_category.get(category_name, 0)))
             + Decimal(str(amount))

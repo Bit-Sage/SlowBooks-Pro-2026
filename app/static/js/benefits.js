@@ -53,7 +53,7 @@ const BenefitsPage = {
     _acctOptions(accounts, selected, types) {
         const list = types ? accounts.filter(a => types.includes(a.account_type)) : accounts;
         return '<option value="">— none —</option>' + list.map(a =>
-            `<option value="${a.id}" ${String(a.id) === String(selected || '') ? 'selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`).join('');
+            `<option value="${a.id}" ${String(a.id) === String(selected || '') ? 'selected' : ''}>${accountLabel(a, null, ' ')}</option>`).join('');
     },
 
     // ------------------------------------------------------------------ codes

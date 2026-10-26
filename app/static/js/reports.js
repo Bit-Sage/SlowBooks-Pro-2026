@@ -918,7 +918,7 @@ const ReportsPage = {
         const key = `${from}|${range.start}|${range.end}|${classId || ''}`;
         if (ReportsPage._drillList && ReportsPage._drillList.key === key) return ReportsPage._drillList.list;
         const dates = `start_date=${range.start}&end_date=${range.end}`;
-        const label = (a) => `${a.account_number ? a.account_number + ' - ' : ''}${a.account_name || a.name}`;
+        const label = (a) => accountWords(a, a.account_name || a.name);
         const pick = (groups) => groups.flat().filter(a => a && a.account_id).map(a => ({ id: a.account_id, label: label(a) }));
         let list = [];
         try {
@@ -944,7 +944,7 @@ const ReportsPage = {
                     list = pick([d.adjustments || [], d.working_capital || [], d.investing, d.financing]); break;
                 default:
                     d = await API.get('/accounts');
-                    list = d.map(a => ({ id: a.id, label: `${a.account_number ? a.account_number + ' - ' : ''}${a.name}` }));
+                    list = d.map(a => ({ id: a.id, label: accountWords(a) }));
             }
         } catch (e) { list = []; }
         ReportsPage._drillList = { key, list };
@@ -1875,13 +1875,13 @@ const ReportsPage = {
             const agrees = ledger && Math.abs(ledger.difference) < 0.005;
             const reconcile = ledger ? `
                     <div style="font-size:12px; margin-top:8px; border-top:1px solid var(--gray-200); padding-top:6px;">
-                        ${escapeHtml(ledger.account_number)} ${escapeHtml(ledger.account_name)}: tax posted this period <strong>${formatCurrency(ledger.tax_posted)}</strong>
+                        ${accountLabel(ledger, ledger.account_name, ' ')}: tax posted this period <strong>${formatCurrency(ledger.tax_posted)}</strong>
                         ${agrees
                             ? '— agrees with this report.'
                             : `— <span style="color:var(--danger); font-weight:700;">differs from this report by ${formatCurrency(ledger.difference)}</span>. Something other than a sale or credit memo posted to the account in these dates (tax on a bill, a journal entry, a void of an earlier sale).`}
                         <div>Paid this period: ${formatCurrency(ledger.payments)} · Owed at ${formatDate(data.end_date)}: <strong>${formatCurrency(ledger.balance)}</strong></div>
                         ${Math.abs(ledger.purchase_tax_to_date || 0) >= 0.005 ? `<div style="margin-top:6px;">
-                            Sales tax paid to suppliers on bills entered before SlowBooks Pro 2.18 was posted to ${escapeHtml(ledger.account_name)}, lowering that balance by <strong>${formatCurrency(ledger.purchase_tax)}</strong> this period; since 2.18 that tax is part of what the purchase cost. To correct it, post one journal entry: debit the expense or cost-of-goods account those purchases used, and credit ${escapeHtml(ledger.account_number)} ${escapeHtml(ledger.account_name)} <strong>${formatCurrency(ledger.purchase_tax_to_date)}</strong> (the total to ${formatDate(data.end_date)}).</div>` : ''}
+                            Sales tax paid to suppliers on bills entered before SlowBooks Pro 2.18 was posted to ${escapeHtml(ledger.account_name)}, lowering that balance by <strong>${formatCurrency(ledger.purchase_tax)}</strong> this period; since 2.18 that tax is part of what the purchase cost. To correct it, post one journal entry: debit the expense or cost-of-goods account those purchases used, and credit ${accountLabel(ledger, ledger.account_name, ' ')} <strong>${formatCurrency(ledger.purchase_tax_to_date)}</strong> (the total to ${formatDate(data.end_date)}).</div>` : ''}
                     </div>` : '';
             return `
                 <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
@@ -1929,7 +1929,7 @@ const ReportsPage = {
             const qs = `start_date=${range.start}&end_date=${range.end}${f.account_id ? `&account_id=${f.account_id}` : ''}${f.class_id ? `&class_id=${f.class_id}` : ''}`;
             const data = await API.get(`/reports/general-ledger?${qs}`);
             const { accounts, classes } = ReportsPage._glLists;
-            const acctOpts = accounts.map(a => `<option value="${a.id}"${String(a.id) === f.account_id ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`).join('');
+            const acctOpts = accounts.map(a => `<option value="${a.id}"${String(a.id) === f.account_id ? ' selected' : ''}>${accountLabel(a, null, ' ')}${a.is_active === false ? ' (inactive)' : ''}</option>`).join('');
             const classOpts = classes.map(c => `<option value="${c.id}"${String(c.id) === f.class_id ? ' selected' : ''}>${escapeHtml(c.name)}${c.is_archived ? ' (archived)' : ''}</option>`).join('');
             const cls = data.class_name;
             let html = `
@@ -1960,7 +1960,8 @@ const ReportsPage = {
                     const name = acct.account_id
                         ? `<a href="javascript:void(0)" style="color:var(--text-link); text-decoration:none;" onclick="${drillCall(acct)}">${escapeHtml(words)}</a>`
                         : escapeHtml(words);
-                    html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${escapeHtml(acct.account_number)} &mdash; ${name}</h3>`;
+                    const number = accountWords(acct, '', '');
+                    html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${number ? `${escapeHtml(number)} &mdash; ` : ''}${name}</h3>`;
                     html += `<div class="table-container"><table>
                         <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Reference</th><th scope="col">Source</th><th scope="col">${T('Class')}</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Balance</th></tr></thead><tbody>`;
                     html += `<tr style="color:var(--gray-500);"><td></td><td colspan="6">Balance brought forward</td><td class="amount">${formatCurrency(acct.opening_balance)}</td></tr>`;
@@ -2413,9 +2414,11 @@ const ReportsPage = {
             const drill = (i) => i.account_id
                 ? ReportsPage._rowLink(`ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_path || i.account_name)},${JSON.stringify(range.start)},${JSON.stringify(range.end)},null,null,'trial-balance')`, i.account_path || i.account_name, `drill:${i.account_id}`)
                 : escapeHtml(i.account_path || i.account_name);
+            // the Number column goes when the company does not use account numbers (#567)
+            const numbers = accountNumbersOn();
             let rows = data.items.map(i =>
                 `<tr>
-                    <td>${escapeHtml(i.account_number)}</td>
+                    ${numbers ? `<td>${escapeHtml(i.account_number)}</td>` : ''}
                     <td>${drill(i)}</td>
                     <td style="font-size:10px; color:var(--gray-400);">${i.account_type}</td>
                     <td class="amount">${i.total_debit > 0 ? formatCurrency(i.total_debit) : ''}</td>
@@ -2425,7 +2428,7 @@ const ReportsPage = {
             ).join('');
             const diffColor = Math.abs(data.difference) < 0.01 ? 'var(--text-success)' : 'var(--text-danger)';
             rows += `<tr style="font-weight:700; background:var(--gray-50);">
-                <td colspan="3">TOTALS</td>
+                <td colspan="${numbers ? 3 : 2}">TOTALS</td>
                 <td class="amount">${formatCurrency(data.total_debit)}</td>
                 <td class="amount">${formatCurrency(data.total_credit)}</td>
                 <td class="amount" style="color:${diffColor}">${formatCurrency(data.difference)}</td>
@@ -2433,7 +2436,7 @@ const ReportsPage = {
             return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}`)}
                 <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}</p>
                 <div class="table-container"><table>
-                    <thead><tr><th scope="col">Number</th><th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
+                    <thead><tr>${numbers ? '<th scope="col">Number</th>' : ''}<th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>`;
         }, "Dates", false, { view: 'trial-balance', prefill, ...ReportsPage._adjOpts(prefill) });
@@ -2447,7 +2450,7 @@ const ReportsPage = {
             const data = await API.get(`/reports/adjusting-entries?${qs}`);
             const entries = data.entries.map(e => {
                 const lines = e.lines.map(l =>
-                    `<tr><td style="padding-left:24px;">${l.account_number ? `${escapeHtml(l.account_number)} ` : ''}${escapeHtml(l.account_name)}${l.description ? ` <span style="color:var(--gray-500);">— ${escapeHtml(l.description)}</span>` : ''}</td>
+                    `<tr><td style="padding-left:24px;">${accountLabel(l, l.account_name, ' ')}${l.description ? ` <span style="color:var(--gray-500);">— ${escapeHtml(l.description)}</span>` : ''}</td>
                          <td class="amount">${l.debit > 0 ? formatCurrency(l.debit) : ''}</td>
                          <td class="amount">${l.credit > 0 ? formatCurrency(l.credit) : ''}</td></tr>`).join('');
                 return `<tr style="font-weight:600; background:var(--gray-50);">
@@ -2547,7 +2550,7 @@ const ReportsPage = {
             const accountId = String(prm.account_id || '');
             const vendorId = String(prm.vendor_id || '');
             const payeeText = String(prm.payee || '');
-            const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}${a.is_active === false ? ' (inactive)' : ''}</option>`;
+            const acctOpt = (a, selected) => `<option value="${a.id}"${String(a.id) === String(selected) ? ' selected' : ''}>${accountLabel(a, null, ' ')}${a.is_active === false ? ' (inactive)' : ''}</option>`;
             const picker = `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
                     <label for="rc-account" style="font-size:11px;">Lines on</label>
                     <select id="rc-account" data-no-search style="max-width:300px;" onchange="ReportsPage.setParam('account_id', this.value)"><option value="">Choose an account…</option>${rc.lists.accounts.map(a => acctOpt(a, accountId)).join('')}</select>
@@ -2942,7 +2945,7 @@ ReportsPage._pivotGrid = function (spec) {
     const empties = cols.map((_, i) => `<td data-col="${i}"></td>`).join('') + '<td></td>';
     // the number and full path, as the P&L flat list prints a line (#416);
     // a row without the label (an older reply) still reads number - name
-    const label = a => escapeHtml(a.account_label || `${a.account_number ? a.account_number + ' - ' : ''}${a.account_name}`);
+    const label = a => a.account_label ? escapeHtml(a.account_label) : accountLabel(a, a.account_name);
     const cell = (a, i) => {
         const amount = a.amounts[i];
         if (!amount) return `<td class="amount" data-col="${i}"></td>`;
@@ -3755,7 +3758,7 @@ ReportsPage.possibleDuplicates = async function (prefill) {
         account_id: p.account_id || (accounts.length ? String(accounts[0].id) : ''),
         include_dismissed: ['1', 'true'].includes(String(p.include_dismissed)) ? '1' : '',
     };
-    const label = (a) => `${a.account_number ? a.account_number + ' - ' : ''}${a.name}`;
+    const label = (a) => accountWords(a);
     const options = accounts.map(a => `<option value="${a.id}" ${String(a.id) === String(params.account_id) ? 'selected' : ''}>${escapeHtml(label(a))}</option>`).join('');
     const box = 'font-weight:normal; text-transform:none; font-size:12px; display:inline-flex; gap:6px; align-items:center;';
     const toolbar = `
@@ -4030,7 +4033,7 @@ ReportsPage.functionalExpenses = async function (prefill) {
         const keys = ['total', 'program', 'management', 'fundraising', 'unassigned'];
         const pt = cmp && d.prior ? d.prior.totals : {};
         const row = (label, r, style = '', prior = null) => { const pv = prior != null ? prior : (r.prior_total || 0); return `<tr style="${style}"><td>${label}</td>${keys.map(k => `<td class="amount">${formatCurrency(r[k])}</td>`).join('')}${cmp ? `<td class="amount">${formatCurrency(pv)}</td><td class="amount">${formatCurrency(r.total - pv)}</td>` : ''}</tr>`; };
-        const rows = d.rows.map(r => row(escapeHtml(`${r.account_number || ''} ${r.account_name}`.trim()), r)).join('');
+        const rows = d.rows.map(r => row(accountLabel(r, r.account_name, ' '), r)).join('');
         const programs = d.programs.length ? `<h4 style="margin:12px 0 4px;font-size:12px;">Program services by program</h4>
             <div class="table-container"><table><thead><tr><th scope="col">Program</th><th scope="col" class="amount">Amount</th></tr></thead>
             <tbody>${d.programs.map(p => `<tr><td>${escapeHtml(p.class_name)}</td><td class="amount">${formatCurrency(p.amount)}</td></tr>`).join('')}</tbody></table></div>` : '';

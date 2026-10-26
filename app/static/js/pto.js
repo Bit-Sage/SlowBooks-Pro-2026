@@ -141,7 +141,7 @@ const PTOPage = {
                   accrue_liability: false, valuation: 'current_rate', expense_account_id: '', liability_account_id: '', pays_out_on_termination: false };
         if (id) p = await API.get(`/pto/policies/${id}`);
         const accounts = await API.get('/accounts');
-        const acctOpts = (types, sel) => '<option value="">— default (6160 / 2390) —</option>' + accounts.filter(a => types.includes(a.account_type)).map(a => `<option value="${a.id}" ${String(a.id) === String(sel || '') ? 'selected' : ''}>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`).join('');
+        const acctOpts = (types, sel) => '<option value="">— default (6160 / 2390) —</option>' + accounts.filter(a => types.includes(a.account_type)).map(a => `<option value="${a.id}" ${String(a.id) === String(sel || '') ? 'selected' : ''}>${accountLabel(a, null, ' ')}</option>`).join('');
 
         openModal(id ? 'Edit PTO Policy' : 'Add PTO Policy', `
             <form onsubmit="PTOPage.savePolicy(event, ${id})">

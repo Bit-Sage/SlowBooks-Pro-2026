@@ -57,6 +57,7 @@ from app.services.account_tree import (
     takes_no_new_parent,
 )
 from app.services.csv_export import strip_formula_guard
+from app.services.settings_service import use_account_numbers
 
 # --- vocabulary -------------------------------------------------------------
 
@@ -522,6 +523,9 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
     for a in existing:
         by_name.setdefault(a.name.strip().lower(), a)
     numbers = _Numbers(set(by_number))
+    # a company that does not use account numbers brings a numberless row
+    # in unnumbered instead of handing it the next free number (#567)
+    numbered = use_account_numbers(db)
     matched: set[int] = set()
     # what each row resolves to, for parent links: key = path (hledger) or
     # number or name (csv) -> ("existing", id) | ("new", row index)
@@ -636,6 +640,10 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 continue
             if r.number and numbers.claim(r.number):
                 number = r.number
+            elif not numbered:
+                number = None
+                if r.number:
+                    entry["note"] = f"number {r.number} is taken; brought in unnumbered"
             else:
                 number = numbers.next_free(r.type)
                 if r.number:
@@ -650,8 +658,10 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                     f"an account named '{twin.name}' already exists as "
                     f"{twin.account_number or 'unnumbered'} and is matched by another row"
                 )
-            resolved[r.path or number] = ("new", i)
-            resolved[number] = ("new", i)
+            if r.path:
+                resolved[r.path] = ("new", i)
+            if number:
+                resolved[number] = ("new", i)
             resolved[r.name.lower()] = ("new", i)
         entry["detail_type"] = _planned_detail(r, target, entry)
         entry["_row"] = r

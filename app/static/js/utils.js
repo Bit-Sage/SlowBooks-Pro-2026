@@ -124,14 +124,31 @@ function reversedRangeRefused(start, end, kept) {
     return true;
 }
 
+// Whether the company uses account numbers (Settings → Company, #567):
+// on unless the setting says "false". Off, every label, picker, report
+// and the chart print the name alone; an account keeps whatever number
+// it has.
+function accountNumbersOn() {
+    const s = (typeof App !== 'undefined' && App && App.settings) || {};
+    return s.use_account_numbers !== 'false';
+}
+
 // An account's words in a picker or a list: "1000 - Checking", and for an
 // account with no number (optional since 2.23.5) its name alone, not
-// "- Checking" at the top of the list (2.23.5 round 2, NEW-144). `name`
-// overrides the name shown (a path, say).
-function accountLabel(a, name = null) {
+// "- Checking" at the top of the list (2.23.5 round 2, NEW-144), as for
+// every account when the company does not use account numbers (#567).
+// `name` overrides the name shown (a path, say); `sep` joins the two
+// where a page prints "1000 Checking". The Python twin is
+// app/services/account_label.py. accountWords is the plain text;
+// accountLabel is the same, HTML-escaped for markup.
+function accountWords(a, name = null, sep = ' - ') {
     const shown = name !== null ? name : (a.name || '');
-    const number = a.account_number || '';
-    return number ? `${escapeHtml(number)} - ${escapeHtml(shown)}` : escapeHtml(shown);
+    const number = accountNumbersOn() ? (a.account_number || '') : '';
+    return number ? `${number}${sep}${shown}` : shown;
+}
+
+function accountLabel(a, name = null, sep = ' - ') {
+    return escapeHtml(accountWords(a, name, sep));
 }
 
 function todayISO() {

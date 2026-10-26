@@ -377,6 +377,12 @@ def new_lines_taxable(db: Session) -> bool:
     return get_setting_raw(db, "new_lines_taxable") != "false"
 
 
+def use_account_numbers(db: Session) -> bool:
+    """Whether the chart shows and sorts by account numbers (Settings ->
+    use_account_numbers, #567). On unless set to "false"."""
+    return get_setting_raw(db, "use_account_numbers") != "false"
+
+
 def is_nonprofit(db: Session) -> bool:
     """True when the company file is set to nonprofit mode (Settings ->
     company_type). Gates the nonprofit documents, reports and vocabulary."""

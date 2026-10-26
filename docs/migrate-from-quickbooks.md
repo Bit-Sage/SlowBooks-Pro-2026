@@ -384,6 +384,29 @@ under Uncategorized is a posting QuickBooks had no class on either.
 
 ## After the import
 
+- **The starter accounts stay.** A new company comes with a generic chart
+  (Checking, Accounts Receivable, Advertising & Marketing, Office Supplies
+  and the rest). An import adds your accounts beside them and never deletes
+  a starter account. The QuickBooks imports on this page reuse a starter
+  account that has the same name as yours (the IIF import also one with
+  the same number) and create the rest; the CSV chart import goes one
+  step further and renames a starter control account (Accounts Receivable,
+  Accounts Payable, Checking, Sales Tax Payable, Undeposited Funds,
+  Inventory, Retained Earnings, Cost of Goods Sold) to your name rather
+  than making a twin, so every document keeps posting to it. The starter
+  accounts your file does not mention stay on the chart, unused. To clear
+  them: **Chart of Accounts
+  → Remove unused seeded accounts…** takes every starter account with no
+  postings, no sub-accounts, no register and no control role off the chart
+  in one step, and names the ones that stay and why (Accounts Receivable
+  and the other control accounts always stay; so does any account the
+  import posted to). The CSV chart import also offers **Replace the seeded
+  chart**, which deactivates (never deletes) every account the file does
+  not name that has never been posted to. Either way, an account with
+  history is kept: delete nothing by hand that a transaction still uses.
+  If your business does not number its accounts, untick **Settings →
+  Company → Use account numbers** after the import: the starter accounts
+  keep their numbers, but nothing prints them.
 - Spot-check **Reports → Trial Balance** against the same report in
   QuickBooks as of your cutover date (mind the date range — set it to
   cover the imported history).
