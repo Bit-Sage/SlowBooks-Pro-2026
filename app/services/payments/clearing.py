@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_NAMES = ("stripe", "paypal", "square")
 
+# Human-facing provider names (PayPal keeps its capital P).
+DISPLAY_NAMES = {"stripe": "Stripe", "paypal": "PayPal", "square": "Square"}
+
 # Suggested account number + name per provider's clearing account. The number
 # is kept only when the chart hasn't used it (ensure_account), so an imported
 # chart that already owns 1210 gets an unnumbered "Stripe Clearing" instead.
@@ -107,6 +110,40 @@ def clearing_account_id(db: Session, provider_name: str) -> int:
     return ensure_account(
         db, number, name, AccountType.ASSET, detail_type="other_current_asset"
     ).id
+
+
+def existing_clearing_account(db: Session, provider_name: str) -> Account | None:
+    """The provider's clearing account if it already exists, creating nothing:
+    the chosen account when it still checks out, else the default found by
+    name, else None. For a read path (the payout suggestion, #584) that must
+    not touch the chart. No clearing account means nothing has cleared yet, so
+    there is nothing to pay out."""
+    chosen = get_setting_raw(db, f"{provider_name}_clearing_account_id")
+    if chosen:
+        try:
+            acct = db.query(Account).filter(Account.id == int(chosen)).first()
+        except (TypeError, ValueError):
+            acct = None
+        if _is_valid_clearing_account(acct):
+            return acct
+    _, name = _CLEARING_ACCOUNTS[provider_name]
+    return db.query(Account).filter(Account.name == name).first()
+
+
+def existing_fee_account(db: Session, provider_name: str) -> Account | None:
+    """The provider's fee account if it already exists, creating nothing (#584):
+    the chosen account when valid, else the shared default by name, else None.
+    A missing fee account is fine — the payout creates it with `fee_account_id`
+    at post time, only when a fee is actually booked."""
+    chosen = get_setting_raw(db, f"{provider_name}_fee_account_id")
+    if chosen:
+        try:
+            acct = db.query(Account).filter(Account.id == int(chosen)).first()
+        except (TypeError, ValueError):
+            acct = None
+        if _is_valid_fee_account(acct):
+            return acct
+    return db.query(Account).filter(Account.name == FEE_ACCOUNT_NAME).first()
 
 
 def fee_account_id(db: Session, provider_name: str) -> int:

@@ -18,9 +18,6 @@ from app.models.banking import BankTransaction
 
 logger = logging.getLogger(__name__)
 
-# The display name shown for each provider a deposit can be a payout of (#584).
-_PAYOUT_DISPLAY = {"stripe": "Stripe", "paypal": "PayPal", "square": "Square"}
-
 
 def payout_suggestion(
     db: Session, settings: Mapping[str, str], payee: Optional[str]
@@ -29,24 +26,23 @@ def payout_suggestion(
     case-insensitive), on a company with that provider's clearing on, can
     be recorded as a payout of that provider (#584).
 
-    Advisory only: it writes no category and posts nothing. Returns the
-    accounts and the clearing balance the payout modal pre-fills with, or
-    None. The caller gates on a deposit (amount > 0) and an unmatched line;
-    this only decides provider and reads the clearing balance.
+    Advisory only and a pure read: it creates no account, commits nothing,
+    and posts nothing. Returns the provider, its display name and the
+    clearing balance the payout modal pre-fills the gross with, or None. The
+    caller gates on a deposit (amount > 0) and an unmatched line; this only
+    decides provider and reads the clearing balance.
 
-    The provider's clearing and fee accounts are created on demand here (as
-    they are when a payment clears, #583) and committed, so the ids the
-    modal posts the split with are real before the payout POST looks them
-    up."""
+    No clearing account yet means nothing has cleared, so there is nothing
+    to pay out and the suggestion is None — the chart is left untouched by
+    merely listing the review queue."""
     from datetime import date as _date
 
-    from app.models.accounts import Account
     from app.services.bank_register import balance_as_of
     from app.services.payments.clearing import (
+        DISPLAY_NAMES,
         PROVIDER_NAMES,
-        clearing_account_id,
         clearing_enabled,
-        fee_account_id,
+        existing_clearing_account,
     )
 
     text = (payee or "").lower()
@@ -55,16 +51,13 @@ def payout_suggestion(
             continue
         if not clearing_enabled(settings, provider):
             continue
-        clearing_id = clearing_account_id(db, provider)
-        fee_id = fee_account_id(db, provider)
-        db.commit()  # the on-demand accounts must persist for the payout POST
-        acct = db.get(Account, clearing_id)
+        acct = existing_clearing_account(db, provider)
+        if acct is None:
+            return None
         balance, _ = balance_as_of(db, acct, _date.today())
         return {
             "provider": provider,
-            "display_name": _PAYOUT_DISPLAY[provider],
-            "clearing_account_id": clearing_id,
-            "fee_account_id": fee_id,
+            "display_name": DISPLAY_NAMES[provider],
             "clearing_balance": balance,
         }
     return None

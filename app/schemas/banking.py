@@ -208,6 +208,17 @@ class StatementAdd(StrictModel):
     splits: Optional[list[BankSplit]] = None
 
 
+class StatementPayout(StrictModel):
+    """Record an unmatched deposit as a provider payout (#584): the server
+    builds the split (CR clearing the gross, DR the fee, DR bank the net)
+    so the clearing and fee account ids stay off the client. `gross` is the
+    amount cleared from the clearing account; the fee is gross − the
+    statement net, which must not be negative."""
+
+    provider: str
+    gross: Decimal
+
+
 class StatementVendors(StrictModel):
     """Added feed lines whose payee should become (or be linked to) a
     vendor (#491)."""

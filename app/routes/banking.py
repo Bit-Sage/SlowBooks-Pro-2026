@@ -39,6 +39,7 @@ from app.schemas.banking import (
     ReconciliationCreate,
     ReconciliationUpdate,
     StatementAdd,
+    StatementPayout,
     StatementVendors,
     StatementCategory,
     StatementMatch,
@@ -443,6 +444,65 @@ def statement_add(
         vendor_id=data.vendor_id,
         splits=splits,
     )
+    db.commit()
+    db.refresh(bt)
+    return _statement_out([bt], db)[0]
+
+
+@router.post("/transactions/{txn_id}/payout", response_model=BankTransactionResponse)
+def statement_payout(txn_id: int, data: StatementPayout, db: Session = Depends(get_db)):
+    """Record an unmatched deposit as a provider payout (#584). The server
+    builds the split from the gross — CR the provider's clearing account for
+    the gross, DR the fee account for gross − net, DR the bank for the net —
+    so the account ids stay off the client; then it adds it the normal way,
+    so the line links and voids/reconciliation behave like any bank entry.
+    The clearing and fee accounts are created on demand here, at post time."""
+    from app.services import bank_matching as m
+    from app.services.payments.clearing import (
+        DISPLAY_NAMES,
+        PROVIDER_NAMES,
+        clearing_account_id,
+        clearing_enabled_db,
+        fee_account_id,
+    )
+
+    if data.provider not in PROVIDER_NAMES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown payment provider: {data.provider}"
+        )
+    if not clearing_enabled_db(db, data.provider):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{DISPLAY_NAMES[data.provider]} clearing is off; turn it on first",
+        )
+    bt = _statement_line(db, txn_id)
+    net = _q(bt.amount)
+    if net <= 0:
+        raise HTTPException(
+            status_code=400, detail="A payout is a deposit; this line is not money in"
+        )
+    gross = _q(data.gross)
+    if gross < net:
+        raise HTTPException(
+            status_code=400,
+            detail="The gross cleared cannot be less than the net that reached the bank",
+        )
+    display = DISPLAY_NAMES[data.provider]
+    clearing = (
+        db.query(Account)
+        .filter(Account.id == clearing_account_id(db, data.provider))
+        .first()
+    )
+    splits = [(clearing, gross, f"{display} payout")]
+    fee = gross - net
+    if fee > 0:
+        fee_acct = (
+            db.query(Account)
+            .filter(Account.id == fee_account_id(db, data.provider))
+            .first()
+        )
+        splits.append((fee_acct, -fee, f"{display} payout fee"))
+    bt = m.add(db, bt, payee=f"{display} payout", splits=splits)
     db.commit()
     db.refresh(bt)
     return _statement_out([bt], db)[0]

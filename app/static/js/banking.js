@@ -877,19 +877,22 @@ const BankingPage = {
         const net = Math.abs(parseFloat(t.amount) || 0);
         const bal = parseFloat(t.suggested_payout.clearing_balance) || 0;
         const name = t.suggested_payout.display_name;
+        // Prefill the gross with the clearing balance when it covers the net
+        // (the fee is the difference the balance still carries), else the net.
+        const gross = bal >= net ? bal : net;
         openModal(`Record ${escapeHtml(name)} payout`, `
             <form onsubmit="BankingPage.submitPayout(event, ${lineId}, ${accountId})">
                 <p style="font-size:12px; margin:0 0 8px;">
                     This ${escapeHtml(formatCurrency(net))} deposit clears the ${escapeHtml(name)} clearing
-                    account (${escapeHtml(formatCurrency(bal))} awaiting payout). Raise the gross to book the
+                    account (${escapeHtml(formatCurrency(bal))} awaiting payout). The gross less the net is the
                     fee the processor took out.
                 </p>
                 <div class="form-grid">
                     <div class="form-group"><label>Gross cleared</label>
-                        <input id="payout-gross" type="number" step="0.01" min="0" value="${net.toFixed(2)}"
+                        <input id="payout-gross" type="number" step="0.01" min="${net.toFixed(2)}" value="${gross.toFixed(2)}"
                             oninput="BankingPage._payoutFee()"></div>
                     <div class="form-group"><label>Fee</label>
-                        <input id="payout-fee" type="number" step="0.01" min="0" value="0.00" readonly></div>
+                        <input id="payout-fee" type="number" step="0.01" min="0" value="${Math.max(0, gross - net).toFixed(2)}" readonly></div>
                     <div class="form-group"><label>Net to bank</label>
                         <input id="payout-net" type="number" value="${net.toFixed(2)}" readonly></div>
                 </div>
@@ -914,18 +917,16 @@ const BankingPage = {
         if (!sp) return;
         const gross = parseFloat($('#payout-gross').value) || 0;
         const net = parseFloat($('#payout-net').value) || 0;
-        const fee = Math.round((gross - net) * 100) / 100;
-        if (fee < 0) { toast('The fee cannot be negative', 'error'); return; }
-        const splits = [{ category_account_id: sp.clearing_account_id, amount: gross.toFixed(2) }];
-        if (fee > 0) splits.push({ category_account_id: sp.fee_account_id, amount: (-fee).toFixed(2) });
+        if (gross < net) { toast('The gross cannot be less than the net', 'error'); return; }
         try {
-            const added = await API.post(`/banking/transactions/${lineId}/add`, {
-                payee: `${sp.display_name} payout`, splits,
+            // The server builds the split from the gross, so the clearing and
+            // fee account ids never touch the client.
+            await API.post(`/banking/transactions/${lineId}/payout`, {
+                provider: sp.provider, gross: gross.toFixed(2),
             });
             closeModal();
             toast('Payout recorded');
             BankingPage.go(`#/banking/${accountId}`);
-            void added;
         } catch (err) { toast(err.message, 'error'); }
     },
 
