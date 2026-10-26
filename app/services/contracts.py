@@ -23,21 +23,28 @@ from sqlalchemy.orm import Session
 from app.models.estimates import Estimate, EstimateStatus
 from app.models.jobs import Job, SovLine
 from app.services.accounting import _q
-from app.services.estimating import included_lines, line_price
+from app.services.estimating import (
+    estimate_totals,
+    fmt_pct,
+    included_lines,
+    line_price,
+)
 
 
 def sov_from_estimate(estimate: Estimate) -> list[dict]:
     """The SOV lines an accepted estimate produces, in print order:
 
     - one `work` line per trade package — the sum of that package's base and
-      accepted-alternate line PRICES (which carry whatever markup is in the
-      rates), packages named first then "Unassigned";
-    - one `allowance` line per allowance line (its own price).
+      accepted-alternate line PRICES, now AT COST (the lines carry no markup),
+      packages named first then "Unassigned";
+    - one `allowance` line per allowance line (its own price);
+    - one line per NON-ZERO markup, in order — general_conditions, insurance,
+      fee, bond — each its own kind, named "General conditions (8%)" style.
 
-    The work lines plus the allowance lines sum, by construction, to the
-    estimate's pre-tax bid_total (Σ included line prices). The contingency
-    line is added by build_sov, which knows the job. Returns plain dicts
-    (no line_no / item_no yet)."""
+    The work lines plus the allowance lines sum to the estimate's subtotal, and
+    the markup lines add markup_total, so the whole set foots exactly to the
+    estimate's pre-tax bid_total. The contingency line is added by build_sov,
+    which knows the job. Returns plain dicts (no line_no / item_no yet)."""
     work: dict = {}  # package_id -> {"name", "value"}
     allowances: list[dict] = []
     for line in included_lines(estimate):
@@ -89,6 +96,31 @@ def sov_from_estimate(estimate: Estimate) -> list[dict]:
         for pkg_id, bucket in ordered
     ]
     lines.extend(allowances)
+
+    # One line per non-zero markup, in compounding order, each its own kind.
+    # Work + allowance lines foot to the subtotal; these add markup_total, so
+    # the full set foots to the estimate's pre-tax bid_total.
+    totals = estimate_totals(estimate)
+    markup_specs = (
+        ("general_conditions", "General conditions", totals["gc_pct"], totals["gc"]),
+        ("insurance", "Insurance", totals["insurance_pct"], totals["insurance"]),
+        ("fee", "Fee", totals["fee_pct"], totals["fee"]),
+        ("bond", "Bond", totals["bond_pct"], totals["bond"]),
+    )
+    for kind, label, pct, amount in markup_specs:
+        if not amount:
+            continue
+        lines.append(
+            {
+                "item_no": None,
+                "description": f"{label} ({fmt_pct(pct)}%)",
+                "trade_package_id": None,
+                "cost_code_id": None,
+                "kind": kind,
+                "scheduled_value": amount,
+                "source_estimate_id": estimate.id,
+            }
+        )
     return lines
 
 

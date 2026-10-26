@@ -63,6 +63,16 @@ def _pct(value) -> Decimal:
     return Decimal(str(value or 0)) / Decimal("100")
 
 
+def fmt_pct(pct) -> str:
+    """A markup percent as it reads on a line description: 8, 1.5, 10 — the
+    stored value with any trailing zeros dropped (#551). Shared by the convert
+    route and the SOV builder (#552)."""
+    s = format(Decimal(str(pct or 0)), "f")
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
 # A base line or an accepted alternate is markup-able scope; an allowance is
 # only when the estimate says so (the GC decides, off by default); everything
 # excluded never is.

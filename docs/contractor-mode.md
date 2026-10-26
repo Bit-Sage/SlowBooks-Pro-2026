@@ -243,14 +243,16 @@ when change orders arrive (#554) the tab can show original + changes = revised.
 **The schedule of values.** The SOV is the contract sum broken into the lines
 an owner pay application bills against — each with an item number, a
 description, an optional package and section, a kind (work, allowance,
-contingency, fee or general conditions) and a scheduled value. The sum (and
-the schedule) is **pre-tax**: sales tax is added on each invoice, not carried
-in the contract. **Build from accepted estimate** lays it out automatically:
-one **work** line per trade package (its base lines plus any accepted
-alternates, at the prices as bid — the SOV never itemises the estimate's
-markups separately, it carries the line prices the customer sees), an
-**allowance** line for each allowance, and a **contingency** line when the job
-carries one. Lines with no package roll into one "Unassigned" work line. You
+contingency, or one of the four markups: general conditions, insurance, fee,
+bond) and a scheduled value. The sum (and the schedule) is **pre-tax**: sales
+tax is added on each invoice, not carried in the contract. **Build from
+accepted estimate** lays it out automatically: one **work** line per trade
+package (its base lines plus any accepted alternates, **at cost** — the lines
+carry no markup), an **allowance** line for each allowance, then one line per
+**non-zero markup** in order (general conditions, insurance, fee, bond), each
+labelled with its percent, and a **contingency** line when the job carries one.
+The work, allowance and markup lines foot exactly to the pre-tax bid. Lines
+with no package roll into one "Unassigned" work line. You
 can add, remove and reorder rows by hand and edit any value; a value may be
 **negative** — a deduct alternate carried onto the schedule nets the sum down.
 The SOV must **balance to the contract sum**: a running total and the balance

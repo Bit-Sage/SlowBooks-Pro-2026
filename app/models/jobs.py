@@ -39,9 +39,18 @@ JOB_STATUSES = ("pending", "awarded", "in_progress", "closed", "not_awarded")
 CONTRACT_TYPES = ("lump_sum", "gmp", "cost_plus")
 
 # A schedule-of-values line kind. "work" is the ordinary scope line (one per
-# trade package); allowance / contingency / fee / general_conditions are the
-# carried items an owner reads on a pay application.
-SOV_KINDS = ("work", "allowance", "contingency", "fee", "general_conditions")
+# trade package); allowance / contingency and the four estimate markups —
+# general_conditions / insurance / fee / bond — are the carried items an owner
+# reads on a pay application.
+SOV_KINDS = (
+    "work",
+    "allowance",
+    "contingency",
+    "general_conditions",
+    "insurance",
+    "fee",
+    "bond",
+)
 
 
 class Job(Base):

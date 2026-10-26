@@ -577,7 +577,7 @@ const JobsPage = {
     // The owner's side of the job: the contract terms, the summary tiles and
     // the schedule of values. The SOV must balance to the contract sum — the
     // balance line stays highlighted until it does.
-    SOV_KINDS: { work: 'Work', allowance: 'Allowance', contingency: 'Contingency', fee: 'Fee', general_conditions: 'General conditions' },
+    SOV_KINDS: { work: 'Work', allowance: 'Allowance', contingency: 'Contingency', general_conditions: 'General conditions', insurance: 'Insurance', fee: 'Fee', bond: 'Bond' },
     CONTRACT_TYPES: { lump_sum: 'Lump sum', gmp: 'GMP (guaranteed max)', cost_plus: 'Cost-plus' },
 
     async contractHtml() {

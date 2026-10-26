@@ -28,6 +28,7 @@ from app.services.job_costing import line_cost_type, budgets_from_estimate
 from app.services.estimating import (
     estimate_totals,
     estimate_document_totals,
+    fmt_pct,
     is_included_line,
 )
 from app.services.terminology import terms_from_db
@@ -82,15 +83,6 @@ _FROZEN_ON_SETTLE = {
 
 def _customer_bill_to(customer) -> dict:
     return {f"bill_{k}": getattr(customer, f"bill_{k}", None) for k in _ADDRESS_PARTS}
-
-
-def _fmt_pct(pct) -> str:
-    """A markup percent as it reads on a line description: 8, 1.5, 10 — the
-    stored value with any trailing zeros dropped (#551)."""
-    s = format(Decimal(str(pct or 0)), "f")
-    if "." in s:
-        s = s.rstrip("0").rstrip(".")
-    return s
 
 
 _MARKUP_PCTS = ("gc_pct", "insurance_pct", "fee_pct", "bond_pct")
@@ -599,7 +591,7 @@ def convert_to_invoice(
     )
     markup_lines = [
         SimpleNamespace(
-            description=f"{label} ({_fmt_pct(pct)}%)",
+            description=f"{label} ({fmt_pct(pct)}%)",
             amount=amt,
             is_taxable=markups_taxable,
         )

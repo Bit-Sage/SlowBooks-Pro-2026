@@ -224,8 +224,9 @@ balance stays highlighted until it does. The contract sum is **pre-tax** —
 tax is added on each invoice. **Build from accepted estimate**
 (`POST /api/jobs/{id}/contract/from-estimate/{estimate_id}`) lays the schedule
 out from the estimate — one work line per trade package (its base lines plus
-any accepted alternates, at the prices as bid), an allowance line per
-allowance, and a contingency line when one is set — and defaults the contract
+any accepted alternates, **at cost**), an allowance line per allowance, one
+line per non-zero markup (general conditions, insurance, fee, bond), and a
+contingency line when one is set — and defaults the contract
 sum to the estimate's pre-tax bid plus the contingency, so a freshly built
 schedule balances to zero. `GET`/`PUT /api/jobs/{id}/contract` read and set the
 terms, `PUT /api/jobs/{id}/sov` edits the schedule (a line may be negative — a

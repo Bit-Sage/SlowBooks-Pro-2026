@@ -261,8 +261,11 @@ def test_cap_and_contingency_remaining(
 
 def _build_estimate_with_shape(client, seed_customer):
     """Two packages, a direct-priced unassigned line (no unit cost), an
-    allowance, an excluded and an accepted alternate — and real markups, so
-    accepting after a reprice is a true cost-built bid, not a trivial one."""
+    allowance, an excluded and an accepted alternate — and real markups (gc 8%,
+    fee 5%). The lines stay at cost; the markups are their own SOV lines, so
+    accepting builds a true cost-plus-markup schedule, not a trivial one."""
+    # Markups are a construction-mode field: a business-mode estimate stores 0.
+    client.put("/api/settings", json={"company_type": "construction"})
     conc = _section(client, "03 30 00", "Cast-in-Place Concrete")
     elec = _section(client, "26 05 00", "Electrical")
     pkg_c = _package(client, "Concrete", [conc["id"]])
@@ -316,9 +319,7 @@ def _build_estimate_with_shape(client, seed_customer):
     return est, pkg_c, pkg_e
 
 
-def _reprice_and_accept(client, est_id, job_id):
-    r = client.post(f"/api/estimates/{est_id}/reprice")
-    assert r.status_code == 200, r.text
+def _accept(client, est_id, job_id):
     r = client.post(f"/api/estimates/{est_id}/accept", json={"job_id": job_id})
     assert r.status_code == 200, r.text
 
@@ -326,7 +327,7 @@ def _reprice_and_accept(client, est_id, job_id):
 def test_from_estimate_builds_and_balances(client, db_session, seed_customer):
     est, pkg_c, pkg_e = _build_estimate_with_shape(client, seed_customer)
     job = _job(client, seed_customer.id)
-    _reprice_and_accept(client, est["id"], job["id"])
+    _accept(client, est["id"], job["id"])
 
     r = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}")
     assert r.status_code == 200, r.text
@@ -341,24 +342,35 @@ def test_from_estimate_builds_and_balances(client, db_session, seed_customer):
         "Unassigned",
     ]
     by_desc = {line["description"]: float(line["scheduled_value"]) for line in work}
-    # the marked-up package prices come straight from the repriced estimate
-    totals = estimate_totals(db_session.get(Estimate, est["id"]))
-    by_pkg = {g["package_name"]: float(g["price"]) for g in totals["by_package"]}
-    assert by_desc["Concrete"] == by_pkg["Concrete"]  # slab + accepted alt, marked up
-    assert by_desc["Electrical"] == by_pkg["Electrical"]
-    assert by_desc["Unassigned"] == 5000.0  # the direct-priced line, never marked up
-    assert by_desc["Concrete"] > 14000.0  # markup really applied
+    # the work lines carry cost now — no markup rides the line
+    assert by_desc["Concrete"] == 14000.0  # slab 10,000 + accepted alt 4,000
+    assert by_desc["Electrical"] == 20000.0
+    assert by_desc["Unassigned"] == 5000.0  # the direct-priced line
     # the declined alternate is in no line
     assert all("declined" not in line["description"].lower() for line in sov)
     assert len(allow) == 1 and float(allow[0]["scheduled_value"]) == 3000.0
+
+    # the non-zero markups are their own lines, in order; insurance/bond are 0
+    gc = [line for line in sov if line["kind"] == "general_conditions"]
+    fee = [line for line in sov if line["kind"] == "fee"]
+    assert len(gc) == 1 and float(gc[0]["scheduled_value"]) == 2720.0  # 8% of 34,000
+    assert gc[0]["description"] == "General conditions (8%)"
+    assert len(fee) == 1 and float(fee[0]["scheduled_value"]) == 1836.0  # 5% of 36,720
+    assert fee[0]["description"] == "Fee (5%)"
+    assert not [line for line in sov if line["kind"] in ("insurance", "bond")]
+
     assert [line["line_no"] for line in sov] == list(range(1, len(sov) + 1))
     assert sov[0]["item_no"] == "01"
 
     c = body["contract"]
+    totals = estimate_totals(db_session.get(Estimate, est["id"]))
     bid_total = float(totals["bid_total"])
+    assert bid_total == 46556.0  # 42,000 subtotal + 4,556 markups
+    # work + allowance + markup lines foot exactly to the pre-tax bid
+    assert sum(float(line["scheduled_value"]) for line in sov) == bid_total
     assert c["contract_type"] == "lump_sum"  # defaulted
     assert c["contract_amount"] == bid_total  # pre-tax bid
-    assert c["sov_total"] == bid_total  # work + allowance foot to the bid
+    assert c["sov_total"] == bid_total
     assert c["sov_balance"] == 0.0  # balances when the sum came from the estimate
     assert c["contract_estimate_id"] == est["id"]
 
@@ -400,7 +412,7 @@ def test_from_estimate_folds_contingency_into_the_sum_and_balances(
     est, _, _ = _build_estimate_with_shape(client, seed_customer)
     job = _job(client, seed_customer.id, name="WithContingency")
     client.put(f"/api/jobs/{job['id']}/contract", json={"contingency_amount": 6000})
-    _reprice_and_accept(client, est["id"], job["id"])
+    _accept(client, est["id"], job["id"])
     body = client.post(
         f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
     ).json()
@@ -418,7 +430,7 @@ def test_from_estimate_does_not_overwrite_an_existing_sum_and_is_repeatable(
 ):
     est, _, _ = _build_estimate_with_shape(client, seed_customer)
     job = _job(client, seed_customer.id)
-    _reprice_and_accept(client, est["id"], job["id"])
+    _accept(client, est["id"], job["id"])
     # the operator set the sum by hand first
     client.put(
         f"/api/jobs/{job['id']}/contract",
@@ -458,7 +470,15 @@ def test_sov_from_estimate_is_pure(client, db_session, seed_customer):
     est, _, _ = _build_estimate_with_shape(client, seed_customer)
     estimate = db_session.get(Estimate, est["id"])
     lines = sov_from_estimate(estimate)
-    assert [line["kind"] for line in lines] == ["work", "work", "work", "allowance"]
+    # work ×3, the allowance, then the two non-zero markups (gc, fee)
+    assert [line["kind"] for line in lines] == [
+        "work",
+        "work",
+        "work",
+        "allowance",
+        "general_conditions",
+        "fee",
+    ]
     assert db_session.query(SovLine).count() == 0  # nothing written
 
 
@@ -537,6 +557,26 @@ def test_put_sov_refuses_a_bad_kind(client, seed_customer):
         json={"lines": [{"description": "Bad kind", "kind": "profit"}]},
     )
     assert r.status_code == 422
+
+
+def test_put_sov_accepts_insurance_and_bond_kinds(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    r = client.put(
+        f"/api/jobs/{job['id']}/sov",
+        json={
+            "lines": [
+                {"description": "Work", "kind": "work", "scheduled_value": 80000},
+                {
+                    "description": "Insurance",
+                    "kind": "insurance",
+                    "scheduled_value": 5000,
+                },
+                {"description": "Bond", "kind": "bond", "scheduled_value": 3000},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["sov_total"] == 88000.0
 
 
 def test_changing_the_sum_with_a_schedule_reports_the_balance(client, seed_customer):
