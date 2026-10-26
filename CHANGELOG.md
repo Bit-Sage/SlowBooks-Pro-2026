@@ -70,6 +70,18 @@ Make Deposits, because it isn't in Undeposited Funds. Settings → Online
 Payments carries the toggle and the two account pickers on each provider's
 card. (Recording the payout and matching it to the bank feed is step 2, #584.)
 
+**The QuickBooks ledger import warns about a report over 12 months** (#568,
+@ContractorKeith). A Transaction Detail by Account export whose period — read
+from the title QuickBooks prints above the columns — runs more than 12 months
+imports as it always has, with a warning in the result: for a range over a
+year QuickBooks prints the balance sheet accounts for the whole range but the
+income and expense accounts for its last year only, so the earlier years can
+come across half-complete; export one year per file and import them oldest
+first. A July–June fiscal year is 12 months and says nothing, and the
+adjusting-entries import never warns. If such a file also fails the "does not
+balance" check, the first of those errors carries the same explanation. The
+migration guide says the same under *One year per file*.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its
