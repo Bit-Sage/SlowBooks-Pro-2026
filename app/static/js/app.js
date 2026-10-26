@@ -186,6 +186,16 @@ const App = {
     // updated and a customer's page comes back after an edit from it. Not
     // a dismissal: see closeModal (NEW-23 review).
     refresh() {
+        // opened over another page (App.openOver, a register line): that
+        // page is redrawn and the document comes back over it, not over
+        // its own list
+        const doc = location.hash || '#/';
+        const under = App._dialogUnder;
+        if (under && under !== doc && under !== App.pageUnder(doc)) {
+            closeModal();
+            Promise.resolve(App.navigate(location.hash)).then(() => App.openOver(null, doc));
+            return;
+        }
         closeModal({ keepAddress: true });
         App.navigate(location.hash);
     },

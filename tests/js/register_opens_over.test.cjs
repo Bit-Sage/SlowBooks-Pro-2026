@@ -82,3 +82,30 @@ test('opening a document by its address still draws its list behind it', async (
     assert.ok(a.calls.some(c => c[0] === 'JournalPage.render'));
     assert.ok(a.calls.some(c => c[0] === 'JournalPage.view' && c[1] === '42'));
 });
+
+test('a save or void inside it redraws the register, with the document back over it', async () => {
+    const a = app('#/banking/3');
+    a.ctx.closeModal = () => a.App.dialogClosed();
+    a.App.openOver({ button: 0 }, '/#/payments/9');
+    await settle();
+    a.calls.length = 0;
+    a.App.refresh();
+    await settle();
+    const names = a.calls.map(c => c[0]);
+    assert.ok(names.includes('BankingPage.renderRegister'), names.join(','));
+    assert.ok(!names.includes('PaymentsPage.render'), 'the payments list is not drawn');
+    assert.ok(a.calls.some(c => c[0] === 'PaymentsPage.view' && c[1] === '9'));
+    assert.equal(a.ctx.location.hash, '#/payments/9');
+});
+
+test('a save on a document opened at its own address still redraws its list', async () => {
+    const a = app('#/payments/9');
+    a.ctx.closeModal = opts => { if (!(opts && opts.keepAddress)) a.App.dialogClosed(); };
+    await a.App.navigate('#/payments/9');
+    await settle();
+    a.calls.length = 0;
+    a.App.refresh();
+    await settle();
+    assert.ok(a.calls.some(c => c[0] === 'PaymentsPage.render'));
+    assert.equal(a.ctx.location.hash, '#/payments/9');
+});

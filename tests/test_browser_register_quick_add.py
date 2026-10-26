@@ -423,3 +423,39 @@ def test_a_register_line_opens_over_the_register_and_closes_back_to_it(browser):
         assert listed == [], listed
     finally:
         page.close()
+
+
+def test_voiding_a_posting_opened_from_the_register_comes_back_to_the_register(browser):
+    page = _open(browser, 1280, 800, "#/")
+    listed, voided = [], []
+
+    def journal(route):
+        url = route.request.url
+        if route.request.method == "POST" and url.endswith("/api/journal/42/void"):
+            voided.append(url)
+            return route.fulfill(json={"id": 43})
+        if url.rstrip("/").endswith("/api/journal") or "/api/journal?" in url:
+            listed.append(url)
+            return route.fulfill(json=[])
+        return route.fulfill(json={**JOURNAL_42, "voidable": True})
+
+    page.route(
+        "**/api/banking/check-register*",
+        lambda r: r.fulfill(json={**REGISTER, "entries": [ENTRY], "balance": 90.52}),
+    )
+    page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+    page.route("**/api/journal**", journal)
+    page.route("**/api/attachments/**", lambda r: r.fulfill(json=[]))
+    page.on("dialog", lambda d: d.accept())
+    try:
+        page.goto(page.url.split("#")[0] + "#/banking/1")
+        page.wait_for_selector("#qe-category")
+        page.click("text=Deposit: Deposit Stripe")
+        page.wait_for_selector("text=Journal Entry #42")
+        page.click("#modal-body >> button:has-text('Void')")
+        page.wait_for_function("location.hash === '#/banking/1'")
+        page.wait_for_selector("#qe-category")
+        assert voided, "the void was posted"
+        assert listed == [], listed
+    finally:
+        page.close()

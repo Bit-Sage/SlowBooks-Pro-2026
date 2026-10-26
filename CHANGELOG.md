@@ -13,7 +13,8 @@ document's whole list first: for a journal entry, every journal entry in the
 company, which took minutes on a file with years of imported history. Closing
 it then left you on Journal Entries instead of the register. The line's
 posting now opens over the register, with nothing else loaded, and Close
-comes back to the register where you were. Opening a document by its address
+comes back to the register where you were; voiding or saving it there brings
+you back to the register too. Opening a document by its address
 (a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
 in a new tab.
 
