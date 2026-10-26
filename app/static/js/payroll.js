@@ -5,6 +5,14 @@
 const PayrollPage = {
     showAll() { PayrollPage._showAll = true; App.navigate(location.hash); },
 
+    // An S corporation (#488 / #557): the owner's pay is W-2 wages here,
+    // before any distribution; the sentence is TaxPage's, shown once.
+    _sCorpNote() {
+        const entity = (typeof App !== 'undefined' && App.settings && App.settings.entity) || {};
+        if (entity.return_form !== 'Form 1120-S' || typeof TaxPage === 'undefined') return '';
+        return `<div style="font-size:10px;color:var(--text-muted);margin-bottom:12px;">${escapeHtml(TaxPage.S_CORP_NOTE)}</div>`;
+    },
+
     async render() {
         const { rows: runs, note: capNote } = await listRows(PayrollPage, '/payroll', 'PayrollPage.showAll()', 'pay runs', 200);
         let html = `
@@ -18,7 +26,7 @@ const PayrollPage = {
             </div>${capNote}
             <div style="background:#fef3c7;border:1px solid #fbbf24;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#92400e;">
                 <strong>Disclaimer:</strong> Tax calculations are approximate. Verify with a tax professional before filing.
-            </div>`;
+            </div>${PayrollPage._sCorpNote()}`;
 
         if (runs.length === 0) {
             html += '<div class="empty-state"><p>No payroll runs yet</p></div>';
