@@ -62,5 +62,8 @@ class PaymentResponse(BaseModel):
     unapplied: Decimal = Decimal("0")
     # On the single-payment read: the deposit it is in, as a sentence.
     deposited_in: Optional[str] = None
+    # On a void: a caution the screen shows, e.g. the payment was already
+    # paid out by its provider (#584). The void still went through.
+    warning: Optional[str] = None
 
     model_config = {"from_attributes": True}

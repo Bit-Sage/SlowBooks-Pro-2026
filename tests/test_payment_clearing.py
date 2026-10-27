@@ -872,7 +872,7 @@ def test_paypal_webhook_route_posts_fee(client, db_session, seed_accounts, monke
     assert _net(lines, fee_account_id(db_session, "paypal")) == Decimal("6.30")
 
 
-def test_voiding_a_clearing_payment_reverses_all_four_lines(
+def test_voiding_a_clearing_payment_keeps_the_fee_the_provider_kept(
     client, db_session, seed_accounts
 ):
     from app.services.settings_service import set_setting
@@ -898,7 +898,8 @@ def test_voiding_a_clearing_payment_reverses_all_four_lines(
     resp = client.post(f"/api/payments/{pid}/void")
     assert resp.status_code == 200, resp.text
 
-    # Across the original 4-line entry and its reversal, every account nets 0.
+    # The gross reverses; the fee the provider kept stays as an expense (and
+    # clearing runs 6.30 short) unless the provider refunded it (#584).
     def _net_all(account_id):
         rows = (
             db_session.query(TransactionLine)
@@ -908,6 +909,6 @@ def test_voiding_a_clearing_payment_reverses_all_four_lines(
         return _net(rows, account_id)
 
     db_session.expire_all()
-    assert _net_all(clearing_id) == Decimal("0")
-    assert _net_all(fee_id) == Decimal("0")
+    assert _net_all(clearing_id) == Decimal("-6.30")
+    assert _net_all(fee_id) == Decimal("6.30")
     assert _net_all(ar_id) == Decimal("0")

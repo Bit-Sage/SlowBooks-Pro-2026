@@ -249,6 +249,32 @@ def _guard_clearing_accounts(db: Session, cleaned: dict) -> None:
                 )
 
 
+def _clearing_off_warnings(db: Session, cleaned: dict) -> list[str]:
+    """Turning a provider's clearing off while its clearing account still
+    holds money is allowed, with a warning (#584): payouts stay available
+    until the balance is zero, and new captures go straight to the bank side
+    (Undeposited Funds)."""
+    from app.services.payments.clearing import (
+        DISPLAY_NAMES,
+        PROVIDER_NAMES,
+        clearing_balance,
+        clearing_enabled_db,
+    )
+
+    warnings = []
+    for provider in PROVIDER_NAMES:
+        key = f"{provider}_clearing_enabled"
+        if cleaned.get(key) == "false" and clearing_enabled_db(db, provider):
+            held = clearing_balance(db, provider)
+            if held > 0:
+                warnings.append(
+                    f"{DISPLAY_NAMES[provider]} Clearing still holds {held:,.2f}. "
+                    "New payments now skip it, but you can keep recording "
+                    "payouts until it is paid out."
+                )
+    return warnings
+
+
 @router.put("")
 def update_settings(
     data: SettingsUpdate, request: Request, db: Session = Depends(get_db)
@@ -320,6 +346,7 @@ def update_settings(
             effective_type = get_setting_raw(db, "entity_type") or ""
         if effective_type != "llc":
             cleaned["llc_tax_election"] = ""
+    clearing_warnings = _clearing_off_warnings(db, cleaned)
     for key, value in cleaned.items():
         set_setting(db, key, value)
     # The equity accounts follow a newly chosen entity type while the chart
@@ -339,6 +366,8 @@ def update_settings(
     result = _with_entity(db)
     if equity is not None:
         result["entity_equity"] = equity
+    if clearing_warnings:
+        result["clearing_warnings"] = clearing_warnings
     return result
 
 

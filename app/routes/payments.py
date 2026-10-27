@@ -24,6 +24,13 @@ from app.services.accounting import (
     void_line_memo,
 )
 from app.services.closing_date import check_closing_date
+from app.services.payments.clearing import (
+    DISPLAY_NAMES,
+    PROVIDER_NAMES,
+    clearing_balance,
+    existing_clearing_account,
+    is_fee_line,
+)
 from app.services import request_keys
 from app.services.audit import _actor
 
@@ -425,9 +432,43 @@ def apply_payment(payment_id: int, data: PaymentApply, db: Session = Depends(get
     return _response(payment)
 
 
+def _paid_out_warning(db, lines, provider) -> str | None:
+    """A sentence when this payment's net (what it added to the provider's
+    clearing account) is no longer all there, which means part of it has
+    already been paid out to the bank (#584). Per-payment payout tracking does not exist
+    yet, so this is a warning, not a block."""
+    if not provider:
+        return None
+    clearing = existing_clearing_account(db, provider)  # reading creates nothing
+    if clearing is None:
+        return None
+    net_in = sum(
+        (Decimal(str(ln.debit)) - Decimal(str(ln.credit)))
+        for ln in lines
+        if ln.account_id == clearing.id
+    )
+    if net_in <= 0 or clearing_balance(db, provider) >= net_in:
+        return None
+    return (
+        f"This payment looks already paid out by {DISPLAY_NAMES[provider]}: "
+        f"{DISPLAY_NAMES[provider]} Clearing now runs short by the amount "
+        "reversed. Check the payout, and record the refund or dispute taken "
+        "from the next one."
+    )
+
+
 @router.post("/{payment_id}/void", response_model=PaymentResponse)
-def void_payment(payment_id: int, db: Session = Depends(get_db)):
-    """Void a payment — reverses journal entry and restores invoice balances"""
+def void_payment(
+    payment_id: int, fee_refunded: bool = False, db: Session = Depends(get_db)
+):
+    """Void a payment — reverses journal entry and restores invoice balances.
+
+    An online payment posted to a provider's clearing account is reversed
+    against that account, never the bank, so a refund or dispute comes out of
+    what the provider holds (#584). The processing fee the provider kept
+    stays booked as an expense unless `fee_refunded` says the provider gave it
+    back. A payment already paid out can't be told apart per payment yet, so
+    the void goes through and the response carries a warning."""
     # Row-lock the payment so two concurrent voids can't both pass the
     # is_voided guard and post duplicate reversing JEs.
     payment = (
@@ -438,6 +479,7 @@ def void_payment(payment_id: int, db: Session = Depends(get_db)):
     if payment.is_voided:
         raise HTTPException(status_code=400, detail="Payment already voided")
     check_closing_date(db, payment.date)
+    payout_warning = None
     # Money already taken to the bank in a deposit (or received straight
     # into a bank account that has since been reconciled) can't just be
     # reversed out of Undeposited Funds: that drove 1200 negative while the
@@ -464,6 +506,14 @@ def void_payment(payment_id: int, db: Session = Depends(get_db)):
             .filter(TransactionLine.transaction_id == payment.transaction_id)
             .all()
         )
+        provider = payment.method if payment.method in PROVIDER_NAMES else None
+        # judged on the whole entry: what this payment added to clearing
+        payout_warning = _paid_out_warning(db, original_lines, provider)
+        if provider and not fee_refunded:
+            # the provider kept its fee: leave those two lines standing
+            original_lines = [
+                ol for ol in original_lines if not is_fee_line(ol.description, provider)
+            ]
         reverse_lines = [
             {
                 "account_id": ol.account_id,
@@ -539,4 +589,6 @@ def void_payment(payment_id: int, db: Session = Depends(get_db)):
 
         void_invoice(receipt.id, db)
     db.refresh(payment)
-    return _response(payment)
+    resp = _response(payment)
+    resp.warning = payout_warning
+    return resp

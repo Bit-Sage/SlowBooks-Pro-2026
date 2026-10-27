@@ -99,8 +99,10 @@ const PaymentsPage = {
     async void(id) {
         if (!confirm(`Void this payment? ${T('Invoice')} balances will be restored.`)) return;
         try {
-            await API.post(`/payments/${id}/void`);
+            const r = await API.post(`/payments/${id}/void`);
             toast('Payment voided');
+            // e.g. already paid out by its online provider (#584)
+            if (r && r.warning) toast(r.warning, 'error');
             App.refresh();
         } catch (err) { toast(err.message, 'error'); }
     },

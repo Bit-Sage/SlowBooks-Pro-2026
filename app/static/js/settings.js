@@ -113,12 +113,16 @@ const SettingsPage = {
             SettingsPage._clearingAccountOptions(accounts, feeSel, 'expense',
                 'Default (Merchant Account Fees)') + '</select></div>';
         h += '</div>';  // close .form-grid
+        h += '</div>';  // close #<provider>-clearing-fields
         // Awaiting payout (#584): the clearing account's balance and a link
         // to its register, plus Record payout for a payout with no feed.
+        // Outside the pickers so it stays when clearing is turned off while
+        // money is still waiting: payouts continue until the balance is zero.
         const clearingAcct = (Array.isArray(accounts) ? accounts : []).find(a =>
             clearingSel ? String(a.id) === String(clearingSel) : a.name === label + ' Clearing');
-        if (clearingAcct) {
-            const bal = formatCurrency(parseFloat(clearingAcct.balance) || 0);
+        const waiting = clearingAcct ? (parseFloat(clearingAcct.balance) || 0) : 0;
+        if (clearingAcct && (on || waiting > 0)) {
+            const bal = formatCurrency(waiting);
             const href = App.accountRegisterHref({ id: clearingAcct.id, bank_kind: null });
             h += '<div style="font-size:11px; margin:6px 0;">Awaiting payout: ';
             h += '<strong>' + escapeHtml(bal) + '</strong> ';
@@ -127,7 +131,6 @@ const SettingsPage = {
             h += 'onclick="SettingsPage.showProviderPayout(\'' + provider + '\', \'' +
                 label + '\')" style="margin-left:6px;">Record payout</button></div>';
         }
-        h += '</div>';  // close #<provider>-clearing-fields
         h += '</div>';  // close the provider group
         return h;
     },
@@ -1808,6 +1811,8 @@ const SettingsPage = {
             const equity = saved && saved.entity_equity;
             if (equity && equity.applied) toast(`${T('Equity')} accounts set for ${saved.entity.label}: ${equity.accounts.join(', ')}`);
             else if (equity && equity.note) toast(equity.note);
+            // Clearing turned off with money still in the clearing account (#584)
+            for (const w of (saved && saved.clearing_warnings) || []) toast(w, 'error');
             SettingsPage.loadUnreadableSecrets();
         } catch (err) {
             toast(err.message, 'error');

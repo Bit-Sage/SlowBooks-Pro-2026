@@ -12,6 +12,8 @@
 # ============================================================================
 
 import logging
+from datetime import date
+from decimal import Decimal
 from typing import Mapping
 
 from sqlalchemy.orm import Session
@@ -144,6 +146,36 @@ def existing_fee_account(db: Session, provider_name: str) -> Account | None:
         if _is_valid_fee_account(acct):
             return acct
     return db.query(Account).filter(Account.name == FEE_ACCOUNT_NAME).first()
+
+
+def clearing_balance(db: Session, provider_name: str) -> Decimal:
+    """What the provider's clearing account holds today (0 when it does not
+    exist yet), i.e. captured net of fees and not yet paid out (#584)."""
+    from app.services.bank_register import balance_as_of
+
+    acct = existing_clearing_account(db, provider_name)
+    if acct is None:
+        return Decimal("0")
+    return balance_as_of(db, acct, date.today())[0]
+
+
+def payouts_allowed(db: Session, provider_name: str) -> bool:
+    """A payout can be recorded while clearing is on, and after it is turned
+    off for as long as money is still waiting in the clearing account."""
+    return clearing_enabled_db(db, provider_name) or clearing_balance(
+        db, provider_name
+    ) > 0
+
+
+def fee_line_memo(provider_name: str) -> str:
+    """The memo on the two lines a capture books for the provider's fee; a
+    void finds them by it (see `is_fee_line`)."""
+    return f"{DISPLAY_NAMES[provider_name]} fee"
+
+
+def is_fee_line(description: str | None, provider_name: str) -> bool:
+    """True for a line of a captured payment's entry that books the fee."""
+    return (description or "") == fee_line_memo(provider_name)
 
 
 def fee_account_id(db: Session, provider_name: str) -> int:

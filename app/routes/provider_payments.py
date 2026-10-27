@@ -236,46 +236,62 @@ def record_payout(
     """Record a provider payout that arrived without a bank feed (#584):
     post it from the bank account, clearing the provider's clearing account
     for the gross (net + fee) and booking any fee, the same split a feed
-    payout uses. Requires the provider's clearing to be on."""
+    payout uses. Needs clearing on, or a balance still waiting in the clearing
+    account; the gross may not exceed that balance."""
     from app.models.accounts import Account
+    from app.services.accounting import _q
     from app.services.bank_posting import post_bank_entry, require_bank_account
     from app.services.payments.clearing import (
+        DISPLAY_NAMES,
         PROVIDER_NAMES,
         clearing_account_id,
-        clearing_enabled,
+        clearing_balance,
         fee_account_id,
+        payouts_allowed,
     )
-    from app.services.settings_service import get_all_settings
 
     if provider_name not in PROVIDER_NAMES:
         raise HTTPException(
             status_code=400, detail=f"Unknown payment provider: {provider_name}"
         )
-    if not clearing_enabled(get_all_settings(db), provider_name):
+    display = DISPLAY_NAMES[provider_name]
+    # Allowed while clearing is on, and after it is turned off until the
+    # clearing balance is paid out.
+    if not payouts_allowed(db, provider_name):
         raise HTTPException(
             status_code=400,
-            detail=f"{provider_name.title()} clearing is off; turn it on first",
+            detail=f"{display} clearing is off and holds nothing to pay out; turn it on first",
         )
-    net, fee = Decimal(str(data.net)), Decimal(str(data.fee))
+    net, fee = _q(data.net), _q(data.fee)
     if fee < 0:
         raise HTTPException(status_code=400, detail="The fee cannot be negative")
     if net <= 0:
         raise HTTPException(status_code=400, detail="The payout must be more than zero")
 
+    gross = net + fee  # CR clearing the gross, DR fee, DR bank the net
+    held = clearing_balance(db, provider_name)
+    if gross > held:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The gross ({gross:,.2f}) is more than {display} Clearing holds "
+                f"({held:,.2f}). Enter the net that reached the bank and only the "
+                "fee not already booked at capture."
+            ),
+        )
     bank = require_bank_account(db, data.bank_account_id)  # 400 if not bank-kind
     clearing = db.get(Account, clearing_account_id(db, provider_name))
-    gross = net + fee  # CR clearing the gross, DR fee, DR bank the net
-    splits = [(clearing, gross, f"{provider_name.title()} payout")]
+    splits = [(clearing, gross, f"{display} payout")]
     if fee > 0:
         fee_acct = db.get(Account, fee_account_id(db, provider_name))
-        splits.append((fee_acct, -fee, f"{provider_name.title()} payout fee"))
+        splits.append((fee_acct, -fee, f"{display} payout fee"))
     txn = post_bank_entry(
         db,
         bank,
         data.date,
         net,
         clearing,
-        payee=f"{provider_name.title()} payout",
+        payee=f"{display} payout",
         splits=splits,
     )
     db.commit()

@@ -318,7 +318,7 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
     def _payout(r):
         if r.match_status != "unmatched" or not r.amount or r.amount <= 0:
             return None
-        return payout_suggestion(db, settings, r.payee)
+        return payout_suggestion(db, settings, r.payee, r)
 
     return [
         {
@@ -462,18 +462,24 @@ def statement_payout(txn_id: int, data: StatementPayout, db: Session = Depends(g
         DISPLAY_NAMES,
         PROVIDER_NAMES,
         clearing_account_id,
-        clearing_enabled_db,
+        clearing_balance,
         fee_account_id,
+        payouts_allowed,
     )
 
     if data.provider not in PROVIDER_NAMES:
         raise HTTPException(
             status_code=400, detail=f"Unknown payment provider: {data.provider}"
         )
-    if not clearing_enabled_db(db, data.provider):
+    # Allowed while clearing is on, and after it is turned off until the
+    # clearing balance is paid out.
+    if not payouts_allowed(db, data.provider):
         raise HTTPException(
             status_code=400,
-            detail=f"{DISPLAY_NAMES[data.provider]} clearing is off; turn it on first",
+            detail=(
+                f"{DISPLAY_NAMES[data.provider]} clearing is off and holds "
+                "nothing to pay out; turn it on first"
+            ),
         )
     bt = _statement_line(db, txn_id)
     net = _q(bt.amount)
@@ -488,6 +494,30 @@ def statement_payout(txn_id: int, data: StatementPayout, db: Session = Depends(g
             detail="The gross cleared cannot be less than the net that reached the bank",
         )
     display = DISPLAY_NAMES[data.provider]
+    # A payout recorded by hand (Record payout) already sits in the ledger
+    # as a match for this deposit, however late the feed line arrives.
+    from app.services import bank_matching as _m
+
+    if _m.candidate_lines(db, _m._feed_account(db, bt).id, bt.amount, bt.date):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This deposit matches an entry already in your books, perhaps a "
+                "payout you recorded by hand. Use Match instead of posting it twice."
+            ),
+        )
+    # Clearing holds the net of everything not yet paid out; a bigger gross
+    # would book the difference as fees.
+    held = clearing_balance(db, data.provider)
+    if gross > held:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The gross ({gross:,.2f}) is more than {display} Clearing holds "
+                f"({held:,.2f}). Enter the net that reached the bank, or the "
+                "gross the provider actually cleared."
+            ),
+        )
     clearing = (
         db.query(Account)
         .filter(Account.id == clearing_account_id(db, data.provider))
