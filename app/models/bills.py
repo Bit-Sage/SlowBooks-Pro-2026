@@ -19,6 +19,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    false,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -154,6 +155,10 @@ class BillPayment(Base):
     exchange_rate = Column(Numeric(18, 8), nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     is_voided = Column(Boolean, default=False, nullable=False)
+    # Construction (#553): paid to a Sub whose certificate of insurance had
+    # expired, by explicit override; the note says which certificate.
+    coi_override = Column(Boolean, nullable=False, default=False, server_default=false())
+    coi_override_note = Column(String(200), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

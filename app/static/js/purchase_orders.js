@@ -350,7 +350,9 @@ const PurchaseOrdersPage = {
             ? `<p class="form-hint">${po.retainage_pct}% retainage is held back on this bill and posted to Retainage Payable.</p>`
             : '';
         openModal(`Turn ${po.po_number} into a bill`, `
-            <p style="margin-bottom:8px;">Choose where each line is recorded. The bill is dated ${formatDate(po.date)} and takes ${escapeHtml(vendor.name)}'s terms (${escapeHtml(vendor.terms || 'Net 30')}).</p>
+            <p style="margin-bottom:8px;">Choose where each line is recorded. The bill takes ${escapeHtml(vendor.name)}'s terms (${escapeHtml(vendor.terms || 'Net 30')}) from the date below.</p>
+            <div class="form-group" style="max-width:200px;"><label for="po-conv-date">Bill date</label>
+                <input type="date" id="po-conv-date" value="${todayISO()}"></div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Billed</th><th scope="col" class="amount">This period</th>' : ''}<th scope="col">Account</th></tr></thead>
                 <tbody>${rows}</tbody>
@@ -400,7 +402,8 @@ const PurchaseOrdersPage = {
             }
         }
         try {
-            const result = await API.post(`/purchase-orders/${id}/convert-to-bill`, { lines });
+            const date = $('#po-conv-date')?.value || null;
+            const result = await API.post(`/purchase-orders/${id}/convert-to-bill`, { lines, date });
             toast(result.message);
             closeModal();
             // Through the hash, so the address (and a refresh) shows Bills.

@@ -11,6 +11,8 @@ so a company with no commitments sees none of it:
   amount is its scheduled value). remaining = amount - billed_amount.
 - bills gains retainage_held (credited to Retainage Payable, 2050, not A/P)
   and lien_waiver_status.
+- bill_payments gains coi_override / coi_override_note (a payment to a Sub
+  with an expired certificate, made by explicit override).
 - bill_lines gains purchase_order_line_id (SET NULL) — the back link partial
   billing needs.
 
@@ -79,6 +81,17 @@ def upgrade() -> None:
             sa.Column("lien_waiver_status", sa.String(length=16), nullable=True)
         )
 
+    with op.batch_alter_table("bill_payments") as batch:
+        batch.add_column(
+            sa.Column(
+                "coi_override",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            )
+        )
+        batch.add_column(sa.Column("coi_override_note", sa.String(200), nullable=True))
+
     with op.batch_alter_table("bill_lines") as batch:
         batch.add_column(
             sa.Column("purchase_order_line_id", sa.Integer(), nullable=True)
@@ -105,6 +118,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("bill_payments") as batch:
+        batch.drop_column("coi_override_note")
+        batch.drop_column("coi_override")
+
     with op.batch_alter_table("bill_lines") as batch:
         batch.drop_constraint("fk_bill_line_po_line", type_="foreignkey")
         batch.drop_column("purchase_order_line_id")

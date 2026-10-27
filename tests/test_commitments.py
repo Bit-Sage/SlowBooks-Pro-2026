@@ -787,6 +787,277 @@ def test_buyout_bought_is_the_pretax_subtotal(
 # ── Migration up/down incl. backfill ──────────────────────────────────────
 
 
+# ── Review follow-ups (#574) ─────────────────────────────────────────────
+
+
+def _close_through(client, day):
+    r = client.put("/api/settings", json={"closing_date": day})
+    assert r.status_code == 200, r.text
+
+
+def test_progress_bill_is_dated_when_billed_not_to_the_po(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)  # PO dated 2026-09-01
+    ids = [ln["id"] for ln in po["lines"]]
+    _close_through(client, "2026-09-30")
+    today = date.today().isoformat()
+
+    # the PO's month is closed: its own date cannot be billed, today can
+    refused = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 1000}], date="2026-09-15"
+    )
+    assert refused.status_code != 200, refused.text
+    ok = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 1000}], date=today
+    )
+    assert ok.status_code == 200, ok.text
+    bill = db_session.get(Bill, ok.json()["bill_id"])
+    assert bill.date.isoformat() == today
+    assert bill.due_date >= bill.date  # terms run from the bill date
+    from app.models.transactions import Transaction
+
+    assert db_session.get(Transaction, bill.transaction_id).date.isoformat() == today
+
+
+def test_convert_without_a_date_keeps_the_po_date(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    r = _convert(client, po["id"])
+    bill = db_session.get(Bill, r.json()["bill_id"])
+    assert bill.date.isoformat() == "2026-09-01"
+
+
+def test_edit_converted_bill_lines_retallies_the_commitment(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Convert 4000, edit to 3000, void: the PO line's billed goes
+    4000 -> 3000 -> 0."""
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    ids = [ln["id"] for ln in po["lines"]]
+    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
+        "bill_id"
+    ]
+
+    def billed():
+        row = db_session.get(PurchaseOrderLine, ids[0])
+        db_session.refresh(row)
+        return Decimal(str(row.billed_amount))
+
+    assert billed() == Decimal("4000.00")
+    bill = client.get(f"/api/bills/{bill_id}").json()
+    line = bill["lines"][0]
+    assert line["purchase_order_line_id"] == ids[0]
+
+    def edited(rate):
+        return {
+            "lines": [
+                {
+                    "purchase_order_line_id": ids[0],
+                    "account_id": line["account_id"],
+                    "description": line["description"],
+                    "quantity": 1,
+                    "rate": rate,
+                }
+            ]
+        }
+
+    up = client.put(f"/api/bills/{bill_id}", json=edited(3000))
+    assert up.status_code == 200, up.text
+    assert up.json()["lines"][0]["purchase_order_line_id"] == ids[0]
+    assert billed() == Decimal("3000.00")
+
+    assert client.post(f"/api/bills/{bill_id}/void").status_code == 200
+    assert billed() == Decimal("0.00")
+
+
+def test_edit_cannot_bill_past_the_commitment_or_claim_a_new_link(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    ids = [ln["id"] for ln in po["lines"]]
+    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
+        "bill_id"
+    ]
+    acct = seed_accounts["5100"].id
+
+    over = client.put(
+        f"/api/bills/{bill_id}",
+        json={
+            "lines": [
+                {
+                    "purchase_order_line_id": ids[0],
+                    "account_id": acct,
+                    "description": "x",
+                    "quantity": 1,
+                    "rate": 10001,
+                }
+            ]
+        },
+    )
+    assert over.status_code == 422, over.text
+
+    # a link to a line this bill never drew on is refused
+    stray = client.put(
+        f"/api/bills/{bill_id}",
+        json={
+            "lines": [
+                {
+                    "purchase_order_line_id": ids[1],
+                    "account_id": acct,
+                    "description": "x",
+                    "quantity": 1,
+                    "rate": 100,
+                }
+            ]
+        },
+    )
+    assert stray.status_code == 422, stray.text
+    row = db_session.get(PurchaseOrderLine, ids[0])
+    db_session.refresh(row)
+    assert Decimal(str(row.billed_amount)) == Decimal("4000.00")
+
+
+def test_editing_a_linked_line_away_gives_the_dollars_back(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    ids = [ln["id"] for ln in po["lines"]]
+    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
+        "bill_id"
+    ]
+    # replace the linked line with a hand-typed one: unlinked, PO released
+    up = client.put(
+        f"/api/bills/{bill_id}",
+        json={
+            "lines": [
+                {
+                    "account_id": seed_accounts["5100"].id,
+                    "description": "retyped",
+                    "quantity": 1,
+                    "rate": 4000,
+                }
+            ]
+        },
+    )
+    assert up.status_code == 200, up.text
+    row = db_session.get(PurchaseOrderLine, ids[0])
+    db_session.refresh(row)
+    assert Decimal(str(row.billed_amount)) == Decimal("0.00")
+    po_row = db_session.get(PurchaseOrder, po["id"])
+    db_session.refresh(po_row)
+    assert po_row.status.value == "sent"
+
+
+def _expired_sub_bill(client, seed_accounts):
+    sub = _vendor(
+        client,
+        name="Lapsed Electric",
+        vendor_type="sub",
+        coi_expires="2026-08-01",
+        default_expense_account_id=seed_accounts["5100"].id,
+    )
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": sub["id"],
+            "date": "2026-09-01",
+            "lines": [{"description": "work", "amount": 500}],
+        },
+    ).json()
+    return sub, bill
+
+
+def _pay(client, sub, bill, **extra):
+    return client.post(
+        "/api/bill-payments",
+        json={
+            "vendor_id": sub["id"],
+            "date": "2026-09-10",
+            "amount": 500,
+            "allocations": [{"bill_id": bill["id"], "amount": 500}],
+            **extra,
+        },
+    )
+
+
+def test_payment_to_a_sub_with_an_expired_coi_needs_an_override(
+    client, seed_accounts
+):
+    sub, bill = _expired_sub_bill(client, seed_accounts)
+    refused = _pay(client, sub, bill)
+    assert refused.status_code == 409, refused.text
+    assert "2026-08-01" in refused.json()["detail"]
+    assert client.get(f"/api/bills/{bill['id']}").json()["status"] == "unpaid"
+
+    ok = _pay(client, sub, bill, coi_override=True)
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["coi_override"] is True
+    assert "2026-08-01" in ok.json()["coi_override_note"]
+    # the record shows it where payment details are read
+    got = client.get(f"/api/bill-payments/{ok.json()['id']}").json()
+    assert got["coi_override"] is True
+
+
+def test_payment_with_a_current_coi_records_no_override(client, seed_accounts):
+    sub = _vendor(
+        client,
+        name="Current Electric",
+        vendor_type="sub",
+        coi_expires="2027-08-01",
+        default_expense_account_id=seed_accounts["5100"].id,
+    )
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": sub["id"],
+            "date": "2026-09-01",
+            "lines": [{"description": "work", "amount": 500}],
+        },
+    ).json()
+    # an override sent for a current certificate is not recorded
+    ok = _pay(client, sub, bill, coi_override=True)
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["coi_override"] is False
+
+
+def test_lien_waiver_saves_on_a_closed_period_bill(client, seed_accounts):
+    v = _vendor(client, vendor_type="sub", default_expense_account_id=seed_accounts["5100"].id)
+    bill = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": v["id"],
+            "date": "2026-09-01",
+            "lines": [{"description": "work", "amount": 100}],
+        },
+    ).json()
+    _close_through(client, "2026-09-30")
+    ok = client.put(f"/api/bills/{bill['id']}", json={"lien_waiver_status": "pending"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["lien_waiver_status"] == "pending"
+    # anything that is a posting still honours the closing date
+    blocked = client.put(f"/api/bills/{bill['id']}", json={"notes": "late edit"})
+    assert blocked.status_code != 200, blocked.text
+
+
+def test_retainage_line_carries_the_job(
+    client, db_session, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _po(client, v["id"], SUB_LINES, retainage_pct=10, job_id=job["id"]).json()
+    assert _convert(client, po["id"]).status_code == 200
+    ret = _retainage_account(db_session)
+    lines = db_session.query(TransactionLine).filter_by(account_id=ret.id).all()
+    assert lines and all(ln.job_id == job["id"] for ln in lines)
+
+
 def test_migration_upgrades_downgrades_and_backfills(tmp_path):
     db = tmp_path / "mig.db"
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{db}"}

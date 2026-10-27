@@ -118,7 +118,7 @@ const BillsPage = {
             const how = [p.method ? p.method.replace('_', ' ') : '', p.check_number ? `#${p.check_number}` : ''].filter(Boolean).join(' ');
             return `<tr${p.is_voided ? ' class="row--dim"' : ''}>
                 <td>${formatDate(p.date)}</td>
-                <td>${escapeHtml(how)}</td>
+                <td>${escapeHtml(how)}${p.coi_override ? ` <span class="compliance-flag" style="color:var(--text-danger);font-size:11px" title="${escapeHtml(p.coi_override_note || '')}">(COI override)</span>` : ''}</td>
                 <td class="amount">${formatCurrency(applied)}</td>
                 <td class="actions">${p.is_voided ? statusBadge('void') : `${BillsPage._printCheckButton(p)}<button data-destructive class="btn btn-sm btn-danger" onclick="BillsPage.voidBillPayment(${p.id}, ${bill.id})">Void</button>`}</td>
             </tr>`;
@@ -161,6 +161,7 @@ const BillsPage = {
                 <strong>Paid by:</strong> ${escapeHtml(how)}<br>
                 <strong>Amount:</strong> ${formatCurrency(p.amount)}<br>
                 <strong>Status:</strong> ${p.is_voided ? statusBadge('void') : 'Paid'}
+                ${p.coi_override ? `<br><strong>COI override:</strong> ${escapeHtml(p.coi_override_note || 'Paid with an expired certificate of insurance')}` : ''}
             </div>
             ${rows ? `<div class="table-container"><table>
                 <thead><tr><th scope="col">Bill #</th><th scope="col">Date</th><th scope="col" class="amount">Applied</th><th scope="col"></th></tr></thead>
@@ -319,7 +320,7 @@ const BillsPage = {
         const rate = line && !amountOnly ? Number(l.rate) : '';
         const amount = line ? Number(l.amount).toFixed(2) : '';
         const acctOpts = PurchaseAccounts.options(BillsPage._accounts, stock ? null : (l.account_id || BillsPage._defaultExpenseAccountId));
-        return `<tr data-billline="${idx}">
+        return `<tr data-billline="${idx}" data-po-line="${l.purchase_order_line_id || ''}">
                 <td><select class="line-item" onchange="BillsPage.itemSelected(this)">${ItemQuickAdd.options(BillsPage._items, l.item_id)}</select></td>
                 <td>${AccountQuickAdd.picker(`<select class="line-account"${stock ? ' disabled title="Stock items are recorded in Inventory"' : ''}><option value="">Choose...</option>${acctOpts}</select>`, 'bill', { disabled: stock })}</td>
                 <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
@@ -599,6 +600,8 @@ const BillsPage = {
                 ? { quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1, rate: parseFloat(row.querySelector('.line-rate')?.value) || 0 }
                 : { amount: parseFloat(row.querySelector('.line-amt')?.value) || 0 };
             lines.push({
+                // a converted bill's line keeps its commitment link (#553)
+                purchase_order_line_id: row.dataset.poLine ? parseInt(row.dataset.poLine) : null,
                 item_id: ItemQuickAdd.itemId(row.querySelector('.line-item')),
                 account_id: accountId,
                 description: row.querySelector('.line-desc')?.value || '',
@@ -660,7 +663,8 @@ const BillsPage = {
     },
 
     // A Sub's missing W-9 or expired/missing COI, as a compact flag (#553).
-    // Warn-only; nothing here blocks a payment.
+    // A missing W-9 or COI only warns; an expired COI asks to be overridden at
+    // Pay (savePay).
     LIEN_WAIVERS: { not_required: 'Not required', pending: 'Pending', conditional: 'Conditional', unconditional: 'Unconditional' },
 
     complianceFlagHtml(c) {
@@ -704,7 +708,7 @@ const BillsPage = {
         const acctOpts = accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
 
         // Construction shows a Sub's compliance flags and a lien-waiver select
-        // (#553); warn-only, nothing blocks a payment. Other companies keep
+        // (#553); an expired COI asks for an override on Pay. Other companies keep
         // today's six columns.
         const con = Terms.isConstruction();
         let billRows = openBills.map(b => `
@@ -714,7 +718,7 @@ const BillsPage = {
                 <td>${escapeHtml(b.vendor_name || '')}</td>
                 <td>${formatDate(b.due_date)}</td>
                 <td class="amount">${formatCurrency(b.balance_due)}</td>
-                <td><input type="number" step="0.01" class="pay-amount money" data-bill="${b.id}" data-vendor="${b.vendor_id}" data-vendor-name="${escapeHtml(b.vendor_name || '')}" value="0" style="width:80px;"></td>
+                <td><input type="number" step="0.01" class="pay-amount money" data-bill="${b.id}" data-vendor="${b.vendor_id}" data-vendor-name="${escapeHtml(b.vendor_name || '')}" data-coi-expires="${con && b.vendor_compliance && b.vendor_compliance.is_sub && b.vendor_compliance.coi_expires ? b.vendor_compliance.coi_expires : ''}" value="0" style="width:80px;"></td>
                 ${con ? `<td>${BillsPage.lienWaiverSelectHtml(b)}</td>` : ''}
             </tr>`).join('');
 
@@ -772,6 +776,7 @@ const BillsPage = {
                 const vid = parseInt(input.dataset.vendor);
                 if (!byVendor.has(vid)) byVendor.set(vid, { name: input.dataset.vendorName, total: 0, allocations: [] });
                 const v = byVendor.get(vid);
+                v.coiExpires = input.dataset.coiExpires || null;
                 v.allocations.push({ bill_id: parseInt(input.dataset.bill), amount: amt });
                 v.total += amt;
             }
@@ -786,6 +791,13 @@ const BillsPage = {
         const fromId = form.pay_from_account_id.value ? parseInt(form.pay_from_account_id.value) : null;
         const outgoing = [...byVendor.values()].reduce((sum, v) => sum + v.total, 0);
         if (!(await Overdraft.confirm(fromId, outgoing, '1000'))) return;
+        // A Sub whose certificate of insurance has expired is paid only on an
+        // explicit override, which the payment records (#553).
+        const expired = [...byVendor.values()].filter(v => v.coiExpires && v.coiExpires < form.date.value);
+        if (expired.length) {
+            const who = expired.map(v => `${v.name} (expired ${v.coiExpires})`).join(', ');
+            if (!confirm(`Certificate of insurance expired: ${who}.\n\nA sub without a current certificate leaves you exposed if someone is hurt on the job. Pay anyway? The payment will be recorded as paid with an expired COI.`)) return;
+        }
         if (!(await TxnWarn.ok(form))) return;
 
         const paid = [];
@@ -808,6 +820,7 @@ const BillsPage = {
                     pay_from_account_id: fromId,
                     allocations: v.allocations,
                 };
+                if (v.coiExpires && v.coiExpires < form.date.value) body.coi_override = true;
                 // a check number the paying account already has (#481):
                 // keep it, or go back to the form with nothing paid
                 const done = await CheckNumberWarn.send(

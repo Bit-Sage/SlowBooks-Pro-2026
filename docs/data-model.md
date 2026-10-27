@@ -182,6 +182,8 @@ A commitment is a purchase order — no new table. Additive columns:
   Retainage Payable, 2050, not A/P; `balance_due` is the net), and
   `lien_waiver_status` String(16) (`not_required` | `pending` | `conditional`
   | `unconditional`).
+- `bill_payments.coi_override` / `coi_override_note`: set when a Sub with an
+  expired COI was paid by explicit override (#553).
 - `bill_lines.purchase_order_line_id` (FK `purchase_order_lines.id`, SET
   NULL) — the back link partial billing tallies against.
 

@@ -17,6 +17,7 @@ from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
+from app.models.purchase_orders import PurchaseOrderLine
 from app.schemas.bills import (
     BillCreate,
     BillLineCreate,
@@ -318,6 +319,7 @@ def _post_bill_lines(
                     "debit": Decimal("0"),
                     "credit": retainage_held,
                     "description": f"Retainage held - {bill.bill_number}",
+                    "job_id": bill.job_id,  # so release (#576) can find it by job
                 }
             )
         txn = create_journal_entry(
@@ -384,6 +386,48 @@ def _reject_po_line_links(lines) -> None:
             detail="purchase_order_line_id is set by converting a commitment, "
             "not on a bill entered or edited by hand.",
         )
+
+
+def _linked_amounts(lines, from_request: bool) -> dict[int, Decimal]:
+    """Dollars per commitment line a set of bill lines draws on. Request lines
+    carry quantity x rate; stored lines carry the amount."""
+    out: dict[int, Decimal] = {}
+    for ln in lines:
+        link = getattr(ln, "purchase_order_line_id", None)
+        if link is None:
+            continue
+        amt = (
+            _q(Decimal(str(ln.quantity)) * Decimal(str(ln.rate)))
+            if from_request
+            else _q(Decimal(str(ln.amount or 0)))
+        )
+        out[link] = out.get(link, Decimal("0")) + amt
+    return out
+
+
+def _resync_po_status(db: Session, po_ids) -> None:
+    """Set each commitment's status from what its lines have billed (#553):
+    nothing billed reopens it, something left is partial, all billed closes
+    it. DRAFT and RECEIVED are never walked back."""
+    from app.models.purchase_orders import POStatus, PurchaseOrder
+
+    for po_id in po_ids:
+        po = db.get(PurchaseOrder, po_id)
+        if not po or po.status in (POStatus.DRAFT, POStatus.RECEIVED):
+            continue
+        billed = sum(
+            (Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0")
+        )
+        remaining = any(
+            Decimal(str(ln.amount or 0)) - Decimal(str(ln.billed_amount or 0)) > 0
+            for ln in po.lines
+        )
+        if billed <= 0:
+            po.status = POStatus.SENT
+        elif remaining:
+            po.status = POStatus.PARTIAL
+        else:
+            po.status = POStatus.CLOSED
 
 
 @router.post("", response_model=BillResponse, status_code=201)
@@ -512,9 +556,25 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bill not found")
     if bill.status == BillStatus.VOID:
         raise HTTPException(status_code=400, detail="Cannot edit a voided bill")
+    # A converted bill's lines keep their link to the commitment line they
+    # draw on (#553); an edit may carry those links, never invent a new one.
+    old_links = _linked_amounts(bill.lines, from_request=False)
     if data.lines is not None:
-        _reject_po_line_links(data.lines)
-    check_closing_date(db, bill.date)
+        stray = {
+            ln.purchase_order_line_id
+            for ln in data.lines
+            if ln.purchase_order_line_id is not None
+        } - set(old_links)
+        if stray:
+            raise HTTPException(
+                status_code=422,
+                detail="purchase_order_line_id is set by converting a commitment, "
+                "not on a bill entered or edited by hand.",
+            )
+    # A lien waiver is metadata, not a posting: saving only that moves no
+    # money, so it is allowed on a closed-period bill (#553).
+    if data.model_fields_set - {"lien_waiver_status"}:
+        check_closing_date(db, bill.date)
 
     # The edit form sends a cleared number as null; the generate step below
     # fills it in, so it is the one NOT NULL column null may reach.
@@ -621,6 +681,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                 fields["function"] = ln.function
             effective_lines.append(BillLineCreate.model_construct(**fields))
     amount_paid = bill.amount_paid or Decimal("0")
+    retally: dict[int, Decimal] = {}
     if needs_repost:
         tax_rate = data.tax_rate if data.tax_rate is not None else bill.tax_rate
         subtotal, tax_amount, total = compute_line_totals(effective_lines, tax_rate)
@@ -663,6 +724,36 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                     "retainage or void the payment first."
                 ),
             )
+        # Re-tally the commitment (#553): what these lines draw on replaces
+        # what the old ones did, and may not pass a line's scheduled value.
+        # Locked and checked here so a refused edit moves nothing.
+        new_links = _linked_amounts(effective_lines, from_request=True)
+        retally: dict[int, Decimal] = {}
+        for link in set(old_links) | set(new_links):
+            delta = new_links.get(link, Decimal("0")) - old_links.get(
+                link, Decimal("0")
+            )
+            if delta == 0:
+                continue
+            poline = (
+                db.query(PurchaseOrderLine)
+                .filter(PurchaseOrderLine.id == link)
+                .with_for_update()
+                .first()
+            )
+            if not poline:
+                continue
+            billed = _q(Decimal(str(poline.billed_amount or 0))) + delta
+            if billed > _q(Decimal(str(poline.amount or 0))):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"That edit bills {billed:.2f} against "
+                        f"'{poline.description or 'a line'}', more than its "
+                        f"{_q(Decimal(str(poline.amount or 0))):.2f} on the commitment."
+                    ),
+                )
+            retally[link] = max(Decimal("0"), billed)
 
     # Check every posting before any state moves (as the invoice edit does).
     from app.models.transactions import Transaction
@@ -753,6 +844,13 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         db.flush()
         db.refresh(bill)
 
+        touched_pos = set()
+        for link, billed in retally.items():
+            poline = db.get(PurchaseOrderLine, link)
+            poline.billed_amount = billed
+            touched_pos.add(poline.purchase_order_id)
+        _resync_po_status(db, touched_pos)
+
         # Net of retainage is what's payable, so a bill paid down to the held
         # amount is PAID, not stuck PARTIAL (#553).
         if bill.balance_due <= 0 and amount_paid >= _q(total - retainage_held):
@@ -842,8 +940,6 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     # Give the billed dollars back to the commitment this bill drew on, and
     # reopen it (#553): the reversing JE above already backed out the A/P and
     # any Retainage Payable (2050) credits.
-    from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
-
     touched_pos = set()
     for line in bill.lines:
         if not line.purchase_order_line_id:
@@ -859,25 +955,7 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
             )
         )
         touched_pos.add(poline.purchase_order_id)
-    for po_id in touched_pos:
-        po = db.get(PurchaseOrder, po_id)
-        if not po or po.status in (POStatus.DRAFT, POStatus.RECEIVED):
-            # RECEIVED (goods in hand) trumps the billing state and is never
-            # walked back to SENT/PARTIAL by a void.
-            continue
-        billed = sum(
-            (Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0")
-        )
-        remaining = any(
-            Decimal(str(ln.amount or 0)) - Decimal(str(ln.billed_amount or 0)) > 0
-            for ln in po.lines
-        )
-        if billed <= 0:
-            po.status = POStatus.SENT
-        elif remaining:
-            po.status = POStatus.PARTIAL
-        else:
-            po.status = POStatus.CLOSED
+    _resync_po_status(db, touched_pos)
 
     bill.status = BillStatus.VOID
     bill.balance_due = Decimal("0")

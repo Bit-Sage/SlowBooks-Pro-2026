@@ -89,8 +89,8 @@ def _check_lien_waiver(v):
 
 
 class VendorCompliance(BaseModel):
-    """What a Sub vendor's paperwork looks like at pay time (#553). Warn-only:
-    nothing here blocks a payment."""
+    """What a Sub vendor's paperwork looks like at pay time (#553). A missing
+    W-9 or COI only warns; an expired COI blocks payment unless overridden."""
 
     is_sub: bool = False
     w9_on_file: bool = False
@@ -242,6 +242,8 @@ class BillPaymentCreate(StrictModel):
     # that does is now refused like any other unknown field.
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
+    # Pay a Sub whose COI has expired anyway (#553); recorded on the payment.
+    coi_override: bool = False
     allocations: list[BillPaymentAllocationCreate] = []
 
 
@@ -263,6 +265,8 @@ class BillPaymentResponse(BaseModel):
     currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
     is_voided: bool = False
+    coi_override: bool = False
+    coi_override_note: Optional[str] = None
     created_at: Optional[datetime] = None
     # Which bills this payment paid, and how much of each — the bill's view
     # lists its payments from here so one can be voided on screen.

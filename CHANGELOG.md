@@ -264,8 +264,15 @@ alongside it in the job overview and cost tree. A new **Buyout** tab on the job
 (and `GET /api/jobs/{id}/buyout`) pairs each trade package's bid against what
 has been bought — variance, committed-remaining, billed-to-date and the
 commitments behind it. Bills and Pay Bills carry each Sub vendor's compliance
-(`vendor_compliance`: W-9 on file, COI expiry) as warn-only flags, and Pay
-Bills offers a per-bill lien-waiver status saved through `PUT /api/bills/{id}`.
+(`vendor_compliance`: W-9 on file, COI expiry); a missing W-9 or COI warns,
+while a Sub whose COI has **expired** is not paid without an override (Pay Bills
+confirms and says why; `coi_override` on `POST /api/bill-payments`, recorded on
+the payment). Pay Bills also offers a per-bill lien-waiver status saved through
+`PUT /api/bills/{id}`, which works on closed-period bills since it posts
+nothing. The To Bill dialog takes a **bill date** (default today; `date` on
+`convert-to-bill`) used for the bill, its journal and the closing-date check,
+editing a converted bill's lines keeps the commitment link and re-tallies
+billed-to-date, and the 2050 retainage line carries the job.
 Sub change orders (#554), progress billing with retainage released (#555) and
 the buyout report / job cost by vendor (#556) build on this. A Business or
 Nonprofit company sees none of it. One behaviour change for everyone: a $0

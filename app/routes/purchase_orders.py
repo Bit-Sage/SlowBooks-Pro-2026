@@ -328,13 +328,22 @@ def convert_to_bill(
         record_purchase,
     )
 
-    po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+    # Row lock for the read-check-write on billed_amount, as bill_payments
+    # does for bills. No-op on SQLite.
+    po = (
+        db.query(PurchaseOrder)
+        .filter(PurchaseOrder.id == po_id)
+        .with_for_update()
+        .first()
+    )
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
-    # Posts a JE dated to po.date; closing-date enforcement must cover this
-    # path too, otherwise an operator can reach into a closed period by
-    # converting an old PO without ever creating a bill directly.
-    check_closing_date(db, po.date)
+    # The bill is dated when it is billed (the To Bill dialog's date, default
+    # today), not to the PO: a progress bill months into a subcontract ages
+    # from its own date. Without a date the PO's own is used, as before.
+    # The closing-date check covers the date actually posted.
+    bill_date = (data.date if data and data.date else None) or po.date
+    check_closing_date(db, bill_date)
     if po.status == POStatus.CLOSED:
         raise HTTPException(status_code=400, detail="PO already closed")
     if Decimal(str(po.total or 0)) <= 0:
@@ -493,13 +502,13 @@ def convert_to_bill(
         vendor_id=po.vendor_id,
         status=BillStatus.UNPAID,
         po_id=po.id,
-        date=po.date,
+        date=bill_date,
         currency=doc_currency,
         exchange_rate=doc_rate,
         # The vendor's terms, and the due date they give — a converted bill
         # had "Net 30" and no due date, so it never aged (macbase1 F10).
         terms=terms,
-        due_date=_due_date_from_terms(po.date, terms),
+        due_date=_due_date_from_terms(bill_date, terms),
         subtotal=subtotal,
         tax_rate=po.tax_rate,
         tax_amount=tax_amount,
@@ -570,11 +579,13 @@ def convert_to_bill(
                     "debit": Decimal("0"),
                     "credit": retainage_held,
                     "description": f"Retainage held - {po.po_number}",
+                    # so retainage release (#576) can find it by job
+                    "job_id": po.job_id,
                 }
             )
         txn = create_journal_entry(
             db,
-            po.date,
+            bill_date,
             f"Bill {bill.bill_number} - {vendor.name if vendor else ''}",
             journal_lines,
             source_type="bill",
@@ -594,7 +605,7 @@ def convert_to_bill(
             source_id=bill.id,
             memo=f"PO {po.po_number}",
             post_journal=False,
-            txn_date=po.date,
+            txn_date=bill_date,
         )
 
     # Tally what each line has now billed, and close the commitment when every

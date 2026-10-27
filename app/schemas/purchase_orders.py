@@ -136,6 +136,9 @@ class POConvertToBill(StrictModel):
     default, and bill their full remaining."""
 
     lines: list[POConvertLineAccount] = []
+    # The bill's date (the dialog defaults it to today); the PO's own date
+    # when left out.
+    date: Optional[dt_date] = None
 
 
 class POResponse(BaseModel):

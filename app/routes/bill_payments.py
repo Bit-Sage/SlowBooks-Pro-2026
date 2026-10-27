@@ -95,6 +95,23 @@ def create_bill_payment(
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")
 
+    # A Sub whose certificate of insurance had expired by the payment date is
+    # not paid without an explicit override, which the payment records (#553).
+    # A Sub with no COI on file only warns in Pay Bills; it is not blocked.
+    coi_note = None
+    if vendor.vendor_type == "sub" and vendor.coi_expires and data.date > vendor.coi_expires:
+        if not data.coi_override:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{vendor.name}'s certificate of insurance expired on "
+                    f"{vendor.coi_expires.isoformat()}. Get a current one, or "
+                    "pay anyway with coi_override and the payment will record "
+                    "that it was overridden."
+                ),
+            )
+        coi_note = f"Paid with COI expired {vendor.coi_expires.isoformat()}"
+
     from app.services.currency import (
         document_currency,
         fx_gain_loss_account_id,
@@ -128,6 +145,8 @@ def create_bill_payment(
         notes=data.notes,
         currency=pay_currency,
         exchange_rate=pay_rate,
+        coi_override=coi_note is not None,
+        coi_override_note=coi_note,
     )
     db.add(payment)
     db.flush()

@@ -294,7 +294,13 @@ commitment opens the usual convert dialog with an amount-this-period column
 prefilled with each line's remaining (scheduled value less what's already
 billed). Bill some or all of it: each line tallies its billed-to-date, the
 commitment reads **partial** while anything remains and **closed** once every
-line is fully billed. A business company's PO bills in one go exactly as before.
+line is fully billed. A business company's PO bills in one go exactly as before. The dialog takes a
+**bill date**, defaulting to today: the bill, its journal entry and the
+closing-date check all use it, so a progress bill ages from the day it is
+billed and a later period can still be billed once the PO's own month is
+closed. (`convert-to-bill` accepts an optional `date`; left out, the PO's date
+is used.) Editing the lines of a converted bill keeps each line tied to its
+commitment line and re-tallies billed-to-date; a void gives it all back.
 A line with no price ($0) is not a bill line — the converted bill carries only
 the lines with money on them (a change from the earlier behaviour, where a
 description-only line rode along).
@@ -306,6 +312,7 @@ payable in full — so the bill credits Accounts Payable for the net and
 the journal still balances with the gross debits. Pay Bills pays only what's
 owed now, and the A/P aging and vendor balances show the net (the held amount
 sits on 2050, not A/P). A bill entered by hand can hold retainage the same way.
+The 2050 line carries the bill's job, so release can find it by job.
 Releasing retainage (a debit back to 2050) is progress billing's job (#555);
 for now the figure is the retainage held to date.
 
@@ -335,7 +342,14 @@ whether a **W-9** is on file and whether the **certificate of insurance** has
 expired (or is missing). The Pay Bills rows and the Buyout tab's commitments
 show a compact flag for a Sub that's short either one, and Pay Bills offers a
 **lien waiver** status per bill (not required / pending / conditional /
-unconditional). Every flag is a warning: nothing here blocks a payment.
+unconditional). A missing W-9 or missing COI is a warning. A Sub whose
+certificate has **expired** (by the payment date) is not paid unless the payment
+is overridden: Pay Bills asks first, saying why, and the payment records that it
+was paid with an expired COI (`coi_override`, with a note naming the expiry),
+shown on the bill's payments and the payment's own view. Through the API,
+`POST /api/bill-payments` answers 409 until the request carries
+`coi_override: true`. The lien waiver is only a status: saving it works on a
+bill in a closed period, since it posts nothing.
 
 **What comes next.** Sub **change orders** (#554) will revise a commitment the
 way owner change orders revise the contract. **Progress billing** (#555) will
@@ -387,7 +401,6 @@ appear. Every other report stays where it is.
 - **No new accounting.** No change orders, draws (pay applications) or
   progress-billing screens; the accounts are there to post to by hand until
   those land.
-- **No COI-expiry warning** in Pay Bills — a later issue.
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
