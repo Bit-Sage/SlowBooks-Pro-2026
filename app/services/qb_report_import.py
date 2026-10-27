@@ -18,10 +18,12 @@
 # customer.
 # ============================================================================
 
+import calendar
 import csv
 import io
 import logging
-from datetime import datetime
+import re
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy import or_
@@ -125,6 +127,121 @@ def _cell(row: list[str], cols: dict, name: str) -> str:
     if idx is None or idx >= len(row):
         return ""
     return (row[idx] or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# The report's period (#568). QuickBooks prints it in the title block above
+# the column headers ("January through December 2024", "January 1, 2023
+# through December 31, 2024") and, on the Transaction Detail reports, once
+# more in the first cell under them ("Jan 1, '23 - Dec 31, '24"). For a range
+# over more than 12 months QuickBooks prints the balance sheet accounts for
+# the whole range but the income and expense accounts for its last year only,
+# so every earlier sale and expense would arrive without its other half. That
+# is a warning, not a refusal: a July-June fiscal year spans two calendar
+# years and imports fine, and a half-complete file already fails the "does
+# not balance" check.
+# ---------------------------------------------------------------------------
+
+_MONTHS = (
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+)
+_RANGE_JOIN = re.compile(r"\s+(?:through|thru|to|-|\u2013)\s+", re.IGNORECASE)
+_WORD_DATE = re.compile(
+    r"^([A-Za-z]+)\.?(?:\s+(\d{1,2}))?(?:,?\s+(?:((?:19|20)\d{2})|'(\d{2})))?$"
+)
+
+
+def _period_end(half: str):
+    """One end of a printed period as (year|None, month, day|None): "December
+    31, 2024", "Dec 31, '24", "12/31/2024", "December 2024" or "April 9" (no
+    year: it takes the other end's). Not a date at all returns None."""
+    half = half.strip().rstrip(".")
+    parsed = _parse_date(half)
+    if parsed is not None:
+        return parsed.year, parsed.month, parsed.day
+    m = _WORD_DATE.match(half)
+    if m is None or m.group(1)[:3].lower() not in _MONTHS:
+        return None
+    month = _MONTHS.index(m.group(1)[:3].lower()) + 1
+    day = int(m.group(2)) if m.group(2) else None
+    if m.group(3):
+        year = int(m.group(3))
+    elif m.group(4):
+        year = 2000 + int(m.group(4))
+    else:
+        year = None
+    return year, month, day
+
+
+def _period_range(text: str):
+    """The (start, end) dates a printed period covers, or None when the text
+    is not a date range ("All Transactions", a company name, a time). A bare
+    month starts on its first day and ends on its last."""
+    parts = _RANGE_JOIN.split(text.strip(), maxsplit=1)
+    if len(parts) != 2:
+        return None
+    start, end = (_period_end(p) for p in parts)
+    if start is None or end is None or end[0] is None:
+        return None
+    ey, em, ed = end
+    if ed is None:
+        ed = calendar.monthrange(ey, em)[1]
+    sy, sm, sd = start
+    sd = sd or 1
+    try:
+        last = date(ey, em, ed)
+        # a start with no year is the latest such date not after the end
+        if sy is None:
+            sy = ey if date(ey, sm, sd) <= last else ey - 1
+        return date(sy, sm, sd), last
+    except ValueError:
+        return None
+
+
+def _over_twelve_months(start: date, end: date) -> bool:
+    """True when the range runs a year or more past its first day, so a
+    calendar year (Jan 1 - Dec 31) and a fiscal year (Jul 1 - Jun 30) are
+    both one year."""
+    try:
+        return end >= start.replace(year=start.year + 1)
+    except ValueError:  # a Feb 29 start
+        return end >= date(start.year + 1, 3, 1)
+
+
+def long_period(rows: list[list[str]], header_at: int):
+    """The period as the report prints it when it covers more than 12
+    months, else None. Only the title block above the column headers and
+    the range cell right under them are read, never the data."""
+    candidates = [cell for row in rows[:header_at] for cell in row if cell.strip()]
+    if header_at + 1 < len(rows) and rows[header_at + 1]:
+        candidates.append(rows[header_at + 1][0])
+    for text in candidates:
+        span = _period_range(text)
+        if span and _over_twelve_months(*span):
+            return text.strip()
+    return None
+
+
+def long_period_note(period: str) -> str:
+    return (
+        f"This report covers {period}, more than 12 months. For a range over "
+        "a year QuickBooks prints the balance sheet accounts for the whole "
+        "range but the income and expense accounts for its last year only, so "
+        "the earlier years can come across half-complete. Export one year "
+        "per file (the same filters and columns) and import the files one at "
+        "a time, oldest year first."
+    )
 
 
 _AR_NAMES = frozenset({"accounts receivable", "a/r", "accounts receivable (a/r)"})
@@ -1425,6 +1542,9 @@ def import_qb_report(
                 "All accounts rather than adding an Account column."
             )
             return base
+        # a range over 12 months is a warning (#568), never on the adjusting
+        # import: an accountant's file for a fiscal year imports as it is
+        period = None if adjusting_only else long_period(rows, header_at)
         sub = import_ledger_report(
             db,
             rows,
@@ -1461,4 +1581,12 @@ def import_qb_report(
     base["duplicates_skipped"] = sub.get("duplicates_skipped", 0)
     base["errors"] = sub.get("errors", [])
     base["warnings"] = sub.get("warnings", [])
+    if kind == "ledger" and period:
+        unbalanced = next((e for e in base["errors"] if "does not balance" in e), None)
+        if unbalanced is not None:
+            # the likely reason, on the error the person is looking at
+            i = base["errors"].index(unbalanced)
+            base["errors"][i] = f"{unbalanced}. {long_period_note(period)}"
+        else:
+            base["warnings"].append(long_period_note(period))
     return base
