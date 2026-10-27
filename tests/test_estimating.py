@@ -662,6 +662,7 @@ def test_accept_refuses_another_estimate_while_locked(client, seed_customer):
 
 
 def test_put_accepted_locks_with_a_job_and_is_idempotent(client, seed_customer):
+    _set_construction(client)
     job = _job(client, seed_customer.id)
     est = _estimate(
         client,
@@ -691,6 +692,7 @@ def test_put_accepted_without_a_job_is_a_plain_status_change(client, seed_custom
 
 
 def test_a_settled_estimate_refuses_scope_edits(client, seed_customer):
+    _set_construction(client)
     job = _job(client, seed_customer.id)
     est = _estimate(
         client,
@@ -703,7 +705,7 @@ def test_a_settled_estimate_refuses_scope_edits(client, seed_customer):
         {"lines": [{"description": "X", "quantity": 1, "rate": 1}]},
         {"gc_pct": 9},
         {"tax_rate": 0.05},
-        {"customer_id": seed_customer.id},
+        {"job_id": _job(client, seed_customer.id, name="Other")["id"]},
     ):
         r = client.put(f"/api/estimates/{est['id']}", json=edit)
         assert r.status_code == 409, (edit, r.text)
@@ -917,6 +919,7 @@ def _budget_snapshot(client, job_id):
 
 
 def test_a_settled_estimate_refuses_a_status_change(client, seed_customer):
+    _set_construction(client)
     job = _job(client, seed_customer.id)
     est = _estimate(
         client,
@@ -945,11 +948,15 @@ def test_a_settled_estimate_refuses_a_status_change(client, seed_customer):
 def test_a_converted_estimate_refuses_a_status_change(
     client, seed_accounts, seed_customer
 ):
+    _set_construction(client)
+    job = _job(client, seed_customer.id)
     est = _estimate(
         client,
         seed_customer.id,
-        [{"description": "Shell", "quantity": 1, "rate": 100}],
+        [{"description": "Shell", "quantity": 1, "rate": 100, "unit_cost": 100}],
+        job_id=job["id"],
     )
+    assert client.post(f"/api/estimates/{est['id']}/accept", json={}).status_code == 200
     assert client.post(f"/api/estimates/{est['id']}/convert").status_code == 200
     for status in ("pending", "accepted"):
         r = client.put(f"/api/estimates/{est['id']}", json={"status": status})
@@ -1160,3 +1167,87 @@ def test_a_manual_budget_codes_markup_share_is_not_redistributed(client, seed_cu
     assert float(rows[a["id"]]["revenue_amount"]) == 66000.0
     assert float(rows[b["id"]]["revenue_amount"]) == 45000.0  # manual row untouched
     assert rows[b["id"]]["locked"] is False
+
+
+def _form_payload(client, est_id):
+    """What the estimate form sends on save: every field, resent as stored."""
+    e = client.get(f"/api/estimates/{est_id}").json()
+    keys = (
+        "item_id description quantity rate is_taxable cost_code_id cost_type "
+        "unit_cost trade_package_id line_kind unit alternate_accepted line_order"
+    ).split()
+    return {
+        "customer_id": e["customer_id"],
+        "date": e["date"],
+        "expiration_date": e["expiration_date"],
+        "tax_rate": float(e["tax_rate"]),
+        "notes": e["notes"],
+        "job_id": e["job_id"],
+        "gc_pct": float(e["gc_pct"]),
+        "insurance_pct": float(e["insurance_pct"]),
+        "fee_pct": float(e["fee_pct"]),
+        "bond_pct": float(e["bond_pct"]),
+        "markup_allowances": e["markup_allowances"],
+        "lines": [{k: ln[k] for k in keys} for ln in e["lines"]],
+    }
+
+
+def test_a_settled_estimate_takes_a_notes_only_save_from_the_form(
+    client, seed_customer
+):
+    _set_construction(client)
+    job = _job(client, seed_customer.id)
+    est = _estimate(
+        client,
+        seed_customer.id,
+        [
+            {"description": "Shell", "quantity": 2, "rate": 80, "unit_cost": 80},
+            {"description": "Fence", "quantity": 1, "rate": 50},
+        ],
+        job_id=job["id"],
+        gc_pct=5,
+        tax_rate=0.0825,
+    )
+    assert client.post(f"/api/estimates/{est['id']}/accept", json={}).status_code == 200
+    body = _form_payload(client, est["id"])
+    body["notes"] = "signed by the owner"
+    r = client.put(f"/api/estimates/{est['id']}", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["notes"] == "signed by the owner"
+    # the same full payload with one line changed is still refused
+    body["lines"][0]["quantity"] = 3
+    assert client.put(f"/api/estimates/{est['id']}", json=body).status_code == 409
+    body = _form_payload(client, est["id"])
+    body["gc_pct"] = 6
+    assert client.put(f"/api/estimates/{est['id']}", json=body).status_code == 409
+
+
+def _business_or_nonprofit_settled(client, seed_customer, company_type):
+    if company_type != "business":
+        r = client.put("/api/settings", json={"company_type": company_type})
+        assert r.status_code == 200, r.text
+    job = _job(client, seed_customer.id, name=f"Job {company_type}")
+    est = _estimate(
+        client,
+        seed_customer.id,
+        [{"description": "Shell", "quantity": 1, "rate": 100}],
+        job_id=job["id"],
+    )
+    r = client.put(f"/api/estimates/{est['id']}", json={"status": "accepted"})
+    assert r.status_code == 200, r.text
+    return est
+
+
+def test_business_and_nonprofit_estimates_are_not_frozen_when_accepted(
+    client, seed_customer
+):
+    for company_type in ("business", "nonprofit"):
+        est = _business_or_nonprofit_settled(client, seed_customer, company_type)
+        url = f"/api/estimates/{est['id']}"
+        r = client.put(
+            url, json={"lines": [{"description": "Other", "quantity": 2, "rate": 7}]}
+        )
+        assert r.status_code == 200, (company_type, r.text)
+        r = client.put(url, json={"status": "pending"})
+        assert r.status_code == 200, (company_type, r.text)
+        assert r.json()["status"] == "pending"

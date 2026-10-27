@@ -89,7 +89,7 @@ def markup_base_amount(line, markup_allowances: bool = False) -> Decimal:
 
 
 def markup_factor(estimate) -> Decimal:
-    """The multiplier that turns a line's unit cost into a marked-up price:
+    """The multiplier that turns a line's price into a marked-up price:
     (1+gc)(1+ins)(1+fee)(1+bond). Unrounded — the caller rounds the price.
     Used to show an alternate's marked-up price to the customer."""
     one = Decimal("1")
@@ -188,7 +188,7 @@ def estimate_totals(estimate) -> dict:
     by_package carries price and cost per package (allowances contribute price
     only, never a unit cost); alternates and unit_prices list the lines held
     out of the bid so the customer can choose them. An alternate that carries
-    a unit cost shows its MARKED-UP price (cost × the markup factor); one with
+    a unit cost shows its MARKED-UP price (price × the markup factor); one with
     no cost shows its rate price.
     """
     subtotal = Decimal("0")
@@ -220,8 +220,10 @@ def estimate_totals(estimate) -> dict:
 
         if kind == "alternate":
             # An alternate with a unit cost is shown at its marked-up price;
-            # one with no cost is shown at its rate price.
-            shown = _q(cost * factor) if line.unit_cost is not None else price
+            # one with no cost is shown at its rate price. Built on price
+            # (quantity x rate), the same base the markups compound on when
+            # the alternate is accepted, so the two cannot drift apart.
+            shown = _q(price * factor) if line.unit_cost is not None else price
             alternates.append(
                 {
                     "id": line.id,

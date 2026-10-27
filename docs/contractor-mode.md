@@ -180,10 +180,12 @@ and then **locks** the seeded rows: they are the contract budget. The lock is
 per row: a manual budget row on a code the estimate never touched still saves
 after acceptance, but a locked row's own key, or re-seeding the whole budget
 from another estimate, is refused. A job whose budget one estimate locked will
-not accept a second, and a settled estimate refuses edits to its lines,
-markups, customer, job, tax and **status** (its notes and expiration still
-edit; moving status off accepted or converted is refused with a 409, since the
-next accept would re-seed the locked budget). **There
+not accept a second, and a construction estimate that locked a budget refuses
+changes to its lines, markups, customer, job, tax and **status** (its notes and
+expiration still edit, and a save that resends the same values is not a
+change; moving status off accepted or converted is refused with a 409, since
+the next accept would re-seed the locked budget). Business and Nonprofit
+estimates lock no budget and edit as they always did. **There
 is no unlock** — a new estimate or, later, a change order is how a locked
 budget moves. The customer PDF groups the bid by package with the section code,
 then blocks the allowances, the alternates not yet taken (at their marked-up
