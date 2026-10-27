@@ -395,6 +395,26 @@ package's Trial Balance on the company default.
 11. **Screen toggle built** in step 1: the toolbar pattern (`_adjOpts`)
     made it a few lines.
 
+## Known limits of step 1
+
+- **Proration drifts when a document's lines change between partial
+  payments.** Each payment prorates over the document's recognition lines
+  as they stand that day. A late fee or an edit between two partial
+  payments shifts the split between accounts for the later one; the
+  totals stay exact (each payment recognizes exactly what it applied).
+  The link from a cash line to its document (open items) is what would
+  true this up.
+- **A payment that produces no cash lines, such as a $0 payment, is
+  looked at again on every boot.** The backfill finds payments by "has no
+  cash line", and nothing marks one that legitimately has none.
+- **An invoice the QuickBooks Online ledger import posted counts once, on
+  the posting's date.** Its `qbo_ledger` lines are `both`, so its income
+  is already in the cash view; a payment on it writes no recognition
+  lines (its `both` bank/A-R pair already takes A/R to zero), and
+  applying an unapplied remainder to it only moves Unapplied Cash Payment
+  Income back to A/R. Its income lands on the invoice date, not the
+  payment date, until the posting is adopted by an edit.
+
 ## Open items (not settled; conservative choice taken)
 
 - **A link from a cash line to its document** (`recognizes_invoice_id` /

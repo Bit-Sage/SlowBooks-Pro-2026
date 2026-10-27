@@ -262,6 +262,15 @@ def _cash_line(line: dict, memo: str) -> dict:
     }
 
 
+def _ledger_posted(db: Session, document) -> bool:
+    """Whether the QuickBooks Online ledger import posted this invoice and
+    that posting stands. Its lines are `both`: its income and A/R already
+    count on the cash view, so a payment on it recognizes nothing more."""
+    from app.services.qbo_documents import import_posting, invoice_origin
+
+    return import_posting(db, invoice_origin(db, document)) is not None
+
+
 def _recognition(
     db: Session,
     source_types,
@@ -294,6 +303,8 @@ def customer_payment_cash_lines(
     Income; and one Dr A/R for the whole, so the cash lines balance."""
     out: list[dict] = []
     for invoice, applied_home in applied:
+        if _ledger_posted(db, invoice):
+            continue
         out.extend(
             _recognition(
                 db,
@@ -371,7 +382,25 @@ def apply_reclass_lines(
 ) -> list[dict]:
     """When an unapplied remainder is applied to an invoice later: the
     invoice's recognition lines, and Unapplied Cash Payment Income debited
-    for the same. Cash lines only; the accrual reading sees nothing."""
+    for the same. Cash lines only; the accrual reading sees nothing.
+    An invoice the QuickBooks ledger import posted already counts its income
+    on cash (`both`), so the unapplied income is simply taken back to A/R."""
+    if _ledger_posted(db, invoice):
+        applied_home = _q(applied_home)
+        if applied_home == 0:
+            return []
+        return [
+            _cash_line(
+                {"account_id": unapplied_income_id(db), "amount": -applied_home}, memo
+            ),
+            {
+                "account_id": ar_id,
+                "debit": Decimal("0"),
+                "credit": applied_home,
+                "description": memo,
+                "basis": BASIS_CASH,
+            },
+        ]
     lines = _recognition(
         db,
         INVOICE_SOURCE_TYPES,
@@ -564,6 +593,16 @@ def _bill_payment_lines(db: Session, payment: BillPayment, ap_id: int):
     )
 
 
+def add_payment_cash_lines(db: Session, payment: Payment) -> int:
+    """Give one posted customer payment its cash lines now, when it has none
+    (a payment posted before the invoice it pays had its own entry). Returns
+    the number of lines written."""
+    from app.services.accounting import get_ar_account_id
+
+    txn, lines = _customer_payment_lines(db, payment, get_ar_account_id(db))
+    return append_cash_lines(db, txn, lines) if lines else 0
+
+
 class _Progress:
     """Counts the backfill's writes and commits every BACKFILL_BATCH of them
     so a big book never holds one long write transaction."""
@@ -681,6 +720,7 @@ def pending_backfill(db: Session) -> bool:
 
 __all__ = [
     "ACCRUAL_SOURCE_TYPES",
+    "add_payment_cash_lines",
     "append_cash_lines",
     "apply_reclass_lines",
     "backfill",

@@ -929,3 +929,135 @@ def test_an_iif_import_gives_its_payments_cash_lines(client, db_session, seed_ac
     assert D(str(april["total_income"])) == D("100.00"), april["income"]
     assert _pl(client, "2026-03-01", "2026-03-31", "cash")["total_income"] == 0
     _each_entry_balances_on_every_basis(db_session)
+
+
+# ---------------------------------------------------------------------------
+# clearing-on online payments, and QuickBooks Online postings
+# ---------------------------------------------------------------------------
+
+
+def _cash_credit_lines(db_session, txn_id):
+    return [
+        ln
+        for ln in db_session.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == txn_id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+        .all()
+        if ln.basis == BASIS_CASH and ln.credit
+    ]
+
+
+def test_an_online_payment_with_clearing_on_writes_cash_lines(
+    client, db_session, seed_accounts, seed_customer
+):
+    from datetime import date
+
+    from app.models.payments import Payment
+    from app.services.payments.recorder import record_provider_payment
+    from app.services.settings_service import set_setting
+
+    set_setting(db_session, "stripe_clearing_enabled", "true")
+    db_session.commit()
+    inv = _invoice(client, seed_customer.id, "2026-03-01", [{"rate": 100}])
+    status = record_provider_payment(
+        db_session, "stripe", "Stripe", inv["id"], "cs_clear", D("100.00"), D("3.20")
+    )
+    assert status == "payment_recorded"
+    payment = db_session.query(Payment).filter_by(reference="cs_clear").one()
+    cash_credits = _cash_credit_lines(db_session, payment.transaction_id)
+    assert sum(D(str(ln.credit)) for ln in cash_credits) == D("100.00")
+
+    today = date.today().isoformat()
+    pl, bs, _ = _assert_cash_invariant(client, today, today)
+    assert _amount(pl, "4000") == D("100.00")
+    assert _bs_amount(bs, "1100") == 0
+    _each_entry_balances_on_every_basis(db_session)
+
+
+def _make_ledger_posted(db_session, invoice_id, qbo_type, qbo_id):
+    """Dress an invoice written here as one the QuickBooks Online ledger
+    import posted: its entry becomes a qbo_ledger one (every line `both`),
+    the invoice keeps no entry of its own, and the mappings exist."""
+    from app.models.invoices import Invoice
+    from app.models.qbo_mapping import QBOMapping
+
+    invoice = db_session.get(Invoice, invoice_id)
+    txn = db_session.get(Transaction, invoice.transaction_id)
+    txn.source_type = "qbo_ledger"
+    txn.source_id = None
+    for ln in (
+        db_session.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == txn.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+    ):
+        ln.basis = BASIS_BOTH
+    invoice.transaction_id = None
+    entity = "sales_receipt" if qbo_type == "Sales Receipt" else "invoice"
+    db_session.add(
+        QBOMapping(entity_type=entity, slowbooks_id=invoice.id, qbo_id=qbo_id)
+    )
+    db_session.add(
+        QBOMapping(
+            entity_type="ledger", slowbooks_id=txn.id, qbo_id=f"{qbo_type}:{qbo_id}"
+        )
+    )
+    db_session.commit()
+    return txn
+
+
+def test_a_qbo_ledger_invoice_counts_once_on_cash(
+    client, db_session, seed_accounts, seed_customer
+):
+    inv = _invoice(client, seed_customer.id, "2026-03-01", [{"rate": 100}])
+    _make_ledger_posted(db_session, inv["id"], "Invoice", "9001")
+    _payment(client, seed_customer.id, "2026-04-05", 100, [(inv["id"], 100)])
+
+    # income counts once, on the posting's date; nothing lands on 4950
+    pl, bs, _ = _assert_cash_invariant(client, "2026-03-01", "2026-04-30")
+    assert D(str(pl["net_income"])) == D("100.00")
+    assert _amount(pl, "4000") == D("100.00")
+    assert _amount(pl, "4950") == 0
+    assert _bs_amount(bs, "1100") == 0
+    accrual = _pl(client, "2026-03-01", "2026-04-30", "accrual")
+    assert D(str(accrual["net_income"])) == D("100.00")
+    _each_entry_balances_on_every_basis(db_session)
+
+
+def test_an_adopted_qbo_receipt_payment_gets_cash_lines(
+    client, db_session, seed_accounts, seed_customer
+):
+    from app.models.invoices import Invoice
+    from app.models.payments import Payment
+
+    inv = _invoice(client, seed_customer.id, "2026-03-01", [{"rate": 100}])
+    pay = _payment(client, seed_customer.id, "2026-03-01", 100, [(inv["id"], 100)])
+    # the import posted the receipt and its payment together, no entries of ours
+    payment = db_session.get(Payment, pay["id"])
+    for ln in (
+        db_session.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == payment.transaction_id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+    ):
+        db_session.delete(ln)
+    db_session.flush()
+    db_session.delete(db_session.get(Transaction, payment.transaction_id))
+    payment.transaction_id = None
+    db_session.commit()
+    _make_ledger_posted(db_session, inv["id"], "Sales Receipt", "9002")
+
+    # an edit that changes the date makes the receipt ours
+    r = client.put(f"/api/invoices/{inv['id']}", json={"date": "2026-03-02"})
+    assert r.status_code == 200, r.text
+
+    db_session.expire_all()
+    payment = db_session.get(Payment, pay["id"])
+    assert payment.transaction_id is not None
+    cash_credits = _cash_credit_lines(db_session, payment.transaction_id)
+    assert sum(D(str(ln.credit)) for ln in cash_credits) == D("100.00")
+    assert db_session.get(Invoice, inv["id"]).transaction_id is not None
+    # the income went to the invoice's own account, not unapplied cash
+    pl, bs, _ = _assert_cash_invariant(client, "2026-03-01", "2026-03-31")
+    assert _amount(pl, "4000") == D("100.00")
+    assert _amount(pl, "4950") == 0
+    assert _bs_amount(bs, "1100") == 0
+    _each_entry_balances_on_every_basis(db_session)

@@ -86,7 +86,7 @@ with a savepoint per payment (one that fails is logged by id and skipped,
 and start-up warns with the count), on a new index of
 `transactions(source_type, source_id)` that took the backfill from minutes
 to seconds on a big book. The IIF, QuickBooks report and QuickBooks Online
-imports write their payments' cash lines at the end of the import. An
+imports write their payments' cash lines at the end of the import. Online card payments with a clearing account write their cash lines too, as does the payment of a QuickBooks Online sales receipt or invoice once an edit makes it ours; an invoice the old QuickBooks Online connector posted counts once on cash, on its posting's date. An
 account, job or cost code that has only cash-basis lines (Unapplied Cash
 Payment Income, say) counts as in use and cannot be deleted. When A/R or
 A/P is not zero on a cash-basis report (history that came in as journal

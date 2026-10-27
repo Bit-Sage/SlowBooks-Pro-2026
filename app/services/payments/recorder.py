@@ -138,6 +138,16 @@ def record_provider_payment(
                     "description": f"{provider_display_name} fee",
                 },
             ]
+        # the cash-basis reading of the payment (#483), same as clearing off
+        from app.services import cash_basis
+
+        journal_lines += cash_basis.customer_payment_cash_lines(
+            db,
+            ar_id,
+            [(invoice, amount)],
+            Decimal("0"),
+            f"{provider_display_name} payment from {customer_name}",
+        )
         txn = create_journal_entry(
             db,
             date.today(),
