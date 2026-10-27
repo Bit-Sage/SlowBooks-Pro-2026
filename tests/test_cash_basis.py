@@ -705,9 +705,9 @@ def test_a_broken_payment_is_skipped_and_named_not_fatal(
         done = cash_basis.backfill(db_session)
 
     assert done["payments"] == 2 and done["failed"] == 1
-    assert any(
-        f"payment {broken.id}" in r.getMessage() for r in caplog.records
-    ), [r.getMessage() for r in caplog.records]
+    assert any(f"payment {broken.id}" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
     cash_lines = (
         db_session.query(TransactionLine.transaction_id)
         .filter(TransactionLine.basis == BASIS_CASH)
@@ -768,9 +768,7 @@ def test_an_account_with_only_cash_lines_cannot_be_deleted(
     _assert_cash_invariant(client, "2026-03-01", "2026-03-31")
 
 
-def test_a_job_with_only_cash_lines_is_in_use(
-    client, db_session, seed_accounts
-):
+def test_a_job_with_only_cash_lines_is_in_use(client, db_session, seed_accounts):
     from datetime import date
 
     from app.models.contacts import Customer
@@ -790,11 +788,19 @@ def test_a_job_with_only_cash_lines_is_in_use(
     db_session.add_all(
         [
             TransactionLine(
-                transaction_id=txn.id, account_id=bank, debit=5, credit=0, job_id=job.id,
+                transaction_id=txn.id,
+                account_id=bank,
+                debit=5,
+                credit=0,
+                job_id=job.id,
                 basis=BASIS_CASH,
             ),
             TransactionLine(
-                transaction_id=txn.id, account_id=income, debit=0, credit=5, job_id=job.id,
+                transaction_id=txn.id,
+                account_id=income,
+                debit=0,
+                credit=5,
+                job_id=job.id,
                 basis=BASIS_CASH,
             ),
         ]
@@ -844,8 +850,12 @@ def test_the_cash_report_says_when_receivables_are_not_zero(
     from app.services.pdf_service import _render
 
     html = _render(
-        "report_pdf.html", {}, sections=[_bs_section(bs)], paper_size="letter",
-        landscape=False, generated_on="2026-03-31",
+        "report_pdf.html",
+        {},
+        sections=[_bs_section(bs)],
+        paper_size="letter",
+        landscape=False,
+        generated_on="2026-03-31",
     )
     assert "not zero on this cash-basis report" in html
 
@@ -893,9 +903,7 @@ def test_the_accountants_package_follows_the_company_basis(
     assert manifest["basis"] == "cash"
 
 
-def test_an_iif_import_gives_its_payments_cash_lines(
-    client, db_session, seed_accounts
-):
+def test_an_iif_import_gives_its_payments_cash_lines(client, db_session, seed_accounts):
     from app.models.payments import Payment
     from app.services import cash_basis
     from app.services.iif_import import import_all
