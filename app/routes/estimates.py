@@ -102,6 +102,81 @@ def _enforce_at_cost(lines, is_construction: bool) -> None:
             ln.rate = Decimal(str(ln.unit_cost))
 
 
+def _locked_a_budget(db: Session, estimate: Estimate) -> bool:
+    """True when the estimate is settled AND its acceptance locked a job
+    budget: a construction company, a job, and budget rows locked to this
+    estimate. Only then is it frozen (#551)."""
+    if estimate.status not in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
+        return False
+    if estimate.job_id is None or not terms_from_db(db).is_construction:
+        return False
+    return (
+        db.query(JobBudget.id)
+        .filter(JobBudget.estimate_id == estimate.id, JobBudget.locked.is_(True))
+        .first()
+        is not None
+    )
+
+
+def _frozen_changes(db: Session, estimate: Estimate, changes: dict) -> set:
+    """The frozen header fields an edit actually changes: a value sent back
+    the same as stored (the form resends every field) is not a change."""
+    touched = set()
+    for name in _FROZEN_ON_SETTLE & set(changes):
+        sent, stored = changes[name], getattr(estimate, name)
+        if isinstance(stored, (int, float, Decimal)) and not isinstance(stored, bool):
+            if sent is None or Decimal(str(sent)) != Decimal(str(stored)):
+                touched.add(name)
+        elif sent != stored:
+            touched.add(name)
+    return touched
+
+
+_LINE_FIELDS = (
+    "item_id",
+    "quantity",
+    "rate",
+    "class_name",
+    "job_id",
+    "cost_code_id",
+    "cost_type",
+    "unit_cost",
+    "trade_package_id",
+    "line_kind",
+    "unit",
+    "alternate_accepted",
+    "is_taxable",
+)
+
+
+def _line_key(line) -> tuple:
+    """A line's content as the store keeps it: numbers as Decimals, an empty
+    description as none, the same normal form from a request or a stored row."""
+    key = []
+    for name in _LINE_FIELDS:
+        val = getattr(line, name)
+        if isinstance(val, (int, float, Decimal)) and not isinstance(val, bool):
+            val = Decimal(str(val))
+        key.append(val)
+    key.append(getattr(line, "description", None) or "")
+    return tuple(key)
+
+
+def _lines_changed(db: Session, estimate: Estimate, sent_lines) -> bool:
+    """True when the sent lines differ from the stored ones. The sent lines
+    get the same settling a save gives them (tax flag, at-cost rate, cost
+    type) on copies, so an unchanged form payload compares equal."""
+    sent = [ln.model_copy() for ln in sent_lines]
+    order = {id(ln): ln.line_order or i for i, ln in enumerate(sent)}
+    sent.sort(key=lambda ln: order[id(ln)])
+    resolve_line_taxable(db, sent, db.get(Customer, estimate.customer_id))
+    _enforce_at_cost(sent, terms_from_db(db).is_construction)
+    for ln in sent:
+        ln.cost_type = line_cost_type(db, ln.cost_code_id, ln.cost_type)
+    stored = sorted(estimate.lines, key=lambda ln: (ln.line_order or 0, ln.id))
+    return [_line_key(ln) for ln in sent] != [_line_key(ln) for ln in stored]
+
+
 def _estimate_response(est: Estimate) -> EstimateResponse:
     """A single estimate's response: the customer name, each line's package
     name, and the bid math (#551). The list endpoint skips the totals."""
@@ -354,18 +429,20 @@ def update_estimate(
     if accepting:
         changes.pop("status")
 
-    # A settled estimate (accepted or converted) is the basis of the job's
-    # locked budget, so its scope and price are frozen: lines, markups,
-    # customer, job and tax are refused (notes and the expiration date still
-    # edit, and re-setting status=accepted is a no-op) — change it with a new
-    # estimate or, later, a change order (#551).
-    if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
-        touched = set(changes) & _FROZEN_ON_SETTLE
+    # A settled estimate (accepted or converted) that locked a job budget is
+    # the basis of that budget, so its scope and price are frozen: a changed
+    # line, markup, customer, job or tax is refused (notes and the expiration
+    # date still edit, values sent back unchanged are fine, and re-setting
+    # status=accepted is a no-op). Change it with a new estimate or, later, a
+    # change order (#551). Business and Nonprofit estimates lock no budget and
+    # keep editing freely.
+    if _locked_a_budget(db, estimate):
+        touched = _frozen_changes(db, estimate, changes)
         # moving the status off accepted/converted would let the next accept
         # re-seed the locked budget; re-setting the same status is a no-op
         if new_status is not None and new_status != estimate.status:
             touched.add("status")
-        if data.lines is not None:
+        if data.lines is not None and _lines_changed(db, estimate, data.lines):
             touched.add("lines")
         if touched:
             raise HTTPException(status_code=409, detail=_SETTLED_MSG)

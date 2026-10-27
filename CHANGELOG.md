@@ -329,8 +329,10 @@ rows are then locked — the lock is per row, so a manual budget row on a code
 the estimate never touched still saves afterward, but a locked row's own key,
 or re-seeding the whole budget from another estimate, is refused. There is no
 unlock: a new estimate or, later, a change order moves a locked budget, and a
-settled estimate refuses edits to its lines, markups, customer, job, tax and
-status (moving it back to pending would re-seed the locked budget).
+construction estimate that locked a budget refuses changes to its lines,
+markups, customer, job, tax and status (moving it back to pending would
+re-seed the locked budget); a save that resends the same values still goes
+through, and Business and Nonprofit estimates are never frozen.
 Converting an accepted estimate to an invoice drops the unit-price lines and
 any un-accepted alternate, and now carries each line's cost type and unit cost
 onto the invoice so the cost basis isn't lost. A Business or Nonprofit
