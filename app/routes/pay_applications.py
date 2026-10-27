@@ -280,7 +280,9 @@ def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
     payments = (
         db.query(Payment)
         .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
-        .filter(PaymentAllocation.invoice_id == app.invoice_id, Payment.is_voided.is_(False))
+        .filter(
+            PaymentAllocation.invoice_id == app.invoice_id, Payment.is_voided.is_(False)
+        )
         .order_by(Payment.date, Payment.id)
         .all()
     )
@@ -480,7 +482,8 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
 
     deposit = _q(app.deposit_applied)
     moved = any(
-        _q(ln.this_period) != 0 or _q(ln.stored) != prior_stored.get(ln.sov_line_id, _ZERO)
+        _q(ln.this_period) != 0
+        or _q(ln.stored) != prior_stored.get(ln.sov_line_id, _ZERO)
         for ln in app.lines
     )
     # Nothing at all to bill, hold, release, apply or move — refuse rather

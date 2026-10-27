@@ -1071,10 +1071,13 @@ def test_retainage_to_date_is_net_of_releases(
     # Trent's repro: bill 30k, release 1,500, bill 10k. The application, the
     # invoice and account 1150 all agree.
     job, sov = _two_line_job(client, seed_customer.id)
-    rows = lambda tp: [
-        {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
-        {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
-    ]
+
+    def rows(tp):
+        return [
+            {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
+            {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+        ]
+
     a1 = _new_app(client, job["id"])
     assert _bill(client, a1["id"], rows(30000)).status_code == 200
     assert _gl(db_session, "1150") == Decimal("3000.00")
@@ -1148,10 +1151,13 @@ def test_only_the_latest_approved_application_can_be_voided(
     client, db_session, seed_accounts, seed_customer
 ):
     job, sov = _two_line_job(client, seed_customer.id)
-    rows = lambda tp: [
-        {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
-        {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
-    ]
+
+    def rows(tp):
+        return [
+            {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
+            {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+        ]
+
     a1 = _new_app(client, job["id"])
     assert _bill(client, a1["id"], rows(30000)).status_code == 200
     a2 = _new_app(client, job["id"])
@@ -1190,7 +1196,12 @@ def test_tax_toggle_and_tax_rate_saved_on_put(
 
     # a second application with tax off: no tax on the invoice or the app
     a2 = _new_app(client, job["id"])
-    r = _edit(client, a2["id"], lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}], charge_tax=False)
+    r = _edit(
+        client,
+        a2["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+        charge_tax=False,
+    )
     assert r.json()["charge_tax"] is False
     assert r.json()["totals"]["tax_amount"] == 0.0
     r = _approve(client, a2["id"])
@@ -1246,11 +1257,14 @@ def test_pdf_uses_contract_sums_as_of_approval(
 
     job, sov = _two_line_job(client, seed_customer.id)
     app = _new_app(client, job["id"])
-    assert _bill(
-        client,
-        app["id"],
-        [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
-    ).status_code == 200
+    assert (
+        _bill(
+            client,
+            app["id"],
+            [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+        ).status_code
+        == 200
+    )
     jb = db_session.query(Job).get(job["id"])
     jb.contract_amount = Decimal("123456.00")  # a later change order
     db_session.commit()
@@ -1306,11 +1320,14 @@ def test_negative_this_period_or_stored_cannot_go_below_zero(
     )
     assert r.status_code == 422
     # a correction that keeps completed >= 0 is fine
-    assert _bill(
-        client,
-        a1["id"],
-        [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
-    ).status_code == 200
+    assert (
+        _bill(
+            client,
+            a1["id"],
+            [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+        ).status_code
+        == 200
+    )
     a2 = _new_app(client, job["id"])
     r = _edit(
         client,
@@ -1417,7 +1434,10 @@ def test_lien_waiver_wording_follows_the_type(
         ).json()
         row = db_session.get(LienWaiver, w["id"])
         html = render_lien_waiver_html(
-            row, row.payment, db_session.get(Job, row.job_id), get_all_settings(db_session)
+            row,
+            row.payment,
+            db_session.get(Job, row.job_id),
+            get_all_settings(db_session),
         )
         assert title in html
         assert effect in html

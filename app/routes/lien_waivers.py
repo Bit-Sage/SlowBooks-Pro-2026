@@ -62,9 +62,11 @@ def create_lien_waiver(data: LienWaiverCreate, db: Session = Depends(get_db)):
         .first()
     )
     job_id = invoice.job_id if invoice else None
-    app = db.get(PayApplication, invoice.pay_application_id) if (
-        invoice and invoice.pay_application_id
-    ) else None
+    app = (
+        db.get(PayApplication, invoice.pay_application_id)
+        if (invoice and invoice.pay_application_id)
+        else None
+    )
     waiver = LienWaiver(
         payment_id=payment.id,
         job_id=job_id,

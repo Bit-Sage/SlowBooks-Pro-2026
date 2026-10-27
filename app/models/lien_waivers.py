@@ -34,12 +34,17 @@ LIEN_WAIVER_TYPES = (
 class LienWaiver(Base):
     __tablename__ = "lien_waivers"
     __table_args__ = (
-        UniqueConstraint("payment_id", "waiver_type", name="uq_lien_waiver_payment_type"),
+        UniqueConstraint(
+            "payment_id", "waiver_type", name="uq_lien_waiver_payment_type"
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     payment_id = Column(
-        Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("payments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     job_id = Column(Integer, ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     pay_application_id = Column(

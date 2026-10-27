@@ -261,7 +261,9 @@ def retainage_outstanding(db: Session, job_id: int) -> Decimal:
 def retainage_held_to_date(db: Session, job_id: int) -> Decimal:
     """Owner retainage withheld to date, before releases (outstanding +
     released), so held − released reads as what is still outstanding."""
-    return _q(retainage_outstanding(db, job_id) + retainage_released_to_date(db, job_id))
+    return _q(
+        retainage_outstanding(db, job_id) + retainage_released_to_date(db, job_id)
+    )
 
 
 def retainage_released_to_date(db: Session, job_id: int) -> Decimal:
