@@ -162,3 +162,23 @@ def test_plus_minus_and_t_move_the_row_date(browser):
         )
     finally:
         page.close()
+
+
+def test_minus_still_types_a_minus_in_the_amount_boxes(browser):
+    # the key handler takes only date boxes: a money box keeps its - (and +)
+    page = _register_page(browser, [])
+    try:
+        page.focus("#qe-out")
+        page.keyboard.type("-12.5")
+        assert page.input_value("#qe-out") == "-12.5"
+        page.click("text=+ Entry")
+        page.wait_for_selector("#entry-payee")
+        page.focus("#modal-body [name='amount']")
+        page.keyboard.type("-40")
+        assert page.input_value("#modal-body [name='amount']") == "-40"
+        # and the dialog's date box did not move
+        assert (
+            page.input_value("#modal-body [name='date']") == dt.date.today().isoformat()
+        )
+    finally:
+        page.close()
