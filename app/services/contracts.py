@@ -37,10 +37,16 @@ def contract_is_locked(db: Session, job: Job) -> bool:
     order. Until then both edit freely, so a sum typed before the bid (or a
     contingency set after the build) is just an edit.
 
-    Neither exists on this branch yet, so nothing locks. #576 (progress
-    billing) adds the billing condition and #575 (change orders) adds the
-    change-order condition here."""
-    return False
+    A change order counts while it is live: draft, pending, approved or
+    promoted. A void, rejected or superseded one leaves no mark on the sum.
+    #576 (progress billing) adds the billing condition here."""
+    from app.models.change_orders import ChangeOrder
+
+    live = db.query(ChangeOrder.id).filter(
+        ChangeOrder.job_id == job.id,
+        ChangeOrder.status.notin_(("void", "rejected", "superseded")),
+    )
+    return db.query(live.exists()).scalar() or False
 
 
 def sov_from_estimate(estimate: Estimate) -> list[dict]:

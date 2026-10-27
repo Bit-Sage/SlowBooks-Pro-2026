@@ -1344,3 +1344,26 @@ def test_plain_po_edit_cannot_move_a_sub_co_line_to_another_job(
     moved = next(ln for ln in fresh["lines"] if ln["description"] == "Extra")
     assert moved["job_id"] == added["job_id"]
     assert float(fresh["total"]) == 7000
+
+
+def test_a_change_order_locks_the_contract_sum_and_contingency(
+    client, seed_accounts, seed_customer
+):
+    """The sum and contingency edit freely until the job has a change order;
+    from then on they move by change order only (#552, #554). A rejected CO
+    frees them again."""
+    job = _job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    _contract(client, job["id"], contract_type="lump_sum", contract_amount=100000)
+    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+    co = _co(client, job["id"], [LABOR])
+    r = client.put(base, json={"contract_amount": 120000})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "contract_sum_locked"
+    r = client.put(base, json={"contingency_amount": 5000})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "contingency_locked"
+    # the same value is not a change
+    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+    assert client.post(f"/api/change-orders/{co['id']}/submit").status_code == 200
+    r = client.post(f"/api/change-orders/{co['id']}/reject")
+    assert r.status_code == 200, r.text
+    assert client.put(base, json={"contract_amount": 120000}).status_code == 200
