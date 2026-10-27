@@ -8,6 +8,7 @@
 # ============================================================================
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,17 +19,26 @@ from app.database import get_db
 from app.routes._helpers import reject_null_updates
 from app.models.contacts import Customer
 from app.models.cost_codes import CostCode
-from app.models.jobs import Job
+from app.models.trade_packages import TradePackage
+from app.models.jobs import Job, SovLine
 from app.models.transactions import Transaction, TransactionLine
 from app.schemas.job_costing import JobBudgetResponse, JobBudgetSave
 from app.schemas.jobs import (
+    ContractResponse,
+    ContractSummary,
+    ContractTerms,
     JobCreate,
     JobDetailResponse,
     JobResponse,
     JobSummary,
     JobUpdate,
+    SovLineOut,
+    SovSave,
 )
 from app.models.estimates import Estimate
+from app.services.contracts import build_sov, contract_summary, sync_contingency_line
+from app.services.estimating import estimate_totals
+from app.services.accounting import _q
 from app.models.job_costing import JobBudget
 from app.services.job_costing import (
     budget_vs_actual_all_jobs,
@@ -37,6 +47,7 @@ from app.services.job_costing import (
     job_cost_tree,
 )
 from app.services.jobs_service import (
+    commitment_figures,
     committed_cost,
     find_job,
     job_profitability,
@@ -145,8 +156,27 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         }
     )
     summary["committed_cost"] = committed_cost(db, [job_id]).get(job_id, 0.0)
+    # The commitment roll-up rides alongside (#553): the whole commitment and
+    # what has been billed, additive to the remaining figure above.
+    cf = commitment_figures(db, [job_id]).get(job_id, {})
+    summary["committed_total"] = cf.get("committed_total", 0.0)
+    summary["billed_to_date"] = cf.get("billed_to_date", 0.0)
     base = _to_response(job)
-    return JobDetailResponse(**base.model_dump(), summary=JobSummary(**summary))
+    # The contract roll-up rides along, additive (#552); the SPA shows it in
+    # construction mode only, but the summary is harmless for anyone. The cost
+    # and billed figures are the ones profitability already computed, so a
+    # plain job fetch runs no extra cost-tree query.
+    contract = ContractSummary(
+        **contract_summary(
+            db,
+            job,
+            cost=Decimal(str(summary.get("total_costs", 0) or 0)),
+            billed=Decimal(str(summary.get("income", 0) or 0)),
+        )
+    )
+    return JobDetailResponse(
+        **base.model_dump(), summary=JobSummary(**summary), contract=contract
+    )
 
 
 @router.get("/{job_id}/transactions")
@@ -179,6 +209,33 @@ def _budget_response(row: JobBudget) -> JobBudgetResponse:
     return data
 
 
+def _locked_budget_409(db: Session, row: JobBudget):
+    """The 409 a locked budget row gives. There is no unlock: a row an
+    accepted estimate owns is the contract budget, moved only by a new
+    estimate or, later, a change order (#551)."""
+    est = db.get(Estimate, row.estimate_id) if row.estimate_id else None
+    number = est.estimate_number if est else "an accepted estimate"
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "budget_locked",
+            "message": f"Locked by estimate {number}; change it with a change order",
+        },
+    )
+
+
+def _refuse_locked_budget(db: Session, job_id: int) -> None:
+    """Job-wide refusal: re-seeding from an estimate replaces the whole
+    estimate budget, so any locked row blocks it (#551)."""
+    locked = (
+        db.query(JobBudget)
+        .filter(JobBudget.job_id == job_id, JobBudget.locked.is_(True))
+        .first()
+    )
+    if locked is not None:
+        _locked_budget_409(db, locked)
+
+
 @router.get("/{job_id}/budgets", response_model=list[JobBudgetResponse])
 def get_job_budgets(job_id: int, db: Session = Depends(get_db)):
     _get(db, job_id)
@@ -195,22 +252,29 @@ def get_job_budgets(job_id: int, db: Session = Depends(get_db)):
 def save_job_budgets(job_id: int, data: JobBudgetSave, db: Session = Depends(get_db)):
     """Replace the job's MANUAL budget rows with the given set (estimate-
     seeded rows are kept unless the same key is supplied, which then takes
-    over as manual). Zero-amount rows are dropped."""
+    over as manual). Zero-amount rows are dropped. A row an accepted estimate
+    locked (#551) can't be overwritten — only that row's key is refused, so
+    manual rows on other codes still save after acceptance."""
     _get(db, job_id)
     types = cost_type_map(db)
     existing = {
         (r.cost_code_id, r.cost_type): r
         for r in db.query(JobBudget).filter(JobBudget.job_id == job_id).all()
     }
+    locked_keys = {k: r for k, r in existing.items() if r.locked}
     keep: set = set()
     for row in data.rows:
+        key = (row.cost_code_id, row.cost_type)
+        # a locked row's key is refused before anything else — it is the
+        # contract budget, moved only by a change order (#551)
+        if key in locked_keys:
+            _locked_budget_409(db, locked_keys[key])
         if row.cost_type and row.cost_type not in types:
             raise HTTPException(
                 status_code=422, detail=f"Unknown cost type '{row.cost_type}'"
             )
         if row.cost_code_id and not db.get(CostCode, row.cost_code_id):
             raise HTTPException(status_code=404, detail="Cost code not found")
-        key = (row.cost_code_id, row.cost_type)
         if row.amount == 0 and row.revenue_amount == 0:
             continue
         keep.add(key)
@@ -249,6 +313,7 @@ def seed_budget_from_estimate(
     job_id: int, estimate_id: int, db: Session = Depends(get_db)
 ):
     job = _get(db, job_id)
+    _refuse_locked_budget(db, job_id)
     est = db.get(Estimate, estimate_id)
     if not est:
         raise HTTPException(status_code=404, detail="Estimate not found")
@@ -259,6 +324,215 @@ def seed_budget_from_estimate(
     budgets_from_estimate(db, job, est)
     db.commit()
     return get_job_budgets(job_id, db)
+
+
+# ---------------------------------------------------------------------------
+# The contract on the job (#552) — terms, the summary and the schedule of
+# values. Bookkeeper-writable, like the rest of jobs; nothing here is locked
+# (change-order revisions are #554).
+# ---------------------------------------------------------------------------
+
+
+def _sov_responses(job: Job) -> list[SovLineOut]:
+    out = []
+    for r in job.sov_lines:
+        data = SovLineOut.model_validate(r)
+        data.trade_package_name = r.trade_package.name if r.trade_package else None
+        data.cost_code_label = r.cost_code.label if r.cost_code else None
+        out.append(data)
+    return out
+
+
+def _contract_response(db: Session, job: Job) -> ContractResponse:
+    return ContractResponse(
+        contract=ContractSummary(**contract_summary(db, job)),
+        sov=_sov_responses(job),
+    )
+
+
+@router.get("/{job_id}/contract", response_model=ContractResponse)
+def get_contract(job_id: int, db: Session = Depends(get_db)):
+    job = _get(db, job_id)
+    return _contract_response(db, job)
+
+
+def _stamp_contract_defaults(job: Job) -> None:
+    """The one place the contract sum's derived fields are set, shared by the
+    contract PUT and the plain job form: a GMP's cap defaults to the contract
+    sum, and original_contract_amount is stamped the first time a sum is set
+    with a type and never overwritten after. #554's revisions move
+    contract_amount, not the original."""
+    if (
+        job.contract_type == "gmp"
+        and job.cap_amount is None
+        and job.contract_amount is not None
+    ):
+        job.cap_amount = job.contract_amount
+    if (
+        job.original_contract_amount is None
+        and job.contract_amount is not None
+        and job.contract_type is not None
+    ):
+        job.original_contract_amount = job.contract_amount
+
+
+_AMOUNT_FIELDS = ("contract_amount", "fee_amount", "cap_amount", "contingency_amount")
+
+
+def _refuse_sum_change(job: Job, new_amount) -> None:
+    """Once the original is stamped the contract sum is locked: only an
+    approved change order (#554) moves it. Re-sending the same sum is fine."""
+    if job.original_contract_amount is None:
+        return
+    if new_amount is not None and _q(new_amount) == _q(job.contract_amount):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "contract_sum_locked",
+            "message": "The contract sum is locked once the original is set; change it with a change order",
+        },
+    )
+
+
+@router.put("/{job_id}/contract", response_model=ContractResponse)
+def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)):
+    """Set the job's contract terms. A field left out is unchanged; a field
+    sent as null clears it. A GMP needs a contract amount (the guaranteed
+    maximum the cap defaults to). The SOV's contingency line is kept in step
+    with the contingency term."""
+    job = _get(db, job_id)
+    changes = data.model_dump(exclude_unset=True)
+    for key in _AMOUNT_FIELDS:
+        if changes.get(key) is not None:
+            changes[key] = _q(changes[key])
+    if "contract_amount" in changes:
+        _refuse_sum_change(job, changes["contract_amount"])
+    for key, value in changes.items():
+        setattr(job, key, value)
+    if (
+        job.contract_type == "gmp"
+        and job.cap_amount is None
+        and job.contract_amount is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="A GMP needs a contract amount — its guaranteed maximum.",
+        )
+    _stamp_contract_defaults(job)
+    if "contingency_amount" in changes:
+        sync_contingency_line(db, job)
+    db.commit()
+    db.refresh(job)
+    return _contract_response(db, job)
+
+
+@router.post(
+    "/{job_id}/contract/from-estimate/{estimate_id}",
+    response_model=ContractResponse,
+)
+def contract_from_estimate(
+    job_id: int, estimate_id: int, db: Session = Depends(get_db)
+):
+    """Set the contract from an accepted estimate and build its schedule of
+    values. Defaults the type to lump sum when unset, and the contract sum
+    (and the original) to the estimate's bid total when the job has none
+    yet. Replaces any existing SOV lines."""
+    job = _get(db, job_id)
+    est = db.get(Estimate, estimate_id)
+    if not est:
+        raise HTTPException(status_code=404, detail="Estimate not found")
+    # build_sov re-checks these, but check first so a bad request mutates
+    # nothing on the job. Accepted is checked before the job match, so an
+    # estimate not yet on any job reads as "accept it first".
+    from app.models.estimates import EstimateStatus
+
+    if est.status != EstimateStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "estimate_not_accepted",
+                "message": "Accept the estimate before building the schedule of values.",
+            },
+        )
+    if est.job_id != job.id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "estimate_job_mismatch",
+                "message": "That estimate is not on this job.",
+            },
+        )
+    job.contract_estimate_id = est.id
+    if job.contract_type is None:
+        job.contract_type = "lump_sum"
+    # The contract sum is the estimate's pre-tax bid plus the owner
+    # contingency carried inside it (the SOV adds a contingency line), so a
+    # freshly built schedule balances. An existing sum is left alone; a sum
+    # cleared after the original was stamped goes back to that original
+    # rather than earning a new one.
+    if job.contract_amount is None:
+        if job.original_contract_amount is not None:
+            job.contract_amount = job.original_contract_amount
+        else:
+            bid = _q(estimate_totals(est)["bid_total"])
+            contingency = (
+                _q(job.contingency_amount) if job.contingency_amount else Decimal("0")
+            )
+            job.contract_amount = bid + contingency
+    # A sum already on the job (the job form) still gets its original stamped.
+    _stamp_contract_defaults(job)
+    # A GMP/cost-plus fee % defaults from the estimate's fee markup, so the
+    # fee tile and the SOV fee line agree. Only when the job has none.
+    if not job.fee_pct and est.fee_pct:
+        job.fee_pct = est.fee_pct
+    build_sov(db, job, est, replace=True)
+    db.commit()
+    db.refresh(job)
+    return _contract_response(db, job)
+
+
+@router.put("/{job_id}/sov", response_model=ContractSummary)
+def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
+    """Replace the schedule of values with the given lines, renumbered 1..n
+    in the order sent. Returns the contract summary (whose sov_balance
+    shows whether the SOV balances to the contract sum)."""
+    job = _get(db, job_id)
+    for line in data.lines:
+        if line.trade_package_id and not db.get(TradePackage, line.trade_package_id):
+            raise HTTPException(status_code=404, detail="Trade package not found")
+        if line.cost_code_id and not db.get(CostCode, line.cost_code_id):
+            raise HTTPException(status_code=404, detail="Cost code not found")
+    db.query(SovLine).filter(SovLine.job_id == job.id).delete()
+    db.flush()
+    for n, line in enumerate(data.lines, start=1):
+        item_no = (line.item_no or "").strip() or f"{n:02d}"
+        db.add(
+            SovLine(
+                job_id=job.id,
+                line_no=n,
+                item_no=item_no,
+                description=line.description,
+                trade_package_id=line.trade_package_id,
+                cost_code_id=line.cost_code_id,
+                kind=line.kind,
+                scheduled_value=line.scheduled_value,
+            )
+        )
+    db.commit()
+    db.refresh(job)
+    return ContractSummary(**contract_summary(db, job))
+
+
+@router.get("/{job_id}/buyout")
+def get_buyout(job_id: int, db: Session = Depends(get_db)):
+    """Bid vs buyout per trade package (#553): the bid cost from the accepted
+    estimate, what has been bought on the job, the variance, and the
+    commitments behind each package with their compliance flags."""
+    from app.services.buyout import job_buyout
+
+    job = _get(db, job_id)
+    return job_buyout(db, job)
 
 
 @router.post("", response_model=JobResponse, status_code=201)
@@ -287,8 +561,17 @@ def update_job(job_id: int, data: JobUpdate, db: Session = Depends(get_db)):
         refuse_moving_a_carried_job(db, job)
     if "name" in changes or "customer_id" in changes:
         _check_name_clash(db, customer_id, changes.get("name", job.name), job.id)
+    if "contract_amount" in changes:
+        if changes["contract_amount"] is not None:
+            changes["contract_amount"] = _q(changes["contract_amount"])
+        _refuse_sum_change(job, changes["contract_amount"])
     for key, value in changes.items():
         setattr(job, key, value)
+    # The job form's plain contract amount runs through the same stamp as the
+    # Contract tab (#552): set the amount with a type already on the job and
+    # the original is stamped once here too.
+    if "contract_amount" in changes:
+        _stamp_contract_defaults(job)
     db.commit()
     db.refresh(job)
     return _to_response(_get(db, job.id))

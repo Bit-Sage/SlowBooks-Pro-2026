@@ -42,6 +42,17 @@ class PurchaseOrder(Base):
     expected_date = Column(Date, nullable=True)
     ship_to = Column(Text, nullable=True)
 
+    # Construction (#553): a commitment is a purchase order. In construction
+    # mode a PO is either a plain "po" or a "subcontract"; its lines are its
+    # schedule of values, and it bills in parts. The package it is bought
+    # against, the retainage held on every bill from it, and the scope.
+    commitment_type = Column(String(12), nullable=False, default="po")
+    trade_package_id = Column(
+        Integer, ForeignKey("trade_packages.id", ondelete="SET NULL"), nullable=True
+    )
+    retainage_pct = Column(Numeric(5, 2), nullable=True)
+    scope_notes = Column(Text, nullable=True)
+
     subtotal = Column(Numeric(15, 2), default=0)
     tax_rate = Column(Numeric(7, 6), default=0)  # a fraction: 8.875% is 0.08875
     tax_amount = Column(Numeric(15, 2), default=0)
@@ -58,6 +69,7 @@ class PurchaseOrder(Base):
 
     vendor = relationship("Vendor", backref="purchase_orders")
     job = relationship("Job")
+    trade_package = relationship("TradePackage")
     lines = relationship(
         "PurchaseOrderLine",
         back_populates="purchase_order",
@@ -77,7 +89,11 @@ class PurchaseOrderLine(Base):
     description = Column(Text, nullable=True)
     quantity = Column(Numeric(12, 4), default=1)
     rate = Column(Numeric(17, 4), default=0)  # unit price, to 4 places
-    amount = Column(Numeric(15, 2), default=0)
+    amount = Column(Numeric(15, 2), default=0)  # the line's scheduled value
+    # Construction (#553): how much of this line has been billed so far.
+    # remaining = amount - billed_amount. received_qty is left for the
+    # goods-receipt path; billing tracks dollars.
+    billed_amount = Column(Numeric(15, 2), nullable=False, default=0)
     received_qty = Column(Numeric(12, 4), default=0)
     # Per-line job; NULL falls back to the document header
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)

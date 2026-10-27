@@ -294,6 +294,119 @@ no COI-expiry warning in Pay Bills, and nothing references a trade package
 yet (bids and commitments are later steps). A prompt to collect a Sub's W-9
 is a follow-up. See [docs/contractor-mode.md](docs/contractor-mode.md).
 
+**Construction estimating** (#551, @ContractorKeith). The construction
+estimate becomes a commercial bid. Its lines now belong to the trade packages
+(#550) a general contractor awards, each line is a plain base line, an
+**allowance**, an add/deduct **alternate**, or a **unit price** (a rate card,
+not part of the total), and each carries a unit of measure. The **lines stay
+at cost** — a base or alternate line with a unit cost is priced at cost, one
+with no unit cost is priced direct and never marked up — and the four markups
+are their own figures **under the subtotal**, **compounding in order**:
+general conditions, then insurance, then fee, then bond, each figured on the
+running total before it. On a $100,000 cost of work at 8 / 1.5 / 5 / 1 percent
+that is $8,000 GC, $1,620 insurance, $5,481 fee and $1,151.01 bond, a
+**$116,252.01 bid total**. The bid total is pre-tax; tax covers the lines and
+the markups together (nothing when the customer is exempt), and the Total is
+subtotal + markups + tax. An alternate with a unit cost is shown at its
+marked-up price, and accepting it adds its cost to the markup base; an
+allowance budgets its amount as cost. The customer PDF groups the lines by
+package with the section code, then the allowances, alternates (marked-up
+price) and unit prices in their own blocks, and foots Subtotal, a row per
+non-zero markup, Bid total, Tax and Total. Converting carries the markups onto
+the invoice as their own lines, so it foots to the bid.
+
+The GC decides where markup goes: **markup on allowances is off by default**,
+a per-estimate flag the form, view, totals panel and PDF show as On or Off;
+on, the allowances join the markup base. **General conditions are both**: the
+GC percent stays markup revenue and its amount is also budgeted as a cost (a
+"GC" General Conditions budget row) when the estimate is accepted. A code
+budgeted by hand keeps its own share of the markups instead of pushing it onto
+the other rows.
+
+Accepting an estimate **locks the job budget to it**: the estimate seeds the
+budget from the bought scope (a row you edited by hand still wins), and those
+rows are then locked — the lock is per row, so a manual budget row on a code
+the estimate never touched still saves afterward, but a locked row's own key,
+or re-seeding the whole budget from another estimate, is refused. There is no
+unlock: a new estimate or, later, a change order moves a locked budget, and a
+settled estimate refuses edits to its lines, markups, customer, job, tax and
+status (moving it back to pending would re-seed the locked budget).
+Converting an accepted estimate to an invoice drops the unit-price lines and
+any un-accepted alternate, and now carries each line's cost type and unit cost
+onto the invoice so the cost basis isn't lost. A Business or Nonprofit
+company's estimate form and PDF are exactly as they were. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**The contract on the job** (#552, @ContractorKeith). Review fixes: the
+contract sum is locked once the original is stamped (409 `contract_sum_locked`
+from the Contract tab and the job form; only a change order, #554, moves it);
+building from an estimate stamps the original even when the job form set the
+sum first, and never gives a cleared sum a new one; contract amounts are
+rounded to the cent and the fee percent is limited to 0-100; a fixed fee shows
+no `fee_period`; and building defaults the job's fee percent from the
+estimate's when the job has none. A construction job can
+now carry a contract — a **lump sum**, a **GMP** (guaranteed maximum price) or
+**cost-plus** — with a fee (a percent of cost or a fixed amount, the fixed fee
+winning), a cap (the GMP maximum, or a cost-plus not-to-exceed), owner
+contingency and a retainage percent held on each billing. A new **Contract**
+tab on the job (construction mode only) shows the terms, summary tiles
+(contract sum, changes, fee, cost to date, cap remaining, contingency
+remaining, billed to date and %) and the owner's **schedule of values** — the
+contract sum broken into billable lines (item no, description, package,
+section, kind, scheduled value), which must balance to the contract sum; the
+balance stays highlighted until it does. The contract sum is **pre-tax** —
+tax is added on each invoice. **Build from accepted estimate**
+(`POST /api/jobs/{id}/contract/from-estimate/{estimate_id}`) lays the schedule
+out from the estimate — one work line per trade package (its base lines plus
+any accepted alternates, **at cost**), an allowance line per allowance, one
+line per non-zero markup (general conditions, insurance, fee, bond), and a
+contingency line when one is set — and defaults the contract
+sum to the estimate's pre-tax bid plus the contingency, so a freshly built
+schedule balances to zero. `GET`/`PUT /api/jobs/{id}/contract` read and set the
+terms, `PUT /api/jobs/{id}/sov` edits the schedule (a line may be negative — a
+deduct alternate nets the sum down), and the Job Profitability report gains the
+contract type and, for cost-plus/GMP, the period fee (`fee_period`, the fee on
+that period's cost — the job-to-date contract fee lives on the contract
+summary). The original contract amount is stamped once and kept while the
+current sum moves. Later issues move the contract with change orders (#554)
+and bill it as owner pay applications with retainage held and released (#555).
+A Business or Nonprofit job is exactly as it was. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Buyout and commitments** (#553, @ContractorKeith). A commitment is a
+purchase order: in construction mode a PO is either a **purchase order** or a
+**subcontract**, its lines are its schedule of values, and it bills in parts.
+The PO form grows a Type select, a Package, a Retainage % and scope notes
+(construction only; a business company's PO is unchanged), and a subcontract
+to a vendor not marked a Sub is allowed with a one-line note that its license
+and insurance aren't tracked. `POST /api/purchase-orders/{id}/convert-to-bill`
+now takes an optional `lines: [{line_id, amount}]` so a commitment bills a
+period at a time: each line tracks billed-to-date, the PO goes **partial**
+while anything remains and **closed** when fully billed. A commitment with a
+**retainage %** holds that percent of each bill's subtotal on **Retainage
+Payable** (2050) instead of A/P, so Pay Bills pays the net; a hand-entered bill
+can hold retainage the same way. Committed cost now means the **remaining**
+(unbilled) open commitment, with **committed total** and **billed to date**
+alongside it in the job overview and cost tree. A new **Buyout** tab on the job
+(and `GET /api/jobs/{id}/buyout`) pairs each trade package's bid against what
+has been bought — variance, committed-remaining, billed-to-date and the
+commitments behind it. Bills and Pay Bills carry each Sub vendor's compliance
+(`vendor_compliance`: W-9 on file, COI expiry); a missing W-9 or COI warns,
+while a Sub whose COI has **expired** is not paid without an override (Pay Bills
+confirms and says why; `coi_override` on `POST /api/bill-payments`, recorded on
+the payment). Pay Bills also offers a per-bill lien-waiver status saved through
+`PUT /api/bills/{id}`, which works on closed-period bills since it posts
+nothing. The To Bill dialog takes a **bill date** (default today; `date` on
+`convert-to-bill`) used for the bill, its journal and the closing-date check,
+editing a converted bill's lines keeps the commitment link and re-tallies
+billed-to-date, and the 2050 retainage line carries the job. Editing a converted bill's lines re-computes its retainage at the commitment's rate (an explicit `retainage_held` still wins), and a fully billed commitment refuses a higher amount with a 409 pointing to a sub change order.
+Sub change orders (#554), progress billing with retainage released (#555) and
+the buyout report / job cost by vendor (#556) build on this. A Business or
+Nonprofit company sees none of it. One behaviour change for everyone: a $0
+(description-only) PO line is no longer copied onto the bill a PO becomes —
+the converted bill carries only the lines with money on them. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every

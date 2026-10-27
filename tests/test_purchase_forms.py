@@ -69,7 +69,7 @@ def test_to_bill_asks_for_an_account_on_every_line_that_needs_one():
     assert "track_inventory" in dialog
     send = _method(js, "async doConvert(id)")
     assert "line_id:" in send and "account_id:" in send
-    assert "/convert-to-bill`, { lines }" in send
+    assert "/convert-to-bill`, { lines, date }" in send
 
 
 def test_the_po_vendor_picker_hides_inactive_vendors_but_keeps_the_pos_own():

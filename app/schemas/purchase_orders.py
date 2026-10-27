@@ -15,6 +15,9 @@ from app.schemas.invoices import RateOut
 
 
 class POLineCreate(StrictModel):
+    # An existing line's id, sent on an update so its billed-to-date and the
+    # bill links to it survive the edit (#553). Absent = a new line.
+    id: Optional[int] = None
     item_id: Optional[int] = None
     description: Optional[str] = None
     quantity: float = 1
@@ -38,7 +41,8 @@ class POLineResponse(BaseModel):
     description: Optional[str] = None
     quantity: Decimal = Decimal("0")
     rate: RateOut = Decimal("0")
-    amount: Decimal = Decimal("0")
+    amount: Decimal = Decimal("0")  # scheduled value of the line
+    billed_amount: Decimal = Decimal("0")  # billed so far (#553)
     received_qty: Decimal = Decimal("0")
     job_id: Optional[int] = None
     cost_code_id: Optional[int] = None
@@ -51,6 +55,26 @@ class POLineResponse(BaseModel):
         return quantity_text(value)
 
 
+COMMITMENT_TYPES = ("po", "subcontract")
+
+
+def _check_commitment_type(v):
+    if v is None:
+        return v
+    v = v.strip().lower()
+    if v not in COMMITMENT_TYPES:
+        raise ValueError(
+            f"commitment_type must be one of {', '.join(COMMITMENT_TYPES)}"
+        )
+    return v
+
+
+def _check_retainage_pct(v):
+    if v is not None and not (0 <= v <= 100):
+        raise ValueError("retainage_pct must be between 0 and 100")
+    return v
+
+
 class POCreate(StrictModel):
     vendor_id: int
     date: dt_date
@@ -59,7 +83,16 @@ class POCreate(StrictModel):
     tax_rate: TaxRateFloat = 0
     notes: Optional[str] = None
     job_id: Optional[int] = None
+    # Construction commitment fields (#553); every company accepts them, and
+    # the defaults keep a plain PO exactly as it was.
+    commitment_type: str = "po"
+    trade_package_id: Optional[int] = None
+    retainage_pct: Optional[Decimal] = None
+    scope_notes: Optional[str] = None
     lines: list[POLineCreate] = []
+
+    _ctype = field_validator("commitment_type")(_check_commitment_type)
+    _ret = field_validator("retainage_pct")(_check_retainage_pct)
 
     @field_validator("lines")
     @classmethod
@@ -78,20 +111,34 @@ class POUpdate(StrictModel):
     tax_rate: Optional[TaxRateFloat] = None
     notes: Optional[str] = None
     job_id: Optional[int] = None
+    commitment_type: Optional[str] = None
+    trade_package_id: Optional[int] = None
+    retainage_pct: Optional[Decimal] = None
+    scope_notes: Optional[str] = None
     lines: Optional[list[POLineCreate]] = None
+
+    _ctype = field_validator("commitment_type")(_check_commitment_type)
+    _ret = field_validator("retainage_pct")(_check_retainage_pct)
 
 
 class POConvertLineAccount(StrictModel):
     line_id: int  # a line of the purchase order being converted
-    account_id: int  # where that line posts on the bill
+    account_id: Optional[int] = None  # where that line posts on the bill
+    # This period's amount for the line (#553 partial billing). None/absent =
+    # bill the line's full remaining (amount - billed_amount).
+    amount: Optional[Decimal] = None
 
 
 class POConvertToBill(StrictModel):
-    """The To Bill dialog's choices: an account for each line that needs
-    one. Lines left out post to their item's expense account, else the
-    vendor's default expense account."""
+    """The To Bill dialog's choices: an account for each line that needs one,
+    and optionally the amount to bill this period (partial billing, #553).
+    Lines left out post to their item's expense account, else the vendor's
+    default, and bill their full remaining."""
 
     lines: list[POConvertLineAccount] = []
+    # The bill's date (the dialog defaults it to today); the PO's own date
+    # when left out.
+    date: Optional[dt_date] = None
 
 
 class POResponse(BaseModel):
@@ -104,6 +151,11 @@ class POResponse(BaseModel):
     date: dt_date
     expected_date: Optional[dt_date] = None
     ship_to: Optional[str] = None
+    commitment_type: str = "po"
+    trade_package_id: Optional[int] = None
+    trade_package_name: Optional[str] = None
+    retainage_pct: Optional[Decimal] = None
+    scope_notes: Optional[str] = None
     subtotal: Decimal = Decimal("0")
     tax_rate: TaxRateOut = Decimal("0")
     tax_amount: Decimal = Decimal("0")

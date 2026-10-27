@@ -19,6 +19,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    false,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -62,6 +63,12 @@ class Bill(Base):
     total = Column(Numeric(15, 2), default=0)
     amount_paid = Column(Numeric(15, 2), default=0)
     balance_due = Column(Numeric(15, 2), default=0)
+
+    # Construction (#553): retainage held back on this bill (credited to
+    # Retainage Payable, 2050, instead of A/P), and the sub's lien-waiver
+    # status for the period. Retainage release is #555.
+    retainage_held = Column(Numeric(15, 2), nullable=False, default=0)
+    lien_waiver_status = Column(String(16), nullable=True)
 
     notes = Column(Text, nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
@@ -112,6 +119,13 @@ class BillLine(Base):
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
     # Per-line cost type; NULL falls back to the cost code's default.
     cost_type = Column(String(20), nullable=True)
+    # Construction (#553): the commitment line this bill line draws on, so
+    # partial billing can tally billed-to-date per schedule-of-values line.
+    purchase_order_line_id = Column(
+        Integer,
+        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     function = Column(String(20), nullable=True)  # nonprofit function
     # Cost billable to the job's customer; set when it is pulled onto an invoice
     is_billable = Column(Boolean, nullable=False, default=False)
@@ -141,6 +155,12 @@ class BillPayment(Base):
     exchange_rate = Column(Numeric(18, 8), nullable=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     is_voided = Column(Boolean, default=False, nullable=False)
+    # Construction (#553): paid to a Sub whose certificate of insurance had
+    # expired, by explicit override; the note says which certificate.
+    coi_override = Column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    coi_override_note = Column(String(200), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

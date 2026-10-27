@@ -1762,6 +1762,38 @@ const CostTypes = {
     },
 };
 
+// ---------------------------------------------------------------------------
+// Trade packages — the bid packages a general contractor awards (#551), chosen
+// per LINE on a construction estimate. Same shape as CostCodes; shown in
+// construction mode only. Blank groups a line under "Unassigned".
+// ---------------------------------------------------------------------------
+const TradePackages = {
+    _list: null,
+    async load() {
+        try { TradePackages._list = await API.get('/trade-packages'); } catch (e) { TradePackages._list = []; }
+        return TradePackages._list;
+    },
+    // construction mode only, and only once some package exists
+    any() { return Terms.isConstruction() && !!(TradePackages._list && TradePackages._list.length); },
+    name(id) {
+        const p = (TradePackages._list || []).find(p => p.id === id);
+        return p ? p.name : '';
+    },
+    optionsHtml(selectedId) {
+        return '<option value="">Unassigned</option>' + (TradePackages._list || []).map(p =>
+            `<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+    },
+    // <td> for a line row, or '' outside construction mode
+    cellHtml(cls, selectedId) {
+        return TradePackages.any() ? `<td><select class="${cls}">${TradePackages.optionsHtml(selectedId)}</select></td>` : '';
+    },
+    headHtml(label = 'Package') { return TradePackages.any() ? `<th scope="col">${label}</th>` : ''; },
+    fromRow(row, cls) {
+        const v = row.querySelector(`.${cls}`)?.value;
+        return v ? parseInt(v) : null;
+    },
+};
+
 // Normalize a form's job_id string to int-or-null for the API payload.
 function jobIdFromForm(form) {
     const v = form.job_id ? form.job_id.value : '';
