@@ -1216,6 +1216,12 @@ const JobsPage = {
     // period / stored / retainage, with a release and a deposit applied.
     // Approving an application creates the invoice; voiding reverses it.
     PA_STATUS_LABELS: { draft: 'Draft', submitted: 'Submitted', approved: 'Approved', void: 'Void' },
+    WAIVER_TYPES: {
+        conditional_progress: 'Conditional progress',
+        unconditional_progress: 'Unconditional progress',
+        conditional_final: 'Conditional final',
+        unconditional_final: 'Unconditional final',
+    },
     LIEN_WAIVERS: { not_required: 'Not required', pending: 'Pending', conditional: 'Conditional', unconditional: 'Unconditional' },
 
     async payAppsHtml() {
@@ -1272,6 +1278,7 @@ const JobsPage = {
         if (open) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paApprove(${id})">Approve</button>`);
         if (a.status === 'approved') parts.push(`<button class="btn btn-sm btn-danger" data-destructive onclick="JobsPage.paVoid(${id})">Void</button>`);
         parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/pay-applications/${id}/pdf','_blank')">PDF</button>`);
+        if (a.status === 'approved' && a.invoice_id) parts.push(`<button class="btn btn-sm btn-secondary" onclick="JobsPage.paWaivers(${id})">Waivers</button>`);
         return parts.join(' ');
     },
 
@@ -1314,6 +1321,9 @@ const JobsPage = {
             <div class="form-grid" style="margin-top:10px">
                 <div class="form-group"><label>Period to</label><input id="pa-period" ${d} type="date" value="${a.period_to || ''}"></div>
                 <div class="form-group"><label>Retainage %</label><input id="pa-pct" ${d} type="number" step="0.01" min="0" max="100" value="${a.retainage_pct ?? ''}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Sales tax</label>
+                    <label style="font-weight:normal"><input id="pa-tax-on" ${d} type="checkbox" ${a.charge_tax !== false ? 'checked' : ''} ${a.tax_exempt ? 'disabled' : ''} onchange="JobsPage.paRecalc()"> Charge tax${a.tax_exempt ? ' (owner is tax-exempt)' : ''}</label></div>
+                <div class="form-group"><label>Tax rate %</label><input id="pa-tax-rate" ${d} type="number" step="0.0001" min="0" value="${Math.round(Number(a.tax_rate || 0) * 1000000) / 10000}" oninput="JobsPage.paRecalc()"></div>
                 <div class="form-group"><label>Release retainage</label><input id="pa-release" ${d} type="number" step="0.01" min="0" value="${a.release_retainage ?? 0}" oninput="JobsPage.paRecalc()"></div>
                 <div class="form-group"><label>Deposit applied <span style="color:var(--text-muted)">(${formatCurrency(a.unapplied_deposits)} unapplied)</span></label>
                     <input id="pa-deposit" ${d} type="number" step="0.01" min="0" value="${a.deposit_applied ?? 0}" oninput="JobsPage.paRecalc()"></div>
@@ -1378,6 +1388,7 @@ const JobsPage = {
             + tile('Retainage to date', t.retainage_to_date)
             + tile('Total earned less retainage', t.total_earned_less_retainage)
             + tile('Less previous payment applications', t.previous_applications)
+            + (Number(t.tax_amount) ? tile('Sales tax', t.tax_amount) : '')
             + tile('Current payment due', t.current_due)
             + tile('Net due', t.net_due);
     },
@@ -1409,8 +1420,17 @@ const JobsPage = {
         const prevReleased = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_released) || 0;
         retainage = Math.round((retainage - prevReleased - release) * 100) / 100;
         const earnedLess = completed - retainage;
-        const currentDue = Math.round((earnedLess - prevCert) * 100) / 100;
+        // Tax on what this application bills (completed less the prior
+        // application's completed), when tax is on and the owner is taxable.
+        const prior = (JobsPage._paEditing && JobsPage._paEditing.totals) || {};
+        const priorBilled = (prior.completed_to_date || 0) - (prior.billed_this_period || 0);
+        const taxOn = $('#pa-tax-on') ? $('#pa-tax-on').checked : false;
+        const taxRate = Number(($('#pa-tax-rate') ? $('#pa-tax-rate').value : 0) || 0) / 100;
+        const exempt = !!(JobsPage._paEditing && JobsPage._paEditing.tax_exempt);
+        const tax = (taxOn && !exempt) ? Math.round((completed - priorBilled) * taxRate * 100) / 100 : 0;
+        const currentDue = Math.round((earnedLess - prevCert + tax) * 100) / 100;
         const totals = {
+            tax_amount: tax,
             completed_to_date: completed,
             retainage_to_date: retainage,
             total_earned_less_retainage: earnedLess,
@@ -1429,6 +1449,8 @@ const JobsPage = {
             retainage_pct: num('#pa-pct'),
             release_retainage: num('#pa-release') || 0,
             deposit_applied: num('#pa-deposit') || 0,
+            charge_tax: $('#pa-tax-on') ? $('#pa-tax-on').checked : true,
+            tax_rate: (num('#pa-tax-rate') || 0) / 100,
             lien_waiver_status: ($('#pa-lien') && $('#pa-lien').value) || null,
             lines: $$('#pa-body .pa-line').map(tr => ({
                 sov_line_id: parseInt(tr.dataset.sov),
@@ -1464,6 +1486,41 @@ const JobsPage = {
             await API.post(`/pay-applications/${id}/approve`, {});
             toast('Pay application approved — invoice created');
             await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Lien waivers (#555): one per payment and type, made here and printed.
+    paWaiversHtml(payments) {
+        const m = JobsPage.money;
+        const rows = (payments || []).map(p => {
+            const cells = Object.entries(JobsPage.WAIVER_TYPES).map(([type, label]) => {
+                const w = (p.waivers || []).find(x => x.waiver_type === type);
+                return w
+                    ? `<td><button class="btn btn-sm btn-secondary" onclick="window.open('/api/lien-waivers/${w.id}/pdf','_blank')">${label} PDF</button></td>`
+                    : `<td><button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paMakeWaiver(${p.id}, '${type}')">Make ${label.toLowerCase()}</button></td>`;
+            }).join('');
+            return `<tr><td>${escapeHtml(p.date || '')}</td><td class="amount">${m(p.amount)}</td>${cells}</tr>`;
+        }).join('');
+        return `<table class="data-table" style="font-size:12px"><thead><tr>
+                <th scope="col">Payment</th><th scope="col" class="amount">Amount</th>
+                ${Object.values(JobsPage.WAIVER_TYPES).map(l => `<th scope="col">${l}</th>`).join('')}
+            </tr></thead><tbody>${rows || '<tr><td colspan="6" style="color:var(--text-muted)">No payments on this application\'s invoice yet. Record the payment, then make its waivers here.</td></tr>'}</tbody></table>`;
+    },
+
+    async paWaivers(id) {
+        try {
+            const payments = await API.get(`/pay-applications/${id}/payments`);
+            JobsPage._paWaiverApp = id;
+            openModal('Lien waivers', JobsPage.paWaiversHtml(payments));
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paMakeWaiver(paymentId, type) {
+        try {
+            const w = await API.post('/lien-waivers', { payment_id: paymentId, waiver_type: type });
+            toast('Lien waiver made');
+            await JobsPage.paWaivers(JobsPage._paWaiverApp);
+            window.open(`/api/lien-waivers/${w.id}/pdf`, '_blank');
         } catch (err) { toast(err.message, 'error'); }
     },
 

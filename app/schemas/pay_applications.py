@@ -43,6 +43,7 @@ class PayApplicationUpdate(StrictModel):
     period_to: Optional[dt_date] = None
     retainage_pct: Optional[Decimal] = None
     tax_rate: Optional[Decimal] = None
+    charge_tax: Optional[bool] = None
     release_retainage: Optional[Decimal] = None
     deposit_applied: Optional[Decimal] = None
     lien_waiver_status: Optional[str] = None
@@ -95,6 +96,9 @@ class PayApplicationOut(BaseModel):
     status: str
     retainage_pct: Optional[Decimal] = None
     tax_rate: Decimal = Decimal("0")
+    charge_tax: bool = True
+    # The owner is tax-exempt, so no tax however the toggle stands.
+    tax_exempt: bool = False
     release_retainage: Decimal = Decimal("0")
     deposit_applied: Decimal = Decimal("0")
     lien_waiver_status: Optional[str] = None

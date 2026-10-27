@@ -132,3 +132,24 @@ test('the invoice view shows the retainage lines', () => {
     assert.match(inv, /Retainage released/);
     assert.match(inv, /Current payment due/);
 });
+
+test('the application form carries the tax toggle and the waivers screen lists each type', () => {
+    const page = jobsContext(true).JobsPage;
+    const form = page.paFormHtml({
+        id: 4, number: 'PA-1-02', status: 'draft', lines: [], totals: {}, tax_rate: 0.08,
+        charge_tax: true, retainage_pct: 10, unapplied_deposits: 0,
+    });
+    assert.match(form, /id="pa-tax-on"[^>]*checked/);
+    assert.match(form, /id="pa-tax-rate"[^>]*value="8"/);
+    const html = page.paWaiversHtml([
+        { id: 5, date: '2026-06-15', amount: 5000, waivers: [{ id: 9, waiver_type: 'conditional_progress' }] },
+    ]);
+    assert.match(html, /lien-waivers\/9\/pdf/);
+    assert.match(html, /paMakeWaiver\(5, 'unconditional_final'\)/);
+});
+
+test('an approved application offers its waivers', () => {
+    const page = jobsContext(true).JobsPage;
+    assert.match(page.paRowActions({ id: 3, status: 'approved', invoice_id: 9 }), /paWaivers\(3\)/);
+    assert.doesNotMatch(page.paRowActions({ id: 3, status: 'draft' }), /paWaivers/);
+});

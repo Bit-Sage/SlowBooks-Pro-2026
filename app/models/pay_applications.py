@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     UniqueConstraint,
+    Boolean,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -51,6 +52,14 @@ class PayApplication(Base):
     # Sales-tax rate (a fraction, like the invoice's), defaulted from the job's
     # accepted estimate at creation; approve taxes the billed work with it.
     tax_rate = Column(Numeric(7, 4), nullable=False, default=0)
+    # Tax is on by default; an application turns it off with charge_tax=False
+    # (a tax-exempt job, or work taxed elsewhere). A tax-exempt customer is
+    # never taxed either way.
+    charge_tax = Column(Boolean, nullable=False, default=True)
+    # Contract sums as of approval, so a reprinted PDF does not pick up change
+    # orders approved later. Null until approved (a draft reads the live job).
+    contract_sum_original = Column(Numeric(15, 2), nullable=True)
+    contract_sum_to_date = Column(Numeric(15, 2), nullable=True)
     # Retainage previously held that this application bills back (<= held).
     release_retainage = Column(Numeric(15, 2), nullable=False, default=0)
     # Owner deposit applied to this application's current due.

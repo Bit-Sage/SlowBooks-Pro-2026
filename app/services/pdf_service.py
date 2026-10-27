@@ -321,8 +321,15 @@ def render_pay_application_html(app, pa, job, company_settings: dict) -> str:
     def f(v):
         return float(v) if v is not None else 0.0
 
-    original = f(job.original_contract_amount if job else 0)
-    current = f(job.contract_amount if job else 0)
+    # Contract sums as of the application: the figures snapshotted when it was
+    # approved, so a reprint doesn't pick up change orders approved later. A
+    # draft (no snapshot yet) reads the job as it stands.
+    if app.contract_sum_to_date is not None:
+        original = f(app.contract_sum_original)
+        current = f(app.contract_sum_to_date)
+    else:
+        original = f(job.original_contract_amount if job else 0)
+        current = f(job.contract_amount if job else 0)
     header = {
         "owner": (job.customer.name if job and job.customer else ""),
         "job_name": (job.full_name if job else ""),
@@ -343,6 +350,41 @@ def render_pay_application_html(app, pa, job, company_settings: dict) -> str:
 
 def generate_pay_application_pdf(app, pa, job, company_settings: dict) -> bytes:
     return render_pdf(render_pay_application_html(app, pa, job, company_settings))
+
+
+# The lien waiver wording by type. {amount}, {through} and {owner} are filled
+# from the payment; progress waivers cover work through a date, final waivers
+# the whole job. Conditional waivers take effect only once the payment is
+# received; unconditional ones say it has been.
+LIEN_WAIVER_TITLES = {
+    "conditional_progress": "Conditional Waiver and Release on Progress Payment",
+    "unconditional_progress": "Unconditional Waiver and Release on Progress Payment",
+    "conditional_final": "Conditional Waiver and Release on Final Payment",
+    "unconditional_final": "Unconditional Waiver and Release on Final Payment",
+}
+
+
+def render_lien_waiver_html(waiver, payment, job, company_settings: dict) -> str:
+    """One lien waiver (#555) for a payment: the type picks the title and the
+    wording (conditional / unconditional, progress / final). `job` carries
+    the owner and project."""
+    wtype = waiver.waiver_type
+    return _render(
+        "lien_waiver_pdf.html",
+        company_settings,
+        waiver=waiver,
+        payment=payment,
+        job=job,
+        title=LIEN_WAIVER_TITLES.get(wtype, "Waiver and Release"),
+        conditional=wtype.startswith("conditional"),
+        final=wtype.endswith("final"),
+        owner=(job.customer.name if job and job.customer else ""),
+        project=(job.full_name if job else ""),
+    )
+
+
+def generate_lien_waiver_pdf(waiver, payment, job, company_settings: dict) -> bytes:
+    return render_pdf(render_lien_waiver_html(waiver, payment, job, company_settings))
 
 
 def generate_statement_pdf(

@@ -1037,7 +1037,16 @@ def test_migration_up_down_reverses(tmp_path):
     assert "job_deposits" in insp.get_table_names()
     pa_cols = {c["name"] for c in insp.get_columns("pay_applications")}
     assert {"tax_rate", "deposit_payment_id"} <= pa_cols
+    assert {"charge_tax", "contract_sum_to_date"} <= pa_cols
+    assert "lien_waivers" in insp.get_table_names()
     assert "retainage_held" in {c["name"] for c in insp.get_columns("invoices")}
+    eng.dispose()
+    # the review-fix migration (#576) reverses on its own, then the original
+    command.downgrade(cfg, "-1")
+    eng = create_engine("sqlite:///" + db.as_posix())
+    insp = inspect(eng)
+    assert "lien_waivers" not in insp.get_table_names()
+    assert "charge_tax" not in {c["name"] for c in insp.get_columns("pay_applications")}
     eng.dispose()
     command.downgrade(cfg, "-1")
     eng = create_engine("sqlite:///" + db.as_posix())
@@ -1156,3 +1165,285 @@ def test_only_the_latest_approved_application_can_be_voided(
     assert client.post(f"/api/pay-applications/{a2['id']}/void").status_code == 200
     assert client.post(f"/api/pay-applications/{a1['id']}/void").status_code == 200
     assert _gl(db_session, "1150") == Decimal("0.00")
+
+
+def test_tax_toggle_and_tax_rate_saved_on_put(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _taxed_estimate_job(client, seed_customer.id, rate="0.08")
+    app = _new_app(client, job["id"])
+    assert app["charge_tax"] is True  # on by default
+    lines = [{"sov_line_id": sov[0]["id"], "this_period": 5000, "stored": 0}]
+    # tax_rate on the PUT is saved (it was accepted and dropped)
+    r = _edit(client, app["id"], lines=lines, tax_rate="0.06")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert float(body["tax_rate"]) == 0.06
+    # tax shows on the application, so its current due is the invoice's
+    t = body["totals"]
+    assert t["tax_amount"] == 300.0
+    assert t["current_due"] == 4800.0  # 5,000 - 500 retainage + 300 tax
+    r = _approve(client, app["id"])
+    inv = db_session.query(Invoice).filter_by(id=r.json()["invoice_id"]).first()
+    assert inv.tax_amount == Decimal("300.00")
+    assert inv.balance_due == Decimal(str(r.json()["totals"]["current_due"]))
+
+    # a second application with tax off: no tax on the invoice or the app
+    a2 = _new_app(client, job["id"])
+    r = _edit(client, a2["id"], lines=[{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}], charge_tax=False)
+    assert r.json()["charge_tax"] is False
+    assert r.json()["totals"]["tax_amount"] == 0.0
+    r = _approve(client, a2["id"])
+    inv2 = db_session.query(Invoice).filter_by(id=r.json()["invoice_id"]).first()
+    assert inv2.tax_amount == Decimal("0.00")
+    assert inv2.balance_due == Decimal("900.00")
+    assert r.json()["totals"]["current_due"] == 900.0
+
+
+def test_stored_to_installed_only_application_has_no_invoice(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    a1 = _new_app(client, job["id"])
+    r = _bill(
+        client,
+        a1["id"],
+        [{"sov_line_id": sov[0]["id"], "this_period": 0, "stored": 5000}],
+    )
+    assert r.status_code == 200, r.text
+    n_invoices = db_session.query(Invoice).count()
+
+    # materials installed: this period takes up the stored amount
+    a2 = _new_app(client, job["id"])
+    r = _bill(
+        client,
+        a2["id"],
+        [{"sov_line_id": sov[0]["id"], "this_period": 5000, "stored": 0}],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "approved"
+    assert body["invoice_id"] is None
+    assert body["totals"]["current_due"] == 0.0
+    assert db_session.query(Invoice).count() == n_invoices
+    # it still voids cleanly
+    assert client.post(f"/api/pay-applications/{a2['id']}/void").status_code == 200
+
+
+def test_empty_application_still_refused(client, seed_accounts, seed_customer):
+    job, _sov_ = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])
+    assert _approve(client, app["id"]).status_code == 422
+
+
+def test_pdf_uses_contract_sums_as_of_approval(
+    client, db_session, seed_accounts, seed_customer
+):
+    from app.models.jobs import Job
+    from app.routes.pay_applications import _out
+    from app.services.pdf_service import render_pay_application_html
+    from app.services.settings_service import get_all_settings
+
+    job, sov = _two_line_job(client, seed_customer.id)
+    app = _new_app(client, job["id"])
+    assert _bill(
+        client,
+        app["id"],
+        [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+    ).status_code == 200
+    jb = db_session.query(Job).get(job["id"])
+    jb.contract_amount = Decimal("123456.00")  # a later change order
+    db_session.commit()
+    pa = db_session.query(PayApplication).filter_by(id=app["id"]).first()
+    html = render_pay_application_html(
+        pa, _out(db_session, pa), jb, get_all_settings(db_session)
+    )
+    assert "100,000.00" in html
+    assert "123,456.00" not in html
+
+
+def test_applied_deposit_payment_cannot_be_voided_from_payments(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    bank = _acct(db_session, "1000")
+    _deposit(client, job["id"], 10000, bank.id)
+    app = _new_app(client, job["id"])
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+        deposit_applied=10000,
+    )
+    assert _approve(client, app["id"]).status_code == 200
+    pa = db_session.query(PayApplication).filter_by(id=app["id"]).first()
+    r = client.post(f"/api/payments/{pa.deposit_payment_id}/void")
+    assert r.status_code == 409
+    assert pa.number in r.json()["detail"]
+    # the application's own void still reverses it
+    assert client.post(f"/api/pay-applications/{app['id']}/void").status_code == 200
+    listing = client.get(f"/api/jobs/{job['id']}/deposits").json()
+    assert listing["unapplied"] == 10000.0
+
+
+def test_negative_this_period_or_stored_cannot_go_below_zero(
+    client, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    a1 = _new_app(client, job["id"])
+    # nothing billed yet: a negative this period would leave completed < 0
+    r = _edit(
+        client,
+        a1["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": -100, "stored": 0}],
+    )
+    assert r.status_code == 422
+    # a negative stored is refused the same way
+    r = _edit(
+        client,
+        a1["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 500, "stored": -100}],
+    )
+    assert r.status_code == 422
+    # a correction that keeps completed >= 0 is fine
+    assert _bill(
+        client,
+        a1["id"],
+        [{"sov_line_id": sov[0]["id"], "this_period": 1000, "stored": 0}],
+    ).status_code == 200
+    a2 = _new_app(client, job["id"])
+    r = _edit(
+        client,
+        a2["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": -400, "stored": 0}],
+    )
+    assert r.status_code == 200, r.text
+
+
+# ── Lien waivers ─────────────────────────────────────────────────────────
+
+
+def _pay_invoice(client, customer_id, invoice_id, amount):
+    r = client.post(
+        "/api/payments",
+        json={
+            "customer_id": customer_id,
+            "date": "2026-06-15",
+            "amount": amount,
+            "method": "check",
+            "allocations": [{"invoice_id": invoice_id, "amount": amount}],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def test_lien_waivers_one_per_payment_and_type(
+    client, db_session, seed_accounts, seed_customer
+):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    pay = _pay_invoice(client, seed_customer.id, app["invoice_id"], 5000)
+    made = {}
+    for kind in (
+        "conditional_progress",
+        "unconditional_progress",
+        "conditional_final",
+        "unconditional_final",
+    ):
+        r = client.post(
+            "/api/lien-waivers",
+            json={"payment_id": pay["id"], "waiver_type": kind, "signed_by": "Pat"},
+        )
+        assert r.status_code == 201, r.text
+        w = r.json()
+        assert w["waiver_type"] == kind
+        assert w["amount"] == "5000.00" or float(w["amount"]) == 5000.0
+        assert w["pay_application_id"] == app["id"]
+        assert w["job_id"] == app["job_id"]
+        made[kind] = w
+    # the same type twice for a payment is refused
+    r = client.post(
+        "/api/lien-waivers",
+        json={"payment_id": pay["id"], "waiver_type": "conditional_final"},
+    )
+    assert r.status_code == 409
+    # a type outside the four is a validation error
+    r = client.post(
+        "/api/lien-waivers", json={"payment_id": pay["id"], "waiver_type": "bogus"}
+    )
+    assert r.status_code == 422
+    listed = client.get(f"/api/lien-waivers?payment_id={pay['id']}").json()
+    assert len(listed) == 4
+    # the application's Waivers screen reads its payments with their waivers
+    rows = client.get(f"/api/pay-applications/{app['id']}/payments").json()
+    assert [r["id"] for r in rows] == [pay["id"]]
+    assert len(rows[0]["waivers"]) == 4
+
+
+def test_lien_waiver_wording_follows_the_type(
+    client, db_session, seed_accounts, seed_customer
+):
+    from app.models.jobs import Job
+    from app.models.lien_waivers import LienWaiver
+    from app.services.pdf_service import render_lien_waiver_html
+    from app.services.settings_service import get_all_settings
+
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    pay = _pay_invoice(client, seed_customer.id, app["invoice_id"], 5000)
+    for kind, title, effect in (
+        (
+            "conditional_progress",
+            "Conditional Waiver and Release on Progress Payment",
+            "Upon receipt",
+        ),
+        (
+            "unconditional_progress",
+            "Unconditional Waiver and Release on Progress Payment",
+            "has been paid",
+        ),
+        (
+            "conditional_final",
+            "Conditional Waiver and Release on Final Payment",
+            "whole of the project",
+        ),
+        (
+            "unconditional_final",
+            "Unconditional Waiver and Release on Final Payment",
+            "has been paid",
+        ),
+    ):
+        w = client.post(
+            "/api/lien-waivers", json={"payment_id": pay["id"], "waiver_type": kind}
+        ).json()
+        row = db_session.get(LienWaiver, w["id"])
+        html = render_lien_waiver_html(
+            row, row.payment, db_session.get(Job, row.job_id), get_all_settings(db_session)
+        )
+        assert title in html
+        assert effect in html
+        assert "5,000.00" in html
+
+
+def test_lien_waiver_pdf_route(client, db_session, seed_accounts, seed_customer):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    pay = _pay_invoice(client, seed_customer.id, app["invoice_id"], 5000)
+    w = client.post(
+        "/api/lien-waivers",
+        json={"payment_id": pay["id"], "waiver_type": "conditional_progress"},
+    ).json()
+    r = client.get(f"/api/lien-waivers/{w['id']}/pdf")
+    assert r.status_code == 200
+    assert r.content.startswith(b"%PDF")
+
+
+def test_lien_waiver_refused_on_a_voided_payment(
+    client, db_session, seed_accounts, seed_customer
+):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    pay = _pay_invoice(client, seed_customer.id, app["invoice_id"], 5000)
+    assert client.post(f"/api/payments/{pay['id']}/void").status_code == 200
+    r = client.post(
+        "/api/lien-waivers",
+        json={"payment_id": pay["id"], "waiver_type": "conditional_progress"},
+    )
+    assert r.status_code == 409

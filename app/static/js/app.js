@@ -1076,7 +1076,7 @@ const App = {
         'JobsPage.coSubmit', 'JobsPage.coApprove', 'JobsPage.coReject', 'JobsPage.coVoid', 'JobsPage.coPromote',
         'JobsPage.coMakeSub', 'JobsPage.coSubmitSubOrder',
         'JobsPage.paNew', 'JobsPage.paEdit', 'JobsPage.paSave', 'JobsPage.paSubmit', 'JobsPage.paApprove',
-        'JobsPage.paVoid', 'JobsPage.paAddDeposit', 'JobsPage.paSaveDeposit', 'JobsPage.paVoidDeposit',
+        'JobsPage.paVoid', 'JobsPage.paMakeWaiver', 'JobsPage.paAddDeposit', 'JobsPage.paSaveDeposit', 'JobsPage.paVoidDeposit',
         'PurchaseOrdersPage.subPayApp', 'PurchaseOrdersPage.releaseRetainage',
         'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
         'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',

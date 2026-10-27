@@ -42,6 +42,7 @@ from app.services.numbering import next_invoice_number
 from app.services.pay_applications import (
     application_figures,
     deposits_figures,
+    effective_tax_rate,
     line_computed,
     previous_by_sov_line,
     retainage_outstanding,
@@ -147,6 +148,9 @@ def _out(db: Session, app: PayApplication) -> PayApplicationOut:
     out.lines = lines
     out.totals = totals
     out.job_number = app.job.job_number if app.job else None
+    out.tax_exempt = bool(
+        app.job and app.job.customer and app.job.customer.is_taxable is False
+    )
     out.invoice_number = app.invoice.invoice_number if app.invoice else None
     out.sub_waivers = _sub_waivers(db, app.job_id, app.period_to)
     out.unapplied_deposits = float(deposits_figures(db, app.job_id)["unapplied"])
@@ -164,6 +168,23 @@ def _validate(db: Session, app: PayApplication) -> None:
         completed = _q(
             prev.get(ln.sov_line_id, _ZERO) + _q(ln.this_period) + _q(ln.stored)
         )
+        # Completed and stored stay on the line's own side of zero (>= 0, or
+        # <= 0 on a deduct line): a negative this-period or stored cannot pull
+        # work already billed below nothing (#576).
+        label = f"{ln.item_no or ''} {ln.description or ''}".strip()
+        wrong_side = (
+            (completed < _ZERO or _q(ln.stored) < _ZERO)
+            if scheduled >= _ZERO
+            else (completed > _ZERO or _q(ln.stored) > _ZERO)
+        )
+        if wrong_side:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{label}: completed to date ({completed:.2f}) and stored "
+                    f"({_q(ln.stored):.2f}) cannot go below zero."
+                ).lstrip(": "),
+            )
         # Direction-aware: a positive line can't bill past its scheduled value;
         # a negative (deduct) line can't be credited past it the other way.
         over = completed > scheduled if scheduled >= _ZERO else completed < scheduled
@@ -196,7 +217,7 @@ def _validate(db: Session, app: PayApplication) -> None:
             ),
         )
     current_due = application_figures(db, app)["current_due"]
-    if deposit > current_due:
+    if deposit > 0 and deposit > current_due:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -244,6 +265,45 @@ def list_pay_applications(job_id: int = Query(...), db: Session = Depends(get_db
         .all()
     )
     return [_out(db, a) for a in apps]
+
+
+@router.get("/{app_id}/payments")
+def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
+    """The payments received on this application's invoice, each with the lien
+    waivers already made for it — what the Waivers screen lists."""
+    from app.models.lien_waivers import LienWaiver
+    from app.models.payments import Payment, PaymentAllocation
+
+    app = _get(db, app_id)
+    if not app.invoice_id:
+        return []
+    payments = (
+        db.query(Payment)
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+        .filter(PaymentAllocation.invoice_id == app.invoice_id, Payment.is_voided.is_(False))
+        .order_by(Payment.date, Payment.id)
+        .all()
+    )
+    out = []
+    for pay in payments:
+        waivers = (
+            db.query(LienWaiver)
+            .filter(LienWaiver.payment_id == pay.id)
+            .order_by(LienWaiver.id)
+            .all()
+        )
+        out.append(
+            {
+                "id": pay.id,
+                "date": pay.date.isoformat() if pay.date else None,
+                "amount": float(pay.amount),
+                "method": pay.method,
+                "waivers": [
+                    {"id": w.id, "waiver_type": w.waiver_type} for w in waivers
+                ],
+            }
+        )
+    return out
 
 
 @router.get("/{app_id}", response_model=PayApplicationOut)
@@ -337,6 +397,8 @@ def update_pay_application(
         "date",
         "period_to",
         "retainage_pct",
+        "tax_rate",
+        "charge_tax",
         "release_retainage",
         "deposit_applied",
         "lien_waiver_status",
@@ -417,46 +479,55 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
         invoice_lines.append((desc, amount, sov.cost_code_id if sov else None))
 
     deposit = _q(app.deposit_applied)
-    # Nothing to bill, hold, release or apply — refuse rather than post an
-    # empty invoice (#555 review).
+    moved = any(
+        _q(ln.this_period) != 0 or _q(ln.stored) != prior_stored.get(ln.sov_line_id, _ZERO)
+        for ln in app.lines
+    )
+    # Nothing at all to bill, hold, release, apply or move — refuse rather
+    # than approve an empty application (#555 review).
     if (
         not invoice_lines
         and retainage_held == 0
         and retainage_released == 0
         and deposit == 0
+        and not moved
     ):
         raise HTTPException(
             status_code=422,
-            detail="This pay application has nothing to bill, hold, release or apply.",
+            detail="This payment application has nothing to bill, hold, release or apply.",
         )
 
-    taxable = customer.is_taxable is not False
-    subtotal = _q(sum((a for _d, a, _c in invoice_lines), _ZERO))
-    # Tax over the taxable work at the application's rate (from the accepted
-    # estimate), the way the invoice routes tax a line.
-    tax_rate = _q4(app.tax_rate)
-    tax_amount = _q(subtotal * tax_rate) if (taxable and tax_rate) else _ZERO
-    total = _q(subtotal + tax_amount)
-
-    invoice = _create_invoice(
-        db,
-        customer=customer,
-        job=job,
-        when=when,
-        lines=invoice_lines,
-        subtotal=subtotal,
-        tax_rate=tax_rate,
-        tax_amount=tax_amount,
-        total=total,
-        retainage_held=retainage_held,
-        retainage_released=retainage_released,
-        taxable=taxable,
-        pay_application=app,
-    )
+    app.contract_sum_original = job.original_contract_amount
+    app.contract_sum_to_date = job.contract_amount
+    invoice = None
+    if invoice_lines or retainage_held != 0 or retainage_released != 0 or deposit:
+        # Tax over the billed work at the application's rate when tax is on and
+        # the owner is taxable — the same figure the application shows.
+        tax_rate = _q4(effective_tax_rate(app))
+        subtotal = _q(sum((a for _d, a, _c in invoice_lines), _ZERO))
+        tax_amount = _q(subtotal * tax_rate) if tax_rate else _ZERO
+        total = _q(subtotal + tax_amount)
+        invoice = _create_invoice(
+            db,
+            customer=customer,
+            job=job,
+            when=when,
+            lines=invoice_lines,
+            subtotal=subtotal,
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            retainage_held=retainage_held,
+            retainage_released=retainage_released,
+            taxable=bool(tax_rate),
+            pay_application=app,
+        )
+    # else: the application only moved stored material into the work — zero
+    # current due, so there is no invoice to post (#576).
 
     app.status = "approved"
     app.approved_at = datetime.now(timezone.utc)
-    app.invoice_id = invoice.id
+    app.invoice_id = invoice.id if invoice is not None else None
     db.flush()
 
     if deposit > 0:
@@ -666,9 +737,9 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
         _refuse_if_truly_paid(db, app, invoice)
         dep = _deposit_payment(db, app, invoice)
         if dep is not None:
-            from app.routes.payments import void_payment
+            from app.routes.payments import void_payment_unchecked
 
-            void_payment(dep.id, db)  # commits; restores the invoice balance
+            void_payment_unchecked(dep.id, db)  # commits; restores the balance
             db.refresh(invoice)
         from app.routes.invoices.lifecycle import void_invoice
 

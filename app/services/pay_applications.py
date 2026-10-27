@@ -55,6 +55,8 @@ def application_totals(
     previous_retainage,
     previous_applications,
     previous_released=0,
+    previous_billed=0,
+    tax_rate=0,
     release_retainage=0,
     deposit_applied=0,
 ) -> dict:
@@ -67,7 +69,14 @@ def application_totals(
 
     Retainage to date is NET of releases: what is still held on the work
     completed. A release is just retainage going down, so the cumulative
-    current-due figures line up with the invoices and account 1150 (#576)."""
+    current-due figures line up with the invoices and account 1150 (#576).
+
+    Sales tax rides on top: `tax_rate` (0 when tax is off for the application
+    or the customer is exempt) taxes what this application bills, which is
+    completed to date less `previous_billed` (the prior approved application's
+    completed to date). The earned/previous figures stay before tax, so the
+    cumulative arithmetic never counts an earlier application's tax again;
+    `current_due` adds this application's tax and matches its invoice."""
     rows = [line_computed(ln, retainage_pct) for ln in lines]
     scheduled_total = _q(sum((r["scheduled_value"] for r in rows), _ZERO))
     previous_total = _q(sum((r["previous"] for r in rows), _ZERO))
@@ -88,7 +97,10 @@ def application_totals(
     # 1150 debit on the invoice. The release is the 1150 credit.
     retainage_this_period = _q(retainage_to_date - prev_ret + release)
     total_earned_less_retainage = _q(completed - retainage_to_date)
-    current_due = _q(total_earned_less_retainage - prev_cert)
+    due_before_tax = _q(total_earned_less_retainage - prev_cert)
+    billed_this_period = _q(completed - _q(previous_billed))
+    tax_amount = _q(billed_this_period * Decimal(str(tax_rate or 0)))
+    current_due = _q(due_before_tax + tax_amount)
     net_due = _q(current_due - deposit)
     return {
         "scheduled_total": scheduled_total,
@@ -102,6 +114,10 @@ def application_totals(
         "retainage_this_period": retainage_this_period,
         "total_earned_less_retainage": total_earned_less_retainage,
         "previous_applications": prev_cert,
+        "billed_this_period": billed_this_period,
+        "due_before_tax": due_before_tax,
+        "tax_rate": Decimal(str(tax_rate or 0)),
+        "tax_amount": tax_amount,
         "current_due": current_due,
         "balance_to_finish_total": balance_total,
         "release_retainage": release,
@@ -137,7 +153,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
     - `stored`    — SOV line id → the latest approved application's stored;
     - `prev_retainage` — the latest approved application's retainage_to_date
       (net of releases); `prev_released` — Σ releases so far;
-    - `prev_applications` — Σ of the approved applications' current_due;
+    - `prev_applications` — Σ of the approved applications' due before tax;
     - `billed`    — the latest approved application's completed_to_date
       (each application's figure is already cumulative; summing them would
       count every earlier period again).
@@ -166,6 +182,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
             previous_retainage=prev_ret,
             previous_applications=prev_cert,
             previous_released=prev_released,
+            previous_billed=billed,
             release_retainage=app.release_retainage,
             deposit_applied=app.deposit_applied,
         )
@@ -178,7 +195,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
             )
             stored[ln.sov_line_id] = _q(ln.stored)
         prev_ret = totals["retainage_to_date"]
-        prev_cert = _q(prev_cert + totals["current_due"])
+        prev_cert = _q(prev_cert + totals["due_before_tax"])
         billed = _q(totals["completed_to_date"])  # cumulative already; the latest wins
     return {
         "previous": previous,
@@ -200,6 +217,15 @@ def stored_by_sov_line(db: Session, job_id: int, before_no=None) -> dict:
     return _history(db, job_id, before_no)["stored"]
 
 
+def effective_tax_rate(app) -> Decimal:
+    """The rate this application taxes with: its own rate when tax is on and
+    the owner is taxable, else 0 (the invoice routes tax the same way)."""
+    customer = app.job.customer if app.job is not None else None
+    if not app.charge_tax or (customer is not None and customer.is_taxable is False):
+        return _ZERO
+    return Decimal(str(app.tax_rate or 0))
+
+
 def application_figures(db: Session, app) -> dict:
     """Full totals for one application, with its lines' `previous` filled from
     one history pass. Reads live, so it is correct whether draft or approved."""
@@ -219,6 +245,8 @@ def application_figures(db: Session, app) -> dict:
         previous_retainage=h["prev_retainage"],
         previous_applications=h["prev_applications"],
         previous_released=h["prev_released"],
+        previous_billed=h["billed"],
+        tax_rate=effective_tax_rate(app),
         release_retainage=app.release_retainage,
         deposit_applied=app.deposit_applied,
     )
