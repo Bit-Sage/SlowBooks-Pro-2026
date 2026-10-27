@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.routes._helpers import clamp_pagination
 from app.routes.payroll._router import router
+from app.services.account_label import label_for
 from app.services.direct_deposit import pays_by_direct_deposit
 from app.routes.payroll.ytd import _ytd_supplemental, employee_ytd, wage_base_ytd
 from app.models.payroll import (
@@ -830,9 +831,7 @@ def _refuse_reconciled(db: Session, txn) -> None:
             continue
         acct = db.get(Account, ln.account_id)
         rec = db.get(Reconciliation, ln.reconciliation_id)
-        where = (
-            f"{acct.account_number} {acct.name}".strip() if acct else "the bank account"
-        )
+        where = label_for(acct, db) if acct else "the bank account"
         when = f" (statement {rec.statement_date:%Y-%m-%d})" if rec else ""
         raise HTTPException(
             status_code=400,
@@ -922,7 +921,7 @@ def _paid_liability_cautions(db: Session, run: PayRun, txn) -> list[str]:
         total = sum((amt for _, amt in payments), Decimal("0"))
         latest = max(d for d, _ in payments)
         out.append(
-            f"{acct.account_number} {acct.name} has had {_money(total)} paid out "
+            f"{label_for(acct, db)} has had {_money(total)} paid out "
             f"of it since this run's pay date (latest {latest:%Y-%m-%d}). Voiding "
             f"the run takes this run's {_money(accrued[acct_id])} back out of it, "
             "so a deposit already made for this run is left as a balance the "

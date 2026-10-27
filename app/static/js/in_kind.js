@@ -72,7 +72,7 @@ const InKindPage = {
 
     lineHtml(idx) {
         const accts = InKindPage._accounts.filter(a => ['asset', 'expense', 'cogs'].includes(a.account_type));
-        const opts = `<option value="">Select...</option>` + accts.map(a => `<option value="${a.id}">${escapeHtml(`${a.account_number || ''} ${a.name}`.trim())}</option>`).join('');
+        const opts = `<option value="">Select...</option>` + accts.map(a => `<option value="${a.id}">${accountLabel(a, null, ' ')}</option>`).join('');
         return `<tr data-ikline="${idx}">
             <td><input class="ik-desc" placeholder="Yamaha U1 upright piano" required style="min-width:180px"></td>
             <td><input class="ik-qty" type="number" step="0.01" min="0.01" value="1" oninput="InKindPage.recalc()"></td>

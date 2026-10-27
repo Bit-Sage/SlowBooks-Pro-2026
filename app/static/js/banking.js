@@ -63,7 +63,7 @@ const BankingPage = {
                 html += `<a class="card card-link" href="#/banking/${a.account_id}" data-row-key="bank:${a.account_id}"
                     aria-label="${escapeHtml(a.name)}" aria-describedby="${id}-kind ${id}-value ${id}-feed"
                     onclick="ReportsPage._leaveFrom(this)" onkeydown="ReportsPage._cardKey(event)">
-                    <div class="card-header">${escapeHtml(a.name)} <span id="${id}-kind" style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.account_number || '')} · ${BankingPage._kindLabel(a.bank_kind)}</span></div>
+                    <div class="card-header">${escapeHtml(a.name)} <span id="${id}-kind" style="font-size:10px; color:var(--gray-400);">${accountLabel(a, '', '') ? accountLabel(a, '', '') + ' · ' : ''}${BankingPage._kindLabel(a.bank_kind)}</span></div>
                     <div class="card-value" id="${id}-value">${formatCurrency(a.balance)}${owed ? ' <span style="font-size:11px; color:var(--gray-500);">owed</span>' : ''}</div>
                     <div id="${id}-feed" style="font-size:12px; color:var(--gray-400); margin-top:4px;">
                         ${a.feed ? `${escapeHtml(a.feed.bank_name || a.feed.name)} ${a.feed.last_four ? '****' + a.feed.last_four : ''}` : 'No bank feed'}
@@ -677,7 +677,7 @@ const BankingPage = {
 
         let html = `
             <div class="page-header">
-                <h2>${escapeHtml(reg.account_name)} <span style="font-size:11px; color:var(--gray-400);">${escapeHtml(reg.account_number || '')} · ${BankingPage._kindLabel(kind)}</span></h2>
+                <h2>${escapeHtml(reg.account_name)} <span style="font-size:11px; color:var(--gray-400);">${accountLabel(reg, '', '') ? accountLabel(reg, '', '') + ' · ' : ''}${BankingPage._kindLabel(kind)}</span></h2>
                 <div class="btn-group">
                     <button class="btn btn-secondary" onclick="BankingPage.go('#/banking')">Back</button>
                     <button class="btn btn-primary" onclick="BankingPage.showEntryForm(${id})">+ Entry</button>

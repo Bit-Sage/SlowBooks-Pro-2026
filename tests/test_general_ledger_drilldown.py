@@ -30,7 +30,7 @@ def test_the_general_ledger_heading_links_into_the_account_register():
     assert "'general-ledger'" in gl
     # the link sits in the heading, in the link colour, and only with an id
     assert re.search(
-        r"<h3 [^>]*>\$\{escapeHtml\(acct\.account_number\)\} &mdash; \$\{name\}</h3>",
+        r"<h3 [^>]*>\$\{number \? `\$\{escapeHtml\(number\)\} &mdash; ` : ''\}\$\{name\}</h3>",
         gl,
     )
     assert (

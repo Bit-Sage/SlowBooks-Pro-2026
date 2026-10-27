@@ -49,7 +49,7 @@ const FixedAssetsPage = {
         const accounts = await API.get('/accounts');
         const opts = kind => accounts
             .filter(a => kind ? a.account_type === kind : true)
-            .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`)
+            .map(a => `<option value="${a.id}">${accountLabel(a, null, ' ')}</option>`)
             .join('');
         openModal('New Asset Type', `
             <form onsubmit="FixedAssetsPage.saveType(event)">
@@ -275,7 +275,7 @@ const FixedAssetsPage = {
 
     async showDisposeForm(assetId) {
         const accounts = await API.get('/accounts?account_type=asset');
-        const opts = accounts.map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`).join('');
+        const opts = accounts.map(a => `<option value="${a.id}">${accountLabel(a, null, ' ')}</option>`).join('');
         openModal('Dispose Asset', `
             <form onsubmit="FixedAssetsPage.dispose(event, ${assetId})">
                 <div class="form-grid">

@@ -23,7 +23,7 @@ const BudgetsPage = {
         let rows = '';
         for (const acct of budgetAccounts) {
             rows += `<tr data-acct="${acct.id}">
-                <td style="font-weight:600; white-space:nowrap;">${escapeHtml(acct.account_number)} ${escapeHtml(acct.name)}</td>`;
+                <td style="font-weight:600; white-space:nowrap;">${accountLabel(acct, null, ' ')}</td>`;
             for (let m = 1; m <= 12; m++) {
                 const val = budgetMap[acct.id]?.[m] || '';
                 rows += `<td><input type="number" step="0.01" class="budget-cell" data-write data-acct="${acct.id}" data-month="${m}"
@@ -91,7 +91,7 @@ const BudgetsPage = {
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             let html = '<div style="overflow-x:auto;">';
             for (const acct of data.accounts) {
-                html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${escapeHtml(acct.account_number)} — ${escapeHtml(acct.account_name)}</h3>`;
+                html += `<h3 style="margin:12px 0 4px; font-size:12px; color:var(--qb-navy);">${accountLabel(acct, acct.account_name, ' — ')}</h3>`;
                 html += `<table style="font-size:10px; margin-bottom:12px;"><thead><tr><th scope="col"></th>`;
                 html += months.map(m => `<th scope="col" class="amount">${m}</th>`).join('');
                 html += '<th scope="col" class="amount" style="font-weight:700;">Total</th></tr></thead><tbody>';

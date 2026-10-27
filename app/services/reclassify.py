@@ -43,6 +43,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.services.account_label import label_for
 from app.models.accounts import Account
 from app.models.bills import Bill, BillLine
 from app.models.classes import TxnClass
@@ -125,8 +126,7 @@ def _control_ids(db: Session) -> dict[int, str]:
 def account_words(acct: Account | None) -> str:
     if acct is None:
         return ""
-    number = (acct.account_number or "").strip()
-    return f"{number} {acct.name}".strip()
+    return label_for(acct)
 
 
 def _account_out(acct: Account | None) -> dict | None:

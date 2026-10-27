@@ -27,7 +27,7 @@ const OpeningBalancesPage = {
             if (!accts.length) continue;
             rows += `<tr><td colspan="2" style="font-weight:700; background:var(--gray-50);">${label}</td></tr>`;
             rows += accts.map(a => `<tr>
-                <td>${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</td>
+                <td>${accountLabel(a, null, ' ')}</td>
                 <td class="amount"><input type="number" step="0.01" class="ob-amount" data-write data-account="${a.id}"
                     style="width:120px; text-align:right;" oninput="OpeningBalancesPage.recalc()"></td>
             </tr>`).join('');

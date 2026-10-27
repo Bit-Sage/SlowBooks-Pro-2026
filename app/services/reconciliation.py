@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account
 from app.models.banking import BankTransaction, Reconciliation, ReconciliationStatus
 from app.models.transactions import Transaction, TransactionLine
+from app.services.account_label import account_label
 from app.services.bank_posting import require_bank_account
 from app.services.bank_register import (
     balance_as_of,
@@ -429,10 +430,12 @@ def report(db: Session, recon: Reconciliation) -> dict:
     }
 
 
-def report_sections(data: dict) -> list[dict]:
-    """The report as sections for the shared report PDF renderer."""
+def report_sections(data: dict, numbered: bool = True) -> list[dict]:
+    """The report as sections for the shared report PDF renderer. `numbered`
+    is the company's use-account-numbers setting (#567); the PDF passes it,
+    the CSV keeps the number."""
     labels = data["labels"]
-    acct = f"{data['account_number'] or ''} {data['account_name']}".strip()
+    acct = account_label(data["account_number"], data["account_name"], numbered, " ")
     period = f"{acct} · statement ending {date_text(date.fromisoformat(data['statement_date']))}"
 
     def _count(state, side):

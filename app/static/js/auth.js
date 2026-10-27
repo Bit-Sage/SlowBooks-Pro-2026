@@ -473,6 +473,13 @@
                 placeholder: "Leave blank if same as yours",
             }) +
             entityField() +
+
+            // Account numbers on the chart (#567): on unless unticked; the
+            // seeded chart keeps its numbers either way
+            '<label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;font-size:13px;color:#333;line-height:1.5;">' +
+            '<input type="checkbox" id="use_account_numbers" checked style="margin-top:3px;">' +
+            '<span><strong>Use account numbers.</strong> Accounts read "6100 - Name" and list by number. ' +
+            'Untick it if your business does not number its accounts; you can change this under Settings.</span></label>' +
             field("auth-password", "Password", {
                 type: "password",
                 required: true,
@@ -567,6 +574,9 @@
         if (encrypt && encrypt.checked) out.encrypt = true;
         const entity = overlay.querySelector("#entity_choice");
         if (entity) Object.assign(out, entityPayload(entity.value));
+
+        const numbers = overlay.querySelector("#use_account_numbers");
+        if (numbers) out.use_account_numbers = numbers.checked ? "true" : "false";
         ids.forEach(function (id) {
             const el = overlay.querySelector("#" + id);
             if (el && el.value.trim() !== "") {

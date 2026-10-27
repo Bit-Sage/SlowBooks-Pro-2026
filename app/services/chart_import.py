@@ -57,6 +57,8 @@ from app.services.account_tree import (
     takes_no_new_parent,
 )
 from app.services.csv_export import strip_formula_guard
+from app.services.account_label import account_label, label_for
+from app.services.settings_service import use_account_numbers
 
 # --- vocabulary -------------------------------------------------------------
 
@@ -522,6 +524,9 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
     for a in existing:
         by_name.setdefault(a.name.strip().lower(), a)
     numbers = _Numbers(set(by_number))
+    # a company that does not use account numbers brings a numberless row
+    # in unnumbered instead of handing it the next free number (#567)
+    numbered = use_account_numbers(db)
     matched: set[int] = set()
     # what each row resolves to, for parent links: key = path (hledger) or
     # number or name (csv) -> ("existing", id) | ("new", row index)
@@ -590,7 +595,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 ):
                     entry["note"] = (
                         f"type stays {target.account_type.value}: control account "
-                        f"(the software posts to it by number)"
+                        f"(the software posts to it)"
                     )
                 elif _posted(db, target.id):
                     entry["note"] = (
@@ -636,6 +641,10 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                 continue
             if r.number and numbers.claim(r.number):
                 number = r.number
+            elif not numbered:
+                number = None
+                if r.number:
+                    entry["note"] = f"number {r.number} is taken; brought in unnumbered"
             else:
                 number = numbers.next_free(r.type)
                 if r.number:
@@ -647,11 +656,14 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             twin = by_name.get(r.name.strip().lower())
             if twin is not None:
                 entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
-                    f"an account named '{twin.name}' already exists as "
-                    f"{twin.account_number or 'unnumbered'} and is matched by another row"
+                    f"an account named '{twin.name}' already exists"
+                    + (f" as {twin.account_number or 'unnumbered'}" if numbered else "")
+                    + " and is matched by another row"
                 )
-            resolved[r.path or number] = ("new", i)
-            resolved[number] = ("new", i)
+            if r.path:
+                resolved[r.path] = ("new", i)
+            if number:
+                resolved[number] = ("new", i)
             resolved[r.name.lower()] = ("new", i)
         entry["detail_type"] = _planned_detail(r, target, entry)
         entry["_row"] = r
@@ -695,7 +707,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
                         "type": a.account_type.value,
                         "action": "keep",
                         "note": "control account not named in the file — kept, "
-                        "the software posts to it by number",
+                        "the software posts to it",
                         "existing_id": a.id,
                         **_as_it_stands(a, label),
                     }
@@ -853,6 +865,7 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
     bank account under an expense folder), and a new parent for a control
     account or an Accounts Receivable / Payable one. The row says why, in
     the dry run as when applied, as a loop does."""
+    numbered = use_account_numbers(db)
     by_existing = {
         e["existing_id"]: e for e in plan.rows if "existing_id" in e and "_row" in e
     }
@@ -917,7 +930,7 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
         # an inactive parent takes no sub-accounts, as the API refuses one
         # (#416); the same words, minus the "Reactivate it" an importer cannot
         if parent_inactive(hit):
-            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            label = account_label(parent[4], parent[0], numbered, " ")
             problem = f"{label} is inactive and cannot take sub-accounts"
         moved = acct is None or hit != ("existing", acct.parent_id)
         if (
@@ -926,9 +939,9 @@ def _flag_parent_types(db: Session, plan: Plan) -> None:
             and moved
             and takes_no_new_parent(child[2], child[4], child[1])
         ):
-            problem = f"{child[0]} is found by its number and takes no parent"
+            problem = f"{child[0]} is one the books post to and takes no parent"
         if problem is None:
-            label = " ".join(p for p in (parent[4], parent[0]) if p)
+            label = account_label(parent[4], parent[0], numbered, " ")
             # the planned detail type of a parent row is its default when the
             # file names none; the rule reads the one it will have
             pe = plan.rows[hit[1]] if hit[0] == "new" else by_existing.get(hit[1])
@@ -1024,6 +1037,7 @@ def _flag_moves(db: Session, plan: Plan) -> None:
     other change would be a "skip", which the apply passes over: the dry run
     then previewed a link (and the detail type it hands down) that was never
     written. Record the move as the row's change so both say the same."""
+    numbered = use_account_numbers(db)
     for entry in plan.rows:
         hit = entry.get("_parent")
         if not hit or entry["action"] not in ("skip", "update"):
@@ -1032,14 +1046,10 @@ def _flag_moves(db: Session, plan: Plan) -> None:
         if acct is None or hit == ("existing", acct.parent_id):
             continue
         if hit[0] == "new":
-            label = " ".join(
-                p
-                for p in (plan.rows[hit[1]].get("number"), plan.rows[hit[1]]["name"])
-                if p
-            )
+            row = plan.rows[hit[1]]
+            label = account_label(row.get("number"), row["name"], numbered, " ")
         else:
-            pacct = db.get(Account, hit[1])
-            label = " ".join(p for p in (pacct.account_number, pacct.name) if p)
+            label = label_for(db.get(Account, hit[1]), db)
         entry["changes"].append(f"parent → {label}")
         if entry["action"] == "skip":
             entry["action"] = "update"

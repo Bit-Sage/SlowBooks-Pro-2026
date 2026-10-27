@@ -11,6 +11,8 @@ from app.models.accounts import Account, AccountType, DetailType
 from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
 from app.services.fiscal_year import fiscal_year_start
+from app.services.account_label import account_label
+from app.services.settings_service import use_account_numbers
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
@@ -58,17 +60,30 @@ _SORT_QUERY = Query(
 )
 
 
-def _chart_index(db) -> dict:
+class ChartIndex(dict):
+    """{id: (number, name, parent, type, detail type)} plus `numbered`: whether
+    the company uses account numbers (#567). A plain dict built by hand (a
+    test) reads as numbered."""
+
+    numbered: bool = True
+
+
+def _chart_index(db) -> ChartIndex:
     """Every account's (number, name, parent, type, detail type), by id: one
     query a statement builds once and hands to every helper that needs the
     chart (#390 review: the compare P&L read it some sixteen times)."""
-    return {
-        a.id: (
-            a.account_number or "",
-            a.name or "",
-            a.parent_id,
-            a.account_type,
-            a.detail_type,
+    from app.services.settings_service import use_account_numbers
+
+    chart = ChartIndex(
+        (
+            a.id,
+            (
+                a.account_number or "",
+                a.name or "",
+                a.parent_id,
+                a.account_type,
+                a.detail_type,
+            ),
         )
         for a in db.query(
             Account.id,
@@ -78,7 +93,9 @@ def _chart_index(db) -> dict:
             Account.account_type,
             Account.detail_type,
         )
-    }
+    )
+    chart.numbered = use_account_numbers(db)
+    return chart
 
 
 def _chain(chart: dict, account_id) -> list:
@@ -102,11 +119,13 @@ def _account_order(db, sort="number", chart: dict | None = None):
     General Ledger take the same key: ORDER BY account_number put the
     accounts with no number first, in creation order (2.23.4 gate, W-7)."""
     chart = chart if chart is not None else _chart_index(db)
+    # a company that does not use account numbers lists by name (#567)
+    by_name = sort == "name" or not getattr(chart, "numbered", True)
 
     def level(account_id):
         number, name = chart[account_id][:2]
         name = name.lower()
-        if sort == "name":
+        if by_name:
             return (0, name, number)
         return (0, number, name) if number else (1, "", name)
 
@@ -128,7 +147,7 @@ def _account_words(chart: dict, account_id) -> tuple[str, str]:
         return "", ""
     path = ": ".join(chart[a][1] for a in chain)
     number = chart[account_id][0]
-    return path, (f"{number} - {path}" if number else path)
+    return path, account_label(number, path, getattr(chart, "numbered", True))
 
 
 _EXCLUDE_ADJUSTING = Query(
@@ -2519,7 +2538,7 @@ def general_ledger_csv_route(
     )
 
 
-def _account_transactions_section(data: dict, t) -> dict:
+def _account_transactions_section(data: dict, t, numbered: bool = True) -> dict:
     """The drill-down's rows for the PDF (#333). A P&L total's or a
     family's (#479) names each line's account where the payee is, the
     payee after it, and its Amount (signed toward the total) and running
@@ -2527,7 +2546,7 @@ def _account_transactions_section(data: dict, t) -> dict:
     if data.get("set"):
         return _account_set_section(data, t)
     acct = data.get("account") or {}
-    head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
+    head = account_label(acct.get("number"), acct.get("name"), numbered, " ")
     rows = [
         {
             "cells": [
@@ -2626,13 +2645,15 @@ def _account_set_section(data: dict, t) -> dict:
     }
 
 
-def _drill_slug(data: dict, t) -> str:
+def _drill_slug(data: dict, t, numbered: bool = True) -> str:
     """The file name's words: the account's number and name, or the set's
     label ("Total Income", "Total 7000 - Travel", #479)."""
     if data.get("set"):
         return t.slug(data["set"]["label"]) or "accounts"
     acct = data.get("account") or {}
-    return t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
+    return t.slug(
+        account_label(acct.get("number"), acct.get("name") or "account", numbered, " ")
+    )
 
 
 def _drill_data(
@@ -2690,7 +2711,7 @@ def account_transactions_csv_route(
     t = terms_from_db(db)
     return _csv_download(
         account_transactions_csv(data, _company_name(db), t),
-        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.csv",
+        f"AccountDetail_{_drill_slug(data, t, use_account_numbers(db))}_{data['start_date']}_{data['end_date']}.csv",
         request,
     )
 
@@ -2721,10 +2742,11 @@ def account_transactions_pdf_route(
         exclude_adjusting,
     )
     t = terms_from_db(db)
+    numbered = use_account_numbers(db)
     return _pdf_response(
-        [_account_transactions_section(data, t)],
+        [_account_transactions_section(data, t, numbered)],
         db,
-        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.pdf",
+        f"AccountDetail_{_drill_slug(data, t, numbered)}_{data['start_date']}_{data['end_date']}.pdf",
     )
 
 
@@ -2921,7 +2943,7 @@ def adjusting_entries(
     }
 
 
-def _adjusting_section(data: dict) -> dict:
+def _adjusting_section(data: dict, numbered: bool = True) -> dict:
     rows = []
     for e in data["entries"]:
         head = f"#{e['id']}  {e['date']}  {e['description']}"
@@ -2933,9 +2955,9 @@ def _adjusting_section(data: dict) -> dict:
             head += "  VOIDED"
         rows.append({"cells": [head, "", ""], "style": "subtotal"})
         for ln in e["lines"]:
-            name = ln["account_name"]
-            if ln["account_number"]:
-                name = f"{ln['account_number']} {name}"
+            name = account_label(
+                ln["account_number"], ln["account_name"], numbered, " "
+            )
             if ln["description"]:
                 name += f" — {ln['description']}"
             rows.append(
@@ -2990,7 +3012,7 @@ def adjusting_entries_pdf_route(
 ):
     data = adjusting_entries(start_date, end_date, db)
     return _pdf_response(
-        [_adjusting_section(data)],
+        [_adjusting_section(data, use_account_numbers(db))],
         db,
         f"adjusting-entries_{data['start_date']}_{data['end_date']}.pdf",
     )

@@ -386,6 +386,5 @@ def test_a_journal_line_without_an_account_number_reads_cleanly():
     js = (Path(__file__).resolve().parents[1] / "app/static/js/journal.js").read_text(
         encoding="utf-8"
     )
-    assert (
-        "${l.account_number ? `${escapeHtml(l.account_number)} - ` : ''}" in js
-    )  # NEW-126
+    # NEW-126; through the one label helper since #567
+    assert "`<tr><td>${accountLabel(l, l.account_name)}</td>" in js

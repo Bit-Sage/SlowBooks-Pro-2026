@@ -39,6 +39,7 @@ from app.models.accounts import Account
 from app.models.banking import BankTransaction
 from app.models.duplicate_dismissals import DuplicateDismissal
 from app.models.transactions import Transaction, TransactionLine
+from app.services.account_label import account_label
 from app.services.bank_register import account_register
 from app.services.duplicate_detection import normalize_name
 
@@ -353,8 +354,12 @@ def possible_duplicates(
                 "entries": rows,
             }
         )
+    from app.services.settings_service import use_account_numbers
+
     return {
         "account": reg["account"],
+        # whether the title prints the register's number (#567)
+        "numbered": use_account_numbers(db),
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
         "window_days": WINDOW_DAYS,
@@ -417,7 +422,7 @@ def dismiss(db: Session, account: Account, txn_ids, actor: str | None):
 
 def _account_label(data: dict) -> str:
     a = data["account"]
-    return f"{a['number']} {a['name']}".strip() if a.get("number") else a["name"]
+    return account_label(a.get("number"), a["name"], data.get("numbered", True), " ")
 
 
 def report_csv(data: dict, company: str) -> str:

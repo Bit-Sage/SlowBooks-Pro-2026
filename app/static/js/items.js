@@ -116,7 +116,7 @@ const ItemsPage = {
         const incomeAccts = pickerAccounts(accounts, ['income'], item.income_account_id);
         const expenseAccts = pickerAccounts(accounts, ['expense','cogs'], item.expense_account_id);
         const assetAccts = pickerAccounts(accounts, ['asset'], item.asset_account_id);
-        const acctLabel = a => `${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.name)}`;
+        const acctLabel = a => accountLabel(a);
 
         // Phase 11 inventory only makes sense for tangible items.
         const trackable = ['product','material'].includes(item.item_type);

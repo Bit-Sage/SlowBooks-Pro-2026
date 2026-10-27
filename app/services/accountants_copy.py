@@ -46,10 +46,12 @@ from app.models.accountants_copies import AccountantsCopy
 from app.models.accounts import Account
 from app.models.transactions import Transaction
 from app.services import company_file
+from app.services.account_label import account_label
 from app.services.auth import READABLE_ALPHABET
 from app.services.settings_service import (
     ENCRYPTED_SETTINGS_KEYS,
     get_setting_raw,
+    use_account_numbers,
 )
 
 logger = logging.getLogger(__name__)
@@ -577,6 +579,7 @@ def preview(db: Session, content: bytes) -> dict:
     applied = set(record.applied or [])
     chart = _chart(db)
     rows = []
+    numbered = use_account_numbers(db)
     for e in body.get("entries", []):
         ref = int(e["ref"])
         status, why = "new", ""
@@ -591,7 +594,9 @@ def preview(db: Session, content: bytes) -> dict:
             )
         else:
             missing = [
-                (ln.get("account_number") or "") + " " + (ln.get("account_name") or "")
+                account_label(
+                    ln.get("account_number"), ln.get("account_name"), numbered, " "
+                )
                 for ln in e.get("lines", [])
                 if _resolve_account(chart, ln) is None
             ]

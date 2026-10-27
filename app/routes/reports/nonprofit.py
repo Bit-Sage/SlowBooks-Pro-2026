@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routes.reports._router import router
 from app.routes.reports.financial import _money, _pdf_response
+from app.services.account_label import account_label
 from app.services import nonprofit_reports as svc
 from app.services.fiscal_year import fiscal_year_start
+from app.services.settings_service import use_account_numbers
 
 
 def _period(db, start_date, end_date):
@@ -366,7 +368,7 @@ def functional_expenses(
     return _sfe(db, start_date, end_date, compare)
 
 
-def _sfe_section(data: dict) -> dict:
+def _sfe_section(data: dict, numbered: bool = True) -> dict:
     keys = ("total", "program", "management", "fundraising", "unassigned")
     cmp = data.get("compare") == "prior_year"
 
@@ -377,7 +379,9 @@ def _sfe_section(data: dict) -> dict:
 
     rows = [
         {
-            "cells": [f"{r['account_number'] or ''} {r['account_name']}".strip()]
+            "cells": [
+                account_label(r["account_number"], r["account_name"], numbered, " ")
+            ]
             + [_money(r[k]) for k in keys]
             + extra(r)
         }
@@ -434,7 +438,9 @@ def functional_expenses_pdf(
     start_date, end_date = _period(db, start_date, end_date)
     data = _sfe(db, start_date, end_date, compare)
     return _pdf_response(
-        [_sfe_section(data)], db, f"functional-expenses_{start_date}_{end_date}.pdf"
+        [_sfe_section(data, use_account_numbers(db))],
+        db,
+        f"functional-expenses_{start_date}_{end_date}.pdf",
     )
 
 

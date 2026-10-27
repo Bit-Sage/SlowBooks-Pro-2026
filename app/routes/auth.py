@@ -108,6 +108,10 @@ class SetupPayload(StrictModel):
     default_terms: Optional[str] = Field(None, max_length=100)
     default_tax_rate: Optional[str] = Field(None, max_length=20)
 
+    # Whether the chart uses account numbers (#567): "true" | "false";
+    # left out, the default (on) stands
+    use_account_numbers: Optional[str] = Field(None, max_length=5)
+
 
 # Settings keys we accept on /setup (anything else on the payload is ignored)
 _SETUP_SETTINGS_KEYS = (
@@ -127,6 +131,7 @@ _SETUP_SETTINGS_KEYS = (
     "operator_email",
     "default_terms",
     "default_tax_rate",
+    "use_account_numbers",
 )
 
 
@@ -386,6 +391,11 @@ def setup(
     for key in _SETUP_SETTINGS_KEYS:
         value = payload_dict.get(key)
         if value is not None and value != "":
+            if key == "use_account_numbers" and value not in ("true", "false"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="use_account_numbers must be one of: false, true",
+                )
             try:
                 to_store[key] = clean_setting_value(key, value)
             except SettingValueError as exc:

@@ -326,7 +326,7 @@ const ClassesPage = {
             account_id: i.account_id, class_id: c.id, start_date: s.start, end_date: s.end, from: 'classes',
         }));
         const section = (items) => items.length
-            ? items.map(i => `<tr><td style="padding-left:24px;"><a href="${drill(i)}" onclick="event.preventDefault(); App.navigate(this.getAttribute('href'))" style="color:var(--text-link); text-decoration:none;">${escapeHtml(i.account_label || `${i.account_number ? i.account_number + ' - ' : ''}${i.account_name}`)}</a></td><td class="amount">${ClassesPage.money(i.amount)}</td></tr>`).join('')
+            ? items.map(i => `<tr><td style="padding-left:24px;"><a href="${drill(i)}" onclick="event.preventDefault(); App.navigate(this.getAttribute('href'))" style="color:var(--text-link); text-decoration:none;">${i.account_label ? escapeHtml(i.account_label) : accountLabel(i, i.account_name)}</a></td><td class="amount">${ClassesPage.money(i.amount)}</td></tr>`).join('')
             : '<tr><td colspan="2" style="padding-left:24px; color:var(--gray-400);">None</td></tr>';
         const subtotal = (title, amount) => `<tr style="font-weight:600; background:var(--gray-50);"><td>${title}</td><td class="amount">${ClassesPage.money(amount)}</td></tr>`;
         // The class's share of the company's net: a percentage only where
@@ -411,7 +411,7 @@ const ClassesPage = {
             return `<tr class="clickable" onclick="App.navigate('${escapeHtml(href.replace(/^\//, ''))}')" style="${e.voided ? 'color:var(--gray-400); text-decoration:line-through;' : ''}">
                 <td>${formatDate(e.date)}</td>
                 <td><a href="${escapeHtml(href)}" onclick="event.stopPropagation()">${escapeHtml(label(e.source_type))}${e.reference ? ` ${escapeHtml(e.reference)}` : ''}</a></td>
-                <td>${e.account_number ? escapeHtml(e.account_number) + ' - ' : ''}${escapeHtml(e.account_name)}</td>
+                <td>${accountLabel(e, e.account_name)}</td>
                 <td>${escapeHtml(e.description || '')}</td>
                 <td class="amount">${e.debit > 0 ? formatCurrency(e.debit) : ''}</td>
                 <td class="amount">${e.credit > 0 ? formatCurrency(e.credit) : ''}</td>

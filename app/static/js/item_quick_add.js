@@ -164,7 +164,7 @@ const ItemQuickAdd = {
         const sel = box.querySelector('.iqa-account');
         if (!sel) return;
         sel.insertAdjacentHTML('beforeend', ItemQuickAdd._accounts(box, accounts).map(a =>
-            `<option value="${a.id}" data-number="${escapeHtml(a.account_number || '')}">${a.account_number ? escapeHtml(a.account_number) + ' - ' : ''}${escapeHtml(a.name)}</option>`).join(''));
+            `<option value="${a.id}" data-number="${escapeHtml(a.account_number || '')}">${accountLabel(a)}</option>`).join(''));
         ItemQuickAdd._defaultAccount(box);
     },
 

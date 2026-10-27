@@ -347,7 +347,7 @@ def test_a_control_account_takes_no_new_parent(client, db_session, seed_accounts
     r = client.put(f"/api/accounts/{ar.id}", json={"parent_id": bank.id})
     assert r.status_code == 400
     assert r.json()["detail"] == (
-        "1100 Accounts Receivable is found by its number when the books post, "
+        "1100 Accounts Receivable is one the books post to, "
         "so it stays a top-level account."
     )
     # one it has already (saved before) can be left

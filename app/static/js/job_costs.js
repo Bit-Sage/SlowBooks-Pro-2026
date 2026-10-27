@@ -97,7 +97,7 @@ const JobCostsPage = {
         const who = `<option value="">--</option>`
             + (JobCostsPage._employees.length ? `<optgroup label="Employees">${JobCostsPage._employees.map(e => `<option value="emp:${e.id}">${escapeHtml(e.first_name + ' ' + e.last_name)}</option>`).join('')}</optgroup>` : '')
             + (JobCostsPage._equipment.length ? `<optgroup label="Equipment">${JobCostsPage._equipment.map(q => `<option value="eq:${q.id}" data-rate="${q.hourly_rate}">${escapeHtml(q.name)} (${formatCurrency(q.hourly_rate)}/hr)</option>`).join('')}</optgroup>` : '');
-        const acctOpts = JobCostsPage._opt(JobCostsPage._accounts, 'id', a => `${a.account_number || ''} ${a.name}`.trim(), null, 'default');
+        const acctOpts = JobCostsPage._opt(JobCostsPage._accounts, 'id', a => accountWords(a, null, ' '), null, 'default');
         return `<tr data-jcline="${idx}">
             <td><select class="jc-code" style="min-width:150px;max-width:190px">${codeOpts}</select></td>
             <td><select class="jc-type">${typeOpts}</select></td>
@@ -189,7 +189,7 @@ const JobCostsPage = {
         const jobOpts = JobCostsPage._jobs.map(j => `<label style="display:block;font-weight:normal"><input type="checkbox" class="alloc-job" value="${j.id}" checked> ${escapeHtml(j.full_name)} <input type="number" class="alloc-weight" step="0.01" value="1" style="width:70px;margin-left:6px" title="Weight (percent method)"></label>`).join('');
         const codeOpts = JobCostsPage._opt(JobCostsPage._codes, 'id', c => c.label, null);
         const typeOpts = JobCostsPage._opt(JobCostsPage._types, 'code', t => t.name, 'other', 'auto');
-        const acctOpts = JobCostsPage._opt(JobCostsPage._accounts, 'id', a => `${a.account_number || ''} ${a.name}`.trim(), null, 'default');
+        const acctOpts = JobCostsPage._opt(JobCostsPage._accounts, 'id', a => accountWords(a, null, ' '), null, 'default');
         openModal(`Allocate a Cost Across ${T('Jobs')}`, `
             <form onsubmit="JobCostsPage.saveAllocate(event)">
                 <div class="form-grid">

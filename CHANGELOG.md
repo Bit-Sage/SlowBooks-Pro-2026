@@ -70,6 +70,32 @@ Make Deposits, because it isn't in Undeposited Funds. Settings → Online
 Payments carries the toggle and the two account pickers on each provider's
 card. (Recording the payout and matching it to the bank feed is step 2, #584.)
 
+**Account numbers optional on the chart** (#567, @ContractorKeith). From
+support: many businesses no longer number their accounts. Settings → Company
+has a new box, **Use account numbers**, ticked by default so a company that
+leaves it alone sees no change; the setup wizard asks a new company. Unticked,
+every picker, report and PDF names an account by its name alone instead of
+"6100 - Name", the Chart of Accounts and the Trial Balance hide the Number
+column, accounts list by name within their type, the quick-add panel leaves
+the number off, and a chart import brings a row with no number in unnumbered
+instead of handing it the next free one. A number is optional on the account
+form either way (as since 2.23.5), an account keeps the number it has, and
+ticking the box again with unnumbered accounts in the chart is allowed: those
+simply show no number until given one. The seeded chart keeps its numbers, and
+the control accounts (1100, 2000 and the rest) are still found by theirs, so
+nothing posts differently. One label helper on each side decides
+(`app/services/account_label.py`, `accountLabel()` in `utils.js`); the pages
+that built "6100 - Name" by hand now go through it. Every PDF and message follows
+it too: the drill-down and adjusting-entries PDFs (and the drill-down's file
+name), the nonprofit functional-expenses PDF, the bank reconciliation PDF, the
+closing-date exceptions report, the control-account refusals, the pay-run void
+notes, the duplicate-check-number warning, the IIF, QuickBooks and chart
+imports' notes and the accountant's copy preview name an account by its name
+alone when numbers are off. A control account's note no longer says it is "found
+by its number"; it says the software relies on the account. The CSVs keep their
+number column. docs/migrate-from-quickbooks.md
+answers what happens to the starter accounts after a real chart is imported.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its

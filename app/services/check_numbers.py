@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.services.account_label import label_for
 from app.models.accounts import Account
 from app.models.bills import BillPayment
 from app.models.contacts import Vendor
@@ -141,11 +142,7 @@ def refuse_duplicate(
     if not uses:
         return
     first = uses[0]
-    name = (
-        f"{account.account_number} {account.name}"
-        if account.account_number
-        else account.name
-    )
+    name = label_for(account, db)
     said = ", ".join(
         part
         for part in (

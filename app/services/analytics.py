@@ -53,16 +53,12 @@ def _prev_month_start(d: date) -> date:
     return date(d.year, d.month - 1, 1)
 
 
-def account_label(number, name) -> str:
-    """How the Profit & Loss names an account on screen: "6100 - Auto & Truck
-    Expense" (the page, the PDF, the CSV, the AI brief and the AI tool all
-    use it, so a category reads the same everywhere — 2.22.3 gate, NEW-74:
-    it was the number alone)."""
-    number = str(number or "").strip()
-    name = str(name or "").strip()
-    if number and name:
-        return f"{number} - {name}"
-    return number or name or "Uncategorized"
+# How the Profit & Loss names an account on screen: "6100 - Auto & Truck
+# Expense" (the page, the PDF, the CSV, the AI brief and the AI tool all use
+# it, so a category reads the same everywhere — 2.22.3 gate, NEW-74: it was
+# the number alone). Lives in account_label.py since #567; imported here so
+# `from app.services.analytics import account_label` still works.
+from app.services.account_label import account_label  # noqa: E402
 
 
 class AnalyticsEngine:
@@ -170,8 +166,11 @@ class AnalyticsEngine:
             start_date = _month_start(date.today())
         if end_date is None:
             end_date = date.today()
+        from app.services.settings_service import use_account_numbers
+
+        numbered = use_account_numbers(self.db)
         return {
-            account_label(account_number, name): amount
+            account_label(account_number, name, numbered): amount
             for account_number, name, amount in self.expenses_by_account(
                 start_date, end_date
             )
