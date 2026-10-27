@@ -99,7 +99,11 @@ def create_bill_payment(
     # not paid without an explicit override, which the payment records (#553).
     # A Sub with no COI on file only warns in Pay Bills; it is not blocked.
     coi_note = None
-    if vendor.vendor_type == "sub" and vendor.coi_expires and data.date > vendor.coi_expires:
+    if (
+        vendor.vendor_type == "sub"
+        and vendor.coi_expires
+        and data.date > vendor.coi_expires
+    ):
         if not data.coi_override:
             raise HTTPException(
                 status_code=409,

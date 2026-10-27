@@ -839,9 +839,9 @@ def test_edit_converted_bill_lines_retallies_the_commitment(
     v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
     po = _sent_po(client, v["id"], SUB_LINES)
     ids = [ln["id"] for ln in po["lines"]]
-    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
-        "bill_id"
-    ]
+    bill_id = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]
+    ).json()["bill_id"]
 
     def billed():
         row = db_session.get(PurchaseOrderLine, ids[0])
@@ -881,9 +881,9 @@ def test_edit_cannot_bill_past_the_commitment_or_claim_a_new_link(
     v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
     po = _sent_po(client, v["id"], SUB_LINES)
     ids = [ln["id"] for ln in po["lines"]]
-    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
-        "bill_id"
-    ]
+    bill_id = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]
+    ).json()["bill_id"]
     acct = seed_accounts["5100"].id
 
     over = client.put(
@@ -929,9 +929,9 @@ def test_editing_a_linked_line_away_gives_the_dollars_back(
     v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
     po = _sent_po(client, v["id"], SUB_LINES)
     ids = [ln["id"] for ln in po["lines"]]
-    bill_id = _convert(client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]).json()[
-        "bill_id"
-    ]
+    bill_id = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]
+    ).json()["bill_id"]
     # replace the linked line with a hand-typed one: unlinked, PO released
     up = client.put(
         f"/api/bills/{bill_id}",
@@ -987,9 +987,7 @@ def _pay(client, sub, bill, **extra):
     )
 
 
-def test_payment_to_a_sub_with_an_expired_coi_needs_an_override(
-    client, seed_accounts
-):
+def test_payment_to_a_sub_with_an_expired_coi_needs_an_override(client, seed_accounts):
     sub, bill = _expired_sub_bill(client, seed_accounts)
     refused = _pay(client, sub, bill)
     assert refused.status_code == 409, refused.text
@@ -1028,7 +1026,9 @@ def test_payment_with_a_current_coi_records_no_override(client, seed_accounts):
 
 
 def test_lien_waiver_saves_on_a_closed_period_bill(client, seed_accounts):
-    v = _vendor(client, vendor_type="sub", default_expense_account_id=seed_accounts["5100"].id)
+    v = _vendor(
+        client, vendor_type="sub", default_expense_account_id=seed_accounts["5100"].id
+    )
     bill = client.post(
         "/api/bills",
         json={
