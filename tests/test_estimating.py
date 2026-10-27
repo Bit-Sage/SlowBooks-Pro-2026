@@ -912,8 +912,7 @@ def test_migration_upgrades_and_downgrades(tmp_path):
 def _budget_snapshot(client, job_id):
     rows = client.get(f"/api/jobs/{job_id}/budgets").json()
     return sorted(
-        (r["cost_code_id"], r["amount"], r["revenue_amount"], r["locked"])
-        for r in rows
+        (r["cost_code_id"], r["amount"], r["revenue_amount"], r["locked"]) for r in rows
     )
 
 
@@ -936,7 +935,9 @@ def test_a_settled_estimate_refuses_a_status_change(client, seed_customer):
     assert _budget_snapshot(client, job["id"]) == before
     # re-setting the same status stays a no-op
     assert (
-        client.put(f"/api/estimates/{est['id']}", json={"status": "accepted"}).status_code
+        client.put(
+            f"/api/estimates/{est['id']}", json={"status": "accepted"}
+        ).status_code
         == 200
     )
 
@@ -962,7 +963,12 @@ def _allowance_estimate(client, customer_id, **extra):
         customer_id,
         [
             {"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 10000},
-            {"description": "Appliances", "quantity": 1, "rate": 2000, "line_kind": "allowance"},
+            {
+                "description": "Appliances",
+                "quantity": 1,
+                "rate": 2000,
+                "line_kind": "allowance",
+            },
         ],
         gc_pct=10,
         **extra,
@@ -1025,13 +1031,28 @@ def test_allowance_markup_reaches_the_budget_revenue(client, seed_customer):
             "gc_pct": 10,
             "markup_allowances": True,
             "lines": [
-                {"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 10000, "cost_code_id": a["id"]},
-                {"description": "Appliances", "quantity": 1, "rate": 2000, "line_kind": "allowance", "cost_code_id": b["id"]},
+                {
+                    "description": "Shell",
+                    "quantity": 1,
+                    "rate": 0,
+                    "unit_cost": 10000,
+                    "cost_code_id": a["id"],
+                },
+                {
+                    "description": "Appliances",
+                    "quantity": 1,
+                    "rate": 2000,
+                    "line_kind": "allowance",
+                    "cost_code_id": b["id"],
+                },
             ],
         },
     ).json()
     client.post(f"/api/estimates/{est['id']}/accept", json={})
-    rows = {r["cost_code_id"]: r for r in client.get(f"/api/jobs/{job['id']}/budgets").json()}
+    rows = {
+        r["cost_code_id"]: r
+        for r in client.get(f"/api/jobs/{job['id']}/budgets").json()
+    }
     # the 1,200 GC splits 10,000 : 2,000 -> 1,000 and 200
     assert float(rows[a["id"]]["revenue_amount"]) == 11000.0
     assert float(rows[b["id"]]["revenue_amount"]) == 2200.0
@@ -1044,7 +1065,15 @@ def test_accept_budgets_general_conditions_as_a_cost(client, seed_customer):
     est = _estimate(
         client,
         seed_customer.id,
-        [{"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 10000, "cost_code_id": a["id"]}],
+        [
+            {
+                "description": "Shell",
+                "quantity": 1,
+                "rate": 0,
+                "unit_cost": 10000,
+                "cost_code_id": a["id"],
+            }
+        ],
         gc_pct=8,
         insurance_pct=2,
         job_id=job["id"],
@@ -1066,7 +1095,15 @@ def test_accept_budgets_general_conditions_as_a_cost(client, seed_customer):
     est2 = _estimate(
         client,
         seed_customer.id,
-        [{"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 10000, "cost_code_id": a["id"]}],
+        [
+            {
+                "description": "Shell",
+                "quantity": 1,
+                "rate": 0,
+                "unit_cost": 10000,
+                "cost_code_id": a["id"],
+            }
+        ],
         fee_pct=5,
         job_id=_job(client, seed_customer.id, name="Other")["id"],
     )
@@ -1084,19 +1121,41 @@ def test_a_manual_budget_codes_markup_share_is_not_redistributed(client, seed_cu
         client,
         seed_customer.id,
         [
-            {"description": "A", "quantity": 1, "rate": 0, "unit_cost": 60000, "cost_code_id": a["id"]},
-            {"description": "B", "quantity": 1, "rate": 0, "unit_cost": 40000, "cost_code_id": b["id"]},
+            {
+                "description": "A",
+                "quantity": 1,
+                "rate": 0,
+                "unit_cost": 60000,
+                "cost_code_id": a["id"],
+            },
+            {
+                "description": "B",
+                "quantity": 1,
+                "rate": 0,
+                "unit_cost": 40000,
+                "cost_code_id": b["id"],
+            },
         ],
         fee_pct=10,
         job_id=job["id"],
     )
     # the operator budgets Masonry by hand before the estimate is accepted
-    assert client.put(
-        f"/api/jobs/{job['id']}/budgets",
-        json={"rows": [{"cost_code_id": b["id"], "amount": 41000, "revenue_amount": 45000}]},
-    ).status_code == 200
+    assert (
+        client.put(
+            f"/api/jobs/{job['id']}/budgets",
+            json={
+                "rows": [
+                    {"cost_code_id": b["id"], "amount": 41000, "revenue_amount": 45000}
+                ]
+            },
+        ).status_code
+        == 200
+    )
     assert client.post(f"/api/estimates/{est['id']}/accept", json={}).status_code == 200
-    rows = {r["cost_code_id"]: r for r in client.get(f"/api/jobs/{job['id']}/budgets").json()}
+    rows = {
+        r["cost_code_id"]: r
+        for r in client.get(f"/api/jobs/{job['id']}/budgets").json()
+    }
     # Concrete keeps only its own 60% of the 10,000 fee, not Masonry's 4,000
     assert float(rows[a["id"]]["revenue_amount"]) == 66000.0
     assert float(rows[b["id"]]["revenue_amount"]) == 45000.0  # manual row untouched
