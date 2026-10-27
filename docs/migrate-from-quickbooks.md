@@ -123,7 +123,7 @@ two trial balances match.
 
 The simplest way to bring every transaction across: in QuickBooks Desktop,
 **Reports > Accountant & Taxes > Transaction Detail by Account**, set the
-dates to **one calendar year** (see *One year per file* below), and save it
+dates to **one year** (see *One year per file* below), and save it
 as CSV (keep the report's default columns).
 In **Customize Report → Filters → Account**, choose **All accounts**.
 That is a filter, not a column: do **not** add an **Account** column. The
@@ -154,8 +154,8 @@ own postings in a section it names "<Parent> - Other" (for example "Advertising
 and Promotion - Other"). That is not an account in its chart, and the import
 posts those lines to the parent account itself.
 
-**One year per file.** Export **one calendar year per file** (set From and To
-to January 1 and December 31 of that year, keep All accounts and the default
+**One year per file.** Export **one year per file** (your fiscal year, or January 1
+to December 31; set From and To to its first and last day, keep All accounts and the default
 columns) and import the files one at a time, **oldest year first**. The reason:
 in a range that spans more than one year, QuickBooks prints the balance sheet
 accounts for the whole range but the income and expense accounts for its last
