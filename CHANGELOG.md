@@ -74,12 +74,23 @@ card. (Recording the payout and matching it to the bank feed is step 2, #584.)
 (#566, from discussion #561, @ContractorKeith). After a post, the register's
 entry row and the + Entry dialog open on the date of the entry just posted
 rather than snapping back to today — each register keeps its own, for the
-page's life; sign-in starts over; no preference. In any date box, + and −
+page's life (until a reload or sign-in); no preference. In any date box, + and −
 step the date a day, T is today, M and H are the first and last day of its
 month, Y and R the first and last day of its year — QuickBooks-style keys,
 one handler for every date box in the app. The "date far from today"
 question (#481) is asked when the date is typed or moved, not again for a
 date carried over from the last entry.
+
+**The register's payee box suggests vendors and links the entry to the one
+named** (#590, from discussion #561, @ContractorKeith). Typing in the payee
+box — the entry row or + Entry — lists the vendors; picking one, or typing a
+name that is exactly a vendor's, puts that vendor on the entry (`vendor_id`,
+as a bank-feed line has, #491), so the entry shows on the vendor's payment
+history (#569). `POST /api/banking/transactions` and `PUT
+/api/banking/entries/{id}` take `vendor_id`, or match the payee by name when
+it is left out, and the entry comes back with `vendor_id` and `vendor_name`.
+A name that is not a vendor stays text and is still offered "Add as a
+vendor?". The 1099-NEC is unchanged: it counts bill payments only.
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general

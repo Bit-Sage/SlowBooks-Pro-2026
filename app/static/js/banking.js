@@ -664,7 +664,7 @@ const BankingPage = {
             API.get('/customers?active_only=true').catch(() => null),
         ]);
         BankingPage._accounts = chart;
-        BankingPage._vendorNames = vendors ? new Set(vendors.map(v => v.name.toLowerCase())) : null;
+        BankingPage._setVendors(vendors);
         BankingPage._customerNames = customers ? new Set(customers.map(c => c.name.toLowerCase())) : null;
         const info = overview.find(a => a.account_id === id) || {};
         const feed = info.feed || null;
@@ -891,6 +891,7 @@ const BankingPage = {
             const r = await API.post('/banking/transactions/vendors', { line_ids: lineIds });
             const made = r.created.map(v => v.name);
             if (BankingPage._vendorNames) made.forEach(n => BankingPage._vendorNames.add(n.toLowerCase()));
+            if (BankingPage._vendorsByName) r.created.forEach(v => BankingPage._vendorsByName.set(v.name.trim().toLowerCase(), { id: v.id, name: v.name }));
             toast(made.length === 1 ? `${made[0]} added to Vendors`
                 : made.length ? `${made.length} vendors added` : `Linked to ${r.linked} vendor${r.linked === 1 ? '' : 's'}`);
         } catch (err) { toast(err.message, 'error'); }
@@ -1027,7 +1028,7 @@ const BankingPage = {
         // named for the new entry, apart from the page's other fields
         return `<tfoot><tr id="reg-quick-entry" data-write style="background:var(--primary-light);">
                     <td><input type="date" id="qe-date" aria-label="New entry date" value="${carried || today}" data-carried="${carried}" style="width:120px; font-size:11px; padding:2px 4px;" ${key}></td>
-                    <td><input type="text" id="qe-payee" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}></td>
+                    <td><input type="text" id="qe-payee" list="qe-payee-vendors" autocomplete="off" aria-label="New entry payee" placeholder="Payee" style="width:100%; font-size:11px; padding:2px 4px;" onblur="BankingPage.payeeTyped(this.value, BankingPage._rowMoneyIn(), 'qe-payee')" ${key}>${BankingPage._vendorDatalist('qe-payee-vendors')}</td>
                     <td><input type="text" id="qe-memo" aria-label="New entry memo" placeholder="Memo" style="width:100%; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td><input type="text" id="qe-ref" aria-label="New entry check or reference number" placeholder="Ref" style="width:60px; font-size:11px; padding:2px 4px;" ${key}></td>
                     <td>${AccountQuickAdd.picker('<select id="qe-category" aria-label="New entry category" data-no-search ' + key + ' style="font-size:11px; padding:2px 4px; max-width:150px;"><option value="">Category…</option>' + cats + '</select>', 'register', { ctx: accountId, id: 'qe-category-add', style: 'font-size:11px; padding:2px 6px;' })}</td>
@@ -1074,6 +1075,7 @@ const BankingPage = {
             amount: out > 0 ? (-out).toFixed(2) : inn.toFixed(2),
             category_account_id: parseInt(v('qe-category'), 10),
             payee: v('qe-payee') || null,
+            vendor_id: BankingPage._payeeVendorId(v('qe-payee')),
             description: v('qe-memo') || null,
             check_number: v('qe-ref') || null,
         };
@@ -1128,7 +1130,7 @@ const BankingPage = {
         BankingPage._accounts = accounts;
         if (!BankingPage._vendorNames) {
             const vendors = await API.get('/vendors?active_only=true').catch(() => null);
-            if (vendors) BankingPage._vendorNames = new Set(vendors.map(v => v.name.toLowerCase()));
+            if (vendors) BankingPage._setVendors(vendors);
         }
         if (!BankingPage._customerNames) {
             const customers = await API.get('/customers?active_only=true').catch(() => null);
@@ -1147,7 +1149,8 @@ const BankingPage = {
                         <input name="amount" class="money" type="number" step="0.01" required>
                         <div style="font-size:10px; color:var(--gray-500);">${isCard ? 'Negative = a charge (owe more). Positive = a payment to the card.' : 'Negative = money out (a payment). Positive = money in (a deposit).'}</div></div>
                     <div class="form-group"><label>Payee</label>
-                        <input name="payee" id="entry-payee" onblur="BankingPage.payeeTyped(this.value, BankingPage._formMoneyIn(), 'entry-payee')"></div>
+                        <input name="payee" id="entry-payee" list="entry-payee-vendors" autocomplete="off" onblur="BankingPage.payeeTyped(this.value, BankingPage._formMoneyIn(), 'entry-payee')">
+                        ${BankingPage._vendorDatalist('entry-payee-vendors')}</div>
                     <div class="form-group"><label>Check / ref #</label>
                         <input name="check_number"></div>
                     <div class="form-group full-width"><label>Category * <span style="font-weight:normal; color:var(--gray-500);">(the other side of the entry; a bank or card account makes it a transfer)</span></label>
@@ -1201,6 +1204,8 @@ const BankingPage = {
         form.date.value = entry.date;
         form.amount.value = Number(entry.amount).toFixed(2);
         form.payee.value = entry.payee || '';
+        form.dataset.payee = (entry.payee || '').trim();
+        form.dataset.vendorId = entry.vendor_id || '';
         form.check_number.value = entry.reference || '';
         form.description.value = entry.description || '';
         form.category_account_id.value = entry.category_account_id || '';
@@ -1362,6 +1367,9 @@ const BankingPage = {
             amount: form.amount.value,
             category_account_id: splits ? splits[0].category_account_id : parseInt(form.category_account_id.value, 10),
             payee: form.payee.value || null,
+            // a vendor picked or exactly typed; an edit keeps its own while the payee is as it was (#590)
+            vendor_id: BankingPage._payeeVendorId(form.payee.value, form.dataset.entryId
+                ? { payee: form.dataset.payee || '', vendorId: form.dataset.vendorId ? parseInt(form.dataset.vendorId, 10) : null } : null),
             description: form.description.value || null,
             check_number: form.check_number.value || null,
             class_id: classIdFromForm(form),
@@ -1479,8 +1487,37 @@ const BankingPage = {
     CATEGORY_TYPES: ['expense', 'income', 'cogs', 'asset', 'liability', 'equity'],
     _accounts: null,      // the chart as last drawn: the parents offered, the picker's new option
     _vendorNames: null,   // lower-cased; null until the register has loaded them
+    _vendorsByName: null, // lower-cased name -> {id, name}, for the payee box (#590)
     _customerNames: null, // lower-cased; null until the register has loaded them
     _payeesAsked: new Set(),
+
+    // The vendor list as loaded: the names the payee box suggests and the
+    // ids a picked or exactly typed name links the entry to (#590).
+    _setVendors(vendors) {
+        BankingPage._vendorsByName = vendors
+            ? new Map(vendors.map(v => [v.name.trim().toLowerCase(), { id: v.id, name: v.name }])) : null;
+        BankingPage._vendorNames = vendors ? new Set(BankingPage._vendorsByName.keys()) : null;
+    },
+
+    // The payee box's suggestions: a native datalist of the vendors, so a
+    // pick fills the box with the vendor's name exactly. The names in it
+    // are the ones the entry links to when it posts.
+    _vendorDatalist(id) {
+        const opts = [...(BankingPage._vendorsByName || new Map()).values()]
+            .map(v => `<option value="${escapeHtml(v.name)}"></option>`).join('');
+        return `<datalist id="${id}">${opts}</datalist>`;
+    },
+
+    // The vendor an entry is paid to: the one whose name is the payee, as
+    // typed or picked (capitals and edge spaces aside); else, on an edit,
+    // the entry's own while its payee text is untouched; else none (null),
+    // and the payee stays text (#590).
+    _payeeVendorId(payee, keep = null) {
+        const name = (payee || '').trim();
+        const hit = BankingPage._vendorsByName && BankingPage._vendorsByName.get(name.toLowerCase());
+        if (hit) return hit.id;
+        return keep && name === keep.payee ? keep.vendorId : null;
+    },
 
     // Which side the money is on for the quick-entry row and the + Entry
     // form: true = money in (a deposit), false = money out, null = not
@@ -1537,8 +1574,11 @@ const BankingPage = {
         const noun = moneyIn ? T('customer') : 'vendor';
         const names = moneyIn ? BankingPage._customerNames : BankingPage._vendorNames;
         try {
-            await API.post(path, { name });
+            const made = await API.post(path, { name });
             if (names) names.add(name.toLowerCase());
+            if (!moneyIn && made && made.id && BankingPage._vendorsByName) {
+                BankingPage._vendorsByName.set(name.trim().toLowerCase(), { id: made.id, name });
+            }
             toast(`${name} added to ${list}`);
         } catch (err) {
             // a near match (409): the entry keeps its text; no second party

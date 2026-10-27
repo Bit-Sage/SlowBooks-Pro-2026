@@ -111,10 +111,18 @@ offered no Edit on these rows.
 
 The entry row at the foot of the register posts the same way (Enter or
 Post). After a post the row (and + Entry) opens on the date just posted,
-each register its own, until the page is left or signed in again; in the
+each register its own, until the page is reloaded or you sign in again; in the
 date box, as in any date box, + and − step a day, T is today, M / H and
 Y / R jump to the ends of the month and the year (QuickBooks-style keys).
-A payee typed there, or in + Entry, that is not already a customer's
+The payee box there, and in + Entry, suggests the vendors as you type (#590).
+Picking one, or typing a name that is exactly a vendor's (capitals and edge
+spaces aside), links the entry to that vendor — `vendor_id` on the entry, as
+a bank-feed line has (#491) — so it shows on the vendor's payment history
+(#569) with the bill payments and expenses; an API caller sends `vendor_id`,
+or just the payee, and gets the same. Editing the payee to another vendor's
+name moves the link, and to a name no vendor has drops it; a transfer has no
+vendor. The 1099-NEC still counts bill payments only, as the payment history
+says. A payee typed there, or in + Entry, that is not already a customer's
 or a vendor's name is offered as one — a customer for money in (a deposit),
 a vendor for money out, matching the categorized import — with Add / Not
 now; the entry posts either way, and Add names the party so the entry's

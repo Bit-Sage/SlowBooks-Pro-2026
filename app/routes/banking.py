@@ -44,6 +44,7 @@ from app.schemas.banking import (
     StatementMatch,
     ReconciliationResponse,
 )
+from app.models.contacts import Vendor
 from app.models.transactions import Transaction
 from app.services.audit import log_event
 from app.services.bank_posting import (
@@ -496,6 +497,35 @@ def feed_auto_match(account_id: int, db: Session = Depends(get_db)):
     return {"matched": n}
 
 
+def _entry_vendor(db: Session, vendor_id, payee):
+    """The vendor a register entry is paid to (#590): the one asked for
+    (404 when there is none), else the vendor whose name is exactly the
+    payee typed, else None, and the payee stays text."""
+    from app.services.bank_matching import vendor_named
+
+    if vendor_id is not None:
+        vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+        if not vendor:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+        return vendor
+    return vendor_named(db, payee)
+
+
+def _link_vendor(txn: Transaction, vendor) -> None:
+    """Name the vendor on the entry. A transfer between two bank or card
+    accounts is not paid to anyone, so it takes none."""
+    wanted = (
+        vendor.id if vendor is not None and txn.source_type == "bank_entry" else None
+    )
+    if txn.vendor_id != wanted:  # a save that changes nothing writes nothing
+        txn.vendor_id = wanted
+
+
+def _vendor_name(db: Session, vendor_id):
+    vendor = db.query(Vendor).get(vendor_id) if vendor_id else None
+    return vendor.name if vendor else None
+
+
 def _entry_out(txn, account_id: int, db: Session, status: str = "recorded") -> dict:
     bank_line = next(ln for ln in txn.lines if ln.account_id == account_id)
     other = next((ln for ln in txn.lines if ln.account_id != account_id), bank_line)
@@ -513,6 +543,8 @@ def _entry_out(txn, account_id: int, db: Session, status: str = "recorded") -> d
         "reference": txn.reference or "",
         "source_type": txn.source_type or "",
         "status": status,
+        "vendor_id": txn.vendor_id,
+        "vendor_name": _vendor_name(db, txn.vendor_id),
     }
 
 
@@ -607,6 +639,7 @@ def create_bank_transaction(
     check_closing_date(db, data.date)
     account = _resolve_account(db, data.account_id, data.bank_account_id)
     category, splits = _category_and_splits(db, account, data)
+    vendor = _entry_vendor(db, data.vendor_id, data.payee)
     if data.amount < 0:
         refuse_duplicate(
             db, account.id, data.check_number, allow=allow_duplicate_check_number
@@ -624,6 +657,7 @@ def create_bank_transaction(
         job_id=data.job_id,
         splits=splits,
     )
+    _link_vendor(txn, vendor)
     db.commit()
     db.refresh(txn)
     return _entry_out(txn, account.id, db)
@@ -876,6 +910,16 @@ def update_bank_entry(
             exclude_txn_id=txn.id,
         )
 
+    # the vendor (#590): the one named, or none when null; else, when the
+    # payee text changed, the vendor it now exactly names; else unchanged
+    new_payee = keep("payee", now["payee"] or None)
+    relink = "vendor_id" in given or (new_payee or "") != (now["payee"] or "")
+    vendor = (
+        _entry_vendor(db, data.vendor_id, None if "vendor_id" in given else new_payee)
+        if relink
+        else None
+    )
+
     uncleared = replace_bank_entry(
         db,
         txn,
@@ -883,13 +927,15 @@ def update_bank_entry(
         new_date,
         new_amount,
         category,
-        payee=keep("payee", now["payee"] or None),
+        payee=new_payee,
         memo=keep("description", now["description"] or None),
         reference=keep("check_number", txn.reference or None),
         class_id=keep("class_id", txn.class_id),
         job_id=keep("job_id", txn.job_id),
         splits=splits,
     )
+    if relink:
+        _link_vendor(txn, vendor)
     if recon is not None and moves:
         # the category change on a reconciled entry says so in the trail,
         # beside the rows the hook writes for the header and each line

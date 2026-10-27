@@ -100,6 +100,9 @@ class BankTransactionCreate(StrictModel):
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     splits: Optional[list[BankSplit]] = None
+    # The vendor paid (#590). Left out, a payee that is exactly a vendor's
+    # name picks that vendor; one that is not stays text. A transfer has none.
+    vendor_id: Optional[int] = None
 
 
 class BankEntryUpdate(BankTransactionCreate):
@@ -128,6 +131,8 @@ class BankEntryResponse(BaseModel):
     reference: str
     source_type: str
     status: str
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
 
 
 class BankSplitOut(BaseModel):
