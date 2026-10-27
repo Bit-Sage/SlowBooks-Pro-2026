@@ -413,13 +413,11 @@ def promote_change_order(
                     "message": f"A {pco.status} potential change order cannot be promoted.",
                 },
             )
+
     # One owner CO has one job and one source of money.
-    sig = lambda p: (
-        p.job_id,
-        p.funding,
-        p.allowance_sov_line_id,
-        p.apply_markup,
-    )  # noqa: E731
+    def sig(p):
+        return (p.job_id, p.funding, p.allowance_sov_line_id, p.apply_markup)
+
     if any(sig(p) != sig(first) for p in pcos[1:]):
         raise HTTPException(
             status_code=409,
