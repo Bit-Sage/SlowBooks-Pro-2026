@@ -6,8 +6,8 @@ defaults to budget - actual (floored at zero), so a company that enters
 nothing sees the same figures as a budget-based estimate. Additive: one new
 table.
 
-Revision ID: b4d6f8a0c2e3
-Revises: e5c9a1f7b2d4
+Revision ID: c6e8f0a2d4b6
+Revises: b4d6f8a0c2e3
 Create Date: 2026-10-27
 
 """
@@ -17,8 +17,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "b4d6f8a0c2e3"
-down_revision: Union[str, None] = "e5c9a1f7b2d4"
+revision: str = "c6e8f0a2d4b6"
+down_revision: Union[str, None] = "b4d6f8a0c2e3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
