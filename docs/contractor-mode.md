@@ -655,8 +655,9 @@ billing** (earned − billed, an asset — costs and estimated earnings in exces
 billings) is the difference. The **estimated total cost is actual cost plus the
 cost-to-complete forecast** (below), so a job past its budget with work still to
 do reads under 100%; with no forecast entered the default is budget − actual per
-cell, floored at zero, and a job with no budget at all has nothing to measure
-against and stays at 0%. Every figure reads **as of the date**: cost to date and
+cell, floored at zero, and a job with no budget and no forecast has nothing to
+measure against, so its cost to date is taken as the estimate (100% complete:
+the contract is earned and a loss is the true loss, with no extra provision). Every figure reads **as of the date**: cost to date and
 posted revenue to that day, billing and retainage from the applications approved
 by then, and the revised contract with the change orders approved by then (so the
 schedule reproduces the books on an earlier close). Billed to date is the sum of
@@ -695,13 +696,21 @@ and cost with no code share one Unassigned cell. Type an amount in the Report
 Center table (or `PUT /api/jobs/{id}/cost-to-complete-forecast` with
 `{"entries": [{"cost_code_id", "cost_type", "amount"}]}`; `null` clears a cell
 back to its default). Entries are stored in `job_cost_to_complete` and are
-job-to-date, not dated. PDF and CSV like the other reports.
+job-to-date, not dated: a WIP schedule run back-dated (a year-end run in February)
+stops actuals at the date but uses today's typed amount, so percent complete can
+read high, and the JSON carries a `warnings` entry when the amount was entered
+after the as-of date. The older **Cost to complete** report defines cost to
+complete as remaining budget plus open commitments, which differs from this
+forecast, so the two can show different figures for the same job. PDF and CSV
+like the other reports.
 
 **Commitment status** (`commitment-status`). Each commitment (PO or subcontract,
 not a draft, dated by `as_of`) per job: committed (pre-tax value), billed to date
 (bills dated by then; a retainage-release bill pays money already billed and is
 not counted), retainage held (held less released) and remaining (committed less
-billed, open commitments only), with totals per job and grand. PDF and CSV.
+billed, open commitments only), with totals per job and grand. Committed leaves
+out lines added by a sub change order approved after the date, and a commitment
+closed after the date (it closes when fully billed) is open on it. PDF and CSV.
 
 **Cost to complete** (`cost-to-complete`). Per job, per cost code (division ›
 section), with budget revised, committed (remaining), actual, cost to complete

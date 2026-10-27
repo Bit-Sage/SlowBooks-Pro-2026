@@ -573,7 +573,10 @@ with work left reads under 100% instead of 100%. A **projected loss** is booked 
 full when projected cost passes the contract: the provision is loss × (1 −
 percent complete), added to the entry. A **commitment status** report
 (`commitment-status`, PDF and CSV) lists each PO and subcontract with committed,
-billed, retainage held and remaining, totals per job.
+billed, retainage held and remaining, totals per job, read as of the date
+(sub change orders approved later and closings after it are left out). A job
+with no budget and no forecast takes its cost to date as the estimate (100%
+complete), so a loss is recognised once, not twice.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 

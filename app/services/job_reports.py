@@ -194,13 +194,15 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     totals = job_cost_tree(db, job.id, end_date=as_of)["totals"]
     cost_to_date = _q(totals["actual"])
     # Estimated total cost = actual + the cost-to-complete forecast. A job with
-    # no budget and no forecast has nothing to measure against, so it stays 0.
+    # no budget and no forecast has nothing to measure against, so the cost to
+    # date is the estimate (100% complete): the contract is earned and any loss
+    # is the true loss, recognised once.
     forecast = ctc_forecast(db, job, as_of)
     cost_to_complete = _q(forecast["totals"]["cost_to_complete"])
     if forecast["has_basis"]:
         est_total_cost = _q(cost_to_date + cost_to_complete)
     else:
-        est_total_cost = _ZERO
+        est_total_cost = cost_to_date
     posted_revenue = _q(totals["act_revenue"])
 
     summary = contract_summary(
@@ -279,6 +281,29 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     }
 
 
+def _forecast_dating_warnings(db: Session, jobs: list, rows: list, as_of: date):
+    """A typed cost-to-complete has no date: say so when the schedule is run as
+    of a day before the amount was last entered."""
+    has_contract = {r["job_id"] for r in rows if r.get("has_contract")}
+    out = []
+    for job in jobs:
+        if job.id not in has_contract:
+            continue
+        latest = (
+            db.query(sqlfunc.max(JobCostToComplete.updated_at))
+            .filter(JobCostToComplete.job_id == job.id)
+            .scalar()
+        )
+        if latest is not None and latest.date() > as_of:
+            out.append(
+                f"{job.name}: the cost-to-complete forecast was entered "
+                f"{latest.date().isoformat()}, after {as_of.isoformat()}; it has "
+                "no date, so today's figure is used and percent complete may "
+                "read high."
+            )
+    return out
+
+
 def wip_schedule(
     db: Session,
     as_of: Optional[date] = None,
@@ -295,6 +320,7 @@ def wip_schedule(
     as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
     rows = [wip_row(db, job, as_of) for job in jobs]
+    warnings = _forecast_dating_warnings(db, jobs, rows, as_of)
 
     totals = {key: _ZERO for key in _WIP_SUMMED}
     for r in rows:
@@ -310,6 +336,7 @@ def wip_schedule(
         "as_of": as_of.isoformat(),
         "method": "cost_to_cost",
         "rows": rows,
+        "warnings": warnings,
         "totals": out_totals,
         "columns": WIP_COLUMNS,
         "adjustment_accounts": {
@@ -1271,7 +1298,7 @@ COMMITMENT_COLUMNS = [
 _COMMITMENT_SUMMED = ("committed", "billed", "retainage_held", "remaining")
 
 
-def _commitment_row(po, bills: list, as_of: date) -> dict:
+def _commitment_row(po, bills: list, as_of: date, co_by_id: dict) -> dict:
     """One commitment as of a date. Committed is the pre-tax value; billed is
     the work billed on it by then (a retainage-release bill pays money already
     billed, so it is not counted); retainage held is held less released on those
@@ -1286,8 +1313,19 @@ def _commitment_row(po, bills: list, as_of: date) -> dict:
             continue
         billed += Decimal(str(b.subtotal or 0))
         held += Decimal(str(b.retainage_held or 0))
-    committed = _q(po.subtotal or 0)
-    is_open = po.status in (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED)
+    # Committed as of the date: lines added by a sub change order approved
+    # after it are not yet part of the commitment.
+    later = _ZERO
+    for ln in po.lines:
+        co = ln.change_order_id and co_by_id.get(ln.change_order_id)
+        if co is not None and co.approved_at and co.approved_at.date() > as_of:
+            later += Decimal(str(ln.amount or 0))
+    committed = _q(Decimal(str(po.subtotal or 0)) - later)
+    # Closing is judged as of the date too: a commitment closes when fully
+    # billed, so one closed later was still open (and billed less) on the date.
+    is_open = po.status in (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED) or (
+        po.status == POStatus.CLOSED and billed < committed
+    )
     remaining = _q(committed - billed) if is_open else _ZERO
     return {
         "id": po.id,
@@ -1314,6 +1352,7 @@ def commitment_status(
     `as_of`: committed, billed to date, retainage held and remaining, with
     totals per job and grand. Only bills dated by `as_of` count."""
     from app.models.bills import Bill, BillStatus
+    from app.models.change_orders import ChangeOrder
     from app.models.purchase_orders import POStatus, PurchaseOrder
 
     as_of = as_of or date.today()
@@ -1331,6 +1370,11 @@ def commitment_status(
             .order_by(PurchaseOrder.po_number)
             .all()
         )
+        co_ids = {ln.change_order_id for po in pos for ln in po.lines} - {None}
+        co_by_id = {
+            co.id: co
+            for co in db.query(ChangeOrder).filter(ChangeOrder.id.in_(co_ids)).all()
+        }
         rows = []
         totals = {k: _ZERO for k in _COMMITMENT_SUMMED}
         for po in pos:
@@ -1343,7 +1387,7 @@ def commitment_status(
                 )
                 .all()
             )
-            row = _commitment_row(po, bills, as_of)
+            row = _commitment_row(po, bills, as_of, co_by_id)
             rows.append(row)
             for k in _COMMITMENT_SUMMED:
                 totals[k] += Decimal(str(row[k]))

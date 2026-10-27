@@ -828,8 +828,10 @@ def test_wip_zero_budget_row(db_session, seed_accounts):
     _post_cost(db_session, job.id, _cogs(db_session), "5000", date(2026, 3, 1))
     db_session.commit()
     r = job_reports.wip_schedule(db_session, as_of=date(2026, 6, 1))["rows"][0]
-    assert r["estimated_total_cost"] == 0.0
-    assert r["percent_complete"] == 0.0
+    # no basis: the cost to date is the estimate, so the job reads 100%
+    assert r["estimated_total_cost"] == 5000.0
+    assert r["percent_complete"] == 100.0
+    assert r["earned_revenue"] == 20000.0
     assert r["cost_to_complete"] == 0.0  # floored, no budget to finish against
     assert r["projected_gross_profit"] == 15000.0  # 20,000 − 5,000 cost
 
@@ -1455,3 +1457,101 @@ def test_commitment_status_and_forecast_exports(client, db_session, seed_account
             section["title"] == title
             and section["rows"][-1]["cells"][0] == "Grand total"
         )
+
+
+def test_wip_no_basis_loss_is_recognised_once(db_session, seed_accounts):
+    """Contract 100k, no budget, no forecast, cost 120k: 100% complete, 100k
+    earned, a true 20k loss already in the earned-less-cost, no provision on
+    top (it used to book the loss twice)."""
+    customer = _customer(db_session)
+    _contract_job(db_session, customer, "No basis", 100000, None, 120000)
+    data = _wip(db_session)
+    r = data["rows"][0]
+    assert r["percent_complete"] == 100.0
+    assert r["earned_revenue"] == 100000.0
+    assert r["projected_loss"] == 20000.0
+    assert r["loss_provision"] == 0.0
+    accounts = {ln["account"] for ln in data["adjusting_entry"]["lines"]}
+    assert job_reports.WIP_LOSS_EXPENSE_ACCOUNT not in accounts
+    assert job_reports.WIP_LOSS_ACCOUNT not in accounts
+    # earned 100k, nothing billed: the entry books the 100k under-billing only
+    assert data["adjusting_entry"]["totals"]["under_billing"] == 100000.0
+
+
+def test_wip_warns_when_forecast_entered_after_as_of(db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Late fc", 100000, 90000, 60000)
+    job_reports.set_ctc_entries(
+        db_session, job, [{"cost_code_id": None, "cost_type": "", "amount": 60000}]
+    )
+    assert job_reports.wip_schedule(db_session, as_of=date(2020, 1, 1))["warnings"]
+    assert (
+        job_reports.wip_schedule(db_session, as_of=date(2099, 1, 1))["warnings"] == []
+    )
+
+
+def test_commitment_status_ignores_sub_co_approved_after_as_of(
+    db_session, seed_accounts
+):
+    from datetime import datetime, timezone
+
+    from app.models.change_orders import ChangeOrder
+    from app.models.purchase_orders import PurchaseOrderLine
+
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="CO date", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="CO Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-CO", 10000)
+    co = ChangeOrder(
+        job_id=job.id,
+        number="CO-SUB-1",
+        kind="sub",
+        status="approved",
+        commitment_id=po.id,
+        approved_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(co)
+    db_session.flush()
+    db_session.add_all(
+        [
+            PurchaseOrderLine(
+                purchase_order_id=po.id, amount=Decimal("8000"), line_order=0
+            ),
+            PurchaseOrderLine(
+                purchase_order_id=po.id,
+                amount=Decimal("2000"),
+                change_order_id=co.id,
+                line_order=1,
+            ),
+        ]
+    )
+    db_session.commit()
+    before = job_reports.commitment_status(db_session, as_of=date(2026, 6, 1))
+    row = before["jobs"][0]["rows"][0]
+    assert row["committed"] == 8000.0 and row["remaining"] == 8000.0
+    after = job_reports.commitment_status(db_session, as_of=date(2026, 8, 1))
+    row = after["jobs"][0]["rows"][0]
+    assert row["committed"] == 10000.0 and row["remaining"] == 10000.0
+
+
+def test_commitment_closed_after_as_of_shows_remaining_then(db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Closed later", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="Close Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-CL", 5000, status=POStatus.CLOSED)
+    _po_bill(db_session, po, "C-1", 2000, when=date(2026, 3, 1))
+    _po_bill(db_session, po, "C-2", 3000, when=date(2026, 7, 1))  # closes it
+    db_session.commit()
+    mid = job_reports.commitment_status(db_session, as_of=date(2026, 6, 1))
+    row = mid["jobs"][0]["rows"][0]
+    assert row["billed"] == 2000.0 and row["remaining"] == 3000.0
+    end = job_reports.commitment_status(db_session, as_of=date(2026, 8, 1))
+    assert end["jobs"][0]["rows"][0]["remaining"] == 0.0
