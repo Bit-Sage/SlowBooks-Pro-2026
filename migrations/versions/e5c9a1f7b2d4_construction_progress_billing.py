@@ -17,7 +17,7 @@ of it:
 downgrade reverses.
 
 Revision ID: e5c9a1f7b2d4
-Revises: a7c9e1f3b5d6
+Revises: b8d0f2a4c6e8
 Create Date: 2026-10-25
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "e5c9a1f7b2d4"
-down_revision: Union[str, None] = "a7c9e1f3b5d6"
+down_revision: Union[str, None] = "b8d0f2a4c6e8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
