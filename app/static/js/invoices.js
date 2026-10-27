@@ -925,7 +925,8 @@ const InvoicesPage = {
         const form = e.target;
         if (id && InvoicesPage._payAppInvoice) {
             try {
-                await API.put(`/invoices/${id}`, { notes: form.notes.value || null });
+                // Notes only: nothing reposts, so no closed-period question here.
+                await API.put('/invoices/' + id, { notes: form.notes.value || null });
                 toastPosted(Terms.text('Invoice updated'));
                 App.refresh();
             } catch (err) { toast(err.message, 'error'); }
