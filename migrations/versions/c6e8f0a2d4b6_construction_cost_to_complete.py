@@ -7,7 +7,7 @@ nothing sees the same figures as a budget-based estimate. Additive: one new
 table.
 
 Revision ID: c6e8f0a2d4b6
-Revises: b4d6f8a0c2e3
+Revises: c7e1a3b5d9f2
 Create Date: 2026-10-27
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "c6e8f0a2d4b6"
-down_revision: Union[str, None] = "b4d6f8a0c2e3"
+down_revision: Union[str, None] = "c7e1a3b5d9f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
