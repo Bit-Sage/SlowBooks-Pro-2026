@@ -507,14 +507,17 @@ and change-order lines all bill the same way) carries, per period:
 - **Retainage** = completed × the retainage percent (copied from the contract
   at creation, editable while the application is a draft).
 
-The application totals read the way the owner's payment application does: completed and
-stored to date, **retainage to date** (the sum of the line retainage),
-**retainage this period** (retainage to date less the prior application's),
-**total earned less retainage** (completed − retainage to date), **less
-previous payment applications** (the prior applications' payment due), the **current
-payment due** (total earned less retainage − previous payment applications + any
-retainage released), and the balance to finish. A **deposit applied** (below)
-nets off the current due to the **net due**.
+The application totals read the way the owner's payment application does:
+completed and stored to date, **retainage to date** (the sum of the line
+retainage, *net of every release*, so it is what is still held), **retainage
+this period** (newly withheld), **total earned less retainage** (completed −
+retainage to date), **less previous payment applications** (the prior
+applications' payment due, before tax), **sales tax** on this application's
+billing (below), and the **current payment due** (total earned less retainage −
+previous payment applications + tax), then the balance to finish. A release is
+just retainage going down, so the figures keep lining up with the invoices and
+account 1150. A **deposit applied** (below) nets off the current due to the
+**net due**.
 
 **A worked two-period example with stored materials and a release.** A
 $100,000 contract on two lines, 10% retainage:
@@ -523,7 +526,7 @@ $100,000 contract on two lines, 10% retainage:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **App 1** | 100,000 | 0 | 30,000 | 5,000 | 35,000 | 3,500 | **31,500** |
 | **App 2** | 100,000 | 30,000 | 20,000 | 5,000 | 55,000 | 5,500 | **18,000** |
-| **App 3** (release) | 100,000 | 50,000 | 0 | 5,000 | 55,000 | 5,500 | **5,500** |
+| **App 3** (release) | 100,000 | 50,000 | 0 | 5,000 | 55,000 | 0 (5,500 − 5,500 released) | **5,500** |
 
 App 1 bills 35,000 of work-and-stored, holds 3,500 of retainage, and certifies
 $31,500. App 2 bills 20,000 more; retainage to date is now 5,500, so retainage
@@ -533,6 +536,12 @@ retainage this period, and the current due is the 5,500 released. Across the
 three, the owner has certified $55,000 and been billed the 5,500 of retainage
 back.
 
+A release followed by more work: bill 30,000 (10% retainage, 3,000 held, 27,000
+due), release 1,500 on the next application (retainage to date 1,500, 1,500
+due), then bill 10,000. Retainage to date is 4,000 − 1,500 = 2,500, the
+application's current due is 9,000, the invoice's balance is 9,000 and account
+1150 holds 2,500.
+
 **What approve posts.** The invoice carries one line per SOV line with a
 non-zero this-period amount, where the amount is *this period plus the change
 in stored materials* — so stored materials are billed the period they are
@@ -540,18 +549,31 @@ stored and reversed the period they go into the work, and the income billed to
 date always equals completed-to-date. The journal is DR Accounts Receivable for
 the net (total − retainage held this period + retainage released), DR
 **Retainage Receivable** (1150) for the retainage held, CR 1150 for any
-released, CR income per line, CR sales tax as any invoice. Sales tax is charged
-on the billed work at the application's **tax rate** — defaulted from the job's
-accepted estimate (editable while the application is open) and applied like any
-invoice's, so a taxed job's progress bills carry tax and an untaxed one carries
-none. The invoice's balance due is that net; the invoice view and PDF show
+released, CR income per line, CR sales tax as any invoice. Sales tax is **on by
+default** and can be switched off per application (the *Charge tax* box); it is
+charged on the work billed this period at the application's **tax rate**,
+defaulted from the job's accepted estimate and editable while the application
+is open. A tax-exempt owner is never taxed. The application shows the tax and
+its current due includes it, so the application and the invoice match. The
+invoice's balance due is that net; the invoice view and PDF show
 *Retainage withheld this period*, *Retainage released* and *Current payment
 due*. A dropped retainage percent makes the retainage this period negative and
 the 1150 leg a credit; the entry still balances. **Void** reverses the
 invoice (and the 1150 entries), and later applications stay correct because
 each reads its *previous* and *retainage to date* from the approved history
-live — nothing stored goes stale. Only one application may be open (draft or
-submitted) per job at a time.
+live. Only the **latest approved** application can be voided (409
+`later_application` otherwise); void the later ones first. Only one application
+may be open (draft or submitted) per job at a time.
+
+**Rules the application keeps.** Completed to date and stored never go below
+zero (or above zero on a deduct line): a negative this-period or stored that
+would do that is refused (422). An application that only moves stored material
+into the work has nothing to bill: it is approved with no invoice (current due
+zero); an application with nothing at all to bill, hold, release, apply or move
+is still refused. At approval the application keeps the contract sums as they
+stood (original, and to date with change orders), and its PDF prints those, not
+today's job. An invoice made from a payment application can't be edited on the
+Invoices screen except for its notes (409); change the application instead.
 
 **Owner deposits.** Money an owner pays ahead of the work is a **deposit**
 (Pay apps tab → Owner deposits, or `POST /api/jobs/{id}/deposits`): it posts DR
@@ -560,7 +582,8 @@ unapplied. A pay application's **deposit applied** draws the unapplied balance
 down — on approve a payment whose deposit-to account is 2210 is created and
 applied to the invoice (DR 2210 / CR A/R), so the owner's prepayment settles
 the current due. Voiding the application restores the deposit; a deposit that
-has been applied cannot be voided until the application is.
+has been applied cannot be voided until the application is, and the deposit
+payment cannot be voided from Payments while the application stands (409).
 
 **The sub side.** A commitment bills a period at a time exactly as buyout
 described (the **Sub pay app** button opens the partial-convert dialog with
@@ -579,6 +602,17 @@ the commitment's pay-app schedule lists its bills with that status. On the owner
 side, a pay application warns — it never blocks — about the job's sub bills
 dated on or before the period whose waiver is still missing or pending, so the
 GC sees what to collect before submitting.
+
+On the owner side, each payment received on a payment application's invoice can
+carry the full set of waivers the contractor gives the owner: **conditional
+progress**, **unconditional progress**, **conditional final** and
+**unconditional final** (Pay apps tab → Waivers, or `POST /api/lien-waivers`
+with `payment_id` and `waiver_type`). One of each type per payment; the waiver
+takes the payment's amount and a through date (the application's period, else
+the payment's date), and `GET /api/lien-waivers/{id}/pdf` prints it. A
+conditional waiver takes effect only once the payment is received; an
+unconditional one says it has been; a final one covers the whole job. Some
+states require their own waiver form, so check yours before relying on these.
 
 **The schedule is now anchored.** Once an approved application has billed the
 schedule of values, it can no longer be rebuilt from the estimate (409

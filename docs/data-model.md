@@ -254,8 +254,17 @@ The owner's progress bill from the schedule of values. Two new tables:
   `release_retainage` Numeric(15,2) default 0 (retainage billed back this
   application), `deposit_applied` Numeric(15,2) default 0 (owner deposit
   applied to the current due), `lien_waiver_status` String(16),
-  `invoice_id` (FK invoices, SET NULL — the invoice approve created),
-  `approved_at`, `voided_at`, `notes`.
+  `invoice_id` (FK invoices, SET NULL — the invoice approve created; null for
+  an application that only moves stored material into the work),
+  `tax_rate` Numeric(7,4), `charge_tax` Boolean default true (#576),
+  `contract_sum_original` / `contract_sum_to_date` Numeric(15,2) nullable (the
+  contract sums as of approval), `approved_at`, `voided_at`, `notes`. Retainage
+  to date is net of releases.
+- `lien_waivers` (#576) — `payment_id` (FK payments, CASCADE), `job_id`,
+  `pay_application_id` (FK, SET NULL), `waiver_type` String(24)
+  (`conditional_progress` | `unconditional_progress` | `conditional_final` |
+  `unconditional_final`; unique per payment and type), `amount`,
+  `through_date`, `signed_by`, `notes`.
 - `pay_application_lines` — `pay_application_id` (FK, CASCADE), `sov_line_id`
   (FK `sov_lines.id`, SET NULL), `line_no`, `item_no`, `description`,
   `scheduled_value`, `this_period` and `stored` (Numeric(15,2); `previous` and
