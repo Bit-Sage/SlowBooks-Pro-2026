@@ -424,15 +424,15 @@ def job_profitability(
                 "margin_pct": (float(net / income * 100) if income else None),
             }
         )
-        # Fee on a cost-plus / GMP job (#552): a fixed fee, else the fee
-        # percent on this PERIOD's actual cost — hence fee_period, a period
-        # figure like the costs beside it (the job-to-date contract fee lives
-        # on the contract summary). Additive; lump sum and plain jobs omit it.
+        # Fee on a cost-plus / GMP job (#552): the fee percent on this
+        # PERIOD's actual cost — hence fee_period, a period figure like the
+        # costs beside it (the job-to-date contract fee lives on the contract
+        # summary). Additive; lump sum, plain and fixed-fee jobs omit it.
         job = jobs.get(b["job_id"])
         if job is not None and job.contract_type in ("cost_plus", "gmp"):
-            if job.fee_amount is not None:
-                b["fee_period"] = float(job.fee_amount)
-            elif job.fee_pct is not None:
+            # A fixed fee is a job-level figure, not a period one — it would
+            # repeat whole on every period — so it shows no fee_period.
+            if job.fee_amount is None and job.fee_pct is not None:
                 b["fee_period"] = float(
                     (costs * Decimal(str(job.fee_pct)) / Decimal("100")).quantize(
                         Decimal("0.01")

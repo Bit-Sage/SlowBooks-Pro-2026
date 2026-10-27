@@ -369,6 +369,25 @@ def _stamp_contract_defaults(job: Job) -> None:
         job.original_contract_amount = job.contract_amount
 
 
+_AMOUNT_FIELDS = ("contract_amount", "fee_amount", "cap_amount", "contingency_amount")
+
+
+def _refuse_sum_change(job: Job, new_amount) -> None:
+    """Once the original is stamped the contract sum is locked: only an
+    approved change order (#554) moves it. Re-sending the same sum is fine."""
+    if job.original_contract_amount is None:
+        return
+    if new_amount is not None and _q(new_amount) == _q(job.contract_amount):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "contract_sum_locked",
+            "message": "The contract sum is locked once the original is set; change it with a change order",
+        },
+    )
+
+
 @router.put("/{job_id}/contract", response_model=ContractResponse)
 def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)):
     """Set the job's contract terms. A field left out is unchanged; a field
@@ -377,6 +396,11 @@ def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)
     with the contingency term."""
     job = _get(db, job_id)
     changes = data.model_dump(exclude_unset=True)
+    for key in _AMOUNT_FIELDS:
+        if changes.get(key) is not None:
+            changes[key] = _q(changes[key])
+    if "contract_amount" in changes:
+        _refuse_sum_change(job, changes["contract_amount"])
     for key, value in changes.items():
         setattr(job, key, value)
     if (
@@ -437,14 +461,24 @@ def contract_from_estimate(
         job.contract_type = "lump_sum"
     # The contract sum is the estimate's pre-tax bid plus the owner
     # contingency carried inside it (the SOV adds a contingency line), so a
-    # freshly built schedule balances. An existing sum is left alone.
+    # freshly built schedule balances. An existing sum is left alone; a sum
+    # cleared after the original was stamped goes back to that original
+    # rather than earning a new one.
     if job.contract_amount is None:
-        bid = _q(estimate_totals(est)["bid_total"])
-        contingency = (
-            _q(job.contingency_amount) if job.contingency_amount else Decimal("0")
-        )
-        job.contract_amount = bid + contingency
-        job.original_contract_amount = job.contract_amount
+        if job.original_contract_amount is not None:
+            job.contract_amount = job.original_contract_amount
+        else:
+            bid = _q(estimate_totals(est)["bid_total"])
+            contingency = (
+                _q(job.contingency_amount) if job.contingency_amount else Decimal("0")
+            )
+            job.contract_amount = bid + contingency
+    # A sum already on the job (the job form) still gets its original stamped.
+    _stamp_contract_defaults(job)
+    # A GMP/cost-plus fee % defaults from the estimate's fee markup, so the
+    # fee tile and the SOV fee line agree. Only when the job has none.
+    if not job.fee_pct and est.fee_pct:
+        job.fee_pct = est.fee_pct
     build_sov(db, job, est, replace=True)
     db.commit()
     db.refresh(job)
@@ -509,6 +543,10 @@ def update_job(job_id: int, data: JobUpdate, db: Session = Depends(get_db)):
         refuse_moving_a_carried_job(db, job)
     if "name" in changes or "customer_id" in changes:
         _check_name_clash(db, customer_id, changes.get("name", job.name), job.id)
+    if "contract_amount" in changes:
+        if changes["contract_amount"] is not None:
+            changes["contract_amount"] = _q(changes["contract_amount"])
+        _refuse_sum_change(job, changes["contract_amount"])
     for key, value in changes.items():
         setattr(job, key, value)
     # The job form's plain contract amount runs through the same stamp as the

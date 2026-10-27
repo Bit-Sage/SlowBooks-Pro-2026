@@ -224,6 +224,8 @@ not-to-exceed). The type decides how the fee and the cap read:
 - **Fee** — the contractor's fee. A **fixed fee** (a dollar amount) wins when
   it is set; otherwise a **fee percent** applies to actual cost on a cost-plus
   or GMP job. A lump-sum job earns no separate fee (it is inside the price).
+  The Job Profitability period fee (`fee_period`) is the percent on the
+  period's cost; a fixed fee shows none, since it is a job figure.
 - **Cap** — the guaranteed maximum on a GMP (normally the contract sum, and
   defaulted to it), or an optional not-to-exceed on cost-plus. *Cap remaining*
   is the cap less cost-to-date and fee.
@@ -237,8 +239,14 @@ not-to-exceed). The type decides how the fee and the cap read:
   built from one.
 
 The summary stamps the **original contract amount** once, the first time a sum
-is set with a type; the Contract amount itself is the current, revised sum, so
-when change orders arrive (#554) the tab can show original + changes = revised.
+is set with a type (building from an estimate stamps it too, even when the sum
+came from the job form). From then on the **contract sum is locked**: the
+Contract tab and the job form refuse a different sum (409
+`contract_sum_locked`), and only an approved change order (#554) moves it, so
+the tab shows original + changes = revised. Amounts are rounded to the cent and
+the fee percent must be between 0 and 100. Building from an estimate also
+copies the estimate's fee markup into the job's fee percent when the job has
+none, so the fee tile and the SOV fee line agree on a GMP.
 
 **The schedule of values.** The SOV is the contract sum broken into the lines
 an owner pay application bills against — each with an item number, a

@@ -210,7 +210,14 @@ onto the invoice so the cost basis isn't lost. A Business or Nonprofit
 company's estimate form and PDF are exactly as they were. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
-**The contract on the job** (#552, @ContractorKeith). A construction job can
+**The contract on the job** (#552, @ContractorKeith). Review fixes: the
+contract sum is locked once the original is stamped (409 `contract_sum_locked`
+from the Contract tab and the job form; only a change order, #554, moves it);
+building from an estimate stamps the original even when the job form set the
+sum first, and never gives a cleared sum a new one; contract amounts are
+rounded to the cent and the fee percent is limited to 0-100; a fixed fee shows
+no `fee_period`; and building defaults the job's fee percent from the
+estimate's when the job has none. A construction job can
 now carry a contract — a **lump sum**, a **GMP** (guaranteed maximum price) or
 **cost-plus** — with a fee (a percent of cost or a fixed amount, the fixed fee
 winning), a cap (the GMP maximum, or a cost-plus not-to-exceed), owner

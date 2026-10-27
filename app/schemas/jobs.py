@@ -149,8 +149,8 @@ class ContractTerms(StrictModel):
     @field_validator("fee_pct")
     @classmethod
     def _fee_pct(cls, v):
-        if v is not None and v < 0:
-            raise ValueError("fee_pct cannot be negative")
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("fee_pct must be between 0 and 100")
         return v
 
     @field_validator("retainage_pct")

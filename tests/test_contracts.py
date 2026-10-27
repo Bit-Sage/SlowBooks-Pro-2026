@@ -147,11 +147,13 @@ def test_original_is_set_once_and_not_overwritten(client, seed_customer):
         f"/api/jobs/{job['id']}/contract",
         json={"contract_type": "lump_sum", "contract_amount": 100000},
     )
+    # the sum is locked once the original is stamped (see the lock tests below)
     r = client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": 125000})
-    c = r.json()["contract"]
-    assert c["contract_amount"] == 125000.0  # the current/revised sum moves
-    assert c["original_contract_amount"] == 100000.0  # the original does not
-    assert c["changes"] == 25000.0
+    assert r.status_code == 409
+    c = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
+    assert c["contract_amount"] == 100000.0
+    assert c["original_contract_amount"] == 100000.0
+    assert c["changes"] == 0.0
 
 
 def test_the_job_form_amount_then_a_type_keeps_the_original(client, seed_customer):
@@ -167,11 +169,12 @@ def test_the_job_form_amount_then_a_type_keeps_the_original(client, seed_custome
     )
     # choosing a type stamps the original from the amount already on the job
     client.put(f"/api/jobs/{job['id']}/contract", json={"contract_type": "lump_sum"})
-    # a later revision of the sum leaves the original where it was
+    # the stamped original locks the sum: a later PUT cannot move it
     r = client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": 130000})
-    c = r.json()["contract"]
+    assert r.status_code == 409
+    c = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
     assert c["original_contract_amount"] == 100000.0
-    assert c["contract_amount"] == 130000.0
+    assert c["contract_amount"] == 100000.0
 
 
 def test_validation_422s(client, seed_customer):
@@ -181,6 +184,52 @@ def test_validation_422s(client, seed_customer):
     assert client.put(base, json={"contract_amount": -5}).status_code == 422
     assert client.put(base, json={"retainage_pct": 150}).status_code == 422
     assert client.put(base, json={"fee_amount": -1}).status_code == 422
+
+
+def test_fee_pct_is_bounded_0_to_100_and_amounts_are_cent_rounded(
+    client, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    # 99999 used to pass and 500 on Postgres (Numeric(7,4))
+    assert client.put(base, json={"fee_pct": 99999}).status_code == 422
+    assert client.put(base, json={"fee_pct": 100.01}).status_code == 422
+    assert client.put(base, json={"fee_pct": -0.01}).status_code == 422
+    assert client.put(base, json={"fee_pct": 0}).status_code == 200
+    r = client.put(
+        base,
+        json={"fee_pct": 100, "contract_type": "cost_plus", "contract_amount": 1000.005},
+    )
+    assert r.status_code == 200, r.text
+    c = r.json()["contract"]
+    assert c["fee_pct"] == 100.0
+    assert c["contract_amount"] == 1000.01  # money goes through _q (half-up)
+    assert c["original_contract_amount"] == 1000.01
+
+
+# ── The contract sum locks once the original is stamped ─────────────────
+
+
+def test_contract_sum_is_locked_once_the_original_is_stamped(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    # before the original exists the sum is free to move
+    assert client.put(base, json={"contract_amount": 90000}).status_code == 200
+    assert (
+        client.put(base, json={"contract_type": "lump_sum", "contract_amount": 100000})
+    ).status_code == 200  # this stamps the original
+    r = client.put(base, json={"contract_amount": 110000})
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "contract_sum_locked"
+    assert client.put(base, json={"contract_amount": None}).status_code == 409
+    # the plain job form cannot move it either
+    r = client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 110000})
+    assert r.status_code == 409
+    # re-sending the same sum, and changing other terms, is fine
+    assert client.put(base, json={"contract_amount": 100000}).status_code == 200
+    assert client.put(base, json={"retainage_pct": 10}).status_code == 200
+    c = client.get(base).json()["contract"]
+    assert c["contract_amount"] == 100000.0 and c["changes"] == 0.0
 
 
 # ── Summary math ────────────────────────────────────────────────────────
@@ -372,6 +421,7 @@ def test_from_estimate_builds_and_balances(client, db_session, seed_customer):
     assert c["contract_amount"] == bid_total  # pre-tax bid
     assert c["sov_total"] == bid_total
     assert c["sov_balance"] == 0.0  # balances when the sum came from the estimate
+    assert c["original_contract_amount"] == bid_total
     assert c["contract_estimate_id"] == est["id"]
 
 
@@ -647,6 +697,21 @@ def test_business_mode_job_detail_carries_null_contract(client, seed_customer):
     assert detail["contract"]["contract_amount"] is None
 
 
+def test_a_fixed_fee_has_no_period_fee(client, db_session, seed_accounts, seed_customer):
+    job = _job(client, seed_customer.id)
+    client.put(
+        f"/api/jobs/{job['id']}/contract",
+        json={"contract_type": "cost_plus", "contract_amount": 0, "fee_amount": 9000},
+    )
+    _post_cost(db_session, job["id"], cost=Decimal("40000"), revenue=Decimal("30000"))
+    from app.services.jobs_service import job_profitability
+
+    rows = job_profitability(db_session, job_ids=[job["id"]], include_no_job=False)
+    row = next(r for r in rows if r["job_id"] == job["id"])
+    assert row["contract_type"] == "cost_plus"
+    assert "fee_period" not in row  # the fixed fee is a job figure, not a period one
+
+
 def test_job_profitability_rows_gain_contract_type_and_period_fee(
     client, db_session, seed_accounts, seed_customer
 ):
@@ -684,3 +749,88 @@ def test_migration_upgrades_and_downgrades(tmp_path):
     assert down.returncode == 0, down.stderr
     again = run("upgrade", "head")
     assert again.returncode == 0, again.stderr
+
+
+# ── Building from the estimate: original, fee %, status hole ────────────
+
+
+def test_build_stamps_the_original_when_the_job_form_set_the_sum_first(
+    client, seed_customer
+):
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)
+    job = _job(client, seed_customer.id)
+    # the job form's amount, off from the bid, with no type yet
+    client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 40000})
+    _accept(client, est["id"], job["id"])
+    c = client.post(
+        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
+    ).json()["contract"]
+    assert c["contract_type"] == "lump_sum"
+    assert c["contract_amount"] == 40000.0  # an existing sum is left alone
+    assert c["original_contract_amount"] == 40000.0  # but the original is stamped
+    assert c["changes"] == 0.0  # the gap to the SOV shows as sov_balance
+    assert c["sov_balance"] == 40000.0 - 46556.0
+
+
+def test_rebuild_does_not_give_a_cleared_sum_a_new_original(
+    client, db_session, seed_customer
+):
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)
+    job = _job(client, seed_customer.id)
+    _accept(client, est["id"], job["id"])
+    url = f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
+    client.post(url)
+    # clear the sum behind the API's back (legacy data), original stays
+    from app.models.jobs import Job
+
+    row = db_session.get(Job, job["id"])
+    row.contract_amount = None
+    db_session.commit()
+    c = client.post(url).json()["contract"]
+    assert c["original_contract_amount"] == 46556.0
+    assert c["contract_amount"] == 46556.0  # back to the original, no new one
+    assert c["changes"] == 0.0
+
+
+def test_build_defaults_the_job_fee_pct_from_the_estimate_only_when_unset(
+    client, seed_customer
+):
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)  # fee_pct=5
+    job = _job(client, seed_customer.id)
+    _accept(client, est["id"], job["id"])
+    c = client.post(
+        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
+    ).json()["contract"]
+    assert c["fee_pct"] == 5.0
+
+
+def test_build_keeps_a_fee_pct_already_on_the_job(client, seed_customer):
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)  # fee_pct=5
+    job = _job(client, seed_customer.id)
+    client.put(f"/api/jobs/{job['id']}/contract", json={"fee_pct": 12})
+    _accept(client, est["id"], job["id"])
+    c = client.post(
+        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
+    ).json()["contract"]
+    assert c["fee_pct"] == 12.0
+
+
+def test_estimate_cannot_go_back_to_pending_once_the_sov_is_built(
+    client, seed_customer
+):
+    """The #559 status hole, seen from the contract. The refusal lands in #559
+    (stacked under this PR), so this passes once this branch is rebased onto
+    it; on a head without it the PUT is accepted and this fails."""
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)
+    job = _job(client, seed_customer.id)
+    _accept(client, est["id"], job["id"])
+    url = f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
+    client.post(url)
+    before = client.get(f"/api/jobs/{job['id']}/contract").json()
+    budgets_before = client.get(f"/api/jobs/{job['id']}/budgets").json()
+
+    r = client.put(f"/api/estimates/{est['id']}", json={"status": "pending"})
+    assert r.status_code in (400, 409), r.text
+
+    assert client.get(f"/api/jobs/{job['id']}/contract").json() == before
+    assert client.get(f"/api/jobs/{job['id']}/budgets").json() == budgets_before
