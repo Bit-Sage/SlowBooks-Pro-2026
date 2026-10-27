@@ -1579,3 +1579,34 @@ def test_waiver_amount_is_the_part_paid_to_the_jobs_invoices(
     )
     assert w.status_code == 201, w.text
     assert float(w.json()["amount"]) == 300.0
+
+
+def test_a_pay_application_locks_the_contract_sum_and_contingency(
+    client, seed_accounts, seed_customer
+):
+    """The sum and contingency edit freely until the first pay application;
+    from then on they move by change order only (#552, #555). A void
+    application frees them again."""
+    job, _sov = _two_line_job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+    app = _new_app(client, job["id"])
+    r = client.put(base, json={"contract_amount": 120000})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "contract_sum_locked"
+    r = client.put(base, json={"contingency_amount": 5000})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "contingency_locked"
+    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+    # an approved then voided application leaves no billing behind
+    r = _bill(
+        client,
+        app["id"],
+        [
+            {"sov_line_id": _sov[0]["id"], "this_period": 30000, "stored": 0},
+            {"sov_line_id": _sov[1]["id"], "this_period": 0, "stored": 0},
+        ],
+    )
+    assert r.status_code == 200, r.text
+    assert client.put(base, json={"contract_amount": 120000}).status_code == 409
+    r = client.post(f"/api/pay-applications/{app['id']}/void")
+    assert r.status_code == 200, r.text
+    assert client.put(base, json={"contract_amount": 120000}).status_code == 200

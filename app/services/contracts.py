@@ -39,16 +39,23 @@ def contract_is_locked(db: Session, job: Job) -> bool:
 
     Only an approved owner change order counts: a draft or pending one, a
     potential change order and a sub change order do not move the sum, and a
-    void puts it back. #576 (progress billing) adds the billing condition
-    here."""
+    void puts it back. Billing counts from the first pay application that is
+    not void: a draft already carries this period's amounts against the
+    schedule."""
     from app.models.change_orders import ChangeOrder
+    from app.models.pay_applications import PayApplication
 
-    live = db.query(ChangeOrder.id).filter(
+    live_co = db.query(ChangeOrder.id).filter(
         ChangeOrder.job_id == job.id,
         ChangeOrder.kind == "owner",
         ChangeOrder.status == "approved",
     )
-    return db.query(live.exists()).scalar() or False
+    billing = db.query(PayApplication.id).filter(
+        PayApplication.job_id == job.id, PayApplication.status != "void"
+    )
+    return bool(
+        db.query(live_co.exists()).scalar() or db.query(billing.exists()).scalar()
+    )
 
 
 def sov_from_estimate(estimate: Estimate) -> list[dict]:
