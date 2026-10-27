@@ -499,20 +499,24 @@ block, the deposits block and Save / Submit / Approve / Void / PDF
 line detail); the invoice view and PDF show the retainage lines. The
 WIP schedule, cost-to-complete, the change-order log, the buyout report and job
 cost by vendor (#556) build on this; a Business or Nonprofit company sees none
-of it. Review changes (#576): retainage to date is now net of releases, so the
-application, its invoice and account 1150 agree after a release; an invoice
-made from a payment application only takes note edits (409 otherwise); only the
-latest approved application can be voided (409 `later_application`); the PDF is
-titled "Application for Payment" with a "Line detail" sheet, and none of the
-screens or documents use the AIA form names; sales tax is on by default with a
-per-application *Charge tax* switch, shows on the application so its current
-due matches the invoice, and `tax_rate` is now saved on edit; each payment on
-the invoice can carry conditional or unconditional, progress or final lien
-waivers (`POST /api/lien-waivers`, PDF per waiver); an application that only
-moves stored material into the work is approved with no invoice; the PDF prints
-the contract sums as of approval; a deposit payment applied to an application
-can't be voided from Payments (409); and a negative this-period or stored that
-would take completed to date below zero is refused (422). See
+of it. Retainage to date is net of releases, so the application, its invoice and
+account 1150 agree after a release, and it cannot go below zero (422): dropping
+the retainage percent and releasing on the same application is refused when the
+release is more than what is held. An invoice made from a pay application only
+takes note edits (409 otherwise) and is voided with the application, not from
+the invoice screen (409 `invoice_belongs_to_pay_application`); only the latest
+approved application can be voided (409 `later_application`). Sales tax is on
+by default with a per-application *Charge tax* switch, taxes at the estimate's
+rate to six decimals (8.875% stays 8.875%), shows on the application so its
+current due matches the invoice, and is saved on edit. Stored materials move
+into the work on a later application, and an application that only moves stored
+material is approved with no invoice. The PDF is titled "Application for
+Payment" with a "Line detail" sheet and prints the contract sums as of approval.
+Each payment can carry conditional or unconditional, progress or final lien
+waivers for the part applied to the job (`POST /api/lien-waivers`, PDF per
+waiver). A deposit payment applied to an application can't be voided from
+Payments (409), and a negative this-period or stored that would take completed
+to date below zero is refused (422). See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks

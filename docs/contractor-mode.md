@@ -552,8 +552,8 @@ the net (total − retainage held this period + retainage released), DR
 released, CR income per line, CR sales tax as any invoice. Sales tax is **on by
 default** and can be switched off per application (the *Charge tax* box); it is
 charged on the work billed this period at the application's **tax rate**,
-defaulted from the job's accepted estimate and editable while the application
-is open. A tax-exempt owner is never taxed. The application shows the tax and
+defaulted from the job's accepted estimate (kept to six decimals, so 8.875%
+stays 8.875%) and editable while the application is open. A tax-exempt owner is never taxed. The application shows the tax and
 its current due includes it, so the application and the invoice match. The
 invoice's balance due is that net; the invoice view and PDF show
 *Retainage withheld this period*, *Retainage released* and *Current payment
@@ -561,8 +561,10 @@ due*. A dropped retainage percent makes the retainage this period negative and
 the 1150 leg a credit; the entry still balances. **Void** reverses the
 invoice (and the 1150 entries), and later applications stay correct because
 each reads its *previous* and *retainage to date* from the approved history
-live. Only the **latest approved** application can be voided (409
-`later_application` otherwise); void the later ones first. Only one application
+live. An application's invoice is voided with the application: voiding it from
+the Invoices screen is refused (409 `invoice_belongs_to_pay_application`). Only
+the **latest approved** application can be voided (409 `later_application`
+otherwise); void the later ones first. Only one application
 may be open (draft or submitted) per job at a time.
 
 **Rules the application keeps.** Completed to date and stored never go below
@@ -570,7 +572,12 @@ zero (or above zero on a deduct line): a negative this-period or stored that
 would do that is refused (422). An application that only moves stored material
 into the work has nothing to bill: it is approved with no invoice (current due
 zero); an application with nothing at all to bill, hold, release, apply or move
-is still refused. At approval the application keeps the contract sums as they
+is still refused. Retainage to date can't go below zero either: a release is
+refused (422) when it is more than the retainage held at the application's own
+percent on the work completed, so dropping the percent to 0 and releasing on
+the same application is refused (release at the held percent, or bill the
+release on its own application). A lien waiver's amount is the part of the
+payment applied to the job's invoices. At approval the application keeps the contract sums as they
 stood (original, and to date with change orders), and its PDF prints those, not
 today's job. An invoice made from a payment application can't be edited on the
 Invoices screen except for its notes (409); change the application instead.

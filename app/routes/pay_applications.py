@@ -206,6 +206,20 @@ def _validate(db: Session, app: PayApplication) -> None:
                 f"{outstanding:.2f} of retainage held to date."
             ),
         )
+    # Retainage to date (gross at this application's percent, less the prior
+    # and this release) cannot go below zero: dropping the percent and
+    # releasing on the same application would otherwise over-bill the owner.
+    held = application_figures(db, app)["retainage_to_date"]
+    if held < _ZERO:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Retainage to date would be {held:.2f}: the release of "
+                f"{_q(app.release_retainage):.2f} is more than the retainage "
+                f"held at {app.retainage_pct}% on the work completed. Release "
+                "less, or keep the retainage percent until the release is billed."
+            ),
+        )
     unapplied = deposits_figures(db, app.job_id)["unapplied"]
     deposit = _q(app.deposit_applied)
     if deposit > unapplied:
@@ -247,13 +261,14 @@ def _estimate_tax_rate(db: Session, job: Job) -> Decimal:
             .order_by(Estimate.id.desc())
             .first()
         )
-    return _q4(est.tax_rate) if est and est.tax_rate else _ZERO
+    return _q6(est.tax_rate) if est and est.tax_rate else _ZERO
 
 
-def _q4(value) -> Decimal:
+def _q6(value) -> Decimal:
+    """Tax rates keep six places, as estimates store them (8.875% = 0.08875)."""
     from app.services.accounting import quantize_to
 
-    return quantize_to(value, Decimal("0.0001"))
+    return quantize_to(value, Decimal("0.000001"))
 
 
 @router.get("", response_model=list[PayApplicationOut])
@@ -506,7 +521,7 @@ def approve_pay_application(app_id: int, db: Session = Depends(get_db)):
     if invoice_lines or retainage_held != 0 or retainage_released != 0 or deposit:
         # Tax over the billed work at the application's rate when tax is on and
         # the owner is taxable — the same figure the application shows.
-        tax_rate = _q4(effective_tax_rate(app))
+        tax_rate = _q6(effective_tax_rate(app))
         subtotal = _q(sum((a for _d, a, _c in invoice_lines), _ZERO))
         tax_amount = _q(subtotal * tax_rate) if tax_rate else _ZERO
         total = _q(subtotal + tax_amount)
@@ -744,9 +759,9 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
 
             void_payment_unchecked(dep.id, db)  # commits; restores the balance
             db.refresh(invoice)
-        from app.routes.invoices.lifecycle import void_invoice
+        from app.routes.invoices.lifecycle import void_invoice_unchecked
 
-        void_invoice(invoice.id, db)  # commits; reverses the journal incl. 1150
+        void_invoice_unchecked(invoice.id, db)  # commits; reverses 1150 too
     app.status = "void"
     app.voided_at = datetime.now(timezone.utc)
     db.commit()

@@ -1041,7 +1041,8 @@ def test_migration_up_down_reverses(tmp_path):
     assert "lien_waivers" in insp.get_table_names()
     assert "retainage_held" in {c["name"] for c in insp.get_columns("invoices")}
     eng.dispose()
-    # the review-fix migration (#576) reverses on its own, then the original
+    # the review-fix migrations (#576) reverse on their own, then the original
+    command.downgrade(cfg, "-1")  # tax_rate precision
     command.downgrade(cfg, "-1")
     eng = create_engine("sqlite:///" + db.as_posix())
     insp = inspect(eng)
@@ -1467,3 +1468,114 @@ def test_lien_waiver_refused_on_a_voided_payment(
         json={"payment_id": pay["id"], "waiver_type": "conditional_progress"},
     )
     assert r.status_code == 409
+
+
+# ── Review fixes, round two (#576) ───────────────────────────────────────
+
+
+def _rows30(sov, tp):
+    return [
+        {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
+        {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+    ]
+
+
+def test_release_with_percent_dropped_to_zero_refused(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov, _a1 = _approved_30k(client, seed_customer.id)
+    assert _gl(db_session, "1150") == Decimal("3000.00")
+    a2 = _new_app(client, job["id"])
+    r = _edit(
+        client,
+        a2["id"],
+        lines=_rows30(sov, 0),
+        retainage_pct=0,
+        release_retainage=3000,
+    )
+    assert r.status_code == 422, r.text
+    assert "-3000.00" in r.json()["detail"]
+    assert _gl(db_session, "1150") == Decimal("3000.00")
+
+
+def test_full_release_at_the_same_percent_is_allowed(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov, _a1 = _approved_30k(client, seed_customer.id)
+    a2 = _new_app(client, job["id"])
+    r = _bill(client, a2["id"], _rows30(sov, 0), release_retainage=3000)
+    assert r.status_code == 200, r.text
+    t = r.json()["totals"]
+    assert t["retainage_to_date"] == 0.0
+    assert t["current_due"] == 3000.0
+    assert _gl(db_session, "1150") == Decimal("0.00")
+
+
+def test_pay_app_invoice_cannot_be_voided_from_the_invoice_screen(
+    client, db_session, seed_accounts, seed_customer
+):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    r = client.post(f"/api/invoices/{app['invoice_id']}/void")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "invoice_belongs_to_pay_application"
+    pa = db_session.query(PayApplication).filter_by(id=app["id"]).first()
+    db_session.refresh(pa)
+    assert pa.status == "approved"
+    assert _gl(db_session, "1150") == Decimal("3000.00")
+    # voiding through the application still works
+    assert client.post(f"/api/pay-applications/{app['id']}/void").status_code == 200
+    inv = db_session.query(Invoice).filter_by(id=app["invoice_id"]).first()
+    db_session.refresh(inv)
+    assert inv.status.value == "void"
+    assert _gl(db_session, "1150") == Decimal("0.00")
+
+
+def test_tax_rate_keeps_six_decimals(client, db_session, seed_accounts, seed_customer):
+    job, sov = _taxed_estimate_job(client, seed_customer.id, rate="0.08875")
+    app = _new_app(client, job["id"])
+    assert Decimal(str(app["tax_rate"])) == Decimal("0.08875")
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 10000, "stored": 0}],
+    )
+    r = _approve(client, app["id"])
+    assert r.status_code == 200, r.text
+    inv = db_session.query(Invoice).filter_by(id=r.json()["invoice_id"]).first()
+    assert inv.tax_amount == Decimal("887.50")
+
+
+def test_waiver_amount_is_the_part_paid_to_the_jobs_invoices(
+    client, db_session, seed_accounts, seed_customer
+):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    other = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-04-01",
+            "tax_rate": "0",
+            "lines": [{"description": "Other", "quantity": 1, "rate": 700}],
+        },
+    )
+    assert other.status_code == 201, other.text
+    r = client.post(
+        "/api/payments",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-06-15",
+            "amount": 1000,
+            "method": "check",
+            "allocations": [
+                {"invoice_id": app["invoice_id"], "amount": 300},
+                {"invoice_id": other.json()["id"], "amount": 700},
+            ],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    w = client.post(
+        "/api/lien-waivers",
+        json={"payment_id": r.json()["id"], "waiver_type": "conditional_progress"},
+    )
+    assert w.status_code == 201, w.text
+    assert float(w.json()["amount"]) == 300.0

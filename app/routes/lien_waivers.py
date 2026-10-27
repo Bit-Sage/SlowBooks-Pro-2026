@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -67,12 +68,27 @@ def create_lien_waiver(data: LienWaiverCreate, db: Session = Depends(get_db)):
         if (invoice and invoice.pay_application_id)
         else None
     )
+    # A payment split across several invoices waives only the part applied to
+    # this job's invoices (the whole payment when it carries no job).
+    amount = Decimal(str(payment.amount))
+    if job_id is not None:
+        amount = Decimal(
+            str(
+                db.query(func.coalesce(func.sum(PaymentAllocation.amount), 0))
+                .join(Invoice, Invoice.id == PaymentAllocation.invoice_id)
+                .filter(
+                    PaymentAllocation.payment_id == payment.id,
+                    Invoice.job_id == job_id,
+                )
+                .scalar()
+            )
+        )
     waiver = LienWaiver(
         payment_id=payment.id,
         job_id=job_id,
         pay_application_id=app.id if app else None,
         waiver_type=data.waiver_type,
-        amount=Decimal(str(payment.amount)),
+        amount=amount,
         through_date=(
             data.through_date
             or (app.period_to if app and app.period_to else None)

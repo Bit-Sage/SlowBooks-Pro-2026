@@ -51,7 +51,7 @@ class PayApplication(Base):
     retainage_pct = Column(Numeric(5, 2), nullable=True)
     # Sales-tax rate (a fraction, like the invoice's), defaulted from the job's
     # accepted estimate at creation; approve taxes the billed work with it.
-    tax_rate = Column(Numeric(7, 4), nullable=False, default=0)
+    tax_rate = Column(Numeric(7, 6), nullable=False, default=0)
     # Tax is on by default; an application turns it off with charge_tax=False
     # (a tax-exempt job, or work taxed elsewhere). A tax-exempt customer is
     # never taxed either way.
