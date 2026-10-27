@@ -39,6 +39,7 @@ from app.schemas.banking import (
     ReconciliationCreate,
     ReconciliationUpdate,
     StatementAdd,
+    StatementPayout,
     StatementVendors,
     StatementCategory,
     StatementMatch,
@@ -300,6 +301,8 @@ def post_legacy_balance(
 # Bank Transactions
 def _statement_out(rows: list, db: Session) -> list[dict]:
     from app.services.bank_matching import entry_vendors
+    from app.services.bank_rules_engine import payout_suggestion
+    from app.services.settings_service import get_all_settings
 
     ids = {r.category_account_id for r in rows if r.category_account_id}
     names = (
@@ -308,6 +311,15 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
         else {}
     )
     vendors = entry_vendors(db, rows)
+    # A payout suggestion (#584) is offered only on an unmatched deposit, so
+    # the settings read and the per-provider lookup stay off the common path.
+    settings = get_all_settings(db)
+
+    def _payout(r):
+        if r.match_status != "unmatched" or not r.amount or r.amount <= 0:
+            return None
+        return payout_suggestion(db, settings, r.payee, r)
+
     return [
         {
             "id": r.id,
@@ -327,6 +339,7 @@ def _statement_out(rows: list, db: Session) -> list[dict]:
             "created_at": r.created_at,
             "vendor_id": vendors[r.id].id if r.id in vendors else None,
             "vendor_name": vendors[r.id].name if r.id in vendors else None,
+            "suggested_payout": _payout(r),
         }
         for r in rows
     ]
@@ -398,20 +411,128 @@ def statement_unmatch(txn_id: int, db: Session = Depends(get_db)):
 def statement_add(
     txn_id: int, data: StatementAdd = None, db: Session = Depends(get_db)
 ):
-    """Post this statement line as a register entry and link it."""
+    """Post this statement line as a register entry and link it. With
+    `splits` (a provider payout, #584) the other side is several accounts
+    instead of one category, validated like a register split."""
     from app.services import bank_matching as m
 
     data = data or StatementAdd()
+    bt = _statement_line(db, txn_id)
+    splits = None
+    if data.splits:
+        # The same conversion and total check the register uses, against
+        # the statement amount; mutual exclusivity with the single category
+        # is enforced in bank_matching.add.
+        acct = m._feed_account(db, bt)
+        _, splits = _category_and_splits(
+            db,
+            acct,
+            SimpleNamespace(
+                splits=data.splits,
+                amount=bt.amount,
+                category_account_id=data.category_account_id,
+            ),
+        )
     bt = m.add(
         db,
-        _statement_line(db, txn_id),
+        bt,
         category_account_id=data.category_account_id,
         payee=data.payee,
         memo=data.memo,
         class_id=data.class_id,
         job_id=data.job_id,
         vendor_id=data.vendor_id,
+        splits=splits,
     )
+    db.commit()
+    db.refresh(bt)
+    return _statement_out([bt], db)[0]
+
+
+@router.post("/transactions/{txn_id}/payout", response_model=BankTransactionResponse)
+def statement_payout(txn_id: int, data: StatementPayout, db: Session = Depends(get_db)):
+    """Record an unmatched deposit as a provider payout (#584). The server
+    builds the split from the gross — CR the provider's clearing account for
+    the gross, DR the fee account for gross − net, DR the bank for the net —
+    so the account ids stay off the client; then it adds it the normal way,
+    so the line links and voids/reconciliation behave like any bank entry.
+    The clearing and fee accounts are created on demand here, at post time."""
+    from app.services import bank_matching as m
+    from app.services.payments.clearing import (
+        DISPLAY_NAMES,
+        PROVIDER_NAMES,
+        clearing_account_id,
+        clearing_balance,
+        fee_account_id,
+        payouts_allowed,
+    )
+
+    if data.provider not in PROVIDER_NAMES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown payment provider: {data.provider}"
+        )
+    # Allowed while clearing is on, and after it is turned off until the
+    # clearing balance is paid out.
+    if not payouts_allowed(db, data.provider):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{DISPLAY_NAMES[data.provider]} clearing is off and holds "
+                "nothing to pay out; turn it on first"
+            ),
+        )
+    bt = _statement_line(db, txn_id)
+    net = _q(bt.amount)
+    if net <= 0:
+        raise HTTPException(
+            status_code=400, detail="A payout is a deposit; this line is not money in"
+        )
+    gross = _q(data.gross)
+    if gross < net:
+        raise HTTPException(
+            status_code=400,
+            detail="The gross cleared cannot be less than the net that reached the bank",
+        )
+    display = DISPLAY_NAMES[data.provider]
+    # A payout recorded by hand (Record payout) already sits in the ledger
+    # as a match for this deposit, however late the feed line arrives.
+    from app.services import bank_matching as _m
+
+    if _m.candidate_lines(db, _m._feed_account(db, bt).id, bt.amount, bt.date):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This deposit matches an entry already in your books, perhaps a "
+                "payout you recorded by hand. Use Match instead of posting it twice."
+            ),
+        )
+    # Clearing holds the net of everything not yet paid out; a bigger gross
+    # would book the difference as fees.
+    held = clearing_balance(db, data.provider)
+    if gross > held:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The gross ({gross:,.2f}) is more than {display} Clearing holds "
+                f"({held:,.2f}). Enter the net that reached the bank, or the "
+                "gross the provider actually cleared."
+            ),
+        )
+    clearing = (
+        db.query(Account)
+        .filter(Account.id == clearing_account_id(db, data.provider))
+        .first()
+    )
+    splits = [(clearing, gross, f"{display} payout")]
+    fee = gross - net
+    if fee > 0:
+        fee_acct = (
+            db.query(Account)
+            .filter(Account.id == fee_account_id(db, data.provider))
+            .first()
+        )
+        splits.append((fee_acct, -fee, f"{display} payout fee"))
+    bt = m.add(db, bt, payee=f"{display} payout", splits=splits)
     db.commit()
     db.refresh(bt)
     return _statement_out([bt], db)[0]

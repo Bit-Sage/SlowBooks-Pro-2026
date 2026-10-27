@@ -9,12 +9,79 @@
 # ============================================================================
 
 import logging
+import re
+from typing import Mapping, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.banking import BankTransaction
 
 logger = logging.getLogger(__name__)
+
+
+def payout_suggestion(
+    db: Session,
+    settings: Mapping[str, str],
+    payee: Optional[str],
+    line: Optional[BankTransaction] = None,
+) -> Optional[dict]:
+    """A deposit whose payee names Stripe, PayPal or Square (whole word,
+    case-insensitive), on a company with that provider's clearing on, can
+    be recorded as a payout of that provider (#584).
+
+    Advisory only and a pure read: it creates no account, commits nothing,
+    and posts nothing. Returns the provider, its display name and the
+    clearing balance (shown as information; the modal pre-fills the gross
+    with the deposit's net), or None.
+
+    Clearing turned off still offers it while the clearing account holds a
+    balance. When `line` is given and a ledger entry already matches it (a
+    payout recorded by hand, whose feed line arrived late), nothing is
+    suggested: that deposit wants Match, not a second posting. The
+    caller gates on a deposit (amount > 0) and an unmatched line; this only
+    decides provider and reads the clearing balance.
+
+    No clearing account yet means nothing has cleared, so there is nothing
+    to pay out and the suggestion is None — the chart is left untouched by
+    merely listing the review queue."""
+    from datetime import date as _date
+
+    from app.services.bank_register import balance_as_of
+    from app.services.payments.clearing import (
+        DISPLAY_NAMES,
+        PROVIDER_NAMES,
+        clearing_enabled,
+        existing_clearing_account,
+    )
+
+    text = (payee or "").lower()
+    for provider in PROVIDER_NAMES:
+        if not re.search(rf"\b{re.escape(provider)}\b", text):
+            continue
+        acct = existing_clearing_account(db, provider)
+        if acct is None:
+            return None
+        balance, _ = balance_as_of(db, acct, _date.today())
+        if not clearing_enabled(settings, provider) and balance <= 0:
+            continue
+        if line is not None and _has_ledger_match(db, line):
+            return None
+        return {
+            "provider": provider,
+            "display_name": DISPLAY_NAMES[provider],
+            "clearing_balance": balance,
+        }
+    return None
+
+
+def _has_ledger_match(db: Session, line: BankTransaction) -> bool:
+    """An unlinked ledger entry on the feed's account already has this
+    line's amount near its date, so the line is a Match, not a new posting."""
+    from app.services import bank_matching as m
+
+    return bool(
+        m.candidate_lines(db, m._feed_account(db, line).id, line.amount, line.date)
+    )
 
 
 def _matches(rule_type: str, pattern: str, payee: str) -> bool:

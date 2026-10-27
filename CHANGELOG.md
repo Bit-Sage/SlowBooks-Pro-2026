@@ -54,6 +54,36 @@ are subtotalled beside it rather than folded in. The list's search box
 (#335) stays as it was — name, company, phone, email — and the list route's
 `search` parameter now covers the same four fields instead of the name alone.
 
+**Record a provider payout and match it to the bank feed** (#584,
+@ContractorKeith). Step 2 of the clearing-account feature (#583, merged). When a
+provider's net payout lands in the bank, the deposit line in the bank
+review queue offers a **Payout…** button for any deposit whose payee names
+Stripe, PayPal or Square and whose provider has clearing on. It posts a
+split that credits the provider's clearing account for the gross, debits
+Merchant Account Fees for any fee the payout still carries, and leaves the
+net in the bank — through the normal Add path, so the statement line links
+and voids/reconciliation behave like any bank entry. A payout that arrives
+without a feed is recorded from the provider's settings card with **Record
+payout** (date, bank account, net, fee), which posts the same split. Each
+provider's card shows the clearing balance awaiting payout with a link to
+its register; it returns to zero once every payout is in.
+
+The **Payout…** modal prefills the gross with the deposit's net and shows the
+clearing balance for information (clearing already holds the net of every
+capture not yet paid out), and both the review-queue and the Record payout
+routes refuse a gross larger than the clearing balance. A deposit that
+already matches an entry in the books, such as a payout recorded by hand
+whose feed line arrives more than five days later, offers Match instead of
+Payout… and the payout route refuses to post it twice. Refunds and disputes
+(a void of an online payment) reverse against the provider's clearing
+account, never the bank, and a void leaves the fee the provider kept booked
+as an expense unless it is marked `fee_refunded`. Voiding a payment that
+looks already paid out warns (`warning` on the void response). Turning
+clearing off while the account holds money warns and keeps payouts available
+until the balance is zero; new payments then go to Undeposited Funds. The
+manual route rounds its amounts and names the provider "PayPal", not
+"Paypal".
+
 **A clearing account per payment provider, with the processing fee** (#583,
 @ContractorKeith). Each online-payment provider (Stripe, PayPal, Square) gets
 an optional clearing-account setting, off by default. With it off, a captured

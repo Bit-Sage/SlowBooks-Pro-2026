@@ -24,6 +24,7 @@ from app.services.payments.clearing import (
     clearing_account_id,
     clearing_enabled_db,
     fee_account_id,
+    fee_line_memo,
 )
 from app.services.donor_documents import document_label
 from app.services.terminology import terms_from_db
@@ -129,13 +130,13 @@ def record_provider_payment(
                     "account_id": fee_id,
                     "debit": fee,
                     "credit": Decimal("0"),
-                    "description": f"{provider_display_name} fee",
+                    "description": fee_line_memo(provider_name),
                 },
                 {
                     "account_id": clearing_id,
                     "debit": Decimal("0"),
                     "credit": fee,
-                    "description": f"{provider_display_name} fee",
+                    "description": fee_line_memo(provider_name),
                 },
             ]
         txn = create_journal_entry(

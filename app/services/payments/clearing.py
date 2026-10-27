@@ -12,6 +12,8 @@
 # ============================================================================
 
 import logging
+from datetime import date
+from decimal import Decimal
 from typing import Mapping
 
 from sqlalchemy.orm import Session
@@ -24,6 +26,9 @@ from app.services.settings_service import get_setting_raw
 logger = logging.getLogger(__name__)
 
 PROVIDER_NAMES = ("stripe", "paypal", "square")
+
+# Human-facing provider names (PayPal keeps its capital P).
+DISPLAY_NAMES = {"stripe": "Stripe", "paypal": "PayPal", "square": "Square"}
 
 # Suggested account number + name per provider's clearing account. The number
 # is kept only when the chart hasn't used it (ensure_account), so an imported
@@ -107,6 +112,71 @@ def clearing_account_id(db: Session, provider_name: str) -> int:
     return ensure_account(
         db, number, name, AccountType.ASSET, detail_type="other_current_asset"
     ).id
+
+
+def existing_clearing_account(db: Session, provider_name: str) -> Account | None:
+    """The provider's clearing account if it already exists, creating nothing:
+    the chosen account when it still checks out, else the default found by
+    name, else None. For a read path (the payout suggestion, #584) that must
+    not touch the chart. No clearing account means nothing has cleared yet, so
+    there is nothing to pay out."""
+    chosen = get_setting_raw(db, f"{provider_name}_clearing_account_id")
+    if chosen:
+        try:
+            acct = db.query(Account).filter(Account.id == int(chosen)).first()
+        except (TypeError, ValueError):
+            acct = None
+        if _is_valid_clearing_account(acct):
+            return acct
+    _, name = _CLEARING_ACCOUNTS[provider_name]
+    return db.query(Account).filter(Account.name == name).first()
+
+
+def existing_fee_account(db: Session, provider_name: str) -> Account | None:
+    """The provider's fee account if it already exists, creating nothing (#584):
+    the chosen account when valid, else the shared default by name, else None.
+    A missing fee account is fine — the payout creates it with `fee_account_id`
+    at post time, only when a fee is actually booked."""
+    chosen = get_setting_raw(db, f"{provider_name}_fee_account_id")
+    if chosen:
+        try:
+            acct = db.query(Account).filter(Account.id == int(chosen)).first()
+        except (TypeError, ValueError):
+            acct = None
+        if _is_valid_fee_account(acct):
+            return acct
+    return db.query(Account).filter(Account.name == FEE_ACCOUNT_NAME).first()
+
+
+def clearing_balance(db: Session, provider_name: str) -> Decimal:
+    """What the provider's clearing account holds today (0 when it does not
+    exist yet), i.e. captured net of fees and not yet paid out (#584)."""
+    from app.services.bank_register import balance_as_of
+
+    acct = existing_clearing_account(db, provider_name)
+    if acct is None:
+        return Decimal("0")
+    return balance_as_of(db, acct, date.today())[0]
+
+
+def payouts_allowed(db: Session, provider_name: str) -> bool:
+    """A payout can be recorded while clearing is on, and after it is turned
+    off for as long as money is still waiting in the clearing account."""
+    return (
+        clearing_enabled_db(db, provider_name)
+        or clearing_balance(db, provider_name) > 0
+    )
+
+
+def fee_line_memo(provider_name: str) -> str:
+    """The memo on the two lines a capture books for the provider's fee; a
+    void finds them by it (see `is_fee_line`)."""
+    return f"{DISPLAY_NAMES[provider_name]} fee"
+
+
+def is_fee_line(description: str | None, provider_name: str) -> bool:
+    """True for a line of a captured payment's entry that books the fee."""
+    return (description or "") == fee_line_memo(provider_name)
 
 
 def fee_account_id(db: Session, provider_name: str) -> int:

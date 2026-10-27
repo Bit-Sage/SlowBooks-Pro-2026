@@ -16,6 +16,8 @@
 # ============================================================================
 
 import uuid
+from datetime import date as dt_date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.schemas.common import StrictModel
@@ -30,6 +32,17 @@ from app.services.rate_limit import limiter
 
 class CheckoutSessionRequest(StrictModel):
     payment_token: str
+
+
+class PayoutRequest(StrictModel):
+    """A provider payout that arrived without a bank feed (#584): the net
+    that landed in the bank, the processor's fee for the batch (0 when it
+    was already booked at capture), the date, and the bank account."""
+
+    date: dt_date
+    bank_account_id: int
+    net: Decimal
+    fee: Decimal = Decimal("0")
 
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -214,6 +227,75 @@ def get_payment_link(invoice_id: int, request: Request, db: Session = Depends(ge
 
     base_url = str(request.base_url).rstrip("/")
     return {"url": f"{base_url}/pay/{invoice.payment_token}"}
+
+
+@router.post("/{provider_name}/payout")
+def record_payout(
+    provider_name: str, data: PayoutRequest, db: Session = Depends(get_db)
+):
+    """Record a provider payout that arrived without a bank feed (#584):
+    post it from the bank account, clearing the provider's clearing account
+    for the gross (net + fee) and booking any fee, the same split a feed
+    payout uses. Needs clearing on, or a balance still waiting in the clearing
+    account; the gross may not exceed that balance."""
+    from app.models.accounts import Account
+    from app.services.accounting import _q
+    from app.services.bank_posting import post_bank_entry, require_bank_account
+    from app.services.payments.clearing import (
+        DISPLAY_NAMES,
+        PROVIDER_NAMES,
+        clearing_account_id,
+        clearing_balance,
+        fee_account_id,
+        payouts_allowed,
+    )
+
+    if provider_name not in PROVIDER_NAMES:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown payment provider: {provider_name}"
+        )
+    display = DISPLAY_NAMES[provider_name]
+    # Allowed while clearing is on, and after it is turned off until the
+    # clearing balance is paid out.
+    if not payouts_allowed(db, provider_name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{display} clearing is off and holds nothing to pay out; turn it on first",
+        )
+    net, fee = _q(data.net), _q(data.fee)
+    if fee < 0:
+        raise HTTPException(status_code=400, detail="The fee cannot be negative")
+    if net <= 0:
+        raise HTTPException(status_code=400, detail="The payout must be more than zero")
+
+    gross = net + fee  # CR clearing the gross, DR fee, DR bank the net
+    held = clearing_balance(db, provider_name)
+    if gross > held:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The gross ({gross:,.2f}) is more than {display} Clearing holds "
+                f"({held:,.2f}). Enter the net that reached the bank and only the "
+                "fee not already booked at capture."
+            ),
+        )
+    bank = require_bank_account(db, data.bank_account_id)  # 400 if not bank-kind
+    clearing = db.get(Account, clearing_account_id(db, provider_name))
+    splits = [(clearing, gross, f"{display} payout")]
+    if fee > 0:
+        fee_acct = db.get(Account, fee_account_id(db, provider_name))
+        splits.append((fee_acct, -fee, f"{display} payout fee"))
+    txn = post_bank_entry(
+        db,
+        bank,
+        data.date,
+        net,
+        clearing,
+        payee=f"{display} payout",
+        splits=splits,
+    )
+    db.commit()
+    return {"status": "payout_recorded", "transaction_id": txn.id}
 
 
 # ---------------------------------------------------------------------------
