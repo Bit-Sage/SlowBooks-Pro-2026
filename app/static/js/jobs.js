@@ -1405,8 +1405,11 @@ const JobsPage = {
         const prevCert = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_certificates) || 0;
         const release = Number(($('#pa-release') ? $('#pa-release').value : 0) || 0);
         const deposit = Number(($('#pa-deposit') ? $('#pa-deposit').value : 0) || 0);
+        // Retainage to date is net of every release, this one included.
+        const prevReleased = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_released) || 0;
+        retainage = Math.round((retainage - prevReleased - release) * 100) / 100;
         const earnedLess = completed - retainage;
-        const currentDue = Math.round((earnedLess - prevCert + release) * 100) / 100;
+        const currentDue = Math.round((earnedLess - prevCert) * 100) / 100;
         const totals = {
             completed_to_date: completed,
             retainage_to_date: retainage,

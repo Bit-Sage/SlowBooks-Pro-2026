@@ -44,8 +44,7 @@ from app.services.pay_applications import (
     deposits_figures,
     line_computed,
     previous_by_sov_line,
-    retainage_held_to_date,
-    retainage_released_to_date,
+    retainage_outstanding,
 )
 from app.services.request_utils import content_disposition
 
@@ -151,12 +150,7 @@ def _out(db: Session, app: PayApplication) -> PayApplicationOut:
     out.invoice_number = app.invoice.invoice_number if app.invoice else None
     out.sub_waivers = _sub_waivers(db, app.job_id, app.period_to)
     out.unapplied_deposits = float(deposits_figures(db, app.job_id)["unapplied"])
-    out.retainage_outstanding = float(
-        _q(
-            retainage_held_to_date(db, app.job_id)
-            - retainage_released_to_date(db, app.job_id)
-        )
-    )
+    out.retainage_outstanding = float(retainage_outstanding(db, app.job_id))
     return out
 
 
@@ -182,14 +176,13 @@ def _validate(db: Session, app: PayApplication) -> None:
                     f"scheduled value {scheduled:.2f}."
                 ),
             )
-    held = retainage_held_to_date(db, app.job_id)
-    released = retainage_released_to_date(db, app.job_id)
-    if _q(app.release_retainage) > _q(held - released):
+    outstanding = retainage_outstanding(db, app.job_id)
+    if _q(app.release_retainage) > outstanding:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Release {_q(app.release_retainage):.2f} is more than the "
-                f"{_q(held - released):.2f} of retainage held to date."
+                f"{outstanding:.2f} of retainage held to date."
             ),
         )
     unapplied = deposits_figures(db, app.job_id)["unapplied"]

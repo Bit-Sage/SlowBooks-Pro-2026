@@ -54,31 +54,41 @@ def application_totals(
     retainage_pct,
     previous_retainage,
     previous_certificates,
+    previous_released=0,
     release_retainage=0,
     deposit_applied=0,
 ) -> dict:
     """The application's totals. `lines` is any iterable of objects carrying
     scheduled_value / previous / this_period / stored. The scalars come from
     history: `previous_retainage` is the prior approved application's
-    retainage_to_date, `previous_certificates` the sum of prior approved
-    applications' current_due."""
+    retainage_to_date, `previous_released` the retainage released on prior
+    approved applications, `previous_certificates` the sum of prior approved
+    applications' current_due.
+
+    Retainage to date is NET of releases: what is still held on the work
+    completed. A release is just retainage going down, so the cumulative
+    current-due figures line up with the invoices and account 1150 (#576)."""
     rows = [line_computed(ln, retainage_pct) for ln in lines]
     scheduled_total = _q(sum((r["scheduled_value"] for r in rows), _ZERO))
     previous_total = _q(sum((r["previous"] for r in rows), _ZERO))
     this_period_total = _q(sum((r["this_period"] for r in rows), _ZERO))
     stored_total = _q(sum((r["stored"] for r in rows), _ZERO))
     completed = _q(sum((r["completed_to_date"] for r in rows), _ZERO))
-    retainage_to_date = _q(sum((r["retainage"] for r in rows), _ZERO))
+    retainage_gross = _q(sum((r["retainage"] for r in rows), _ZERO))
     balance_total = _q(sum((r["balance_to_finish"] for r in rows), _ZERO))
 
     prev_ret = _q(previous_retainage)
     prev_cert = _q(previous_certificates)
+    prev_released = _q(previous_released)
     release = _q(release_retainage)
     deposit = _q(deposit_applied)
 
-    retainage_this_period = _q(retainage_to_date - prev_ret)
+    retainage_to_date = _q(retainage_gross - prev_released - release)
+    # Retainage newly withheld this period (gross, before this release): the
+    # 1150 debit on the invoice. The release is the 1150 credit.
+    retainage_this_period = _q(retainage_to_date - prev_ret + release)
     total_earned_less_retainage = _q(completed - retainage_to_date)
-    current_due = _q(total_earned_less_retainage - prev_cert + release)
+    current_due = _q(total_earned_less_retainage - prev_cert)
     net_due = _q(current_due - deposit)
     return {
         "scheduled_total": scheduled_total,
@@ -88,6 +98,7 @@ def application_totals(
         "completed_to_date": completed,
         "retainage_to_date": retainage_to_date,
         "previous_retainage": prev_ret,
+        "previous_released": prev_released,
         "retainage_this_period": retainage_this_period,
         "total_earned_less_retainage": total_earned_less_retainage,
         "previous_certificates": prev_cert,
@@ -124,7 +135,8 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
 
     - `previous`  — SOV line id → Σ this_period billed so far;
     - `stored`    — SOV line id → the latest approved application's stored;
-    - `prev_retainage` — the latest approved application's retainage_to_date;
+    - `prev_retainage` — the latest approved application's retainage_to_date
+      (net of releases); `prev_released` — Σ releases so far;
     - `prev_certificates` — Σ of the approved applications' current_due;
     - `billed`    — the latest approved application's completed_to_date
       (each application's figure is already cumulative; summing them would
@@ -135,6 +147,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
     previous: dict = {}
     stored: dict = {}
     prev_ret = _ZERO
+    prev_released = _ZERO
     prev_cert = _ZERO
     billed = _ZERO
     for app in _approved(db, job_id, before_no):
@@ -152,9 +165,11 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
             retainage_pct=app.retainage_pct,
             previous_retainage=prev_ret,
             previous_certificates=prev_cert,
+            previous_released=prev_released,
             release_retainage=app.release_retainage,
             deposit_applied=app.deposit_applied,
         )
+        prev_released = _q(prev_released + _q(app.release_retainage))
         for ln in app.lines:
             if ln.sov_line_id is None:
                 continue
@@ -169,6 +184,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
         "previous": previous,
         "stored": stored,
         "prev_retainage": prev_ret,
+        "prev_released": prev_released,
         "prev_certificates": prev_cert,
         "billed": billed,
     }
@@ -202,15 +218,22 @@ def application_figures(db: Session, app) -> dict:
         retainage_pct=app.retainage_pct,
         previous_retainage=h["prev_retainage"],
         previous_certificates=h["prev_certificates"],
+        previous_released=h["prev_released"],
         release_retainage=app.release_retainage,
         deposit_applied=app.deposit_applied,
     )
 
 
-def retainage_held_to_date(db: Session, job_id: int) -> Decimal:
-    """Owner retainage held to date — the latest approved application's
-    retainage_to_date (cumulative)."""
+def retainage_outstanding(db: Session, job_id: int) -> Decimal:
+    """Owner retainage still held — the latest approved application's
+    retainage_to_date, which is already net of releases."""
     return _history(db, job_id)["prev_retainage"]
+
+
+def retainage_held_to_date(db: Session, job_id: int) -> Decimal:
+    """Owner retainage withheld to date, before releases (outstanding +
+    released), so held − released reads as what is still outstanding."""
+    return _q(retainage_outstanding(db, job_id) + retainage_released_to_date(db, job_id))
 
 
 def retainage_released_to_date(db: Session, job_id: int) -> Decimal:

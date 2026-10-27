@@ -1043,3 +1043,47 @@ def test_migration_up_down_reverses(tmp_path):
     assert "pay_applications" not in insp.get_table_names()
     assert "retainage_held" not in {c["name"] for c in insp.get_columns("invoices")}
     eng.dispose()
+
+
+# ── Review fixes (#576) ──────────────────────────────────────────────────
+
+
+def _bill(client, app_id, lines, **extra):
+    """Edit then approve an application with `lines` = [(sov_idx, this, stored)]."""
+    _edit(client, app_id, lines=lines, **extra)
+    return _approve(client, app_id)
+
+
+def test_retainage_to_date_is_net_of_releases(
+    client, db_session, seed_accounts, seed_customer
+):
+    # Trent's repro: bill 30k, release 1,500, bill 10k. The application, the
+    # invoice and account 1150 all agree.
+    job, sov = _two_line_job(client, seed_customer.id)
+    rows = lambda tp: [
+        {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
+        {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+    ]
+    a1 = _new_app(client, job["id"])
+    assert _bill(client, a1["id"], rows(30000)).status_code == 200
+    assert _gl(db_session, "1150") == Decimal("3000.00")
+
+    a2 = _new_app(client, job["id"])
+    r2 = _bill(client, a2["id"], rows(0), release_retainage=1500)
+    assert r2.status_code == 200, r2.text
+    t2 = r2.json()["totals"]
+    assert t2["retainage_to_date"] == 1500.0
+    assert t2["current_due"] == 1500.0
+    assert _gl(db_session, "1150") == Decimal("1500.00")
+
+    a3 = _new_app(client, job["id"])
+    r3 = _bill(client, a3["id"], rows(10000))
+    assert r3.status_code == 200, r3.text
+    body = r3.json()
+    t3 = body["totals"]
+    assert t3["retainage_to_date"] == 2500.0
+    assert t3["current_due"] == 9000.0
+    inv = db_session.query(Invoice).filter_by(id=body["invoice_id"]).first()
+    assert inv.balance_due == Decimal("9000.00")
+    assert _gl(db_session, "1150") == Decimal("2500.00")
+    assert body["retainage_outstanding"] == 2500.0
