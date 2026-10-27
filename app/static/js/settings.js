@@ -65,7 +65,7 @@ const SettingsPage = {
             escapeHtml(defaultLabel) + '</option>';
         let matched = false;
         for (const a of pick) {
-            const label = (a.account_number ? a.account_number + ' ' : '') + a.name;
+            const label = accountWords(a, null, ' ');
             const isSel = String(a.id) === sel;
             if (isSel) matched = true;
             html += '<option value="' + a.id + '"' + (isSel ? ' selected' : '') +

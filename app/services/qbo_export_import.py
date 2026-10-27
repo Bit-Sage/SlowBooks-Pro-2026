@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import AccountType, DetailType
 from app.models.contacts import Customer, Vendor
+from app.services.account_label import label_for
 from app.services.migration_common import (
     dry_run_bundle,
     parse_amount,
@@ -932,9 +933,7 @@ def _carry_plan(db: Session, bundle: dict) -> dict:
                 plan["payments"].append(item)
     total = sum((i["open"] for i in items), Decimal("0"))
     control_name = (
-        f"{control.account_number} {control.name}".strip()
-        if control is not None
-        else "Accounts Receivable"
+        label_for(control, db) if control is not None else "Accounts Receivable"
     )
     if plan["duplicates"] == len(items):
         plan["notes"].append(

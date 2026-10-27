@@ -167,11 +167,14 @@ def record_names(db: Session) -> dict:
     """The names an id-field is shown by: accounts and classes."""
     from app.models.accounts import Account
     from app.models.classes import TxnClass
+    from app.services.account_label import account_label
+    from app.services.settings_service import use_account_numbers
 
-    accounts = {}
-    for a in db.query(Account).all():
-        number = (a.account_number or "").strip()
-        accounts[a.id] = f"{number} {a.name}".strip()
+    numbered = use_account_numbers(db)
+    accounts = {
+        a.id: account_label(a.account_number, a.name, numbered, " ")
+        for a in db.query(Account).all()
+    }
     return {
         "account_id": accounts,
         "class_id": {c.id: c.name for c in db.query(TxnClass).all()},

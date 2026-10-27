@@ -747,7 +747,7 @@ const ReportsPage = {
             return `<div id="drilldown-body" style="font-size:11px; color:var(--gray-500);">
                 ${ReportsPage._exportButtons('account-transactions', exportQs)}
                 <p style="margin-bottom:8px; color:var(--gray-500); font-size:12px;">
-                    ${escapeHtml(data.account.number || '')} · ${escapeHtml(data.account.name)}
+                    ${accountLabel({ account_number: data.account.number, name: data.account.name }, null, ' · ')}
                     ${data.class_name ? `&middot; ${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong>` : ''}
                     ${jobOn && data.job_name ? `&middot; ${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong>` : ''}
                     &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}
@@ -964,7 +964,7 @@ const ReportsPage = {
         const cls = $('#drill-class');
         if (!acct || !cls) return;
         const list = accounts.some(a => a.id === data.account.id) ? accounts
-            : [{ id: data.account.id, label: `${data.account.number ? data.account.number + ' - ' : ''}${data.account.name}` }, ...accounts];
+            : [{ id: data.account.id, label: accountWords({ account_number: data.account.number, name: data.account.name }) }, ...accounts];
         acct.innerHTML = list.map(a => `<option value="${a.id}" ${a.id === data.account.id ? 'selected' : ''}>${escapeHtml(a.label)}</option>`).join('');
         const i = list.findIndex(a => a.id === data.account.id);
         const prev = $('#drill-prev'), next = $('#drill-next'), pos = $('#drill-position');
@@ -3803,7 +3803,7 @@ ReportsPage.possibleDuplicates = async function (prefill) {
                 ? ` · ${data.dismissed_count} marked not a duplicate (shown)`
                 : ` · ${data.dismissed_count} marked not a duplicate, not shown`;
         return `${ReportsPage._exportButtons('possible-duplicates', qs)}
-            <p style="margin-bottom:12px; color:var(--gray-500);">${escapeHtml(data.account.number || '')} ${escapeHtml(data.account.name)} · ${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'group' : 'groups'}${hidden}</p>
+            <p style="margin-bottom:12px; color:var(--gray-500);">${accountLabel({ account_number: data.account.number, name: data.account.name }, null, ' ')} · ${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)} · ${data.count} ${data.count === 1 ? 'group' : 'groups'}${hidden}</p>
             <p style="margin-bottom:12px; font-size:12px; color:var(--gray-500);">Entries with the same amount on the same side and the same or a similar payee, at most ${data.window_days} days apart. Nothing here is voided unless you void it.</p>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Date</th><th scope="col">Num</th><th scope="col">Payee</th><th scope="col">Memo</th><th scope="col">Source</th><th scope="col">Reconciled</th><th scope="col" class="amount">Amount</th><th scope="col"></th></tr></thead>

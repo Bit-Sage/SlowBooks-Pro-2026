@@ -32,9 +32,11 @@ from app.models.accounts import (
     detail_type_problem,
 )
 from app.models.transactions import Transaction
+from app.services.account_label import account_label
 from app.services.account_tree import inherited_detail_type, parent_link_problem
 from app.services.accounting import _q, create_journal_entry
 from app.services.safe_errors import DataProblem
+from app.services.settings_service import use_account_numbers
 
 logger = logging.getLogger(__name__)
 
@@ -141,14 +143,16 @@ def _spec_parent(spec: dict):
     )
 
 
-def _parent_decision(parent, spec: dict) -> tuple[bool, str | None, str | None]:
+def _parent_decision(
+    parent, spec: dict, numbered: bool = True
+) -> tuple[bool, str | None, str | None]:
     """The migration's parent rule in one place (#416), so the dry run
     previews exactly what the import applies: (link it, warning, the detail
     type the child inherits). `parent` is the resolved parent (an Account, or
     a spec seen through _spec_parent) or None."""
     if parent is None:
         return False, None, None
-    named = " ".join(p for p in (parent.account_number, parent.name) if p)
+    named = account_label(parent.account_number, parent.name, numbered, " ")
     if not parent.is_active:
         # same rule and words as the API / chart import, minus "Reactivate it"
         return (
@@ -256,6 +260,7 @@ def _plan_accounts(db: Session, accounts: list[dict]) -> list[dict]:
 
     planned: dict[int, SimpleNamespace] = {}
     decisions: list[dict] = []
+    numbered = use_account_numbers(db)
     for i in order:
         spec = accounts[i]
         pname = (spec.get("parent") or "").lower()
@@ -266,7 +271,7 @@ def _plan_accounts(db: Session, accounts: list[dict]) -> list[dict]:
         elif new_index.get(pname) in planned:
             parent = planned[new_index[pname]]
             parent_ref = ("new", new_index[pname])
-        link, warning, inherited = _parent_decision(parent, spec)
+        link, warning, inherited = _parent_decision(parent, spec, numbered)
         # source-system codes can collide with the books' numbers (or an
         # earlier row's): the name stays authoritative, the code is dropped
         code = spec.get("code")

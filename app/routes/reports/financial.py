@@ -12,6 +12,7 @@ from app.models.transactions import Transaction, TransactionLine
 from app.routes.reports._router import router
 from app.services.fiscal_year import fiscal_year_start
 from app.services.account_label import account_label
+from app.services.settings_service import use_account_numbers
 from app.services.statement_layout import (
     BS_GROUP_TOTALS,
     BS_GROUPS,
@@ -2537,7 +2538,7 @@ def general_ledger_csv_route(
     )
 
 
-def _account_transactions_section(data: dict, t) -> dict:
+def _account_transactions_section(data: dict, t, numbered: bool = True) -> dict:
     """The drill-down's rows for the PDF (#333). A P&L total's or a
     family's (#479) names each line's account where the payee is, the
     payee after it, and its Amount (signed toward the total) and running
@@ -2545,7 +2546,7 @@ def _account_transactions_section(data: dict, t) -> dict:
     if data.get("set"):
         return _account_set_section(data, t)
     acct = data.get("account") or {}
-    head = f"{acct.get('number') or ''} {acct.get('name') or ''}".strip()
+    head = account_label(acct.get("number"), acct.get("name"), numbered, " ")
     rows = [
         {
             "cells": [
@@ -2644,13 +2645,13 @@ def _account_set_section(data: dict, t) -> dict:
     }
 
 
-def _drill_slug(data: dict, t) -> str:
+def _drill_slug(data: dict, t, numbered: bool = True) -> str:
     """The file name's words: the account's number and name, or the set's
     label ("Total Income", "Total 7000 - Travel", #479)."""
     if data.get("set"):
         return t.slug(data["set"]["label"]) or "accounts"
     acct = data.get("account") or {}
-    return t.slug(f"{acct.get('number') or ''} {acct.get('name') or 'account'}".strip())
+    return t.slug(account_label(acct.get("number"), acct.get("name") or "account", numbered, " "))
 
 
 def _drill_data(
@@ -2708,7 +2709,7 @@ def account_transactions_csv_route(
     t = terms_from_db(db)
     return _csv_download(
         account_transactions_csv(data, _company_name(db), t),
-        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.csv",
+        f"AccountDetail_{_drill_slug(data, t, use_account_numbers(db))}_{data['start_date']}_{data['end_date']}.csv",
         request,
     )
 
@@ -2739,10 +2740,11 @@ def account_transactions_pdf_route(
         exclude_adjusting,
     )
     t = terms_from_db(db)
+    numbered = use_account_numbers(db)
     return _pdf_response(
-        [_account_transactions_section(data, t)],
+        [_account_transactions_section(data, t, numbered)],
         db,
-        f"AccountDetail_{_drill_slug(data, t)}_{data['start_date']}_{data['end_date']}.pdf",
+        f"AccountDetail_{_drill_slug(data, t, numbered)}_{data['start_date']}_{data['end_date']}.pdf",
     )
 
 
@@ -2939,7 +2941,7 @@ def adjusting_entries(
     }
 
 
-def _adjusting_section(data: dict) -> dict:
+def _adjusting_section(data: dict, numbered: bool = True) -> dict:
     rows = []
     for e in data["entries"]:
         head = f"#{e['id']}  {e['date']}  {e['description']}"
@@ -2951,9 +2953,7 @@ def _adjusting_section(data: dict) -> dict:
             head += "  VOIDED"
         rows.append({"cells": [head, "", ""], "style": "subtotal"})
         for ln in e["lines"]:
-            name = ln["account_name"]
-            if ln["account_number"]:
-                name = f"{ln['account_number']} {name}"
+            name = account_label(ln["account_number"], ln["account_name"], numbered, " ")
             if ln["description"]:
                 name += f" — {ln['description']}"
             rows.append(
@@ -3008,7 +3008,7 @@ def adjusting_entries_pdf_route(
 ):
     data = adjusting_entries(start_date, end_date, db)
     return _pdf_response(
-        [_adjusting_section(data)],
+        [_adjusting_section(data, use_account_numbers(db))],
         db,
         f"adjusting-entries_{data['start_date']}_{data['end_date']}.pdf",
     )

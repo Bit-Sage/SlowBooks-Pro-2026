@@ -390,3 +390,185 @@ def test_the_pages_read_the_setting_through_one_helper():
     hand_built = re.compile(r"account_number \+ ' - '|account_number\) \+ ' - '")
     for path in sorted(JS.glob("*.js")):
         assert not hand_built.search(path.read_text(encoding="utf-8")), path.name
+
+
+# ── PDFs and messages that named an account by hand (#582 review) ────────
+
+
+def _sections(monkeypatch):
+    """Capture the sections handed to the PDF renderer, as text."""
+    seen = []
+
+    def fake(sections, settings, landscape=False):
+        seen.extend(sections)
+        return b"%PDF-1.4 test"
+
+    monkeypatch.setattr("app.services.pdf_service.generate_report_pdf", fake)
+    return seen
+
+
+def _text(sections):
+    return repr(sections)
+
+
+def test_the_drill_down_and_adjusting_pdfs_drop_the_number_when_off(
+    client, db_session, seed_accounts, monkeypatch
+):
+    zeta = _expense(db_session, "Zeta Utilities", "7100")
+    create_journal_entry(
+        db_session,
+        date(2026, 3, 1),
+        "adjusting",
+        [
+            {"account_id": zeta.id, "debit": Decimal("10"), "credit": Decimal("0")},
+            {
+                "account_id": seed_accounts["1000"].id,
+                "debit": Decimal("0"),
+                "credit": Decimal("10"),
+            },
+        ],
+        is_adjusting=True,
+    )
+    db_session.commit()
+    seen = _sections(monkeypatch)
+    drill = {"account_id": zeta.id, **PERIOD}
+    urls = [
+        ("/api/reports/account-transactions/pdf", drill),
+        ("/api/reports/adjusting-entries/pdf", PERIOD),
+    ]
+    for url, params in urls:
+        seen.clear()
+        assert client.get(url, params=params).status_code == 200
+        assert "7100" in _text(seen) and "Zeta Utilities" in _text(seen), url
+
+    _set(client, "false")
+    for url, params in urls:
+        seen.clear()
+        r = client.get(url, params=params)
+        assert r.status_code == 200
+        text = _text(seen)
+        assert "Zeta Utilities" in text, url
+        assert "7100" not in text and "1000" not in text, url
+    # the file name drops it too, the CSV keeps the number
+    r = client.get(urls[0][0], params=drill)
+    assert "7100" not in r.headers["content-disposition"]
+    csv = client.get("/api/reports/account-transactions/csv", params=drill)
+    assert "7100" in csv.text
+
+
+def test_the_functional_expenses_pdf_drops_the_number_when_off():
+    from app.routes.reports.nonprofit import _sfe_section
+
+    data = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "programs": [],
+        "rows": [
+            {
+                "account_number": "7100",
+                "account_name": "Zeta Utilities",
+                "total": 10,
+                "program": 10,
+                "management": 0,
+                "fundraising": 0,
+                "unassigned": 0,
+            }
+        ],
+        "totals": {
+            "total": 10,
+            "program": 10,
+            "management": 0,
+            "fundraising": 0,
+            "unassigned": 0,
+        },
+    }
+    assert "7100 Zeta Utilities" in _text(_sfe_section(data))
+    off = _text(_sfe_section(data, numbered=False))
+    assert "Zeta Utilities" in off and "7100" not in off
+
+
+def test_the_reconciliation_pdf_heading_drops_the_number_when_off():
+    from app.services import reconciliation as rc
+
+    side = {"count": 0, "total": 0, "items": []}
+    state = {"increase": dict(side), "decrease": dict(side)}
+    data = {
+        "account_number": "1000",
+        "account_name": "Checking",
+        "statement_date": "2026-03-31",
+        "labels": {"increase": "Deposits", "decrease": "Payments"},
+        "cleared": state,
+        "uncleared": state,
+        "beginning_balance": 0,
+        "cleared_balance": 0,
+        "ending_balance": 0,
+        "difference": 0,
+        "register_balance": 0,
+    }
+    assert "1000 Checking" in _text(rc.report_sections(data))
+    off = _text(rc.report_sections(data, numbered=False))
+    assert "1000" not in off and "Checking" in off
+
+
+def test_messages_name_an_account_the_way_the_page_does(
+    client, db_session, seed_accounts
+):
+    def refusal():
+        r = client.delete(f"/api/accounts/{seed_accounts['1000'].id}")
+        assert r.status_code == 400
+        return r.json()["detail"]
+
+    on = refusal()
+    assert on.startswith("1000 ")
+    _set(client, "false")
+    off = refusal()
+    assert not re.search(r"\b1000\b", off)
+    # the lock note reads right either way: it no longer says "by its number"
+    assert "by its number" not in on and "by number" not in on
+    assert "by its number" not in off and "by number" not in off
+    # renumbering a control account is refused in the same words
+    r = client.put(
+        f"/api/accounts/{seed_accounts['1000'].id}", json={"account_number": "1999"}
+    )
+    assert r.status_code == 400
+    assert not re.search(r"\b1000\b", r.json()["detail"])
+    assert "by its number" not in r.json()["detail"]
+
+
+def test_label_for_follows_the_setting(client, db_session, seed_accounts):
+    from app.services.account_label import label_for
+
+    acct = seed_accounts["1000"]
+    assert label_for(acct, db_session).startswith("1000 ")
+    _set(client, "false")
+    db_session.expire_all()
+    assert label_for(acct, db_session) == acct.name
+    # no session passed: the account's own is used
+    assert label_for(acct) == acct.name
+
+
+def test_no_python_file_joins_a_number_and_a_name_by_hand():
+    """Everything that names an account for a person goes through
+    account_label / label_for; a CSV column or the ledger_exports CSV
+    heading may carry the number."""
+    app = Path(__file__).resolve().parents[1] / "app"
+    hand = re.compile(
+        r"""f["'][^"']*\{[^}]*account_number[^}]*\}\s+\{[^}]*name[^}]*\}"""
+        r"""|f["'][^"']*\{[^}]*\[.account_number.\][^}]*\}\s+\{[^}]*name"""
+    )
+    csv_ok = {"nonprofit_reports.py", "ledger_exports.py"}
+    for path in sorted(app.rglob("*.py")):
+        if path.name in csv_ok or path.name == "account_label.py":
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            assert not hand.search(line), f"{path.name}:{n}: {line.strip()}"
+
+
+def test_the_pages_name_the_drill_down_account_through_the_helper():
+    reports = (JS / "reports.js").read_text(encoding="utf-8")
+    assert "data.account.number ? data.account.number" not in reports
+    assert "escapeHtml(data.account.number || '')" not in reports
+    app = (JS / "app.js").read_text(encoding="utf-8")
+    # the lock note reads right with the number shown or hidden
+    assert "finds it by its number" not in app
+    assert "Found by its number" not in app

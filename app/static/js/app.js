@@ -1526,8 +1526,8 @@ const App = {
         const lockNote = locked
             ? `<div class="form-group full-width"><div class="hint hint--locked">
                    <strong>${accountLabel(acct, null, ' ')} is a control account.</strong>
-                   The software finds it by its number to post ${escapeHtml(acct.control_purpose || 'part of the books')},
-                   so the number and type (and its detail type) cannot change — a document that could not find it would have nowhere to post.
+                   The software relies on it to post ${escapeHtml(acct.control_purpose || 'part of the books')},
+                   so its number, type and detail type cannot change — a document that could not find it would have nowhere to post.
                    <em>You can rename it.</em>
                </div></div>`
             : '';
@@ -1550,7 +1550,7 @@ const App = {
                         <select name="parent_id" id="account-parent" data-was="${acct.parent_id == null ? '' : Number(acct.parent_id)}" aria-describedby="account-parent-hint" onchange="App.accountParentChanged()">
                             ${App._accountParentOptions(acct.parent_id)}
                         </select>
-                        <span id="account-parent-hint" class="hint">${App._accountStandsAlone(acct) ? 'Found by its number when the books post, so it stays a top-level account.' : 'Accounts of the same type. A sub-account is listed under its parent.'}</span>
+                        <span id="account-parent-hint" class="hint">${App._accountStandsAlone(acct) ? 'The books post to it, so it stays a top-level account.' : 'Accounts of the same type. A sub-account is listed under its parent.'}</span>
                         <span id="account-parent-status" class="hint" role="status"></span></div>
                     <div class="form-group full-width"><label>Description</label>
                         <textarea name="description">${escapeHtml(acct.description || '')}</textarea></div>

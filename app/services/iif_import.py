@@ -28,6 +28,7 @@ from app.models.payments import Payment, PaymentAllocation
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.transactions import Transaction
+from app.services.account_label import label_for
 from app.services.csv_export import strip_formula_guard
 from app.services.iif_common import (
     IIF_SKIPPED_TYPES,
@@ -554,7 +555,7 @@ def import_accounts(db: Session, rows: list) -> dict:
                         if candidate.name.lower() != name.lower():
                             merged.append(
                                 f"'{full_name}' is the chart's "
-                                f"{candidate.account_number} {candidate.name}"
+                                f"{label_for(candidate, db)}"
                             )
             if existing is None:
                 other = _account_at_path(db, segments)
@@ -604,7 +605,7 @@ def import_accounts(db: Session, rows: list) -> dict:
                 if clash is not None:
                     warnings.append(
                         f"'{full_name}' keeps its name; its number {acct_num} is the "
-                        f"chart's {clash.account_number} {clash.name}, so it comes in "
+                        f"chart's {label_for(clash, db)}, so it comes in "
                         f"without a number"
                     )
                     acct_num = None

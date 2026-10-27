@@ -390,11 +390,14 @@ def get_tax_summary(
     total_tax_collected = sum(Decimal(i.tax_amount or 0) for i in invoices)
 
     # Group expenses by account
+    from app.services.settings_service import use_account_numbers
+
+    numbered = use_account_numbers(db)
     expenses_by_account = {}
     bill_lines = db.query(BillLine).join(BillLine.bill).join(BillLine.account)
     for bl in bill_lines:
         if bl.account:
-            key = f"{bl.account.account_number or ''} {bl.account.name}"
+            key = account_label(bl.account.account_number, bl.account.name, numbered, " ")
             expenses_by_account[key] = _to_float(
                 (Decimal(expenses_by_account.get(key, 0)) or 0)
                 + (Decimal(bl.amount or 0) or 0)

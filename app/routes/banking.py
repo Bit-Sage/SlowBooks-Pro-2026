@@ -1065,10 +1065,12 @@ def reconciliation_report_pdf(recon_id: int, db: Session = Depends(get_db)):
 
     from app.services import reconciliation as rc
     from app.services.pdf_service import generate_report_pdf
-    from app.services.settings_service import get_all_settings
+    from app.services.settings_service import get_all_settings, use_account_numbers
 
     data = rc.report(db, _recon(db, recon_id))
-    pdf = generate_report_pdf(rc.report_sections(data), get_all_settings(db))
+    pdf = generate_report_pdf(
+        rc.report_sections(data, use_account_numbers(db)), get_all_settings(db)
+    )
     label = re.sub(r"[^A-Za-z0-9_-]", "", data["account_number"] or "") or str(
         data["account_id"]
     )

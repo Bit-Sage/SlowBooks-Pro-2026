@@ -85,7 +85,15 @@ simply show no number until given one. The seeded chart keeps its numbers, and
 the control accounts (1100, 2000 and the rest) are still found by theirs, so
 nothing posts differently. One label helper on each side decides
 (`app/services/account_label.py`, `accountLabel()` in `utils.js`); the pages
-that built "6100 - Name" by hand now go through it. docs/migrate-from-quickbooks.md
+that built "6100 - Name" by hand now go through it. Every PDF and message follows
+it too: the drill-down and adjusting-entries PDFs (and the drill-down's file
+name), the nonprofit functional-expenses PDF, the bank reconciliation PDF, the
+closing-date exceptions report, the control-account refusals, the pay-run void
+notes, the duplicate-check-number warning, the IIF, QuickBooks and chart
+imports' notes and the accountant's copy preview name an account by its name
+alone when numbers are off. A control account's note no longer says it is "found
+by its number"; it says the software relies on the account. The CSVs keep their
+number column. docs/migrate-from-quickbooks.md
 answers what happens to the starter accounts after a real chart is imported.
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →

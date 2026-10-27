@@ -21,3 +21,16 @@ def account_label(number, name, numbered: bool = True, sep: str = " - ") -> str:
     if number and name:
         return f"{number}{sep}{name}"
     return number or name or "Uncategorized"
+
+
+def label_for(account, db=None, sep: str = " ") -> str:
+    """An Account row named for a sentence ("1000 Checking", or "Checking"
+    when the company does not use account numbers): the one call a message
+    that holds an account needs. `db` defaults to the account's own session."""
+    from sqlalchemy.orm import object_session
+
+    from app.services.settings_service import use_account_numbers
+
+    db = db or object_session(account)
+    numbered = use_account_numbers(db) if db is not None else True
+    return account_label(account.account_number, account.name, numbered, sep)
