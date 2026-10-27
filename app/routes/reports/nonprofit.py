@@ -438,7 +438,9 @@ def functional_expenses_pdf(
     start_date, end_date = _period(db, start_date, end_date)
     data = _sfe(db, start_date, end_date, compare)
     return _pdf_response(
-        [_sfe_section(data, use_account_numbers(db))], db, f"functional-expenses_{start_date}_{end_date}.pdf"
+        [_sfe_section(data, use_account_numbers(db))],
+        db,
+        f"functional-expenses_{start_date}_{end_date}.pdf",
     )
 
 

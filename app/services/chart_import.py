@@ -657,11 +657,7 @@ def plan_chart_import(db: Session, text: str, replace: bool = False) -> Plan:
             if twin is not None:
                 entry["note"] = (entry["note"] + "; " if entry["note"] else "") + (
                     f"an account named '{twin.name}' already exists"
-                    + (
-                        f" as {twin.account_number or 'unnumbered'}"
-                        if numbered
-                        else ""
-                    )
+                    + (f" as {twin.account_number or 'unnumbered'}" if numbered else "")
                     + " and is matched by another row"
                 )
             if r.path:

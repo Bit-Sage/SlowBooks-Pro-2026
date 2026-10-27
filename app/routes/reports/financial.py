@@ -2651,7 +2651,9 @@ def _drill_slug(data: dict, t, numbered: bool = True) -> str:
     if data.get("set"):
         return t.slug(data["set"]["label"]) or "accounts"
     acct = data.get("account") or {}
-    return t.slug(account_label(acct.get("number"), acct.get("name") or "account", numbered, " "))
+    return t.slug(
+        account_label(acct.get("number"), acct.get("name") or "account", numbered, " ")
+    )
 
 
 def _drill_data(
@@ -2953,7 +2955,9 @@ def _adjusting_section(data: dict, numbered: bool = True) -> dict:
             head += "  VOIDED"
         rows.append({"cells": [head, "", ""], "style": "subtotal"})
         for ln in e["lines"]:
-            name = account_label(ln["account_number"], ln["account_name"], numbered, " ")
+            name = account_label(
+                ln["account_number"], ln["account_name"], numbered, " "
+            )
             if ln["description"]:
                 name += f" — {ln['description']}"
             rows.append(
