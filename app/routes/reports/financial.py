@@ -427,6 +427,7 @@ def _pl_columns(db, start_date, end_date, columns, period, sort, chart) -> dict:
         "sort": sort,
         "exclude_adjusting": whole["exclude_adjusting"],
         "basis": whole["basis"],
+        "basis_note": whole["basis_note"],
         "columns_by": columns,
         "columns": out_cols,
         "accounts": accounts,
@@ -522,6 +523,7 @@ def _pl_period(
         "sort": sort,
         "exclude_adjusting": bool(exclude_adjusting),
         "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "income": income,
         "cogs": cogs,
         "expenses": expenses,
@@ -858,6 +860,7 @@ def _bs_period(db, as_of_date, sort, t, chart, basis="accrual") -> dict:
         "as_of_date": as_of_date.isoformat(),
         "sort": sort,
         "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, as_of_date, basis),
         "assets": assets,
         "liabilities": liabilities,
         "equity": equity,
@@ -1965,6 +1968,7 @@ def _pl_section(data: dict, t=None, show_changes: bool = True) -> dict:
         + (f" · {t('Class')}: {cls} only, not the company total" if cls else ""),
         "columns": columns,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -2127,6 +2131,7 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
                 "period": period,
                 "columns": ["Account"] + [c["name"] for c in cols] + [total_label],
                 "rows": rows,
+                "note": data.get("basis_note"),
             }
         )
     return sections
@@ -2241,6 +2246,7 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
         "period": period,
         "columns": columns,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 

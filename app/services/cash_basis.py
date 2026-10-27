@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 from sqlalchemy import exists, select
@@ -32,6 +33,11 @@ from app.models.transactions import (
     Transaction,
     TransactionLine,
 )
+
+log = logging.getLogger(__name__)
+
+# Payments written between commits by the backfill.
+BACKFILL_BATCH = 200
 
 # Entries whose every line counts on the accrual basis only: the documents
 # that put something on A/R or A/P, their voids and the adjustments an edit
@@ -104,6 +110,47 @@ def reading(basis: str) -> dict:
     """Execution options that read the ledger on `basis`, for
     `.execution_options(**reading(basis))`."""
     return {LEDGER_BASIS_OPTION: basis}
+
+
+def receivable_note(db: Session, as_of, basis: str) -> str | None:
+    """A short note for a cash-basis report when A/R or A/P is not zero at
+    `as_of`, else None. History that came in as journal entries (a QuickBooks
+    Desktop ledger import, opening A/R and A/P) counts on both bases and is
+    not converted, so a balance left there must not be read as cash."""
+    if basis != READ_CASH:
+        return None
+    from sqlalchemy import func
+
+    from app.services.accounting import get_ap_account_id, get_ar_account_id
+    from app.services.control_accounts import MissingControlAccount
+
+    ids = []
+    for resolve in (get_ar_account_id, get_ap_account_id):
+        try:
+            ids.append(resolve(db))
+        except MissingControlAccount:
+            pass
+    if not ids:
+        return None
+    rows = (
+        db.query(
+            TransactionLine.account_id,
+            func.coalesce(func.sum(TransactionLine.debit - TransactionLine.credit), 0),
+        )
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id.in_(ids), Transaction.date <= as_of)
+        .group_by(TransactionLine.account_id)
+        .execution_options(**reading(READ_CASH))
+        .all()
+    )
+    if not any(_q(net) != 0 for _, net in rows):
+        return None
+    return (
+        "Accounts Receivable or Accounts Payable is not zero on this cash-basis "
+        "report. That balance came in as journal entries (an imported ledger or "
+        "opening balances), which are not converted to cash, so do not read that "
+        "history as cash."
+    )
 
 
 def unapplied_income_id(db: Session) -> int:
@@ -455,15 +502,118 @@ def _bill_payments_without_cash_lines(db: Session):
     )
 
 
+def _customer_payment_lines(db: Session, payment: Payment, ar_id: int):
+    """(entry, cash lines) for a customer payment that has none yet."""
+    from app.services.currency import to_home
+
+    txn = db.get(Transaction, payment.transaction_id)
+    if txn is None or _has_cash_line(db, txn.id):
+        return None, []
+    pay_rate = Decimal(str(payment.exchange_rate or 1))
+    allocations = (
+        db.query(PaymentAllocation)
+        .filter(PaymentAllocation.payment_id == payment.id)
+        .all()
+    )
+    applied = []
+    applied_total = Decimal("0")
+    for alloc in allocations:
+        invoice = db.get(Invoice, alloc.invoice_id)
+        if invoice is None:
+            continue
+        applied.append(
+            (invoice, to_home(alloc.amount, invoice.exchange_rate or Decimal("1")))
+        )
+        applied_total += Decimal(str(alloc.amount))
+    unapplied = to_home(
+        max(Decimal(str(payment.amount)) - applied_total, Decimal("0")), pay_rate
+    )
+    return txn, customer_payment_cash_lines(
+        db, ar_id, applied, unapplied, txn.description or "Payment"
+    )
+
+
+def _bill_payment_lines(db: Session, payment: BillPayment, ap_id: int):
+    """(entry, cash lines) for a bill payment that has none yet."""
+    from app.services.currency import to_home
+
+    txn = db.get(Transaction, payment.transaction_id)
+    if txn is None or _has_cash_line(db, txn.id):
+        return None, []
+    pay_rate = Decimal(str(payment.exchange_rate or 1))
+    allocations = (
+        db.query(BillPaymentAllocation)
+        .filter(BillPaymentAllocation.bill_payment_id == payment.id)
+        .all()
+    )
+    applied = []
+    applied_total = Decimal("0")
+    for alloc in allocations:
+        bill = db.get(Bill, alloc.bill_id)
+        if bill is None:
+            continue
+        applied.append(
+            (bill, to_home(alloc.amount, bill.exchange_rate or Decimal("1")))
+        )
+        applied_total += Decimal(str(alloc.amount))
+    unapplied = to_home(
+        max(Decimal(str(payment.amount)) - applied_total, Decimal("0")), pay_rate
+    )
+    return txn, bill_payment_cash_lines(
+        db, ap_id, applied, unapplied, txn.description or "Bill payment"
+    )
+
+
+class _Progress:
+    """Counts the backfill's writes and commits every BACKFILL_BATCH of them
+    so a big book never holds one long write transaction."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.pending = 0
+        self.failed = 0
+
+    def run(self, payments, make_lines, label: str) -> int:
+        """Write the cash lines of each payment inside its own savepoint:
+        one broken payment is logged by id and skipped, the rest go on."""
+        wrote = 0
+        for payment in payments:
+            payment_id = payment.id  # read before a failure expires the row
+            try:
+                with self.db.begin_nested():
+                    txn, lines = make_lines(self.db, payment)
+                    if not lines:
+                        continue
+                    append_cash_lines(self.db, txn, lines)
+            except Exception:
+                self.failed += 1
+                log.exception(
+                    "Cash-basis backfill skipped %s %s (entry %s)",
+                    label,
+                    payment_id,
+                    getattr(payment, "transaction_id", None),
+                )
+                continue
+            wrote += 1
+            self.pending += 1
+            if self.pending >= BACKFILL_BATCH:
+                self.db.commit()
+                self.pending = 0
+        return wrote
+
+
 def backfill(db: Session) -> dict:
     """Tag the accrual entries and write the cash lines of every payment
     that has none (#483). Idempotent: a second run finds nothing. Commits
-    when it wrote anything. Returns counts for the start-up log."""
+    as it goes (every BACKFILL_BATCH payments) and a payment that fails is
+    logged and skipped, not fatal. Returns counts for the start-up log:
+    tagged, payments, bill_payments and failed."""
     from app.services.accounting import get_ap_account_id, get_ar_account_id
     from app.services.control_accounts import MissingControlAccount
-    from app.services.currency import to_home
 
     tagged = _tag_accrual_entries(db)
+    db.commit()
+    progress = _Progress(db)
     payments = bills = 0
 
     try:
@@ -471,80 +621,43 @@ def backfill(db: Session) -> dict:
     except MissingControlAccount:
         ar_id = None
     if ar_id is not None:
-        for payment in _payments_without_cash_lines(db):
-            txn = db.get(Transaction, payment.transaction_id)
-            if txn is None or _has_cash_line(db, txn.id):
-                continue
-            pay_rate = Decimal(str(payment.exchange_rate or 1))
-            allocations = (
-                db.query(PaymentAllocation)
-                .filter(PaymentAllocation.payment_id == payment.id)
-                .all()
-            )
-            applied = []
-            applied_total = Decimal("0")
-            for alloc in allocations:
-                invoice = db.get(Invoice, alloc.invoice_id)
-                if invoice is None:
-                    continue
-                applied.append(
-                    (
-                        invoice,
-                        to_home(alloc.amount, invoice.exchange_rate or Decimal("1")),
-                    )
-                )
-                applied_total += Decimal(str(alloc.amount))
-            unapplied = to_home(
-                max(Decimal(str(payment.amount)) - applied_total, Decimal("0")),
-                pay_rate,
-            )
-            lines = customer_payment_cash_lines(
-                db, ar_id, applied, unapplied, txn.description or "Payment"
-            )
-            if lines:
-                append_cash_lines(db, txn, lines)
-                payments += 1
+        payments = progress.run(
+            _payments_without_cash_lines(db),
+            lambda d, p: _customer_payment_lines(d, p, ar_id),
+            "payment",
+        )
 
     try:
         ap_id = get_ap_account_id(db)
     except MissingControlAccount:
         ap_id = None
     if ap_id is not None:
-        for payment in _bill_payments_without_cash_lines(db):
-            txn = db.get(Transaction, payment.transaction_id)
-            if txn is None or _has_cash_line(db, txn.id):
-                continue
-            pay_rate = Decimal(str(payment.exchange_rate or 1))
-            allocations = (
-                db.query(BillPaymentAllocation)
-                .filter(BillPaymentAllocation.bill_payment_id == payment.id)
-                .all()
-            )
-            applied = []
-            applied_total = Decimal("0")
-            for alloc in allocations:
-                bill = db.get(Bill, alloc.bill_id)
-                if bill is None:
-                    continue
-                applied.append(
-                    (bill, to_home(alloc.amount, bill.exchange_rate or Decimal("1")))
-                )
-                applied_total += Decimal(str(alloc.amount))
-            unapplied = to_home(
-                max(Decimal(str(payment.amount)) - applied_total, Decimal("0")),
-                pay_rate,
-            )
-            lines = bill_payment_cash_lines(
-                db, ap_id, applied, unapplied, txn.description or "Bill payment"
-            )
-            if lines:
-                append_cash_lines(db, txn, lines)
-                bills += 1
+        bills = progress.run(
+            _bill_payments_without_cash_lines(db),
+            lambda d, p: _bill_payment_lines(d, p, ap_id),
+            "bill payment",
+        )
 
-    result = {"tagged": tagged, "payments": payments, "bill_payments": bills}
-    if tagged or payments or bills:
-        db.commit()
-    return result
+    db.commit()
+    return {
+        "tagged": tagged,
+        "payments": payments,
+        "bill_payments": bills,
+        "failed": progress.failed,
+    }
+
+
+def backfill_after_import(db: Session) -> dict:
+    """Give the payments an importer just created their cash lines (#483),
+    so the cash reports are right without a restart. Never fails the import:
+    a payment that cannot be given cash lines is logged and retried at the
+    next start."""
+    try:
+        return backfill(db)
+    except Exception:
+        db.rollback()
+        log.exception("Cash-basis backfill after an import failed")
+        return {"tagged": 0, "payments": 0, "bill_payments": 0, "failed": 0}
 
 
 def pending_backfill(db: Session) -> bool:

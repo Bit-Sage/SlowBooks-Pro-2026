@@ -1537,7 +1537,7 @@ const ReportsPage = {
             const total = (label, key, style) => `<tr style="${style}"><td>${totalLabel(label, key)}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}${ReportsPage._basisWords(data)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
@@ -1586,6 +1586,7 @@ const ReportsPage = {
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}${data.basis === 'cash' ? ', cash basis' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
             </div>
+            ${ReportsPage._basisNote(data)}
             ${ReportsPage._pivotGrid({
                 title: `${T('Profit & Loss')} by ${by === 'month' ? 'Month' : 'Quarter'}`,
                 noun,
@@ -1784,6 +1785,12 @@ const ReportsPage = {
                 </div>`;
         return { params, toolbar };
     },
+    // Cash basis with A/R or A/P left over from journal-entry history (#483)
+    _basisNote(data) {
+        return data && data.basis_note
+            ? `<p class="basis-note" style="margin-bottom:12px; font-size:12px; color:var(--gray-600);">${escapeHtml(data.basis_note)}</p>`
+            : '';
+    },
     _basisWords(data) {
         return data && data.basis === 'cash' ? ' &middot; cash basis' : '';
     },
@@ -1862,7 +1869,7 @@ const ReportsPage = {
                 ).join('');
             };
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}${ReportsPage._basisWords(data)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>

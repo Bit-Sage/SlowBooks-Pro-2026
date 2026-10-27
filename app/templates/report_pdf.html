@@ -40,6 +40,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% if section.note %}<p class="report-note" style="margin-top:10px; font-size:10px; color:#666;">{{ section.note }}</p>{% endif %}
     </div>
     {% endfor %}
 </body>

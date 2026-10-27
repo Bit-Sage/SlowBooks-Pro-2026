@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 D = Decimal
 REVISION = "e1a2b3c4d5f6"
 BEFORE = "c8e4a2f1b3d5"
+INDEX_REVISION = "f2b3c4d5e6a7"
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +605,7 @@ def test_the_backfill_tags_and_writes_once(
         "tagged": 0,
         "payments": 0,
         "bill_payments": 0,
+        "failed": 0,
     }
     assert _pl(client, "2026-03-01", "2026-03-31", "cash") == expected_pl
 
@@ -626,9 +628,19 @@ def test_the_migration_adds_the_column_and_walks_back(tmp_path):
     cols = {c["name"]: c for c in inspect(engine).get_columns("transaction_lines")}
     assert "basis" in cols and cols["basis"]["nullable"] is False
     assert "both" in str(cols["basis"]["default"])
+    # the backfill's lookup by source is indexed (review: 189 s for 8,000)
+    assert script.get_revision(INDEX_REVISION).down_revision == REVISION
+    indexes = {i["name"]: i for i in inspect(engine).get_indexes("transactions")}
+    assert indexes["ix_transactions_source"]["column_names"] == [
+        "source_type",
+        "source_id",
+    ]
     engine.dispose()
     command.downgrade(cfg, BEFORE)
     engine = create_engine(f"sqlite:///{db}")
+    assert "ix_transactions_source" not in {
+        i["name"] for i in inspect(engine).get_indexes("transactions")
+    }
     assert "basis" not in {
         c["name"] for c in inspect(engine).get_columns("transaction_lines")
     }
@@ -649,4 +661,263 @@ def test_the_books_invariants_scenario_holds_on_the_cash_basis(
     db_session.commit()
     _build_scenario(client, seed_customer.id, vendor.id)
     _assert_cash_invariant(client, "2026-01-01", "2026-12-31")
+    _each_entry_balances_on_every_basis(db_session)
+
+
+# ---------------------------------------------------------------------------
+# review (Trent, #572): backfill isolation and batching, delete guards, the
+# A/R note, the accountant's package, importers
+# ---------------------------------------------------------------------------
+
+
+def _strip_cash_lines(db_session):
+    """The file as a build before #483 left it."""
+    db_session.execute(text("DELETE FROM transaction_lines WHERE basis = 'cash'"))
+    db_session.execute(text("UPDATE transaction_lines SET basis = 'both'"))
+    db_session.commit()
+
+
+def test_a_broken_payment_is_skipped_and_named_not_fatal(
+    client, db_session, seed_accounts, seed_customer, monkeypatch, caplog
+):
+    from app.models.payments import Payment
+    from app.services import cash_basis
+
+    cust = seed_customer.id
+    ids = []
+    for day in ("2026-03-10", "2026-03-11", "2026-03-12"):
+        inv = _invoice(client, cust, "2026-03-01", [{"rate": 100}])
+        ids.append(_payment(client, cust, day, 100, [(inv["id"], 100)])["id"])
+    _strip_cash_lines(db_session)
+    broken = db_session.get(Payment, ids[1])
+    broken_entry = broken.transaction_id
+
+    real = cash_basis.append_cash_lines
+
+    def flaky(db, txn, lines):
+        real(db, txn, lines)  # the half-written rows must go with the savepoint
+        if txn.id == broken_entry:
+            raise RuntimeError("deliberately broken payment")
+        return len(lines)
+
+    monkeypatch.setattr(cash_basis, "append_cash_lines", flaky)
+    with caplog.at_level("ERROR", logger=cash_basis.log.name):
+        done = cash_basis.backfill(db_session)
+
+    assert done["payments"] == 2 and done["failed"] == 1
+    assert any(
+        f"payment {broken.id}" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+    cash_lines = (
+        db_session.query(TransactionLine.transaction_id)
+        .filter(TransactionLine.basis == BASIS_CASH)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+        .distinct()
+        .all()
+    )
+    assert broken_entry not in {t for (t,) in cash_lines}
+    assert len(cash_lines) == 2
+
+    # fixed, the next run picks the payment up
+    monkeypatch.setattr(cash_basis, "append_cash_lines", real)
+    again = cash_basis.backfill(db_session)
+    assert (again["payments"], again["failed"]) == (1, 0)
+    _each_entry_balances_on_every_basis(db_session)
+
+
+def test_the_backfill_commits_as_it_goes(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    from app.services import cash_basis
+
+    cust = seed_customer.id
+    for day in range(10, 15):
+        inv = _invoice(client, cust, "2026-03-01", [{"rate": 10}])
+        _payment(client, cust, f"2026-03-{day}", 10, [(inv["id"], 10)])
+    _strip_cash_lines(db_session)
+
+    commits = []
+    real_commit = db_session.commit
+    monkeypatch.setattr(
+        db_session, "commit", lambda: (commits.append(1), real_commit())[1]
+    )
+    monkeypatch.setattr(cash_basis, "BACKFILL_BATCH", 2)
+    done = cash_basis.backfill(db_session)
+    assert done["payments"] == 5
+    # the tags, two batches of two, and the closing commit
+    assert len(commits) >= 4
+
+
+def test_an_account_with_only_cash_lines_cannot_be_deleted(
+    client, db_session, seed_accounts, seed_customer
+):
+    cust = seed_customer.id
+    _payment(client, cust, "2026-03-12", 80)  # a prepayment: 4950 gets cash lines only
+    unapplied = _account_id(client, "4950")
+    on_accrual = (
+        db_session.query(TransactionLine)
+        .filter(TransactionLine.account_id == unapplied)
+        .count()
+    )
+    assert on_accrual == 0  # the default reading never sees them
+
+    r = client.delete(f"/api/accounts/{unapplied}")
+    assert r.status_code == 409, r.text
+    assert "posted transaction line" in r.json()["detail"]
+    assert _account_id(client, "4950") == unapplied
+    _assert_cash_invariant(client, "2026-03-01", "2026-03-31")
+
+
+def test_a_job_with_only_cash_lines_is_in_use(
+    client, db_session, seed_accounts
+):
+    from datetime import date
+
+    from app.models.contacts import Customer
+    from app.models.jobs import Job
+
+    cust = Customer(name="Cash Only Co", is_active=True)
+    db_session.add(cust)
+    db_session.flush()
+    job = Job(name="Cash only job", customer_id=cust.id)
+    db_session.add(job)
+    db_session.flush()
+    txn = Transaction(date=date(2026, 3, 1), description="cash lines only")
+    db_session.add(txn)
+    db_session.flush()
+    bank = _account_id(client, "1000")
+    income = _account_id(client, "4000")
+    db_session.add_all(
+        [
+            TransactionLine(
+                transaction_id=txn.id, account_id=bank, debit=5, credit=0, job_id=job.id,
+                basis=BASIS_CASH,
+            ),
+            TransactionLine(
+                transaction_id=txn.id, account_id=income, debit=0, credit=5, job_id=job.id,
+                basis=BASIS_CASH,
+            ),
+        ]
+    )
+    db_session.commit()
+    r = client.delete(f"/api/jobs/{job.id}")
+    assert r.status_code == 400, r.text
+
+
+def _ar_journal(client, accounts, day, amount):
+    """History that came in as a journal entry: A/R against income."""
+    r = client.post(
+        "/api/journal",
+        json={
+            "date": day,
+            "description": "Opening A/R",
+            "lines": [
+                {"account_id": accounts["1100"].id, "debit": amount, "credit": "0"},
+                {"account_id": accounts["4000"].id, "debit": "0", "credit": amount},
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_the_cash_report_says_when_receivables_are_not_zero(
+    client, db_session, seed_accounts, seed_customer
+):
+    from app.routes.reports.financial import _bs_section, _pl_section
+
+    # a clean cash book carries no note
+    inv = _invoice(client, seed_customer.id, "2026-03-01", [{"rate": 100}])
+    _payment(client, seed_customer.id, "2026-03-05", 100, [(inv["id"], 100)])
+    assert _bs(client, "2026-03-31", "cash")["basis_note"] is None
+
+    _ar_journal(client, seed_accounts, "2026-02-01", "250.00")
+    bs = _bs(client, "2026-03-31", "cash")
+    assert "not zero" in bs["basis_note"]
+    assert _bs(client, "2026-03-31", "accrual")["basis_note"] is None
+    pl = _pl(client, "2026-03-01", "2026-03-31", "cash")
+    assert "journal entries" in pl["basis_note"]
+    assert _pl(client, "2026-03-01", "2026-03-31", "accrual")["basis_note"] is None
+
+    # the PDF sections carry it, and the page prints it
+    assert _bs_section(bs)["note"] == bs["basis_note"]
+    assert _pl_section(pl)["note"] == pl["basis_note"]
+    from app.services.pdf_service import _render
+
+    html = _render(
+        "report_pdf.html", {}, sections=[_bs_section(bs)], paper_size="letter",
+        landscape=False, generated_on="2026-03-31",
+    )
+    assert "not zero on this cash-basis report" in html
+
+
+def test_the_accountants_package_follows_the_company_basis(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    import io
+    import zipfile
+
+    from app.routes.reports import financial
+
+    seen = []
+    for name in ("_pl_section", "_bs_section"):
+        real = getattr(financial, name)
+        monkeypatch.setattr(
+            financial,
+            name,
+            lambda data, *a, _real=real, **k: (
+                seen.append(data.get("basis")),
+                _real(data, *a, **k),
+            )[1],
+        )
+
+    def package():
+        r = client.get(
+            "/api/reports/accountants-package?start_date=2026-01-01&end_date=2026-12-31"
+        )
+        assert r.status_code == 200, r.text
+        return zipfile.ZipFile(io.BytesIO(r.content)).read("README.txt").decode()
+
+    readme = package()
+    assert "Report basis: accrual" in readme
+    assert set(seen) <= {"accrual"}
+
+    seen.clear()
+    assert client.put("/api/settings", json={"report_basis": "cash"}).status_code == 200
+    readme = package()
+    assert "Report basis: cash" in readme
+    assert "cash basis" in readme
+    assert seen and set(seen) == {"cash"}
+    manifest = client.get(
+        "/api/reports/accountants-package/manifest?start_date=2026-01-01&end_date=2026-12-31"
+    ).json()
+    assert manifest["basis"] == "cash"
+
+
+def test_an_iif_import_gives_its_payments_cash_lines(
+    client, db_session, seed_accounts
+):
+    from app.models.payments import Payment
+    from app.services import cash_basis
+    from app.services.iif_import import import_all
+
+    iif = (
+        "!CUST\tNAME\nCUST\tBob Jones\n"
+        "!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tDOCNUM\n"
+        "!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tDOCNUM\n"
+        "!ENDTRNS\n"
+        "TRNS\tINVOICE\t03/01/2026\tAccounts Receivable\tBob Jones\t100.00\tI-1\n"
+        "SPL\tINVOICE\t03/01/2026\tService Income\tBob Jones\t-100.00\tI-1\n"
+        "ENDTRNS\n"
+        "TRNS\tPAYMENT\t04/03/2026\tUndeposited Funds\tBob Jones\t100.00\tP-1\n"
+        "SPL\tPAYMENT\t04/03/2026\tAccounts Receivable\tBob Jones\t-100.00\tP-1\n"
+        "ENDTRNS\n"
+    )
+    result = import_all(db_session, iif)
+    assert result["errors"] == [] and result["payments"] == 1
+    assert db_session.query(Payment).count() == 1
+    # no restart: the cash lines are already there
+    assert cash_basis.pending_backfill(db_session) is False
+    april = _pl(client, "2026-04-01", "2026-04-30", "cash")
+    assert D(str(april["total_income"])) == D("100.00"), april["income"]
+    assert _pl(client, "2026-03-01", "2026-03-31", "cash")["total_income"] == 0
     _each_entry_balances_on_every_basis(db_session)

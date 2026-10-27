@@ -81,7 +81,18 @@ Settings → Company has a Report Basis default (accrual, as before), and
 each of the two statements a Basis choice beside Sort by (`?basis=cash` on
 their API, PDF and CSV, which say "cash basis" when they are). Every ledger
 line now carries a basis; a file from an earlier build is tagged and its
-payments' cash lines written once at the next start. Every other report,
+payments' cash lines written once at the next start, in batches of 200
+with a savepoint per payment (one that fails is logged by id and skipped,
+and start-up warns with the count), on a new index of
+`transactions(source_type, source_id)` that took the backfill from minutes
+to seconds on a big book. The IIF, QuickBooks report and QuickBooks Online
+imports write their payments' cash lines at the end of the import. An
+account, job or cost code that has only cash-basis lines (Unapplied Cash
+Payment Income, say) counts as in use and cannot be deleted. When A/R or
+A/P is not zero on a cash-basis report (history that came in as journal
+entries), a note under the report says so, on screen and in the PDF. The
+Accountant's Package follows the company's report basis for its Profit &
+Loss and Balance Sheet, and its README says which. Every other report,
 the registers, agings and exports stay accrual until a later step. Design:
 `docs/design/cash-basis.md`.
 

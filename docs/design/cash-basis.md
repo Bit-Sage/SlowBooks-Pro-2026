@@ -152,7 +152,12 @@ One Alembic revision after `c8e4a2f1b3d5` (cost codes by division,
 2026-10-26): `transaction_lines.basis` NOT NULL, server default `'both'`,
 so every existing row and every row an old build inserts is `both`
 (SQLite adds the column in one `ALTER TABLE`; PostgreSQL the same). No
-index: `basis != 'cash'` is not selective.
+index on `basis`: `basis != 'cash'` is not selective. A second revision,
+`f2b3c4d5e6a7`, indexes `transactions(source_type, source_id)`: the
+backfill finds a payment's invoice and bill entries by that pair, and
+without the index it scanned the table once per payment (18 s for 2,000
+payments and 189 s for 8,000 in review). It is its own revision so a file
+already at the first one gets it.
 
 **The backfill** is `cash_basis.backfill(db)`, run at every start beside
 `rebuild_stored_balances` (not inside the migration — a migration must
@@ -173,11 +178,21 @@ idempotent and cheap when there is nothing to do:
 3. Nothing is written for a voided payment (its entry and its reversal
    both carry no cash lines, and net to zero in either view).
 
+It commits every 200 payments (`BACKFILL_BATCH`), so a big book never
+holds one long write transaction. Each payment is written inside its own
+savepoint: one that fails is logged by id (`Cash-basis backfill skipped
+payment 42`), rolled back alone and counted in the result's `failed`; the
+rest are written, and the failed one is tried again at the next start.
+Start-up prints the counts and, when `failed` is not zero, a warning with
+the number.
+
 After it, the invariant below holds for the file; the test suite proves
-it on a seeded one. Importers (IIF, QuickBooks Online, the ledger
-imports) that post a payment entry without cash lines are caught by the
-same pass at the next start, so a payment entry is never left with a
-reading only one basis can give.
+it on a seeded one. The importers that create payments (IIF, the QuickBooks report
+imports, the QuickBooks Online export) run the same pass at the end of
+the import (`backfill_after_import`), so their payments have cash lines
+at once, not after a restart; a failure there is logged and never fails
+the import. Any other path is caught at the next start, so a payment
+entry is never left with a reading only one basis can give.
 
 ### The invariant
 
@@ -259,7 +274,10 @@ journal entry). QuickBooks' rule — such a line follows the document it
 is "linked" to — needs a customer on the line, which the journal form
 does not have. Opening A/R and A/P balances entered as journal entries
 sit on the cash Balance Sheet until step 2 gives the journal form a
-basis choice.
+basis choice. So nobody reads that history as cash, a cash-basis report
+whose A/R or A/P is not zero at its end date carries a short note
+(`basis_note` on the data; under the period line on screen, under the
+table on the PDF).
 
 **Retainage and progress billing.** #552 (retainage) and #555 (pay
 applications) are not on `main`. When they land, an invoice's A/R debit
@@ -297,7 +315,11 @@ each period on the same basis. Nothing else in the response changes:
 default setting at `accrual`) is the figure of the day before this
 branch, byte for byte. `_pl_section` / `_bs_section` and the two CSVs add
 "(cash basis)" to the period line only when the basis is cash. The
-accountant's package (`package.py`) and the statements PDF stay accrual.
+accountant's package follows the company's report basis: its Profit &
+Loss and Balance Sheet (the statements pack) are cash when the default is
+cash, and its README and manifest say which. Its General Ledger, Trial
+Balance and agings are the books as posted until step 2, and the README
+says so.
 
 The screen: a Basis select (Company default / Accrual / Cash) in the two
 statements' toolbar, riding on the address, the saved report and the
@@ -338,7 +360,7 @@ payments' cash lines; the journal form's basis choice.
 
 **Step 3.** Payroll liabilities and the Sales Tax Liability report on the
 cash basis; the retainage follow-up (#552, #555); the accountant's
-package on the company default.
+package's Trial Balance on the company default.
 
 ## Decisions (2026-10-26, this branch)
 
@@ -365,7 +387,12 @@ package on the company default.
 7. **Edits of a paid document leave earlier cash lines alone** (v1).
 8. **Independent proration per payment**; a cent may stay on a line.
 9. **Payroll and journal entries are `both`** in step 1.
-10. **Screen toggle built** in step 1: the toolbar pattern (`_adjOpts`)
+10. **Review calls (Trent, #572):** 4950 / 6990 show up on any
+    overpayment; a prepayment applied later writes its cash lines on the
+    payment's date; the account, job and cost-code delete guards count
+    every basis, so an account holding only cash lines cannot be deleted;
+    the package follows the company basis in this PR.
+11. **Screen toggle built** in step 1: the toolbar pattern (`_adjOpts`)
     made it a few lines.
 
 ## Open items (not settled; conservative choice taken)
@@ -374,9 +401,8 @@ package on the company default.
   `recognizes_bill_id`) would let the final payment true up rounding,
   let an edit find the lines to recompute, and give the cash-basis P&L
   Detail a Name column. Not added: step 1 needs none of it.
-- **The accountant's package** prints accrual whatever the default. It
-  should probably follow `report_basis`; left until step 2 gives it the
-  Trial Balance on the same basis.
+- **The accountant's Trial Balance** stays as posted in the package even
+  when the statements are cash, until step 2 reads it on a basis.
 - **Opening balances through the wizard** post A/R and A/P as `both`; a
   company that starts on the cash basis with open invoices should enter
   them as invoices, which the wizard already suggests.

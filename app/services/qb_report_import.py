@@ -1461,4 +1461,8 @@ def import_qb_report(
     base["duplicates_skipped"] = sub.get("duplicates_skipped", 0)
     base["errors"] = sub.get("errors", [])
     base["warnings"] = sub.get("warnings", [])
+    # the payments it created get their cash-basis lines now (#483)
+    from app.services.cash_basis import backfill_after_import
+
+    backfill_after_import(db)
     return base

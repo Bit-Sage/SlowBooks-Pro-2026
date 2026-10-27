@@ -2455,4 +2455,8 @@ def import_all(
         result["warnings"].extend(r.get("warnings", []))
 
     db.commit()
+    # the payments it created get their cash-basis lines now (#483)
+    from app.services.cash_basis import backfill_after_import
+
+    backfill_after_import(db)
     return result

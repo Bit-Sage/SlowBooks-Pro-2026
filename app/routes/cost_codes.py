@@ -15,7 +15,11 @@ from app.routes._helpers import reject_null_updates
 from app.models.accounts import Account
 from app.models.bills import BillLine
 from app.models.cost_codes import CostCode
-from app.models.transactions import TransactionLine
+from app.models.transactions import (
+    LEDGER_BASIS_OPTION,
+    READ_ALL,
+    TransactionLine,
+)
 from app.schemas.cost_codes import CostCodeCreate, CostCodeResponse, CostCodeUpdate
 from app.services.job_costing import (
     code_depth,
@@ -204,6 +208,7 @@ def delete_cost_code(code_id: int, db: Session = Depends(get_db)):
     in_use = (
         db.query(TransactionLine.id)
         .filter(TransactionLine.cost_code_id == code_id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .first()
         or db.query(BillLine.id).filter(BillLine.cost_code_id == code_id).first()
     )

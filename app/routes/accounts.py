@@ -27,7 +27,11 @@ from app.services.account_tree import (
     loop_through,
     takes_no_new_parent,
 )
-from app.models.transactions import TransactionLine
+from app.models.transactions import (
+    LEDGER_BASIS_OPTION,
+    READ_ALL,
+    TransactionLine,
+)
 from app.schemas.accounts import (
     AccountCreate,
     AccountUpdate,
@@ -189,6 +193,7 @@ def _bank_history(db: Session, account: Account) -> list[str]:
             TransactionLine.account_id == account.id,
             Transaction.source_type.in_(("bank_entry", "transfer")),
         )
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .scalar()
     )
     if entries:
@@ -503,7 +508,13 @@ def _seeded_unused(db: Session) -> tuple[list[dict], list[dict]]:
         pid
         for (pid,) in db.query(Account.parent_id).filter(Account.parent_id.isnot(None))
     }
-    posted = {aid for (aid,) in db.query(TransactionLine.account_id).distinct()}
+    # Every basis: a cash-only account (4950, 6990) has postings too.
+    posted = {
+        aid
+        for (aid,) in db.query(TransactionLine.account_id)
+        .distinct()
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+    }
     for a in seeded:
         row = {"id": a.id, "account_number": a.account_number or "", "name": a.name}
         if control_accounts.is_control(a.account_number, a.account_type):
@@ -844,9 +855,12 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
     # would lose their anchor. Refusing is correct; the bug was that the
     # refusal arrived as a raw foreign-key violation (HTTP 500) instead of a
     # business rule the caller can act on.
+    # Counted on every basis: an account with only cash-basis lines (4950, 6990)
+    # is still in use, and deleting it would orphan them (#483 review).
     posted = (
         db.query(TransactionLine)
         .filter(TransactionLine.account_id == account_id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .count()
     )
     if posted:

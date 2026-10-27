@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     CheckConstraint,
+    Index,
     func,
 )
 from sqlalchemy import event
@@ -43,6 +44,9 @@ READ_ALL = "all"
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    # Documents' entries are found by their source (a payment's invoices,
+    # the cash-basis backfill, a void): without this each lookup scans.
+    __table_args__ = (Index("ix_transactions_source", "source_type", "source_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, nullable=False, index=True)

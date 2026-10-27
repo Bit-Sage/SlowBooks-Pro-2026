@@ -548,11 +548,18 @@ async def lifespan(app: FastAPI):
             from app.services.cash_basis import backfill as cash_basis_backfill
 
             done = cash_basis_backfill(_db)
-            if any(done.values()):
+            if done["tagged"] or done["payments"] or done["bill_payments"]:
                 print(
                     "Cash basis: tagged %d accrual line(s), wrote cash lines for "
                     "%d payment(s) and %d bill payment(s)"
                     % (done["tagged"], done["payments"], done["bill_payments"])
+                )
+            if done["failed"]:
+                # each failure is logged by payment id; it is retried next start
+                logging.getLogger("uvicorn.error").warning(
+                    "Cash basis: %d payment(s) could not be given cash lines "
+                    "and were skipped; see the log above for each",
+                    done["failed"],
                 )
         finally:
             _db.close()

@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.transactions import LEDGER_BASIS_OPTION, READ_ALL
 from app.database import get_db
 from app.routes._helpers import reject_null_updates
 from app.models.contacts import Customer
@@ -297,7 +298,10 @@ def update_job(job_id: int, data: JobUpdate, db: Session = Depends(get_db)):
 def delete_job(job_id: int, db: Session = Depends(get_db)):
     job = _get(db, job_id)
     in_use = (
-        db.query(TransactionLine.id).filter(TransactionLine.job_id == job_id).first()
+        db.query(TransactionLine.id)
+        .filter(TransactionLine.job_id == job_id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
+        .first()
         or db.query(Transaction.id).filter(Transaction.job_id == job_id).first()
     )
     if in_use:
