@@ -1,11 +1,17 @@
 from datetime import date as dt_date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 from app.schemas.common import StrictModel
 
 from app.models.jobs import CONTRACT_TYPES, JOB_STATUSES, SOV_KINDS
+
+# Money columns are Numeric(15, 2): anything larger overflows Postgres (a 500).
+_MAX_MONEY = Decimal("9999999999999.99")
+Money = Annotated[Decimal, Field(ge=0, le=_MAX_MONEY)]
+# A scheduled value may be negative (a deduct alternate), but is still bounded.
+SignedMoney = Annotated[Decimal, Field(ge=-_MAX_MONEY, le=_MAX_MONEY)]
 
 
 def _clean_name(v):
@@ -37,7 +43,7 @@ class JobCreate(StrictModel):
     start_date: Optional[dt_date] = None
     projected_end_date: Optional[dt_date] = None
     end_date: Optional[dt_date] = None
-    contract_amount: Optional[Decimal] = None
+    contract_amount: Optional[Money] = None
     notes: Optional[str] = None
 
     _name = field_validator("name")(_clean_name)
@@ -55,7 +61,7 @@ class JobUpdate(StrictModel):
     start_date: Optional[dt_date] = None
     projected_end_date: Optional[dt_date] = None
     end_date: Optional[dt_date] = None
-    contract_amount: Optional[Decimal] = None
+    contract_amount: Optional[Money] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -118,33 +124,20 @@ def _check_contract_type(v):
     return v
 
 
-def _non_negative(name):
-    def _check(v):
-        if v is not None and v < 0:
-            raise ValueError(f"{name} cannot be negative")
-        return v
-
-    return _check
-
-
 class ContractTerms(StrictModel):
     """The PUT body for a job's contract terms. Every field is optional —
     a field left out is unchanged; a field sent as null clears it."""
 
     contract_type: Optional[str] = None
-    contract_amount: Optional[Decimal] = None
+    contract_amount: Optional[Money] = None
     fee_pct: Optional[Decimal] = None
-    fee_amount: Optional[Decimal] = None
-    cap_amount: Optional[Decimal] = None
-    contingency_amount: Optional[Decimal] = None
+    fee_amount: Optional[Money] = None
+    cap_amount: Optional[Money] = None
+    contingency_amount: Optional[Money] = None
     retainage_pct: Optional[Decimal] = None
     contract_date: Optional[dt_date] = None
 
     _type = field_validator("contract_type")(_check_contract_type)
-    _amt = field_validator("contract_amount")(_non_negative("contract_amount"))
-    _fee = field_validator("fee_amount")(_non_negative("fee_amount"))
-    _cap = field_validator("cap_amount")(_non_negative("cap_amount"))
-    _cont = field_validator("contingency_amount")(_non_negative("contingency_amount"))
 
     @field_validator("fee_pct")
     @classmethod
@@ -169,7 +162,7 @@ class SovLineIn(StrictModel):
     kind: str = "work"
     # A scheduled value may be negative — a deduct alternate carried onto the
     # schedule reduces the contract sum (#551 allows a deduct alternate).
-    scheduled_value: Decimal = Decimal("0")
+    scheduled_value: SignedMoney = Decimal("0")
 
     @field_validator("kind")
     @classmethod

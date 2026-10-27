@@ -31,6 +31,18 @@ from app.services.estimating import (
 )
 
 
+def contract_is_locked(db: Session, job: Job) -> bool:
+    """True once the contract sum and contingency can only move by change
+    order: the job has billing against its schedule of values or a change
+    order. Until then both edit freely, so a sum typed before the bid (or a
+    contingency set after the build) is just an edit.
+
+    Neither exists on this branch yet, so nothing locks. #576 (progress
+    billing) adds the billing condition and #575 (change orders) adds the
+    change-order condition here."""
+    return False
+
+
 def sov_from_estimate(estimate: Estimate) -> list[dict]:
     """The SOV lines an accepted estimate produces, in print order:
 

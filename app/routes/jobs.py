@@ -35,7 +35,12 @@ from app.schemas.jobs import (
     SovSave,
 )
 from app.models.estimates import Estimate
-from app.services.contracts import build_sov, contract_summary, sync_contingency_line
+from app.services.contracts import (
+    build_sov,
+    contract_is_locked,
+    contract_summary,
+    sync_contingency_line,
+)
 from app.services.estimating import estimate_totals
 from app.services.accounting import _q
 from app.models.job_costing import JobBudget
@@ -372,10 +377,11 @@ def _stamp_contract_defaults(job: Job) -> None:
 _AMOUNT_FIELDS = ("contract_amount", "fee_amount", "cap_amount", "contingency_amount")
 
 
-def _refuse_sum_change(job: Job, new_amount) -> None:
-    """Once the original is stamped the contract sum is locked: only an
-    approved change order (#554) moves it. Re-sending the same sum is fine."""
-    if job.original_contract_amount is None:
+def _refuse_sum_change(db: Session, job: Job, new_amount) -> None:
+    """The contract sum edits freely until the job has billing on the schedule
+    of values or a change order; from then on only a change order (#554)
+    moves it. Re-sending the same sum is fine."""
+    if not contract_is_locked(db, job):
         return
     if new_amount is not None and _q(new_amount) == _q(job.contract_amount):
         return
@@ -383,9 +389,37 @@ def _refuse_sum_change(job: Job, new_amount) -> None:
         status_code=409,
         detail={
             "code": "contract_sum_locked",
-            "message": "The contract sum is locked once the original is set; change it with a change order",
+            "message": "The contract sum is locked once billing starts or a change order exists; change it with a change order",
         },
     )
+
+
+def _refuse_contingency_change(db: Session, job: Job, new_amount) -> None:
+    """Same lock as the sum: the contingency is a line of the schedule that
+    foots to the sum, so past the lock point it moves by change order."""
+    if not contract_is_locked(db, job):
+        return
+    old = job.contingency_amount
+    if (new_amount is None and old is None) or (
+        new_amount is not None and old is not None and _q(new_amount) == _q(old)
+    ):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "contingency_locked",
+            "message": "The contingency is locked once billing starts or a change order exists; change it with a change order",
+        },
+    )
+
+
+def _follow_original(job: Job, changes: dict) -> None:
+    """While the sum is still editable, the original contract amount is
+    whatever the sum is — a correction before billing is not a change."""
+    if changes.get("contract_amount") is not None and (
+        job.original_contract_amount is not None
+    ):
+        job.original_contract_amount = changes["contract_amount"]
 
 
 @router.put("/{job_id}/contract", response_model=ContractResponse)
@@ -400,7 +434,10 @@ def set_contract(job_id: int, data: ContractTerms, db: Session = Depends(get_db)
         if changes.get(key) is not None:
             changes[key] = _q(changes[key])
     if "contract_amount" in changes:
-        _refuse_sum_change(job, changes["contract_amount"])
+        _refuse_sum_change(db, job, changes["contract_amount"])
+    if "contingency_amount" in changes:
+        _refuse_contingency_change(db, job, changes["contingency_amount"])
+    _follow_original(job, changes)
     for key, value in changes.items():
         setattr(job, key, value)
     if (
@@ -509,7 +546,7 @@ def save_sov(job_id: int, data: SovSave, db: Session = Depends(get_db)):
                 trade_package_id=line.trade_package_id,
                 cost_code_id=line.cost_code_id,
                 kind=line.kind,
-                scheduled_value=line.scheduled_value,
+                scheduled_value=_q(line.scheduled_value),
             )
         )
     db.commit()
@@ -546,7 +583,8 @@ def update_job(job_id: int, data: JobUpdate, db: Session = Depends(get_db)):
     if "contract_amount" in changes:
         if changes["contract_amount"] is not None:
             changes["contract_amount"] = _q(changes["contract_amount"])
-        _refuse_sum_change(job, changes["contract_amount"])
+        _refuse_sum_change(db, job, changes["contract_amount"])
+    _follow_original(job, changes)
     for key, value in changes.items():
         setattr(job, key, value)
     # The job form's plain contract amount runs through the same stamp as the

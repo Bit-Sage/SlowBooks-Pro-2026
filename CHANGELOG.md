@@ -211,11 +211,14 @@ company's estimate form and PDF are exactly as they were. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
 
 **The contract on the job** (#552, @ContractorKeith). Review fixes: the
-contract sum is locked once the original is stamped (409 `contract_sum_locked`
-from the Contract tab and the job form; only a change order, #554, moves it);
+contract sum and contingency edit freely until the job has billing on the
+schedule of values or a change order, then lock (409 `contract_sum_locked` /
+`contingency_locked`; a change order moves them from there), so a sum typed
+before the bid is just corrected; the original follows the sum until then;
 building from an estimate stamps the original even when the job form set the
 sum first, and never gives a cleared sum a new one; contract amounts are
-rounded to the cent and the fee percent is limited to 0-100; a fixed fee shows
+rounded to the cent, schedule values too, the money fields are bounded to what the
+database stores, and the fee percent is limited to 0-100; a fixed fee shows
 no `fee_period`; and building defaults the job's fee percent from the
 estimate's when the job has none. A construction job can
 now carry a contract — a **lump sum**, a **GMP** (guaranteed maximum price) or
