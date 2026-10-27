@@ -198,7 +198,11 @@ def test_fee_pct_is_bounded_0_to_100_and_amounts_are_cent_rounded(
     assert client.put(base, json={"fee_pct": 0}).status_code == 200
     r = client.put(
         base,
-        json={"fee_pct": 100, "contract_type": "cost_plus", "contract_amount": 1000.005},
+        json={
+            "fee_pct": 100,
+            "contract_type": "cost_plus",
+            "contract_amount": 1000.005,
+        },
     )
     assert r.status_code == 200, r.text
     c = r.json()["contract"]
@@ -697,7 +701,9 @@ def test_business_mode_job_detail_carries_null_contract(client, seed_customer):
     assert detail["contract"]["contract_amount"] is None
 
 
-def test_a_fixed_fee_has_no_period_fee(client, db_session, seed_accounts, seed_customer):
+def test_a_fixed_fee_has_no_period_fee(
+    client, db_session, seed_accounts, seed_customer
+):
     job = _job(client, seed_customer.id)
     client.put(
         f"/api/jobs/{job['id']}/contract",
@@ -762,9 +768,9 @@ def test_build_stamps_the_original_when_the_job_form_set_the_sum_first(
     # the job form's amount, off from the bid, with no type yet
     client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 40000})
     _accept(client, est["id"], job["id"])
-    c = client.post(
-        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
-    ).json()["contract"]
+    c = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}").json()[
+        "contract"
+    ]
     assert c["contract_type"] == "lump_sum"
     assert c["contract_amount"] == 40000.0  # an existing sum is left alone
     assert c["original_contract_amount"] == 40000.0  # but the original is stamped
@@ -798,9 +804,9 @@ def test_build_defaults_the_job_fee_pct_from_the_estimate_only_when_unset(
     est, _, _ = _build_estimate_with_shape(client, seed_customer)  # fee_pct=5
     job = _job(client, seed_customer.id)
     _accept(client, est["id"], job["id"])
-    c = client.post(
-        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
-    ).json()["contract"]
+    c = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}").json()[
+        "contract"
+    ]
     assert c["fee_pct"] == 5.0
 
 
@@ -809,9 +815,9 @@ def test_build_keeps_a_fee_pct_already_on_the_job(client, seed_customer):
     job = _job(client, seed_customer.id)
     client.put(f"/api/jobs/{job['id']}/contract", json={"fee_pct": 12})
     _accept(client, est["id"], job["id"])
-    c = client.post(
-        f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}"
-    ).json()["contract"]
+    c = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}").json()[
+        "contract"
+    ]
     assert c["fee_pct"] == 12.0
 
 
