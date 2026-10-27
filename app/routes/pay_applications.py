@@ -640,6 +640,27 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=409, detail="Only an approved pay application can be voided."
         )
+    # Later applications are figured from this one (previous work, retainage,
+    # certificates), and their invoices are already posted; so only the latest
+    # approved application can be voided (#576).
+    later = (
+        db.query(PayApplication)
+        .filter(
+            PayApplication.job_id == app.job_id,
+            PayApplication.status == "approved",
+            PayApplication.application_no > app.application_no,
+        )
+        .order_by(PayApplication.application_no)
+        .first()
+    )
+    if later is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "later_application",
+                "message": f"{later.number} is approved after this one; void it first.",
+            },
+        )
     invoice = db.get(Invoice, app.invoice_id) if app.invoice_id else None
     if invoice is not None:
         _refuse_if_truly_paid(db, app, invoice)

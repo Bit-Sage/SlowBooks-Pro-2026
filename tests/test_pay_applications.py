@@ -396,7 +396,9 @@ def test_void_history_recomputed(client, db_session, seed_accounts, seed_custome
         lines=[{"sov_line_id": sov[0]["id"], "this_period": 10000, "stored": 0}],
     )
     _approve(client, a2["id"])
-    # void app 1: app 2's `previous` recomputes from approved ones only
+    # void app 2 then app 1 (latest first): a fresh app 2's `previous`
+    # recomputes from approved ones only
+    assert client.post(f"/api/pay-applications/{a2['id']}/void").status_code == 200
     assert client.post(f"/api/pay-applications/{a1['id']}/void").status_code == 200
     body = client.get(f"/api/pay-applications/{a2['id']}").json()
     line = next(l for l in body["lines"] if l["sov_line_id"] == sov[0]["id"])
@@ -1131,3 +1133,26 @@ def test_pay_app_invoice_refuses_amount_edits_allows_notes(
     assert inv.total == Decimal("30000.00")
     assert inv.retainage_held == Decimal("3000.00")
     assert _gl(db_session, "1150") == before == Decimal("3000.00")
+
+
+def test_only_the_latest_approved_application_can_be_voided(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, sov = _two_line_job(client, seed_customer.id)
+    rows = lambda tp: [
+        {"sov_line_id": sov[0]["id"], "this_period": tp, "stored": 0},
+        {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+    ]
+    a1 = _new_app(client, job["id"])
+    assert _bill(client, a1["id"], rows(30000)).status_code == 200
+    a2 = _new_app(client, job["id"])
+    assert _bill(client, a2["id"], rows(10000)).status_code == 200
+
+    r = client.post(f"/api/pay-applications/{a1['id']}/void")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "later_application"
+    assert _gl(db_session, "1150") == Decimal("4000.00")  # nothing reversed
+
+    assert client.post(f"/api/pay-applications/{a2['id']}/void").status_code == 200
+    assert client.post(f"/api/pay-applications/{a1['id']}/void").status_code == 200
+    assert _gl(db_session, "1150") == Decimal("0.00")
