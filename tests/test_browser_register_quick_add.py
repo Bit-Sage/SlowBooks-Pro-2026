@@ -459,3 +459,68 @@ def test_voiding_a_posting_opened_from_the_register_comes_back_to_the_register(b
         assert listed == [], listed
     finally:
         page.close()
+
+
+def _vendor_register(browser, posted, vendors):
+    """The Checking register with the vendor list stubbed and the post
+    captured, for the payee box's suggestions (#590)."""
+    page = _open(browser, 1280, 800, "#/")
+    page.route("**/api/banking/check-register*", lambda r: r.fulfill(json=REGISTER))
+    page.route("**/api/accounts*", lambda r: r.fulfill(json=CHART))
+    page.route("**/api/vendors*", lambda r: r.fulfill(json=vendors))
+    page.route("**/api/customers*", lambda r: r.fulfill(json=[]))
+
+    def _transactions(route):
+        posted.append(route.request.post_data_json)
+        route.fulfill(status=201, json={"id": len(posted)})
+
+    page.route("**/api/banking/transactions", _transactions)
+    page.goto(page.url.split("#")[0] + "#/banking/1")
+    page.wait_for_selector("#qe-category")
+    return page
+
+
+def _post_row(page, payee):
+    page.fill("#qe-payee", payee)
+    page.select_option("#qe-category", "2")
+    page.fill("#qe-out", "25")
+    page.click("#reg-quick-entry button:has-text('Post')")
+    page.wait_for_selector("#toast-container .toast:has-text('Entry posted')")
+    page.wait_for_function("() => document.getElementById('qe-out').value === ''")
+
+
+def test_the_payee_box_suggests_vendors_and_links_the_one_named(browser):
+    posted = []
+    page = _vendor_register(
+        browser,
+        posted,
+        [{"id": 7, "name": "Pine Street Lumber"}, {"id": 8, "name": "Acme Supply"}],
+    )
+    try:
+        # the box is wired to a list of the vendors, in the row and the dialog
+        assert page.get_attribute("#qe-payee", "list") == "qe-payee-vendors"
+        assert page.locator("#qe-payee-vendors option").evaluate_all(
+            "els => els.map(e => e.value)"
+        ) == ["Pine Street Lumber", "Acme Supply"]
+        page.click("text=+ Entry")
+        page.wait_for_selector("#entry-payee")
+        assert page.locator("#entry-payee-vendors option").count() == 2
+        page.evaluate("() => closeModal()")
+
+        # a name that matches a vendor exactly (any case) links its id
+        _post_row(page, "pine street LUMBER")
+        assert (
+            posted[-1]["vendor_id"] == 7 and posted[-1]["payee"] == "pine street LUMBER"
+        )
+        # a name that is not a vendor stays text, and the offer is made
+        page.evaluate("() => { window.__payeeToastMs = 300; }")
+        _post_row(page, "Pine Street")
+        assert posted[-1]["vendor_id"] is None and posted[-1]["payee"] == "Pine Street"
+        assert (
+            page.locator(
+                "#toast-container .toast:has-text('Add \"Pine Street\"')"
+            ).count()
+            == 1
+        )
+    finally:
+        page.close()

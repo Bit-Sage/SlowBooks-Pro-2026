@@ -49,8 +49,10 @@ other exports. `GET /api/vendors/{id}/payment-history` answers the page
 date leaves the other side open); `GET /api/vendors/{id}/payments/csv` keeps
 its address and its all-time default. The bill-payment subtotal is summed by
 the 1099 query itself, so for a 1099 vendor over a year it is the vendor's
-1099-NEC figure; direct expenses and bank entries, which the 1099 leaves out,
-are subtotalled beside it rather than folded in. The list's search box
+1099-NEC figure before the register entries that name the vendor (#590, which
+count by their expense lines from bank accounts only); direct expenses, which
+the 1099 leaves out, are subtotalled beside it rather
+than folded in. The list's search box
 (#335) stays as it was — name, company, phone, email — and the list route's
 `search` parameter now covers the same four fields instead of the name alone.
 
@@ -137,6 +139,37 @@ first. A July–June fiscal year is 12 months and says nothing, and the
 adjusting-entries import never warns. If such a file also fails the "does not
 balance" check, the first of those errors carries the same explanation. The
 migration guide says the same under *One year per file*.
+
+**The register keeps the last entry's date, and the date keys move it**
+(#566, from discussion #561, @ContractorKeith). After a post, the register's
+entry row and the + Entry dialog open on the date of the entry just posted
+rather than snapping back to today — each register keeps its own, for the
+page's life (until a reload or sign-in); no preference. In any date box, + and −
+step the date a day, T is today, M and H are the first and last day of its
+month, Y and R the first and last day of its year — QuickBooks-style keys,
+one handler for every date box in the app. The "date far from today"
+question (#481) is asked when the date is typed or moved, not again for a
+date carried over from the last entry.
+
+**The register's payee box suggests vendors and links the entry to the one
+named** (#590, from discussion #561, @ContractorKeith). Typing in the payee
+box — the entry row or + Entry — lists the vendors; picking one, or typing a
+name that is exactly a vendor's, puts that vendor on the entry (`vendor_id`,
+as a bank-feed line has, #491), so the entry shows on the vendor's payment
+history (#569). `POST /api/banking/transactions` and `PUT
+/api/banking/entries/{id}` take `vendor_id`, or match the payee by name when
+it is left out, and the entry comes back with `vendor_id` and `vendor_name`.
+A name that is not a vendor stays text and is still offered "Add as a
+vendor?". A linked entry counts toward the vendor's 1099-NEC and the 1099
+Summary with its bill payments, under the same rules (1099 vendor, NEC type,
+$600, voided left out; a linked bank-feed line counts too); a transfer or an
+unlinked payee does not. Only entries paid from a bank account count, never a
+credit card (the card processor reports those on a 1099-K), and only the
+entry's expense and cost-of-goods lines, not the bank amount, so a payment to
+Accounts Payable or Sales Tax Payable adds nothing and a split counts its
+expense part. A reprinted 1099-NEC or 1099 Summary for an earlier year can
+differ from the one filed when register entries were linked to the vendor
+since.
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general

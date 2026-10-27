@@ -243,7 +243,7 @@ FORMS = {
     "bills.js": ["TxnWarn.ok(form, { editing: !!id })", "TxnWarn.ok(form)"],
     "banking.js": [
         "TxnWarn.ok(form, { editing: !!entryId })",
-        "TxnWarn.ok(null, { date: data.date })",
+        "TxnWarn.ok(null, { date: data.date, carried })",  # the quick row (#566)
         "TxnWarn.ok(form)",
     ],
     "sales_receipts.js": ["TxnWarn.ok(form)"],

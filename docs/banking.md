@@ -110,7 +110,24 @@ sign-in posts and voids journal entries but does not edit them, so it is
 offered no Edit on these rows.
 
 The entry row at the foot of the register posts the same way (Enter or
-Post). A payee typed there, or in + Entry, that is not already a customer's
+Post). After a post the row (and + Entry) opens on the date just posted,
+each register its own, until the page is reloaded or you sign in again; in the
+date box, as in any date box, + and − step a day, T is today, M / H and
+Y / R jump to the ends of the month and the year (QuickBooks-style keys).
+The payee box there, and in + Entry, suggests the vendors as you type (#590).
+Picking one, or typing a name that is exactly a vendor's (capitals and edge
+spaces aside), links the entry to that vendor — `vendor_id` on the entry, as
+a bank-feed line has (#491) — so it shows on the vendor's payment history
+(#569) with the bill payments and expenses; an API caller sends `vendor_id`,
+or just the payee, and gets the same. Editing the payee to another vendor's
+name moves the link, and to a name no vendor has drops it; a transfer has no
+vendor. A linked entry counts toward that vendor's 1099-NEC, and the 1099
+Summary, beside its bill payments (QuickBooks counts a register check the
+same way), subject to the same vendor rules — a 1099 vendor of NEC type, the
+$600 threshold, voided entries left out, and only an entry paid from a bank
+account (not a credit card) counts, by its expense and cost-of-goods lines; a refund linked to the vendor nets
+off. A bank-feed line linked to a vendor counts the same. A transfer, and
+text with no vendor, do not. A payee typed there, or in + Entry, that is not already a customer's
 or a vendor's name is offered as one — a customer for money in (a deposit),
 a vendor for money out, matching the categorized import — with Add / Not
 now; the entry posts either way, and Add names the party so the entry's
