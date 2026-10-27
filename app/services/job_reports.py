@@ -557,9 +557,11 @@ def set_ctc_entries(db: Session, job: Job, entries: list[dict]) -> dict:
             db.query(JobCostToComplete)
             .filter(
                 JobCostToComplete.job_id == job.id,
-                JobCostToComplete.cost_code_id.is_(None)
-                if code_id is None
-                else JobCostToComplete.cost_code_id == code_id,
+                (
+                    JobCostToComplete.cost_code_id.is_(None)
+                    if code_id is None
+                    else JobCostToComplete.cost_code_id == code_id
+                ),
                 JobCostToComplete.cost_type == cost_type,
             )
             .first()

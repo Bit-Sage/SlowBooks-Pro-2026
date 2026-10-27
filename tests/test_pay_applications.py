@@ -1041,15 +1041,15 @@ def test_migration_up_down_reverses(tmp_path):
     assert "lien_waivers" in insp.get_table_names()
     assert "retainage_held" in {c["name"] for c in insp.get_columns("invoices")}
     eng.dispose()
-    # the review-fix migrations (#576) reverse on their own, then the original
-    command.downgrade(cfg, "-1")  # tax_rate precision
-    command.downgrade(cfg, "-1")
+    # the review-fix migrations (#576) reverse on their own, then the original;
+    # named revisions, since later steps in the stack sit above them
+    command.downgrade(cfg, "e5c9a1f7b2d4")
     eng = create_engine("sqlite:///" + db.as_posix())
     insp = inspect(eng)
     assert "lien_waivers" not in insp.get_table_names()
     assert "charge_tax" not in {c["name"] for c in insp.get_columns("pay_applications")}
     eng.dispose()
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, "b8d0f2a4c6e8")
     eng = create_engine("sqlite:///" + db.as_posix())
     insp = inspect(eng)
     assert "pay_applications" not in insp.get_table_names()
