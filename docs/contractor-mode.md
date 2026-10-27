@@ -124,8 +124,9 @@ the cost posts. A unit of measure (SF, LF, EA, CY…) sits beside the quantity.
   unit cost is **priced direct** — its rate is its price, and it is never
   marked up.
 - **Allowance** — a budgeted figure for work not yet designed. Its amount is
-  in the subtotal but carries no markup, and on accept it budgets its amount
-  as cost (a budgeted figure is spent, not margined).
+  in the subtotal and carries no markup unless the estimate's **Markup on
+  allowances** flag is on (see below). On accept it budgets its amount as cost
+  (a budgeted figure is spent, not margined).
 - **Alternate** — an add or deduct the customer can choose. Its amount is in
   no total until it is **accepted**; a deduct carries a negative amount, so it
   subtracts. An alternate that carries a unit cost is shown to the customer at
@@ -141,7 +142,7 @@ the cost posts. A unit of measure (SF, LF, EA, CY…) sits beside the quantity.
 subtotal.** The subtotal is the sum of the included line amounts — base lines
 (at cost), accepted alternates and allowances. Beside the subtotal, four
 percents are figured on the markup base (the base and accepted-alternate lines
-that carry a unit cost) and **compound in order** — each figured on the
+that carry a unit cost, plus the allowances when that flag is on) and **compound in order** — each figured on the
 running total before it. Worked example — a $100,000 cost of work, no
 allowances, at 8 / 1.5 / 5 / 1 percent:
 
@@ -163,6 +164,16 @@ The **Total** is subtotal + markups + tax. The markups are a construction-mode
 field: a Business or Nonprofit estimate stores 0 for all four whatever an API
 caller sends, so its totals are the plain Subtotal / Tax / Total.
 
+**Markup on allowances is the GC's call, and it is off by default.** Each
+estimate carries a `markup_allowances` flag (a checkbox under Markups on the
+form). Off, allowances sit in the subtotal at their amount and the markups skip
+them. On, the allowance amounts join the markup base, so the four markups are
+figured on them too (and the budget revenue split follows). The estimate, the
+form's totals panel, the view and the customer PDF all show "Markup on
+allowances" as On or Off. The flag freezes with the rest of the price once the
+estimate is accepted. There is no separate contingency line kind; a contingency
+carried as an allowance line follows the same flag.
+
 **Accept locks the budget.** Accepting an estimate (it needs a job) seeds the
 job budget from the bought scope — a budget row you edited by hand still wins —
 and then **locks** the seeded rows: they are the contract budget. The lock is
@@ -170,14 +181,23 @@ per row: a manual budget row on a code the estimate never touched still saves
 after acceptance, but a locked row's own key, or re-seeding the whole budget
 from another estimate, is refused. A job whose budget one estimate locked will
 not accept a second, and a settled estimate refuses edits to its lines,
-markups, customer, job and tax (its notes and expiration still edit). **There
+markups, customer, job, tax and **status** (its notes and expiration still
+edit; moving status off accepted or converted is refused with a 409, since the
+next accept would re-seed the locked budget). **There
 is no unlock** — a new estimate or, later, a change order is how a locked
 budget moves. The customer PDF groups the bid by package with the section code,
 then blocks the allowances, the alternates not yet taken (at their marked-up
 price) and unit prices, and foots Subtotal, a row per non-zero markup, Bid
 total, Tax and Total. The seeded budget distributes the markups across the rows'
 revenue pro rata to each row's share of the markup base, so the budgeted
-revenue foots to the bid. Converting an accepted estimate to an invoice drops
+revenue foots to the bid. A code you budgeted by hand keeps its own row and its
+own share of the markups; that share is not pushed onto the other rows.
+**General conditions are both revenue and cost:** the GC percent stays markup
+revenue, and on accept the GC amount is also budgeted as a cost on a "GC
+General Conditions" code (created if the books have none, reused if they do),
+so the job carries it. That row carries cost only; its revenue is already in
+the rows above, so it is not counted twice. Insurance, fee and bond are revenue
+only. Converting an accepted estimate to an invoice drops
 the unit-price lines and any un-accepted alternate, carries each line's cost
 type and unit cost onto the invoice, and adds one invoice line per non-zero
 markup (on the job) so the invoice foots to the bid.

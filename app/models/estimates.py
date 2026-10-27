@@ -62,6 +62,9 @@ class Estimate(Base):
     insurance_pct = Column(Numeric(7, 4), nullable=False, default=0)
     fee_pct = Column(Numeric(7, 4), nullable=False, default=0)
     bond_pct = Column(Numeric(7, 4), nullable=False, default=0)
+    # The GC decides whether the markups also build on allowance lines; off by
+    # default (an allowance is a budgeted figure, not priced scope).
+    markup_allowances = Column(Boolean, nullable=False, default=False)
     # When the estimate was accepted and its job budget locked (#551).
     accepted_at = Column(DateTime(timezone=True), nullable=True)
 

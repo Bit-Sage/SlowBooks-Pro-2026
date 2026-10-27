@@ -125,6 +125,7 @@ const EstimatesPage = {
                 ${mRow('Insurance', t.insurance_pct, t.insurance)}
                 ${mRow('Fee', t.fee_pct, t.fee)}
                 ${mRow('Bond', t.bond_pct, t.bond)}
+                ${allowances.length || t.markup_allowances ? `<div class="total-row"><span class="label">Markup on allowances</span><span class="value">${t.markup_allowances ? 'On' : 'Off'}</span></div>` : ''}
                 <div class="total-row"><span class="label">Bid total</span><span class="value">${formatCurrency(t.bid_total)}</span></div>
                 ${taxRow}
                 <div class="total-row grand-total"><span class="label">Total</span><span class="value">${formatCurrency(est.total)}</span></div>
@@ -323,7 +324,8 @@ const EstimatesPage = {
                 ${f('insurance_pct', est.insurance_pct, 'Insurance')}
                 ${f('fee_pct', est.fee_pct, 'Fee')}
                 ${f('bond_pct', est.bond_pct, 'Bond')}
-            </div>`;
+            </div>
+            <label style="display:block; margin-top:6px;"><input type="checkbox" name="markup_allowances" ${est.markup_allowances ? 'checked' : ''} onchange="EstimatesPage.recalc()"> Apply the markups to allowances too (off by default)</label>`;
     },
 
     bidTotalsPanelHtml() {
@@ -338,6 +340,7 @@ const EstimatesPage = {
             ${row('Insurance', 'est-bid-ins')}
             ${row('Fee', 'est-bid-fee')}
             ${row('Bond', 'est-bid-bond')}
+            ${row('Markup on allowances', 'est-bid-markup-allow')}
             ${row('Bid total', 'est-bid-total')}
             ${row('Tax', 'est-bid-tax')}
             <div class="total-row grand-total"><span class="label">Total</span><span class="value" id="est-bid-grand">$0.00</span></div>
@@ -358,6 +361,7 @@ const EstimatesPage = {
         const m = n => pct(form && form[n] ? form[n].value : 0);
         // the marked-up factor an alternate's shown price uses
         const factor = (1 + m('gc_pct')) * (1 + m('insurance_pct')) * (1 + m('fee_pct')) * (1 + m('bond_pct'));
+        const markupAllowances = !!(form && form.markup_allowances && form.markup_allowances.checked);
         let markupBase = 0, allowanceTotal = 0, pricedDirect = 0, subtotal = 0, taxableSubtotal = 0, anyTaxable = false;
         const alternates = [], unitPrices = [];
         $$('#est-lines tr').forEach(row => {
@@ -385,8 +389,10 @@ const EstimatesPage = {
             }
             subtotal += amount;
             if (taxable) { taxableSubtotal += amount; anyTaxable = true; }
-            if (kind === 'allowance') allowanceTotal += amount;
-            else if (hasCost) markupBase += cost;
+            if (kind === 'allowance') {
+                allowanceTotal += amount;
+                if (markupAllowances) markupBase += amount;
+            } else if (hasCost) markupBase += cost;
             else pricedDirect += amount;
         });
         const gc = EstimatesPage._r(markupBase * m('gc_pct'));
@@ -399,7 +405,7 @@ const EstimatesPage = {
         // taxable (the server's rule); an exempt estimate taxes nothing
         const tax = anyTaxable ? EstimatesPage._r((taxableSubtotal + markupTotal) * m('tax_rate')) : 0;
         const total = EstimatesPage._r(bid + tax);
-        return { markupBase, gc, insurance, fee, bond, markupTotal, pricedDirect, allowanceTotal, subtotal, bid, tax, total, alternates, unitPrices };
+        return { markupAllowances, markupBase, gc, insurance, fee, bond, markupTotal, pricedDirect, allowanceTotal, subtotal, bid, tax, total, alternates, unitPrices };
     },
 
     renderBidTotals() {
@@ -410,6 +416,8 @@ const EstimatesPage = {
         set('est-bid-subtotal', t.subtotal); set('est-bid-gc', t.gc); set('est-bid-ins', t.insurance);
         set('est-bid-fee', t.fee); set('est-bid-bond', t.bond); set('est-bid-total', t.bid);
         set('est-bid-tax', t.tax); set('est-bid-grand', t.total);
+        const ma = $('#est-bid-markup-allow');
+        if (ma) ma.textContent = t.markupAllowances ? 'On' : 'Off';
         const alt = $('#est-bid-alternates');
         if (alt) alt.innerHTML = t.alternates.length
             ? '<strong>Alternates</strong> <span style="color:var(--gray-500)">(add / deduct)</span>' + t.alternates.map(a =>
@@ -562,6 +570,7 @@ const EstimatesPage = {
             data.insurance_pct = parseFloat(form.insurance_pct?.value) || 0;
             data.fee_pct = parseFloat(form.fee_pct?.value) || 0;
             data.bond_pct = parseFloat(form.bond_pct?.value) || 0;
+            data.markup_allowances = !!form.markup_allowances?.checked;
         }
 
         if (!(await TxnWarn.ok(form, { editing: !!id }))) return;

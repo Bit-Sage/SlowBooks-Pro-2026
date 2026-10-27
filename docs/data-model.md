@@ -118,7 +118,8 @@ under "Unassigned"), `line_kind` (String(12), NOT NULL default `base` — one of
 nullable — SF, LF, EA, CY…) and `alternate_accepted` (Boolean, NOT NULL
 default false). `estimates` gains the four compounding markups `gc_pct`,
 `insurance_pct`, `fee_pct`, `bond_pct` (Numeric(7,4), NOT NULL default 0 —
-percent values, 5.5 = 5.5%) and `accepted_at` (DateTime, nullable).
+percent values, 5.5 = 5.5%), `markup_allowances` (Boolean, NOT NULL
+default false — the markups also build on allowance lines when true) and `accepted_at` (DateTime, nullable).
 `job_budgets.locked` (Boolean, NOT NULL default false) marks the rows an
 accepted estimate owns — only a change order moves them. `invoice_lines` gains
 `cost_type` (String(20)) and `unit_cost` (Numeric(12,4)), both nullable, so a

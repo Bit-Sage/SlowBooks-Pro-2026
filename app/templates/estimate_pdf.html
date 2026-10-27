@@ -164,6 +164,9 @@
             {% if totals.bond and totals.bond != 0 %}
             <tr><td class="label">Bond ({{ totals.bond_pct | pct_label }}%)</td><td class="r">{{ totals.bond | currency }}</td></tr>
             {% endif %}
+            {% if totals.allowance_total and totals.allowance_total != 0 %}
+            <tr><td class="label">Markup on allowances</td><td class="r">{{ 'On' if totals.markup_allowances else 'Off' }}</td></tr>
+            {% endif %}
             <tr><td class="label">Bid total</td><td class="r">{{ totals.bid_total | currency }}</td></tr>
             {% if est.tax_amount and est.tax_amount != 0 %}
             <tr><td class="label">Tax ({{ est.tax_rate | tax_percent }}%)</td><td class="r">{{ est.tax_amount | currency }}</td></tr>

@@ -76,6 +76,7 @@ _FROZEN_ON_SETTLE = {
     "insurance_pct",
     "fee_pct",
     "bond_pct",
+    "markup_allowances",
 }
 
 
@@ -248,6 +249,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
     if not is_construction:
         for name in _MARKUP_PCTS:
             setattr(data, name, Decimal("0"))
+        data.markup_allowances = False
     # Construction lines stay at cost before anything is totalled (#551).
     _enforce_at_cost(data.lines, is_construction)
     # The document totals cover the bought scope and the four markups: lines
@@ -261,6 +263,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
         data.insurance_pct,
         data.fee_pct,
         data.bond_pct,
+        data.markup_allowances,
     )
 
     estimate = None
@@ -287,6 +290,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             insurance_pct=data.insurance_pct,
             fee_pct=data.fee_pct,
             bond_pct=data.bond_pct,
+            markup_allowances=data.markup_allowances,
             **bill_to,
         )
         db.add(estimate)
@@ -354,6 +358,7 @@ def update_estimate(
     # Accepting through a PUT takes the one accept code path, after the other
     # changes (a new job on the same request) land (#551).
     accepting = changes.get("status") == EstimateStatus.ACCEPTED
+    new_status = changes.get("status")
     if accepting:
         changes.pop("status")
 
@@ -364,6 +369,10 @@ def update_estimate(
     # estimate or, later, a change order (#551).
     if estimate.status in (EstimateStatus.ACCEPTED, EstimateStatus.CONVERTED):
         touched = set(changes) & _FROZEN_ON_SETTLE
+        # moving the status off accepted/converted would let the next accept
+        # re-seed the locked budget; re-setting the same status is a no-op
+        if new_status is not None and new_status != estimate.status:
+            touched.add("status")
         if data.lines is not None:
             touched.add("lines")
         if touched:
@@ -388,6 +397,7 @@ def update_estimate(
     if not is_construction:
         for name in _MARKUP_PCTS:
             setattr(estimate, name, Decimal("0"))
+        estimate.markup_allowances = False
 
     if data.lines is not None:
         # Each line's tax is settled before it is stored, the way create does
@@ -445,11 +455,15 @@ def update_estimate(
             estimate.insurance_pct,
             estimate.fee_pct,
             estimate.bond_pct,
+            estimate.markup_allowances,
         )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount
         estimate.total = total
-    elif any(k in changes for k in ("tax_rate", "customer_id", *_MARKUP_PCTS)):
+    elif any(
+        k in changes
+        for k in ("tax_rate", "customer_id", "markup_allowances", *_MARKUP_PCTS)
+    ):
         # A new rate, customer or markup percent without resending the lines:
         # the stored lines are re-totalled (a rate- or markup-only edit left
         # the old tax and total in place), and a non-taxable customer's
@@ -464,6 +478,7 @@ def update_estimate(
             estimate.insurance_pct,
             estimate.fee_pct,
             estimate.bond_pct,
+            estimate.markup_allowances,
         )
         estimate.subtotal = subtotal
         estimate.tax_amount = tax_amount

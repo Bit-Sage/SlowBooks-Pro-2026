@@ -154,3 +154,15 @@ def test_a_pre_551_estimate_has_no_construction_blocks(
     assert "General conditions" not in html
     assert "Subtotal" in html and "Bid total" in html and "Total" in html
     assert "$500.00" in html
+
+
+def test_pdf_shows_markup_on_allowances_off_and_on(client, db_session, seed_customer):
+    client.put("/api/settings", json={"company_type": "construction"})
+    lines = [
+        {"description": "Shell", "quantity": 1, "rate": 0, "unit_cost": 1000},
+        {"description": "Appliances", "quantity": 1, "rate": 500, "line_kind": "allowance"},
+    ]
+    off = _estimate(client, seed_customer.id, lines, gc_pct=10)
+    on = _estimate(client, seed_customer.id, lines, gc_pct=10, markup_allowances=True)
+    assert "Markup on allowances</td><td class=\"r\">Off" in _html(db_session, off["id"], "construction")
+    assert "Markup on allowances</td><td class=\"r\">On" in _html(db_session, on["id"], "construction")

@@ -213,3 +213,31 @@ test('bidTotals taxes the markups when any included line is taxable (server rule
     // tax = 10% × (0 taxable subtotal + 10,000 markups) = 1,000 — not 0
     assert.equal(t.tax, 1000);
 });
+
+test('the markups block carries the allowance-markup checkbox, off unless set', () => {
+    const page = estimatesContext(true).EstimatesPage;
+    const off = page.markupsBlockHtml({});
+    assert.match(off, /name="markup_allowances"/);
+    assert.doesNotMatch(off, /name="markup_allowances"\s+checked/);
+    assert.match(page.markupsBlockHtml({ markup_allowances: true }), /name="markup_allowances"\s+checked/);
+});
+
+test('bidTotals leaves allowances out of the markup base unless the box is checked', () => {
+    const rows = () => [
+        makeRow(0, { kind: 'base', qty: 1, uc: 100000, rate: 100000, accepted: false }),
+        makeRow(1, { kind: 'allowance', qty: 1, uc: '', rate: 20000, accepted: false }),
+    ];
+    const ctx = estimatesContext(true);
+    withFakeDom(ctx, rows());
+    const off = ctx.EstimatesPage.bidTotals();
+    assert.equal(off.markupAllowances, false);
+    assert.equal(off.markupBase, 100000);
+    assert.equal(off.gc, 10000);
+    const ctx2 = estimatesContext(true);
+    withFakeDom(ctx2, rows());
+    ctx2.$('#est-form').markup_allowances = { checked: true };
+    const on = ctx2.EstimatesPage.bidTotals();
+    assert.equal(on.markupAllowances, true);
+    assert.equal(on.markupBase, 120000);
+    assert.equal(on.gc, 12000);
+});

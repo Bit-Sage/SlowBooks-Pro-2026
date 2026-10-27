@@ -782,6 +782,20 @@ def allocate_cost(
 # ---------------------------------------------------------------------------
 
 
+GC_CODE = "GC"
+
+
+def _general_conditions_code(db: Session) -> CostCode:
+    """The cost code general conditions budget to: a custom "GC" code, reused
+    if the books already have one, else created (#551)."""
+    code = db.query(CostCode).filter(CostCode.code == GC_CODE).first()
+    if code is None:
+        code = CostCode(code=GC_CODE, name="General Conditions", cost_type="other")
+        db.add(code)
+        db.flush()
+    return code
+
+
 def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[JobBudget]:
     """One budget row per cost code on the estimate: cost = qty × unit cost
     (0 when no cost is entered — budgeting the sale price as cost would
@@ -793,7 +807,13 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
     insurance, fee, bond) are the only budgeted margin; they are distributed
     across the rows' revenue pro rata to each row's share of the markup base
     (rows with no markup-able cost get none), with the rounding remainder on
-    the last such row, so Σ revenue == the pre-tax bid total.
+    the last such row, so Σ revenue == the pre-tax bid total. A code the
+    operator budgeted by hand keeps its own row AND its own share: that share
+    is not pushed onto the other rows.
+
+    General conditions are both revenue and cost: the GC markup is spread as
+    revenue like the other markups, and its amount is also budgeted as a COST
+    on a "GC" General Conditions row so the job carries it.
 
     Lines without a code roll into a whole-job row. Re-seeding replaces the
     estimate rows; a row the operator edited by hand (source "manual") wins and
@@ -803,11 +823,13 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
     # the bought scope seeds a budget — a unit-price line is a rate card and an
     # un-accepted alternate is not scope yet (#551).
     from app.services.estimating import (
-        _markupable,
         estimate_totals,
         included_lines,
-        line_price,
+        markup_base_amount,
     )
+
+    est_totals = estimate_totals(estimate)
+    markup_allowances = bool(estimate.markup_allowances)
 
     # bucket: [cost, revenue, markup_base]
     totals: dict[tuple, list[Decimal]] = {}
@@ -821,11 +843,7 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
         else:
             cost = Decimal("0")
         rev = _q(ln.amount or 0)
-        base = (
-            line_price(ln)
-            if (_markupable(ln) and ln.unit_cost is not None)
-            else Decimal("0")
-        )
+        base = markup_base_amount(ln, markup_allowances)
         bucket = totals.setdefault(
             (ln.cost_code_id, ln.cost_type),
             [Decimal("0"), Decimal("0"), Decimal("0")],
@@ -846,35 +864,55 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
         )
         .all()
     }
-    # The rows that will seed (manual-owned codes are left alone), in order.
-    seeded = [
+    # Distribute the markups across ALL the estimate's rows pro rata to their
+    # share of the markup base; the last row with a base takes the rounding
+    # remainder. A manual-owned code is distributed to like any other, then
+    # skipped below, so its share stays on its own row (hand-budgeted) rather
+    # than landing on the others.
+    entries = [
         (code_id, ctype, cost, rev, base)
         for (code_id, ctype), (cost, rev, base) in totals.items()
-        if code_id not in manual_codes
     ]
-    # Distribute the markups across the seeded rows pro rata to their share of
-    # the markup base; the last row with a base takes the rounding remainder.
-    markup_total = estimate_totals(estimate)["markup_total"]
-    base_total = sum((s[4] for s in seeded), Decimal("0"))
-    markup_rev = [Decimal("0")] * len(seeded)
+    markup_total = est_totals["markup_total"]
+    base_total = sum((e[4] for e in entries), Decimal("0"))
+    markup_rev = [Decimal("0")] * len(entries)
     if markup_total and base_total:
-        with_base = [i for i, s in enumerate(seeded) if s[4] > 0]
+        with_base = [i for i, e in enumerate(entries) if e[4] > 0]
         assigned = Decimal("0")
         for n, i in enumerate(with_base):
             if n == len(with_base) - 1:
                 markup_rev[i] = markup_total - assigned
             else:
-                share = _q(markup_total * seeded[i][4] / base_total)
+                share = _q(markup_total * entries[i][4] / base_total)
                 markup_rev[i] = share
                 assigned += share
+    # (code, type, cost, revenue) for each row that will seed; manual-owned
+    # codes are left alone.
+    seeded = [
+        (code_id, ctype, cost, _q(rev + markup_rev[i]))
+        for i, (code_id, ctype, cost, rev, _base) in enumerate(entries)
+        if code_id not in manual_codes
+    ]
+    # General conditions also carry cost: budget the GC amount on its own code
+    # (merged into a line already coded and typed the same).
+    gc_amount = est_totals["gc"]
+    if gc_amount:
+        gc_code = _general_conditions_code(db)
+        if gc_code.id not in manual_codes:
+            for n, (code_id, ctype, cost, rev) in enumerate(seeded):
+                if (code_id, ctype) == (gc_code.id, gc_code.cost_type):
+                    seeded[n] = (code_id, ctype, cost + gc_amount, rev)
+                    break
+            else:
+                seeded.append((gc_code.id, gc_code.cost_type, gc_amount, Decimal("0")))
     rows = []
-    for i, (code_id, ctype, cost, rev, _base) in enumerate(seeded):
+    for code_id, ctype, cost, rev in seeded:
         row = JobBudget(
             job_id=job.id,
             cost_code_id=code_id,
             cost_type=ctype,
             amount=cost,
-            revenue_amount=_q(rev + markup_rev[i]),
+            revenue_amount=rev,
             source="estimate",
             estimate_id=estimate.id,
         )

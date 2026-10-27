@@ -100,6 +100,7 @@ class EstimateCreate(StrictModel):
     insurance_pct: Decimal = Decimal("0")
     fee_pct: Decimal = Decimal("0")
     bond_pct: Decimal = Decimal("0")
+    markup_allowances: bool = False
     lines: list[EstimateLineCreate] = []
 
     @field_validator("lines")
@@ -123,6 +124,7 @@ class EstimateUpdate(StrictModel):
     insurance_pct: Optional[Decimal] = None
     fee_pct: Optional[Decimal] = None
     bond_pct: Optional[Decimal] = None
+    markup_allowances: Optional[bool] = None
     lines: Optional[list[EstimateLineCreate]] = None
 
 
@@ -154,6 +156,7 @@ class EstimateTotals(BaseModel):
     own figures under the subtotal, the bid total is subtotal + markups
     (pre-tax), and the package / alternate / unit-price breakdowns."""
 
+    markup_allowances: bool = False
     markup_base: Decimal
     gc_pct: Decimal
     insurance_pct: Decimal
@@ -201,6 +204,7 @@ class EstimateResponse(BaseModel):
     insurance_pct: Decimal = Decimal("0")
     fee_pct: Decimal = Decimal("0")
     bond_pct: Decimal = Decimal("0")
+    markup_allowances: bool = False
     accepted_at: Optional[datetime] = None
     notes: Optional[str]
     class_id: Optional[int] = None

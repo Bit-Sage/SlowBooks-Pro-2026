@@ -8,7 +8,8 @@ Step 2 of the commercial GC layer, on top of #550. Additive and nullable
   "allowance" / "alternate" / "unit_price", default "base"), unit (SF, LF,
   EA…) and alternate_accepted (default false).
 - estimates gains the four compounding markups gc_pct / insurance_pct /
-  fee_pct / bond_pct (percent values, default 0) and accepted_at.
+  fee_pct / bond_pct (percent values, default 0), markup_allowances (default
+  false: markups skip allowance lines unless on) and accepted_at.
 - job_budgets gains locked (default false): an accepted estimate locks the
   rows it seeded so only a change order moves them.
 
@@ -65,6 +66,14 @@ def upgrade() -> None:
                 sa.Column(col, sa.Numeric(7, 4), nullable=False, server_default="0")
             )
         batch.add_column(
+            sa.Column(
+                "markup_allowances",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            )
+        )
+        batch.add_column(
             sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=True)
         )
 
@@ -91,6 +100,7 @@ def downgrade() -> None:
 
     with op.batch_alter_table("estimates") as batch:
         batch.drop_column("accepted_at")
+        batch.drop_column("markup_allowances")
         for col in ("bond_pct", "fee_pct", "insurance_pct", "gc_pct"):
             batch.drop_column(col)
 

@@ -188,13 +188,22 @@ price) and unit prices in their own blocks, and foots Subtotal, a row per
 non-zero markup, Bid total, Tax and Total. Converting carries the markups onto
 the invoice as their own lines, so it foots to the bid.
 
+The GC decides where markup goes: **markup on allowances is off by default**,
+a per-estimate flag the form, view, totals panel and PDF show as On or Off;
+on, the allowances join the markup base. **General conditions are both**: the
+GC percent stays markup revenue and its amount is also budgeted as a cost (a
+"GC" General Conditions budget row) when the estimate is accepted. A code
+budgeted by hand keeps its own share of the markups instead of pushing it onto
+the other rows.
+
 Accepting an estimate **locks the job budget to it**: the estimate seeds the
 budget from the bought scope (a row you edited by hand still wins), and those
 rows are then locked — the lock is per row, so a manual budget row on a code
 the estimate never touched still saves afterward, but a locked row's own key,
 or re-seeding the whole budget from another estimate, is refused. There is no
 unlock: a new estimate or, later, a change order moves a locked budget, and a
-settled estimate refuses edits to its lines, markups, customer, job and tax.
+settled estimate refuses edits to its lines, markups, customer, job, tax and
+status (moving it back to pending would re-seed the locked budget).
 Converting an accepted estimate to an invoice drops the unit-price lines and
 any un-accepted alternate, and now carries each line's cost type and unit cost
 onto the invoice so the cost basis isn't lost. A Business or Nonprofit

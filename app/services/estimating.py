@@ -63,13 +63,29 @@ def _pct(value) -> Decimal:
     return Decimal(str(value or 0)) / Decimal("100")
 
 
-# A base line or an accepted alternate is markup-able scope; allowances and
-# everything excluded are not.
-def _markupable(line) -> bool:
+# A base line or an accepted alternate is markup-able scope; an allowance is
+# only when the estimate says so (the GC decides, off by default); everything
+# excluded never is.
+def _markupable(line, markup_allowances: bool = False) -> bool:
     kind = getattr(line, "line_kind", None) or "base"
+    if kind == "allowance":
+        return bool(markup_allowances)
     return kind == "base" or (
         kind == "alternate" and getattr(line, "alternate_accepted", False)
     )
+
+
+def markup_base_amount(line, markup_allowances: bool = False) -> Decimal:
+    """What an INCLUDED line adds to the markup base: its price when it is
+    markup-able and carries a unit cost (a flat-priced line is never marked
+    up); an allowance has no unit cost, so with allowance markup on its whole
+    amount counts. Zero otherwise. Shared by the totals and the budget seeder."""
+    if not _markupable(line, markup_allowances):
+        return Decimal("0")
+    if (getattr(line, "line_kind", None) or "base") != "allowance":
+        if line.unit_cost is None:
+            return Decimal("0")
+    return line_price(line)
 
 
 def markup_factor(estimate) -> Decimal:
@@ -97,7 +113,13 @@ def _markups(markup_base, gc_pct, insurance_pct, fee_pct, bond_pct):
 
 
 def estimate_document_totals(
-    lines, tax_rate, gc_pct, insurance_pct, fee_pct, bond_pct
+    lines,
+    tax_rate,
+    gc_pct,
+    insurance_pct,
+    fee_pct,
+    bond_pct,
+    markup_allowances=False,
 ) -> tuple[Decimal, Decimal, Decimal]:
     """The stored (subtotal, tax_amount, total) for an estimate, lines at cost
     with the markups as their own figures under the subtotal.
@@ -105,8 +127,8 @@ def estimate_document_totals(
     - subtotal = Σ price of the included lines (base + accepted alternates +
       allowances), each price being quantity × rate (an ORM line's amount).
     - the four markups compound in order on the markup base (Σ price of base /
-      accepted-alternate lines that carry a unit cost); markup_total is their
-      sum.
+      accepted-alternate lines that carry a unit cost, plus the allowance
+      lines only when markup_allowances is on); markup_total is their sum.
     - tax covers the lines AND the markups: tax_rate × (taxable line subtotal +
       markup_total) when at least one included line is taxable, else 0 (an
       exempt customer pays no tax on anything).
@@ -120,11 +142,7 @@ def estimate_document_totals(
     subtotal = _q(sum((line_price(ln) for ln in included), Decimal("0")))
     markup_base = _q(
         sum(
-            (
-                line_price(ln)
-                for ln in included
-                if _markupable(ln) and ln.unit_cost is not None
-            ),
+            (markup_base_amount(ln, markup_allowances) for ln in included),
             Decimal("0"),
         )
     )
@@ -154,7 +172,8 @@ def estimate_totals(estimate) -> dict:
 
     - markup_base — Σ price of base + accepted-alternate lines that HAVE a
       unit cost (priced at cost, so this is the cost the markups build on);
-      allowances never count.
+      allowances count only when the estimate's markup_allowances flag is on
+      (off by default).
     - the four markups compound in order on markup_base; markup_total is their
       sum.
     - subtotal — Σ price of the included lines (base + accepted alternates +
@@ -180,6 +199,7 @@ def estimate_totals(estimate) -> dict:
     alternates: list = []
     unit_prices: list = []
     factor = markup_factor(estimate)
+    markup_allowances = bool(getattr(estimate, "markup_allowances", False))
 
     for line in estimate.lines:
         kind = line.line_kind or "base"
@@ -217,11 +237,9 @@ def estimate_totals(estimate) -> dict:
         subtotal += price
         if kind == "allowance":
             allowance_total += price
-        else:  # base or accepted alternate
-            if line.unit_cost is None:
-                priced_direct += price
-            else:
-                markup_base += price
+        elif line.unit_cost is None:  # base or accepted alternate
+            priced_direct += price
+        markup_base += markup_base_amount(line, markup_allowances)
 
         key = line.trade_package_id if line.trade_package_id is not None else UNASSIGNED
         bucket = by_package.get(key)
@@ -260,6 +278,7 @@ def estimate_totals(estimate) -> dict:
     )
 
     return {
+        "markup_allowances": markup_allowances,
         "markup_base": markup_base,
         "gc_pct": Decimal(str(estimate.gc_pct or 0)),
         "insurance_pct": Decimal(str(estimate.insurance_pct or 0)),
