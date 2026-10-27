@@ -16,7 +16,7 @@ Step 2 of the commercial GC layer, on top of #550. Additive and nullable
 Nothing is backfilled. downgrade reverses.
 
 Revision ID: d9f6b2c4e7a1
-Revises: c8e4a2f1b3d5
+Revises: f2b3c4d5e6a7
 Create Date: 2026-10-25
 
 """
@@ -27,7 +27,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "d9f6b2c4e7a1"
-down_revision: Union[str, None] = "c8e4a2f1b3d5"
+down_revision: Union[str, None] = "f2b3c4d5e6a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
