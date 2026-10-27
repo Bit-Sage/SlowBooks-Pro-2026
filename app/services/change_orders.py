@@ -167,12 +167,12 @@ def contingency_used(db: Session, job: Job) -> Decimal:
 
 
 def allowance_used(db: Session, job: Job, sov_line_id: int) -> Decimal:
-    """Σ cost_total of approved allowance-funded owner COs on one allowance
-    SOV line (an allowance pays for work at cost — no markup)."""
+    """Σ sell_total of approved allowance-funded owner COs on one allowance
+    SOV line — the marked-up price, as contingency draws it."""
     total = _ZERO
     for co in _approved_owner_cos(db, job.id, "allowance"):
         if co.allowance_sov_line_id == sov_line_id:
-            total += co_totals(co, job)["cost_total"]
+            total += co_totals(co, job)["sell_total"]
     return _q(total)
 
 
@@ -471,7 +471,7 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                 )
             sov_line = check_allowance_line(db, co.job_id, co.allowance_sov_line_id)
             already = allowance_used(db, job, sov_line.id)
-            if _q(already + totals["cost_total"]) > _q(sov_line.scheduled_value):
+            if _q(already + sell_total) > _q(sov_line.scheduled_value):
                 raise HTTPException(
                     status_code=409,
                     detail={

@@ -1228,3 +1228,119 @@ def test_migration_upgrades_and_downgrades(tmp_path):
     assert run("upgrade", "head").returncode == 0
     assert run("downgrade", "-1").returncode == 0
     assert run("upgrade", "head").returncode == 0
+
+
+def test_marked_up_allowance_co_draws_its_sell_price(client, seed_customer):
+    job, allowance_id = _allowance_job(client, seed_customer.id)
+    line = {**_sub_line("Tile", 2000), "markup_pct": 15}
+    kw = dict(
+        funding="allowance", allowance_sov_line_id=allowance_id, apply_markup=True
+    )
+    # $2,000 of cost at 15% sells for $2,300, over the $2,000 allowance
+    co = _co(client, job["id"], [line], **kw)
+    assert co["sell_total"] == 2300.0
+    r = _submit_approve(client, co["id"])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "allowance_exceeded"
+
+    # with room for the sell price it approves and draws 2,300
+    client.put(
+        f"/api/jobs/{job['id']}/sov",
+        json={
+            "lines": [
+                {"description": "Base", "kind": "work", "scheduled_value": 97700},
+                {
+                    "description": "Finishes allowance",
+                    "kind": "allowance",
+                    "scheduled_value": 2300,
+                },
+            ]
+        },
+    )
+    sov = client.get(f"/api/jobs/{job['id']}/contract").json()["sov"]
+    new_id = next(ln["id"] for ln in sov if ln["kind"] == "allowance")
+    co2 = _co(
+        client,
+        job["id"],
+        [line],
+        funding="allowance",
+        allowance_sov_line_id=new_id,
+        apply_markup=True,
+    )
+    assert _submit_approve(client, co2["id"]).status_code == 200
+    contract = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
+    row = next(a for a in contract["allowances"] if a["sov_line_id"] == new_id)
+    assert row["used"] == 2300.0
+    assert row["remaining"] == 0.0
+
+
+def test_contract_funded_co_is_always_marked_up(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    co = _co(client, job["id"], [LABOR], apply_markup=False)
+    assert co["apply_markup"] is True
+    assert co["sell_total"] == 575.0
+    r = client.put(f"/api/change-orders/{co['id']}", json={"apply_markup": False})
+    assert r.status_code == 200
+    assert r.json()["apply_markup"] is True
+
+
+def test_second_sub_co_on_the_same_owner_lines_is_refused(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    url = f"/api/change-orders/{owner['id']}/sub-order"
+    r = client.post(url, json={"commitment_id": po["id"]})
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "owner_co_lines_already_ordered"
+    # still refused while the first is pending or approved
+    client.post(f"/api/change-orders/{sub['id']}/submit")
+    assert client.post(url, json={"commitment_id": po["id"]}).status_code == 409
+    assert client.post(f"/api/change-orders/{sub['id']}/approve").status_code == 200
+    assert client.post(url, json={"commitment_id": po["id"]}).status_code == 409
+
+
+def test_rejected_sub_co_frees_its_owner_lines(client, seed_accounts, seed_customer):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    client.post(f"/api/change-orders/{sub['id']}/submit")
+    assert client.post(f"/api/change-orders/{sub['id']}/reject").status_code == 200
+    r = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_plain_po_edit_cannot_move_a_sub_co_line_to_another_job(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    other = _job(client, seed_customer.id, name="Other")
+    lines = client.get(f"/api/purchase-orders/{po['id']}").json()["lines"]
+    base = next(ln for ln in lines if ln["description"] == "Base")
+    added = next(ln for ln in lines if ln["description"] == "Extra")
+
+    def row(ln, **over):
+        d = {
+            "id": ln["id"],
+            "description": ln["description"],
+            "quantity": float(ln["quantity"]),
+            "rate": float(ln["rate"]),
+        }
+        d.update(over)
+        return d
+
+    for over in (
+        {"job_id": other["id"]},
+        {"cost_type": "labor"},
+        {"quantity": 2, "rate": 1000},
+    ):
+        r = client.put(
+            f"/api/purchase-orders/{po['id']}",
+            json={"lines": [row(base), row(added, **over)]},
+        )
+        assert r.status_code == 409, over
+        assert r.json()["detail"]["code"] == "commitment_co_line"
+    fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
+    moved = next(ln for ln in fresh["lines"] if ln["description"] == "Extra")
+    assert moved["job_id"] == added["job_id"]
+    assert float(fresh["total"]) == 7000

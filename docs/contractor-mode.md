@@ -416,7 +416,11 @@ the cost — because the money was already held. The contractor can still mark i
 up: the change order's **Apply markup** flag turns it on, and the form, the log
 (*+ markup*) and the PDF show whether markup was applied. Switching a change
 order's funding resets the flag to that funding's default. The same $1,500 of
-cost funded by an allowance sells at $1,500 unless markup is applied. A markup
+cost funded by an allowance sells at $1,500 unless markup is applied. A marked-up allowance
+change order draws its **sell** price from the allowance (as contingency does),
+and the approve limit checks that figure: $2,000 of cost at 15% draws $2,300.
+Contract-funded work is always marked up; the flag only governs allowance and
+contingency work. A markup
 percent must be above -100% and at most 1000%.
 
 **Commitment and budget stay together.** A sub change order made from an owner
@@ -424,8 +428,11 @@ change order writes no budget of its own, so it approves only once that owner
 change order is approved (409 `owner_co_not_approved`); an owner change order
 cannot be rejected or voided while an approved sub change order stands under it
 (409 `approved_sub_co`; void the sub CO first). A plain purchase-order edit
-cannot drop a line a sub change order added or change its amount (409
-`commitment_co_line`), and a sub change order is still refused on a fully billed
+cannot drop a line a sub change order added or change its amount, quantity,
+rate, job, cost code or cost type (409 `commitment_co_line`); one owner change
+order line raises a commitment once, so a second pending or approved sub change
+order on the same lines is refused (409 `owner_co_lines_already_ordered`; a
+rejected or void one frees them), and a sub change order is still refused on a fully billed
 commitment (409 `commitment_not_open`).
 
 **What approve does.** Every effect lands on **approve**, in one transaction,

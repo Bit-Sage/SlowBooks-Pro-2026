@@ -630,7 +630,7 @@ const JobsPage = {
                 <div class="form-group"><label for="c-ret">Retainage %</label>
                     <input id="c-ret" name="retainage_pct" type="number" step="0.01" min="0" max="100" value="${v(c.retainage_pct)}"></div>
                 <div class="form-group"><label for="c-comarkup">Markup on change orders (%)</label>
-                    <input id="c-comarkup" name="co_markup_pct" type="number" step="0.0001" min="0" value="${v(c.co_markup_pct)}" placeholder="default markup on owner COs"></div>
+                    <input id="c-comarkup" name="co_markup_pct" type="number" step="0.0001" min="-99.9999" max="1000" value="${v(c.co_markup_pct)}" placeholder="default markup on owner COs"></div>
                 ${src}
             </div>
             <div class="form-actions"><button type="submit" class="btn btn-primary">Save contract terms</button></div>
@@ -1003,7 +1003,7 @@ const JobsPage = {
                 <div class="form-group"><label>Funding</label><select id="co-funding" ${d} onchange="JobsPage.coFundingChanged()">${fundOpts}</select></div>
                 <div class="form-group"><label>Allowance line</label><select id="co-allowance" ${d}>${allowOpts}</select></div>
                 <div class="form-group"><label>Commitment (sub)</label><select id="co-commitment" ${d}>${commitOpts}</select></div>
-                <div class="form-group"><label>Apply markup</label><label style="font-weight:400"><input id="co-apply-markup" ${d} type="checkbox" ${(co.apply_markup ?? (co.funding === 'contract')) ? 'checked' : ''} onchange="JobsPage.coRecalc()"> ${co.funding === 'contract' ? 'Markup applied' : 'Add markup to this allowance/contingency work'}</label></div>
+                <div class="form-group"><label>Apply markup</label><label style="font-weight:400"><input id="co-apply-markup" ${d} ${co.funding === 'contract' ? 'disabled' : ''} type="checkbox" ${(co.apply_markup ?? (co.funding === 'contract')) ? 'checked' : ''} onchange="JobsPage.coRecalc()"> ${co.funding === 'contract' ? 'Markup applied' : 'Add markup to this allowance/contingency work'}</label></div>
                 <div class="form-group"><label>Markup %</label><input id="co-markup" ${d} type="number" step="0.0001" min="-99.9999" max="1000" value="${co.markup_pct ?? ''}" placeholder="default from contract" oninput="JobsPage.coRecalc()"></div>
                 <div class="form-group"><label>Date</label><input id="co-date" ${d} type="date" value="${co.date || ''}"></div>
                 <div class="form-group full-width"><label>Description</label><textarea id="co-desc" ${d} rows="2">${escapeHtml(co.description || '')}</textarea></div>
@@ -1066,7 +1066,8 @@ const JobsPage = {
     // default: on for contract, off for allowance and contingency.
     coFundingChanged() {
         const box = $('#co-apply-markup');
-        if (box) box.checked = $('#co-funding').value === 'contract';
+        const contract = $('#co-funding').value === 'contract';
+        if (box) { box.checked = contract; box.disabled = contract; }  // contract work is always marked up
         JobsPage.coRecalc();
     },
 

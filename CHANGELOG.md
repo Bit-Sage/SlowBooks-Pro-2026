@@ -428,10 +428,10 @@ effect on approve: *contract* adds its sell total to the contract amount,
 appends a read-only `change_order` line to the schedule of values and writes
 locked `source=change` budget rows with the sell as revenue (the job-cost
 tree's Changes column); *contingency* draws the owner's contingency down (409
-`contingency_exceeded`), and *allowance* spends an allowance line at cost (409
+`contingency_exceeded`), and *allowance* spends an allowance line at its sell price, markup included, as contingency does (409
 `allowance_exceeded`), both writing the cost with no revenue (the contract
 already carries that money). A sub change order appends cost-only lines to an
-open commitment on the same job (409 when it is on another job or not open),
+open commitment (one sub change order per owner change order line: a second on the same lines is 409 `owner_co_lines_already_ordered`; the lines a change order added keep their job, cost code, type, quantity and rate on a plain purchase-order edit) on the same job (409 when it is on another job or not open),
 and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
 changing a contract term afterward never moves an approved CO. Every effect
 reverses on **void** — except a commitment line already billed against, which

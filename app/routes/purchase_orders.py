@@ -236,7 +236,7 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                     detail={"code": "commitment_billed", "message": _billed},
                 )
         # Lines a sub change order added belong to it: a plain edit can
-        # neither drop them nor change their amount (void the sub CO).
+        # neither drop them nor change their amount, job, cost code or type (void the sub CO).
         _co_owned = "A sub change order added a line on this commitment; void that change order to change it."
         for ln in po.lines:
             if ln.change_order_id is not None and ln.id not in incoming_ids:
@@ -246,8 +246,17 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                 )
         for ld, amt in zip(data.lines, line_amounts):
             if ld.id and ld.id in existing:
-                if existing[ld.id].change_order_id is not None and amt != _q(
-                    existing[ld.id].amount
+                cur = existing[ld.id]
+                if cur.change_order_id is not None and (
+                    amt != _q(cur.amount)
+                    or (ld.job_id is not None and ld.job_id != cur.job_id)
+                    or (
+                        ld.cost_code_id is not None
+                        and ld.cost_code_id != cur.cost_code_id
+                    )
+                    or (ld.cost_type is not None and ld.cost_type != cur.cost_type)
+                    or Decimal(str(ld.quantity)) != Decimal(str(cur.quantity))
+                    or Decimal(str(ld.rate)) != Decimal(str(cur.rate))
                 ):
                     raise HTTPException(
                         status_code=409,
@@ -288,9 +297,10 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                 ln.quantity = line_data.quantity
                 ln.rate = line_data.rate
                 ln.amount = amt
-                ln.job_id = line_data.job_id
-                ln.cost_code_id = line_data.cost_code_id
-                ln.cost_type = ct
+                if ln.change_order_id is None:  # a CO line keeps its job/code/type
+                    ln.job_id = line_data.job_id
+                    ln.cost_code_id = line_data.cost_code_id
+                    ln.cost_type = ct
                 ln.line_order = line_data.line_order or i
             else:
                 db.add(
