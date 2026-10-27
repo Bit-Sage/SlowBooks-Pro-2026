@@ -189,6 +189,10 @@ class JobBudget(Base):
     revenue_amount = Column(Numeric(15, 2), nullable=False, default=0)
     source = Column(String(20), nullable=False, default="manual")
     estimate_id = Column(Integer, ForeignKey("estimates.id"), nullable=True)
+    # An accepted estimate locks the rows it seeded (#551): they are the
+    # contract budget and only a change order moves them. Manual rows stay
+    # editable.
+    locked = Column(Boolean, nullable=False, default=False)
     notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -75,6 +75,106 @@
         </div>
     </div>
 
+    {% if terms.is_construction %}
+    {# Construction bid (#551): lines AT COST grouped by package with the
+       section code in the description column, then allowances, alternates
+       (marked-up price, accepted ones marked) and unit prices in their own
+       blocks. The totals foot Subtotal, then one row per non-zero markup
+       (General conditions, Insurance, Fee, Bond), then the pre-tax Bid total,
+       Tax (when charged) and Total. Grouping is by package id, so a package
+       literally named "Unassigned" never merges with the no-package bucket. #}
+    {% set totals = estimate_totals(est) %}
+    <table class="line-items">
+        <thead><tr><th>Description</th><th class="r" style="width:60px;">Qty</th><th class="r" style="width:80px;">Rate</th><th class="r" style="width:80px;">Amount</th></tr></thead>
+        <tbody>
+        {% for pkg in totals.by_package %}
+            {% set pkg_lines = [] %}
+            {% for line in est.lines %}
+                {% set kind = line.line_kind or 'base' %}
+                {% if line.trade_package_id == pkg.package_id and (kind == 'base' or (kind == 'alternate' and line.alternate_accepted)) %}
+                    {% set _ = pkg_lines.append(line) %}
+                {% endif %}
+            {% endfor %}
+            {% if pkg_lines %}
+            <tr><td colspan="4" style="background:#eef3f8; font-weight:700; color:#003366;">{{ pkg.package_name }}</td></tr>
+            {% for line in pkg_lines %}
+            <tr>
+                <td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }}</td>
+                <td class="r">{{ line.quantity | qty }}{% if line.unit %} {{ line.unit }}{% endif %}</td>
+                <td class="r">{{ line.rate | rate }}</td>
+                <td class="r">{{ line.amount | currency }}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {% set allowances = [] %}
+    {% for line in est.lines %}{% if (line.line_kind or 'base') == 'allowance' %}{% set _ = allowances.append(line) %}{% endif %}{% endfor %}
+    {% if allowances %}
+    <table class="line-items">
+        <thead><tr><th>Allowances</th><th class="r" style="width:80px;">Amount</th></tr></thead>
+        <tbody>
+        {% for line in allowances %}
+            <tr><td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }}</td><td class="r">{{ line.amount | currency }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {# An accepted alternate is already in the scope table above (at cost) and
+       its markups are in the markup rows, so the Alternates block offers only
+       the ones the customer has not taken yet — at their marked-up price. #}
+    {% set pending_alts = totals.alternates | rejectattr('accepted') | list %}
+    {% if pending_alts %}
+    <table class="line-items">
+        <thead><tr><th>Alternates</th><th class="r" style="width:100px;">Add / Deduct</th></tr></thead>
+        <tbody>
+        {% for alt in pending_alts %}
+            <tr><td>{{ alt.description or '' }}</td><td class="r">{{ alt.amount | currency }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if totals.unit_prices %}
+    <table class="line-items">
+        <thead><tr><th>Unit prices</th><th class="r" style="width:60px;">Unit</th><th class="r" style="width:80px;">Rate</th></tr></thead>
+        <tbody>
+        {% for up in totals.unit_prices %}
+            <tr><td>{{ up.description or '' }}</td><td class="r">{{ up.unit or '' }}</td><td class="r">{{ up.rate | rate }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="totals">
+        <table>
+            <tr><td class="label">Subtotal</td><td class="r">{{ totals.subtotal | currency }}</td></tr>
+            {% if totals.gc and totals.gc != 0 %}
+            <tr><td class="label">General conditions ({{ totals.gc_pct | pct_label }}%)</td><td class="r">{{ totals.gc | currency }}</td></tr>
+            {% endif %}
+            {% if totals.insurance and totals.insurance != 0 %}
+            <tr><td class="label">Insurance ({{ totals.insurance_pct | pct_label }}%)</td><td class="r">{{ totals.insurance | currency }}</td></tr>
+            {% endif %}
+            {% if totals.fee and totals.fee != 0 %}
+            <tr><td class="label">Fee ({{ totals.fee_pct | pct_label }}%)</td><td class="r">{{ totals.fee | currency }}</td></tr>
+            {% endif %}
+            {% if totals.bond and totals.bond != 0 %}
+            <tr><td class="label">Bond ({{ totals.bond_pct | pct_label }}%)</td><td class="r">{{ totals.bond | currency }}</td></tr>
+            {% endif %}
+            {% if totals.allowance_total and totals.allowance_total != 0 %}
+            <tr><td class="label">Markup on allowances</td><td class="r">{{ 'On' if totals.markup_allowances else 'Off' }}</td></tr>
+            {% endif %}
+            <tr><td class="label">Bid total</td><td class="r">{{ totals.bid_total | currency }}</td></tr>
+            {% if est.tax_amount and est.tax_amount != 0 %}
+            <tr><td class="label">Tax ({{ est.tax_rate | tax_percent }}%)</td><td class="r">{{ est.tax_amount | currency }}</td></tr>
+            {% endif %}
+            <tr><td class="label grand">Total</td><td class="r grand">{{ est.total | currency }}</td></tr>
+        </table>
+    </div>
+    {% else %}
     <table class="line-items">
         <thead><tr><th>Description</th><th class="r" style="width:60px;">Qty</th><th class="r" style="width:80px;">Rate</th><th class="r" style="width:80px;">Amount</th></tr></thead>
         <tbody>
@@ -98,6 +198,7 @@
             <tr><td class="label grand">Total</td><td class="r grand">{{ est.total | currency }}</td></tr>
         </table>
     </div>
+    {% endif %}
 
     {% if est.notes %}
     <div class="notes"><strong>Notes:</strong> {{ est.notes }}</div>

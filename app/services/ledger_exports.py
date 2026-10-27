@@ -55,6 +55,8 @@ def _range(data: dict) -> str:
     period = f"{data['start_date']} to {data['end_date']}"
     if data.get("exclude_adjusting"):
         period += " (adjusting entries left out)"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     return period
 
 
@@ -683,6 +685,8 @@ def balance_sheet_csv(
     period = f"As of {data['as_of_date']}"
     if prior:
         period += f" compared with {prior['as_of_date']}"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     _preamble(w, company, words("Balance Sheet"), period)
     groups = data.get("groups") or {}
     tree = data.get("tree") or {}

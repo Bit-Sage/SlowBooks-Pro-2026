@@ -123,7 +123,8 @@ two trial balances match.
 
 The simplest way to bring every transaction across: in QuickBooks Desktop,
 **Reports > Accountant & Taxes > Transaction Detail by Account**, set the
-dates to **All**, and save it as CSV (keep the report's default columns).
+dates to **one year** (see *One year per file* below), and save it
+as CSV (keep the report's default columns).
 In **Customize Report → Filters → Account**, choose **All accounts**.
 That is a filter, not a column: do **not** add an **Account** column. The
 account-grouped report already names each account above its transactions.
@@ -153,17 +154,25 @@ own postings in a section it names "<Parent> - Other" (for example "Advertising
 and Promotion - Other"). That is not an account in its chart, and the import
 posts those lines to the parent account itself.
 
-**Long histories.** QuickBooks' Save as CSV stops a report at 32,768 rows with
-no warning: the last section ends without its Total line, and the income and
-expense accounts, which come after the balance sheet accounts, may be missing
-altogether. Export **one calendar year per file** (set From and To to January 1
-and December 31, keep All accounts and the default columns) and import them
-oldest first; a transaction's lines share a date, so a year never splits one,
-and a line already posted is skipped on the next file. Keep to one year even
-when a longer range would fit under the cap: in a range that spans several
-years, QuickBooks prints the balance sheet accounts for the whole range but the
-income and expense accounts for its last year only, so every earlier sale and
-expense arrives without its other half and the file is refused.
+**One year per file.** Export **one year per file** (your fiscal year, or January 1
+to December 31; set From and To to its first and last day, keep All accounts and the default
+columns) and import the files one at a time, **oldest year first**. The reason:
+in a range that spans more than one year, QuickBooks prints the balance sheet
+accounts for the whole range but the income and expense accounts for its last
+year only, so every earlier sale and expense would arrive without its other
+half and the books would look half-complete. The import reads the period
+QuickBooks prints above the columns and, for a file that covers more than 12
+months, imports it and warns (#568); the warning names the period and says to
+export one year per file, and a file that also fails the "does not balance"
+check carries the same note on that error. A July–June fiscal year is 12
+months and gets no warning. A transaction's lines share a date, so a
+year never splits one, and a line already posted is skipped on the next file.
+
+**Long histories.** QuickBooks' Save as CSV also stops a report at 32,768 rows
+with no warning: the last section ends without its Total line, and the income
+and expense accounts, which come after the balance sheet accounts, may be
+missing altogether. One year per file keeps most companies under the cap; a
+year that still does not fit can go in two files split at a month end.
 
 ### Time: the Time by Name by Job detail report
 

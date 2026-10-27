@@ -782,28 +782,75 @@ def allocate_cost(
 # ---------------------------------------------------------------------------
 
 
+GC_CODE = "GC"
+
+
+def _general_conditions_code(db: Session) -> CostCode:
+    """The cost code general conditions budget to: a custom "GC" code, reused
+    if the books already have one, else created (#551)."""
+    code = db.query(CostCode).filter(CostCode.code == GC_CODE).first()
+    if code is None:
+        code = CostCode(code=GC_CODE, name="General Conditions", cost_type="other")
+        db.add(code)
+        db.flush()
+    return code
+
+
 def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[JobBudget]:
     """One budget row per cost code on the estimate: cost = qty × unit cost
     (0 when no cost is entered — budgeting the sale price as cost would
-    hide the margin), revenue = the line amount. Lines without a code roll
-    into a whole-job row. Re-seeding replaces the estimate rows; a row the
-    operator edited by hand (source "manual") wins and is left alone."""
+    hide the margin), revenue = the line amount plus the row's share of the
+    markups. An ALLOWANCE line budgets its amount as cost (a budgeted figure
+    for undesigned work is spent, not marked up), even with no unit cost.
+
+    Construction lines are priced at cost, so the markups (general conditions,
+    insurance, fee, bond) are the only budgeted margin; they are distributed
+    across the rows' revenue pro rata to each row's share of the markup base
+    (rows with no markup-able cost get none), with the rounding remainder on
+    the last such row, so Σ revenue == the pre-tax bid total. A code the
+    operator budgeted by hand keeps its own row AND its own share: that share
+    is not pushed onto the other rows.
+
+    General conditions are both revenue and cost: the GC markup is spread as
+    revenue like the other markups, and its amount is also budgeted as a COST
+    on a "GC" General Conditions row so the job carries it.
+
+    Lines without a code roll into a whole-job row. Re-seeding replaces the
+    estimate rows; a row the operator edited by hand (source "manual") wins and
+    is left alone."""
     # Key on (cost_code_id, cost_type): a line carries its own type (#550), and
-    # the budget's unique key allows both a code and a type on one row.
+    # the budget's unique key allows both a code and a type on one row. Only
+    # the bought scope seeds a budget — a unit-price line is a rate card and an
+    # un-accepted alternate is not scope yet (#551).
+    from app.services.estimating import (
+        estimate_totals,
+        included_lines,
+        markup_base_amount,
+    )
+
+    est_totals = estimate_totals(estimate)
+    markup_allowances = bool(estimate.markup_allowances)
+
+    # bucket: [cost, revenue, markup_base]
     totals: dict[tuple, list[Decimal]] = {}
-    for ln in estimate.lines:
+    for ln in included_lines(estimate):
         qty = Decimal(str(ln.quantity or 0))
-        cost = (
-            _q(qty * Decimal(str(ln.unit_cost)))
-            if ln.unit_cost is not None
-            else Decimal("0")
-        )
+        kind = ln.line_kind or "base"
+        if kind == "allowance":
+            cost = _q(ln.amount or 0)
+        elif ln.unit_cost is not None:
+            cost = _q(qty * Decimal(str(ln.unit_cost)))
+        else:
+            cost = Decimal("0")
         rev = _q(ln.amount or 0)
+        base = markup_base_amount(ln, markup_allowances)
         bucket = totals.setdefault(
-            (ln.cost_code_id, ln.cost_type), [Decimal("0"), Decimal("0")]
+            (ln.cost_code_id, ln.cost_type),
+            [Decimal("0"), Decimal("0"), Decimal("0")],
         )
         bucket[0] += cost
         bucket[1] += rev
+        bucket[2] += base
     db.query(JobBudget).filter(
         JobBudget.job_id == job.id, JobBudget.source == "estimate"
     ).delete()
@@ -817,10 +864,49 @@ def budgets_from_estimate(db: Session, job: Job, estimate: Estimate) -> list[Job
         )
         .all()
     }
+    # Distribute the markups across ALL the estimate's rows pro rata to their
+    # share of the markup base; the last row with a base takes the rounding
+    # remainder. A manual-owned code is distributed to like any other, then
+    # skipped below, so its share stays on its own row (hand-budgeted) rather
+    # than landing on the others.
+    entries = [
+        (code_id, ctype, cost, rev, base)
+        for (code_id, ctype), (cost, rev, base) in totals.items()
+    ]
+    markup_total = est_totals["markup_total"]
+    base_total = sum((e[4] for e in entries), Decimal("0"))
+    markup_rev = [Decimal("0")] * len(entries)
+    if markup_total and base_total:
+        with_base = [i for i, e in enumerate(entries) if e[4] > 0]
+        assigned = Decimal("0")
+        for n, i in enumerate(with_base):
+            if n == len(with_base) - 1:
+                markup_rev[i] = markup_total - assigned
+            else:
+                share = _q(markup_total * entries[i][4] / base_total)
+                markup_rev[i] = share
+                assigned += share
+    # (code, type, cost, revenue) for each row that will seed; manual-owned
+    # codes are left alone.
+    seeded = [
+        (code_id, ctype, cost, _q(rev + markup_rev[i]))
+        for i, (code_id, ctype, cost, rev, _base) in enumerate(entries)
+        if code_id not in manual_codes
+    ]
+    # General conditions also carry cost: budget the GC amount on its own code
+    # (merged into a line already coded and typed the same).
+    gc_amount = est_totals["gc"]
+    if gc_amount:
+        gc_code = _general_conditions_code(db)
+        if gc_code.id not in manual_codes:
+            for n, (code_id, ctype, cost, rev) in enumerate(seeded):
+                if (code_id, ctype) == (gc_code.id, gc_code.cost_type):
+                    seeded[n] = (code_id, ctype, cost + gc_amount, rev)
+                    break
+            else:
+                seeded.append((gc_code.id, gc_code.cost_type, gc_amount, Decimal("0")))
     rows = []
-    for (code_id, ctype), (cost, rev) in totals.items():
-        if code_id in manual_codes:
-            continue
+    for code_id, ctype, cost, rev in seeded:
         row = JobBudget(
             job_id=job.id,
             cost_code_id=code_id,
@@ -904,11 +990,17 @@ def job_cost_tree(
 
     # committed: open PO lines on this job, by code
     line_job = sqlfunc.coalesce(PurchaseOrderLine.job_id, PurchaseOrder.job_id)
+    # committed = the remaining, unbilled part of each open commitment line
+    # (amount − billed_amount), so the number stays "open PO value not yet
+    # billed" as partial bills draw it down (#553).
     committed_rows = (
         db.query(
             PurchaseOrderLine.cost_code_id,
             PurchaseOrderLine.cost_type,
-            sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.amount), 0),
+            sqlfunc.coalesce(
+                sqlfunc.sum(PurchaseOrderLine.amount - PurchaseOrderLine.billed_amount),
+                0,
+            ),
         )
         .select_from(PurchaseOrderLine)
         .join(PurchaseOrder, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
@@ -1071,13 +1163,28 @@ def job_cost_tree(
     for t in type_nodes:
         for r in t["codes"]:
             strip(r)
+    totals = _finish(grand)
+    # committed_total / billed_to_date ride alongside the committed (remaining)
+    # figure, additive (#553): committed stays "not yet billed", while these
+    # two carry the whole commitment and what has been billed against it.
+    from app.services.jobs_service import commitment_figures
+
+    cf = commitment_figures(db, [job_id]).get(
+        job_id, {"committed_total": 0.0, "billed_to_date": 0.0}
+    )
+    totals["committed_total"] = cf["committed_total"]
+    totals["billed_to_date"] = cf["billed_to_date"]
+    # committed_total and billed_to_date are whole-commitment figures, not
+    # period-scoped like the actuals above — a commitment has no period. The
+    # flag says so for a dated cost tree (#553).
+    totals["commitments_all_time"] = True
     return {
         "job_id": job_id,
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
         "types": type_nodes,
         "job_level_budget": _finish(job_level),
-        "totals": _finish(grand),
+        "totals": totals,
     }
 
 

@@ -402,6 +402,19 @@ def adopt_invoice(db: Session, invoice) -> bool:
     return True
 
 
+def post_adopted_cash_lines(db: Session, invoice) -> None:
+    """The cash-basis lines (#483) of the payments an adoption posted. Called
+    once the adopted invoices have their own entries, because a payment's
+    cash lines are prorated from the invoice's posting, which does not exist
+    yet when post_payment_journal runs."""
+    from app.services import cash_basis
+
+    for alloc in list(invoice.payment_allocations):
+        payment = alloc.payment
+        if payment and not payment.is_voided and payment.transaction_id is not None:
+            cash_basis.add_payment_cash_lines(db, payment)
+
+
 def adopt_unposted_payments(db: Session, invoice) -> None:
     """The QBO payments on an invoice that becomes ours, when they have no
     posting at all (the ledger import never posted them): ours too, and

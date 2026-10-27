@@ -839,6 +839,49 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// The date keys (#566), QuickBooks-style, in every <input type="date">:
+// + and - step the date a day, T is today, M and H the first and last day
+// of its month, Y and R the first and last day of its year. One delegated
+// handler, so a date box drawn later gets them too. The box's own change
+// and input events fire, so a filter wired to onchange still redraws.
+const DateKeys = {
+    // The date the key makes from `iso` (today when the box is empty), or
+    // null for a key that is not one of these.
+    step(iso, key, today = new Date()) {
+        const k = String(key || '');
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+        const base = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]))
+            : new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+        const y = base.getUTCFullYear(), mo = base.getUTCMonth(), d = base.getUTCDate();
+        let out;
+        if (k === '+' || k === '=' || k === 'Add') out = Date.UTC(y, mo, d + 1);
+        else if (k === '-' || k === 'Subtract') out = Date.UTC(y, mo, d - 1);
+        else if (k === 't' || k === 'T') out = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+        else if (k === 'm' || k === 'M') out = Date.UTC(y, mo, 1);
+        else if (k === 'h' || k === 'H') out = Date.UTC(y, mo + 1, 0);
+        else if (k === 'y' || k === 'Y') out = Date.UTC(y, 0, 1);
+        else if (k === 'r' || k === 'R') out = Date.UTC(y, 11, 31);
+        else return null;
+        return new Date(out).toISOString().slice(0, 10);
+    },
+    // True when the key was taken: the box's value is the new date.
+    handle(e) {
+        const el = e.target;
+        if (!el || el.tagName !== 'INPUT' || el.type !== 'date') return false;
+        if (el.readOnly || el.disabled || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return false;
+        const next = DateKeys.step(el.value, e.key);
+        if (next === null) return false;
+        e.preventDefault();
+        if (next !== el.value) {
+            el.value = next;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return true;
+    },
+};
+document.addEventListener('keydown', DateKeys.handle, true);
+
 // opts.wide: a form whose rows are wider than a dialog — the line-item
 // tables with ten or eleven columns (job cost entry). The default 700px
 // dialog clipped the last columns of that table with no scrollbar (#174).
@@ -1325,9 +1368,15 @@ const TxnWarn = {
     EDIT_MESSAGE: 'You are changing a transaction that was already saved. Save your changes?',
     // Before a save: true to go ahead. `opts.date` when the form has no
     // date field named "date"; `opts.editing` for a transaction already saved.
+    // A date carried from the last entry posted (#566: the register keeps
+    // it) was asked about when it was first typed; `opts.carried`, or the
+    // date box's data-carried, names it, and it is not asked about again
+    // unless the date is changed.
     async ok(form, opts = {}) {
         const date = opts.date !== undefined ? opts.date : (form && form.date ? form.date.value : '');
-        const message = TxnWarn.dateMessage(date);
+        const carried = opts.carried !== undefined ? opts.carried
+            : (form && form.date && form.date.dataset ? form.date.dataset.carried : undefined);
+        const message = date && date === carried ? null : TxnWarn.dateMessage(date);
         if (message && !confirm(message)) return false;
         if (opts.editing && TxnWarn._on('warn_edit_transaction') && !confirm(TxnWarn.EDIT_MESSAGE)) return false;
         return true;
@@ -1710,6 +1759,38 @@ const CostTypes = {
     fromRow(row, cls) {
         const v = row.querySelector(`.${cls}`)?.value;
         return v || null;
+    },
+};
+
+// ---------------------------------------------------------------------------
+// Trade packages — the bid packages a general contractor awards (#551), chosen
+// per LINE on a construction estimate. Same shape as CostCodes; shown in
+// construction mode only. Blank groups a line under "Unassigned".
+// ---------------------------------------------------------------------------
+const TradePackages = {
+    _list: null,
+    async load() {
+        try { TradePackages._list = await API.get('/trade-packages'); } catch (e) { TradePackages._list = []; }
+        return TradePackages._list;
+    },
+    // construction mode only, and only once some package exists
+    any() { return Terms.isConstruction() && !!(TradePackages._list && TradePackages._list.length); },
+    name(id) {
+        const p = (TradePackages._list || []).find(p => p.id === id);
+        return p ? p.name : '';
+    },
+    optionsHtml(selectedId) {
+        return '<option value="">Unassigned</option>' + (TradePackages._list || []).map(p =>
+            `<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+    },
+    // <td> for a line row, or '' outside construction mode
+    cellHtml(cls, selectedId) {
+        return TradePackages.any() ? `<td><select class="${cls}">${TradePackages.optionsHtml(selectedId)}</select></td>` : '';
+    },
+    headHtml(label = 'Package') { return TradePackages.any() ? `<th scope="col">${label}</th>` : ''; },
+    fromRow(row, cls) {
+        const v = row.querySelector(`.${cls}`)?.value;
+        return v ? parseInt(v) : null;
     },
 };
 

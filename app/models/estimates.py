@@ -55,6 +55,19 @@ class Estimate(Base):
     tax_amount = Column(Numeric(15, 2), default=0)
     total = Column(Numeric(15, 2), default=0)
 
+    # Construction markups (#551), as percent values — 5.5 means 5.5%. They
+    # compound in order on the base cost: GC, then insurance, then fee, then
+    # bond. Zero on an ordinary estimate, so the bid equals the base cost.
+    gc_pct = Column(Numeric(7, 4), nullable=False, default=0)
+    insurance_pct = Column(Numeric(7, 4), nullable=False, default=0)
+    fee_pct = Column(Numeric(7, 4), nullable=False, default=0)
+    bond_pct = Column(Numeric(7, 4), nullable=False, default=0)
+    # The GC decides whether the markups also build on allowance lines; off by
+    # default (an allowance is a budgeted figure, not priced scope).
+    markup_allowances = Column(Boolean, nullable=False, default=False)
+    # When the estimate was accepted and its job budget locked (#551).
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+
     notes = Column(Text, nullable=True)
     converted_invoice_id = Column(
         Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
@@ -101,6 +114,18 @@ class EstimateLine(Base):
     # Per-line cost type; NULL falls back to the cost code's default.
     cost_type = Column(String(20), nullable=True)
     unit_cost = Column(Numeric(12, 4), nullable=True)  # cost side; rate is revenue
+    # Construction bid shape (#551). The bid package this line belongs to
+    # (NULL groups under "Unassigned"); the line kind — a plain base line, an
+    # allowance, an add/deduct alternate, or a unit price (a rate with no
+    # amount in the bid); the unit of measure (SF, LF, EA, CY…); and whether
+    # an alternate was accepted into the scope. Blank/base on an ordinary
+    # estimate, so nothing changes for a non-construction company.
+    trade_package_id = Column(
+        Integer, ForeignKey("trade_packages.id", ondelete="SET NULL"), nullable=True
+    )
+    line_kind = Column(String(12), nullable=False, default="base")
+    unit = Column(String(20), nullable=True)
+    alternate_accepted = Column(Boolean, nullable=False, default=False)
     # Per-line sales tax (default: the item's flag, or taxable). A customer-
     # owned-device repair is labor with no tax; the part on the same invoice
     # is taxed.
@@ -109,3 +134,5 @@ class EstimateLine(Base):
 
     estimate = relationship("Estimate", back_populates="lines")
     item = relationship("Item")
+    cost_code = relationship("CostCode")
+    trade_package = relationship("TradePackage")

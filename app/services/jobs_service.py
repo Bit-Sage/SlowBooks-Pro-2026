@@ -385,6 +385,9 @@ def job_profitability(
                 "contract_amount": (
                     float(job.contract_amount) if job and job.contract_amount else None
                 ),
+                # The contract type rides along for the Job Profitability report
+                # (#552); a fee is added below for cost-plus / GMP jobs.
+                "contract_type": job.contract_type if job else None,
                 "income": Decimal("0"),
                 "cogs": Decimal("0"),
                 "expenses": Decimal("0"),
@@ -421,6 +424,20 @@ def job_profitability(
                 "margin_pct": (float(net / income * 100) if income else None),
             }
         )
+        # Fee on a cost-plus / GMP job (#552): the fee percent on this
+        # PERIOD's actual cost — hence fee_period, a period figure like the
+        # costs beside it (the job-to-date contract fee lives on the contract
+        # summary). Additive; lump sum, plain and fixed-fee jobs omit it.
+        job = jobs.get(b["job_id"])
+        if job is not None and job.contract_type in ("cost_plus", "gmp"):
+            # A fixed fee is a job-level figure, not a period one — it would
+            # repeat whole on every period — so it shows no fee_period.
+            if job.fee_amount is None and job.fee_pct is not None:
+                b["fee_period"] = float(
+                    (costs * Decimal(str(job.fee_pct)) / Decimal("100")).quantize(
+                        Decimal("0.01")
+                    )
+                )
         out.append(b)
     return out
 
@@ -478,18 +495,24 @@ def job_transactions(
 def committed_cost(
     db: Session, job_ids: Optional[list[int]] = None
 ) -> dict[int, float]:
-    """Open purchase-order value per job: ordered but not yet billed.
+    """The remaining open commitment per job: ordered but not yet billed.
 
-    A PO is committed once it has left draft and until it is closed
-    (conversion to a bill closes it, moving the cost into the ledger). A
-    line's job is its own, else the PO header's."""
+    A commitment (a PO or subcontract) is committed once it has left draft and
+    until it is closed, and only the part not yet billed still counts —
+    partial billing moves each period's dollars into the ledger (#553). So the
+    figure is Σ (amount − billed_amount) over the lines of non-draft,
+    non-closed commitments, which keeps the number meaning "open PO value not
+    yet billed". A line's job is its own, else the header's."""
     from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
 
     line_job = sqlfunc.coalesce(PurchaseOrderLine.job_id, PurchaseOrder.job_id)
     q = (
         db.query(
             line_job.label("job"),
-            sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.amount), 0),
+            sqlfunc.coalesce(
+                sqlfunc.sum(PurchaseOrderLine.amount - PurchaseOrderLine.billed_amount),
+                0,
+            ),
         )
         .select_from(PurchaseOrderLine)
         .join(PurchaseOrder, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
@@ -503,3 +526,36 @@ def committed_cost(
     if job_ids is not None:
         q = q.filter(line_job.in_(job_ids))
     return {int(j): float(v) for j, v in q.group_by("job").all()}
+
+
+def commitment_figures(
+    db: Session, job_ids: Optional[list[int]] = None
+) -> dict[int, dict]:
+    """Per job, the commitment roll-up that rides alongside committed_cost
+    (#553): committed_total (Σ amount of every non-draft commitment line) and
+    billed_to_date (Σ billed_amount of the same). A commitment leaves draft
+    once sent; a closed one keeps its total and its billing in these two, so
+    a buyout stays visible after the work is fully billed. The remaining
+    figure is committed_cost()."""
+    from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
+
+    line_job = sqlfunc.coalesce(PurchaseOrderLine.job_id, PurchaseOrder.job_id)
+    q = (
+        db.query(
+            line_job.label("job"),
+            sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.amount), 0),
+            sqlfunc.coalesce(sqlfunc.sum(PurchaseOrderLine.billed_amount), 0),
+        )
+        .select_from(PurchaseOrderLine)
+        .join(PurchaseOrder, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
+        .filter(
+            PurchaseOrder.status != POStatus.DRAFT,
+            line_job.isnot(None),
+        )
+    )
+    if job_ids is not None:
+        q = q.filter(line_job.in_(job_ids))
+    return {
+        int(j): {"committed_total": float(total), "billed_to_date": float(billed)}
+        for j, total, billed in q.group_by("job").all()
+    }

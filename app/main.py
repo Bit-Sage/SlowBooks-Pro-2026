@@ -543,6 +543,24 @@ async def lifespan(app: FastAPI):
                 print(
                     f"Recomputed {len(fixed)} stored account balance(s) from the ledger"
                 )
+            # #483: a file from before ledger lines carried a basis gets its
+            # accrual tags and the cash-basis lines of its payments once.
+            from app.services.cash_basis import backfill as cash_basis_backfill
+
+            done = cash_basis_backfill(_db)
+            if done["tagged"] or done["payments"] or done["bill_payments"]:
+                print(
+                    "Cash basis: tagged %d accrual line(s), wrote cash lines for "
+                    "%d payment(s) and %d bill payment(s)"
+                    % (done["tagged"], done["payments"], done["bill_payments"])
+                )
+            if done["failed"]:
+                # each failure is logged by payment id; it is retried next start
+                logging.getLogger("uvicorn.error").warning(
+                    "Cash basis: %d payment(s) could not be given cash lines "
+                    "and were skipped; see the log above for each",
+                    done["failed"],
+                )
         finally:
             _db.close()
     except Exception:

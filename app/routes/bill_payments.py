@@ -13,11 +13,13 @@ from app.models.bills import Bill, BillStatus, BillPayment, BillPaymentAllocatio
 from app.models.contacts import Vendor
 from app.schemas.bills import BillPaymentCreate, BillPaymentResponse
 from app.services.accounting import (
+    all_lines,
     create_journal_entry,
     get_ap_account_id,
     get_checking_account_id,
     void_line_memo,
 )
+from app.services import cash_basis
 from app.services.check_numbers import refuse_duplicate
 from app.services.closing_date import check_closing_date
 from app.services import request_keys
@@ -95,6 +97,27 @@ def create_bill_payment(
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")
 
+    # A Sub whose certificate of insurance had expired by the payment date is
+    # not paid without an explicit override, which the payment records (#553).
+    # A Sub with no COI on file only warns in Pay Bills; it is not blocked.
+    coi_note = None
+    if (
+        vendor.vendor_type == "sub"
+        and vendor.coi_expires
+        and data.date > vendor.coi_expires
+    ):
+        if not data.coi_override:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{vendor.name}'s certificate of insurance expired on "
+                    f"{vendor.coi_expires.isoformat()}. Get a current one, or "
+                    "pay anyway with coi_override and the payment will record "
+                    "that it was overridden."
+                ),
+            )
+        coi_note = f"Paid with COI expired {vendor.coi_expires.isoformat()}"
+
     from app.services.currency import (
         document_currency,
         fx_gain_loss_account_id,
@@ -128,6 +151,8 @@ def create_bill_payment(
         notes=data.notes,
         currency=pay_currency,
         exchange_rate=pay_rate,
+        coi_override=coi_note is not None,
+        coi_override_note=coi_note,
     )
     db.add(payment)
     db.flush()
@@ -135,6 +160,7 @@ def create_bill_payment(
     # Home-currency value of A/P relieved per allocation (at each bill's
     # booked rate) — the realized-FX basis, mirroring the A/R side.
     ap_home_debits: list[Decimal] = []
+    applied_bills: list[tuple] = []  # (bill, home amount) for the cash basis
     for alloc_data in data.allocations:
         # Row lock for the read-check-write, as the void path below and
         # create_payment already do (GHSA-rm5h-555g-vpjj). No-op on SQLite.
@@ -173,6 +199,7 @@ def create_bill_payment(
         ap_home_debits.append(
             to_home(alloc_data.amount, bill.exchange_rate or Decimal("1"))
         )
+        applied_bills.append((bill, ap_home_debits[-1]))
 
         db.add(
             BillPaymentAllocation(
@@ -230,6 +257,16 @@ def create_bill_payment(
                     "description": f"Realized FX on bill payment to {vendor.name}",
                 }
             )
+        # The cash-basis reading of this payment (#483): the bills' expense,
+        # cost and inventory lines prorated by what was applied, the
+        # remainder as unapplied cash expense, balanced on A/P.
+        journal_lines += cash_basis.bill_payment_cash_lines(
+            db,
+            ap_id,
+            applied_bills,
+            to_home(unallocated, pay_rate),
+            f"Bill payment to {vendor.name}",
+        )
         txn = create_journal_entry(
             db,
             data.date,
@@ -279,19 +316,21 @@ def void_bill_payment(bill_payment_id: int, db: Session = Depends(get_db)):
         assert_not_reconciled(payment.transaction)
 
     if payment.transaction_id:
-        from app.models.transactions import TransactionLine
-
-        original_lines = (
-            db.query(TransactionLine)
-            .filter(TransactionLine.transaction_id == payment.transaction_id)
-            .all()
-        )
+        # every line, the cash-basis ones included, each undone on its
+        # own basis (#483)
+        original_lines = all_lines(db, payment.transaction_id)
         reverse_lines = [
             {
                 "account_id": ol.account_id,
                 "debit": ol.credit,
                 "credit": ol.debit,
                 "description": void_line_memo(ol.description),
+                "class_id": ol.class_id,
+                "job_id": ol.job_id,
+                "cost_code_id": ol.cost_code_id,
+                "cost_type": ol.cost_type,
+                "function": ol.function,
+                "basis": ol.basis,
             }
             for ol in original_lines
         ]

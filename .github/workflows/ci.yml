@@ -207,7 +207,10 @@ jobs:
           # 181 with the Contact support form's browser test
           # (test_browser_support_form.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "181"
+          # 182 with the register date's browser test
+          # (test_browser_register_date.py, no Playwright here — one module,
+          # skipped like its siblings without the runner's Chromium).
+          MAX_SKIPS: "182"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

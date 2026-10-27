@@ -17,7 +17,14 @@ from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
-from app.schemas.bills import BillCreate, BillLineCreate, BillResponse, BillUpdate
+from app.models.purchase_orders import PurchaseOrderLine
+from app.schemas.bills import (
+    BillCreate,
+    BillLineCreate,
+    BillResponse,
+    BillUpdate,
+    VendorCompliance,
+)
 from app.services.accounting import (
     _q,
     create_journal_entry,
@@ -26,6 +33,7 @@ from app.services.accounting import (
     reversing_lines,
 )
 from app.services.audit import audited_bulk_delete
+from app.services.compliance import vendor_compliance
 from app.services.closing_date import check_closing_date
 from app.services.job_costing import line_cost_type
 from app.services.request_utils import content_disposition
@@ -73,6 +81,7 @@ def list_bills(
         resp = BillResponse.model_validate(b)
         if b.vendor:
             resp.vendor_name = b.vendor.name
+            resp.vendor_compliance = VendorCompliance(**vendor_compliance(b.vendor))
         results.append(resp)
     return results
 
@@ -85,6 +94,7 @@ def get_bill(bill_id: int, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
+        resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
     return resp
 
 
@@ -161,6 +171,7 @@ def _post_bill_lines(
     doc_rate,
     txn_date,
     existing_transaction=None,
+    retainage_held: Decimal = Decimal("0"),
 ):
     """Write the bill's lines, post its journal (DR each line's account or
     Inventory, CR Accounts Payable) and record its inventory receipts. Used
@@ -256,6 +267,9 @@ def _post_bill_lines(
                 class_id=line_data.class_id,
                 cost_code_id=line_data.cost_code_id,
                 cost_type=eff_cost_type,
+                purchase_order_line_id=getattr(
+                    line_data, "purchase_order_line_id", None
+                ),
                 function=line_data.function,
                 is_billable=line_data.is_billable,
                 line_order=line_data.line_order or i,
@@ -283,16 +297,31 @@ def _post_bill_lines(
                 }
             )
 
-    # Credit AP
+    # Credit AP for the net; any retainage held rides on Retainage Payable
+    # (2050) instead, so Pay Bills pays only the net (#553). #555 releases it
+    # with a debit to 2050.
     if ap_id and journal_lines:
         journal_lines.append(
             {
                 "account_id": ap_id,
                 "debit": Decimal("0"),
-                "credit": total,
+                "credit": _q(total - retainage_held),
                 "description": f"Bill {bill.bill_number} - {vendor.name}",
             }
         )
+        if retainage_held and retainage_held > 0:
+            from app.services.accounting import ensure_construction_accounts
+
+            retainage_acct = ensure_construction_accounts(db)["2050"]
+            journal_lines.append(
+                {
+                    "account_id": retainage_acct.id,
+                    "debit": Decimal("0"),
+                    "credit": retainage_held,
+                    "description": f"Retainage held - {bill.bill_number}",
+                    "job_id": bill.job_id,  # so release (#576) can find it by job
+                }
+            )
         txn = create_journal_entry(
             db,
             txn_date,
@@ -347,9 +376,64 @@ def _flush_number(db: Session, number: str) -> None:
         )
 
 
+def _reject_po_line_links(lines) -> None:
+    """A bill line's purchase_order_line_id is set only when a commitment is
+    converted (#553); a hand-entered or edited bill may not claim one, or the
+    void path would hand dollars back to a commitment it never billed."""
+    if any(getattr(ln, "purchase_order_line_id", None) is not None for ln in lines):
+        raise HTTPException(
+            status_code=422,
+            detail="purchase_order_line_id is set by converting a commitment, "
+            "not on a bill entered or edited by hand.",
+        )
+
+
+def _linked_amounts(lines, from_request: bool) -> dict[int, Decimal]:
+    """Dollars per commitment line a set of bill lines draws on. Request lines
+    carry quantity x rate; stored lines carry the amount."""
+    out: dict[int, Decimal] = {}
+    for ln in lines:
+        link = getattr(ln, "purchase_order_line_id", None)
+        if link is None:
+            continue
+        amt = (
+            _q(Decimal(str(ln.quantity)) * Decimal(str(ln.rate)))
+            if from_request
+            else _q(Decimal(str(ln.amount or 0)))
+        )
+        out[link] = out.get(link, Decimal("0")) + amt
+    return out
+
+
+def _resync_po_status(db: Session, po_ids) -> None:
+    """Set each commitment's status from what its lines have billed (#553):
+    nothing billed reopens it, something left is partial, all billed closes
+    it. DRAFT and RECEIVED are never walked back."""
+    from app.models.purchase_orders import POStatus, PurchaseOrder
+
+    for po_id in po_ids:
+        po = db.get(PurchaseOrder, po_id)
+        if not po or po.status in (POStatus.DRAFT, POStatus.RECEIVED):
+            continue
+        billed = sum(
+            (Decimal(str(ln.billed_amount or 0)) for ln in po.lines), Decimal("0")
+        )
+        remaining = any(
+            Decimal(str(ln.amount or 0)) - Decimal(str(ln.billed_amount or 0)) > 0
+            for ln in po.lines
+        )
+        if billed <= 0:
+            po.status = POStatus.SENT
+        elif remaining:
+            po.status = POStatus.PARTIAL
+        else:
+            po.status = POStatus.CLOSED
+
+
 @router.post("", response_model=BillResponse, status_code=201)
 def create_bill(data: BillCreate, db: Session = Depends(get_db)):
     check_closing_date(db, data.date)
+    _reject_po_line_links(data.lines)
 
     vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
     if not vendor:
@@ -399,6 +483,17 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
             ),
         )
 
+    # Retainage held by hand (#553): between zero and the subtotal.
+    retainage_held = _q(data.retainage_held or 0)
+    if retainage_held > subtotal:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Retainage held ({retainage_held:.2f}) cannot exceed the "
+                f"subtotal ({subtotal:.2f})."
+            ),
+        )
+
     from app.services.currency import resolve_rate
 
     doc_currency, doc_rate = resolve_rate(db, data.currency, data.exchange_rate)
@@ -417,7 +512,9 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         tax_rate=data.tax_rate,
         tax_amount=tax_amount,
         total=total,
-        balance_due=total,
+        retainage_held=retainage_held,
+        lien_waiver_status=data.lien_waiver_status,
+        balance_due=_q(total - retainage_held),
         class_id=data.class_id,
         job_id=data.job_id,
         notes=data.notes,
@@ -434,12 +531,14 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         total,
         doc_rate,
         data.date,
+        retainage_held=retainage_held,
     )
 
     db.commit()
     db.refresh(bill)
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
+    resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
     return resp
 
 
@@ -457,7 +556,25 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bill not found")
     if bill.status == BillStatus.VOID:
         raise HTTPException(status_code=400, detail="Cannot edit a voided bill")
-    check_closing_date(db, bill.date)
+    # A converted bill's lines keep their link to the commitment line they
+    # draw on (#553); an edit may carry those links, never invent a new one.
+    old_links = _linked_amounts(bill.lines, from_request=False)
+    if data.lines is not None:
+        stray = {
+            ln.purchase_order_line_id
+            for ln in data.lines
+            if ln.purchase_order_line_id is not None
+        } - set(old_links)
+        if stray:
+            raise HTTPException(
+                status_code=422,
+                detail="purchase_order_line_id is set by converting a commitment, "
+                "not on a bill entered or edited by hand.",
+            )
+    # A lien waiver is metadata, not a posting: saving only that moves no
+    # money, so it is allowed on a closed-period bill (#553).
+    if data.model_fields_set - {"lien_waiver_status"}:
+        check_closing_date(db, bill.date)
 
     # The edit form sends a cleared number as null; the generate step below
     # fills it in, so it is the one NOT NULL column null may reach.
@@ -521,6 +638,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         "job_id",
         "vendor_id",
         "bill_number",
+        "retainage_held",  # moves the A/P vs 2050 split (#553)
     }
     needs_repost = data.lines is not None or any(
         key in update_data and update_data[key] != getattr(bill, key)
@@ -545,6 +663,9 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                 class_id=ln.class_id,
                 cost_code_id=ln.cost_code_id,
                 cost_type=ln.cost_type,
+                # Keep the commitment back-link across a repost (#553), so a
+                # later void still restores the PO line's billed_amount.
+                purchase_order_line_id=ln.purchase_order_line_id,
                 is_billable=bool(ln.is_billable),
                 description=ln.description,
                 # the stored Decimals, not a float round trip (everything
@@ -560,6 +681,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                 fields["function"] = ln.function
             effective_lines.append(BillLineCreate.model_construct(**fields))
     amount_paid = bill.amount_paid or Decimal("0")
+    retally: dict[int, Decimal] = {}
     if needs_repost:
         tax_rate = data.tax_rate if data.tax_rate is not None else bill.tax_rate
         subtotal, tax_amount, total = compute_line_totals(effective_lines, tax_rate)
@@ -580,6 +702,69 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
                     "total at least that much."
                 ),
             )
+        # Retainage held (#553) stays between zero and the subtotal, and what
+        # is left payable after it cannot fall below what has been paid.
+        # Checked here, before anything is torn down, so a bad edit mutates
+        # nothing.
+        retainage_held = _q(update_data.get("retainage_held", bill.retainage_held) or 0)
+        # A bill converted from a commitment with a retainage rate follows its
+        # lines: held is the rate on the new subtotal unless the request
+        # names an amount.
+        if "retainage_held" not in update_data and bill.po_id:
+            from app.models.purchase_orders import PurchaseOrder
+
+            po = db.get(PurchaseOrder, bill.po_id)
+            if po and po.retainage_pct:
+                retainage_held = _q(
+                    subtotal * Decimal(str(po.retainage_pct)) / Decimal("100")
+                )
+        if retainage_held > subtotal:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Retainage held ({retainage_held:.2f}) cannot exceed the "
+                    f"subtotal ({subtotal:.2f})."
+                ),
+            )
+        if _q(total - retainage_held) < amount_paid:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Retainage held ({retainage_held:.2f}) would leave less "
+                    f"than the {amount_paid:.2f} already paid. Lower the "
+                    "retainage or void the payment first."
+                ),
+            )
+        # Re-tally the commitment (#553): what these lines draw on replaces
+        # what the old ones did, and may not pass a line's scheduled value.
+        # Locked and checked here so a refused edit moves nothing.
+        new_links = _linked_amounts(effective_lines, from_request=True)
+        retally: dict[int, Decimal] = {}
+        for link in set(old_links) | set(new_links):
+            delta = new_links.get(link, Decimal("0")) - old_links.get(
+                link, Decimal("0")
+            )
+            if delta == 0:
+                continue
+            poline = (
+                db.query(PurchaseOrderLine)
+                .filter(PurchaseOrderLine.id == link)
+                .with_for_update()
+                .first()
+            )
+            if not poline:
+                continue
+            billed = _q(Decimal(str(poline.billed_amount or 0))) + delta
+            if billed > _q(Decimal(str(poline.amount or 0))):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"That edit bills {billed:.2f} against "
+                        f"'{poline.description or 'a line'}', more than its "
+                        f"{_q(Decimal(str(poline.amount or 0))):.2f} on the commitment."
+                    ),
+                )
+            retally[link] = max(Decimal("0"), billed)
 
     # Check every posting before any state moves (as the invoice edit does).
     from app.models.transactions import Transaction
@@ -636,11 +821,13 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             txn.class_id = bill.class_id
             txn.job_id = bill.job_id
 
+        # retainage_held was validated above, before the teardown.
+        bill.retainage_held = retainage_held
         bill.subtotal = subtotal
         bill.tax_rate = tax_rate
         bill.tax_amount = tax_amount
         bill.total = total
-        bill.balance_due = _q(total - amount_paid)
+        bill.balance_due = _q(total - retainage_held - amount_paid)
 
         for item_id, (qty, unit_cost) in old_receipts.items():
             it = db.query(Item).filter(Item.id == item_id).first()
@@ -664,11 +851,21 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             bill.exchange_rate,
             bill.date,
             existing_transaction=txn,
+            retainage_held=retainage_held,
         )
         db.flush()
         db.refresh(bill)
 
-        if bill.balance_due == 0 and amount_paid >= bill.total:
+        touched_pos = set()
+        for link, billed in retally.items():
+            poline = db.get(PurchaseOrderLine, link)
+            poline.billed_amount = billed
+            touched_pos.add(poline.purchase_order_id)
+        _resync_po_status(db, touched_pos)
+
+        # Net of retainage is what's payable, so a bill paid down to the held
+        # amount is PAID, not stuck PARTIAL (#553).
+        if bill.balance_due <= 0 and amount_paid >= _q(total - retainage_held):
             bill.status = BillStatus.PAID
         elif amount_paid > 0:
             bill.status = BillStatus.PARTIAL
@@ -682,6 +879,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
     db.refresh(bill)
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
+    resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
     return resp
 
 
@@ -751,6 +949,26 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
                 memo=f"VOID Bill {bill.bill_number}",
             )
 
+    # Give the billed dollars back to the commitment this bill drew on, and
+    # reopen it (#553): the reversing JE above already backed out the A/P and
+    # any Retainage Payable (2050) credits.
+    touched_pos = set()
+    for line in bill.lines:
+        if not line.purchase_order_line_id:
+            continue
+        poline = db.get(PurchaseOrderLine, line.purchase_order_line_id)
+        if not poline:
+            continue
+        poline.billed_amount = _q(
+            max(
+                Decimal("0"),
+                Decimal(str(poline.billed_amount or 0))
+                - Decimal(str(line.amount or 0)),
+            )
+        )
+        touched_pos.add(poline.purchase_order_id)
+    _resync_po_status(db, touched_pos)
+
     bill.status = BillStatus.VOID
     bill.balance_due = Decimal("0")
     db.commit()
@@ -758,4 +976,5 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
+        resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
     return resp

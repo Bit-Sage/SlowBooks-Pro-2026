@@ -255,6 +255,7 @@ class JobBudgetResponse(BaseModel):
     revenue_amount: Decimal
     source: str
     estimate_id: Optional[int] = None
+    locked: bool = False
     notes: Optional[str] = None
 
     model_config = {"from_attributes": True}

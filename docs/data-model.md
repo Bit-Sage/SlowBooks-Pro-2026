@@ -109,6 +109,99 @@ transaction_lines and bill_lines. `purchase_orders.job_id` /
 A package is what a sub bids; a section is what costs post to. Seeded by
 `POST /api/construction/setup` when the company has none.
 
+## Construction estimating (#551)
+
+`estimate_lines` gains the bid shape: `trade_package_id` (nullable FK
+trade_packages, SET NULL — the bid package the line belongs to; null groups
+under "Unassigned"), `line_kind` (String(12), NOT NULL default `base` — one of
+`base` · `allowance` · `alternate` · `unit_price`), `unit` (String(20),
+nullable — SF, LF, EA, CY…) and `alternate_accepted` (Boolean, NOT NULL
+default false). `estimates` gains the four compounding markups `gc_pct`,
+`insurance_pct`, `fee_pct`, `bond_pct` (Numeric(7,4), NOT NULL default 0 —
+percent values, 5.5 = 5.5%), `markup_allowances` (Boolean, NOT NULL
+default false — the markups also build on allowance lines when true) and `accepted_at` (DateTime, nullable).
+`job_budgets.locked` (Boolean, NOT NULL default false) marks the rows an
+accepted estimate owns — only a change order moves them. `invoice_lines` gains
+`cost_type` (String(20)) and `unit_cost` (Numeric(12,4)), both nullable, so a
+converted estimate carries its cost basis onto the invoice. The bid math
+(lines at cost; the markup base, the four markups compounding in order, and
+their total; the subtotal of the included lines; the pre-tax bid total as
+subtotal + markups, with tax covering the lines and markups together;
+priced-direct and allowance totals; the package, alternate and unit-price
+breakdowns) is computed, not stored — `app/services/estimating.py`. Migration
+`d9f6b2c4e7a1_construction_estimating` (additive and nullable/defaulted;
+downgrade reverses).
+
+## The contract on the job (#552)
+
+`jobs` gains the contract terms, all nullable (a job with no `contract_type`
+behaves exactly as before): `contract_type` (String(12) — `lump_sum` · `gmp` ·
+`cost_plus`), `original_contract_amount` (Numeric(15,2) — the sum when the
+contract was first set, stamped once; `contract_amount` stays the current /
+revised sum so #554 shows original + changes = revised), `fee_pct`
+(Numeric(7,4)) and `fee_amount` (Numeric(15,2) — a fixed fee, which wins when
+both are set), `cap_amount` (Numeric(15,2) — the GMP maximum or a cost-plus
+not-to-exceed), `contingency_amount` (Numeric(15,2) — owner contingency inside
+the sum), `retainage_pct` (Numeric(5,2) — held per pay application, used by
+#555), `contract_date` (Date) and `contract_estimate_id` (FK estimates, SET
+NULL).
+
+New table `sov_lines` — the owner's schedule of values:
+
+| column | notes |
+|---|---|
+| id, job_id (FK jobs, CASCADE) | the job this schedule belongs to |
+| line_no (Integer), item_no (String(10)) | 1-based order; printed number ("01"…), editable |
+| description (String(200)) | |
+| trade_package_id (FK, SET NULL), cost_code_id (FK, SET NULL) | optional links |
+| kind (String(16), NOT NULL default `work`) | `work` · `allowance` · `contingency` · `general_conditions` · `insurance` · `fee` · `bond` |
+| scheduled_value (Numeric(15,2), NOT NULL default 0) | |
+| source_estimate_id (FK estimates, SET NULL) | set when built from an estimate |
+
+Unique `(job_id, line_no)`. A `scheduled_value` may be negative (a deduct
+alternate nets the sum down). No billed / stored / retainage columns yet —
+#555 adds them when progress billing bills the SOV. The contract sum and the
+schedule are **pre-tax** (tax is added per invoice). The contract summary
+(changes, fee, cap remaining, contingency remaining, SOV total and balance,
+billed to date) is computed, not stored — `app/services/contracts.py`.
+Migration `e2a4c6d8f0b1_construction_contract` (additive and
+nullable/defaulted; downgrade reverses).
+
+## Buyout and commitments (#553)
+
+A commitment is a purchase order — no new table. Additive columns:
+
+- `purchase_orders.commitment_type` String(12) NOT NULL default `po`
+  (`po` | `subcontract`), `trade_package_id` (FK `trade_packages.id`, SET
+  NULL), `retainage_pct` Numeric(5,2) (held on every bill from the
+  commitment), `scope_notes` Text.
+- `purchase_order_lines.billed_amount` Numeric(15,2) NOT NULL default 0 — how
+  much of the line (whose `amount` is its scheduled value) has been billed;
+  remaining = `amount − billed_amount`. `received_qty` is left untouched.
+- `bills.retainage_held` Numeric(15,2) NOT NULL default 0 (credited to
+  Retainage Payable, 2050, not A/P; `balance_due` is the net), and
+  `lien_waiver_status` String(16) (`not_required` | `pending` | `conditional`
+  | `unconditional`).
+- `bill_payments.coi_override` / `coi_override_note`: set when a Sub with an
+  expired COI was paid by explicit override (#553).
+- `bill_lines.purchase_order_line_id` (FK `purchase_order_lines.id`, SET
+  NULL) — the back link partial billing tallies against.
+
+`committed_cost` is now Σ `(amount − billed_amount)` over non-draft, non-closed
+commitment lines (the remaining open value); `commitment_figures` adds
+`committed_total` (Σ amount of non-draft commitments) and `billed_to_date` (Σ
+billed) — `app/services/jobs_service.py`. Those two are whole-commitment
+figures, so in a date-ranged `job_cost_tree` they are all-time; the totals
+carry `commitments_all_time: true` to say so. Retainage is computed on the
+pre-tax subtotal (tax is payable in full); the shared `vendor_compliance`
+helper (`app/services/compliance.py`) feeds both the bills responses and the
+buyout rows. The buyout table (bid vs bought per
+package) is computed in `app/services/buyout.py`; `vendor_compliance` (Sub
+W-9 / COI flags) is computed from the vendor. Migration
+`f3b5d7e9a2c4_construction_buyout` (additive; backfills a closed PO's billed
+lines from its bill; downgrade reverses). Retainage release (a debit back to
+2050) is #555.
+
 ## Job cost model (milestone 3)
 
 | table | purpose |

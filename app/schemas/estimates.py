@@ -15,6 +15,8 @@ from app.schemas.common import (
 )
 from app.schemas.invoices import RateOut
 
+LINE_KINDS = ("base", "allowance", "alternate", "unit_price")
+
 
 class EstimateLineCreate(StrictModel):
     item_id: Optional[int] = None
@@ -28,13 +30,33 @@ class EstimateLineCreate(StrictModel):
     is_taxable: Optional[bool] = None
     class_name: Optional[str] = None
     job_id: Optional[int] = None
+    # Construction bid shape (#551); harmless defaults for an ordinary line.
+    trade_package_id: Optional[int] = None
+    line_kind: str = "base"
+    unit: Optional[str] = None
+    alternate_accepted: bool = False
     line_order: int = 0
 
     _cost_type = field_validator("cost_type")(clean_line_cost_type)
 
+    @field_validator("line_kind")
+    @classmethod
+    def _kind(cls, v):
+        v = (v or "base").strip() or "base"
+        if v not in LINE_KINDS:
+            raise ValueError(f"line_kind must be one of {', '.join(LINE_KINDS)}")
+        return v
+
     @model_validator(mode="after")
     def _check_non_negative(self):
-        validate_non_negative_line(self.quantity, self.rate)
+        # A deduct alternate carries a negative amount (its rate is a credit),
+        # so the non-negative rule skips alternates; every other kind keeps it.
+        if self.line_kind != "alternate":
+            validate_non_negative_line(self.quantity, self.rate)
+            # a line priced at cost would otherwise store a negative line from
+            # a negative unit cost; a deduct alternate keeps its negative cost
+            if self.unit_cost is not None and self.unit_cost < 0:
+                raise ValueError("unit_cost must not be negative")
         return self
 
 
@@ -51,6 +73,11 @@ class EstimateLineResponse(BaseModel):
     is_taxable: bool = True
     class_name: Optional[str]
     job_id: Optional[int] = None
+    trade_package_id: Optional[int] = None
+    trade_package_name: Optional[str] = None
+    line_kind: str = "base"
+    unit: Optional[str] = None
+    alternate_accepted: bool = False
     line_order: int
 
     model_config = {"from_attributes": True}
@@ -68,6 +95,12 @@ class EstimateCreate(StrictModel):
     notes: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    # Compounding markups as percent values (5.5 = 5.5%), #551.
+    gc_pct: Decimal = Decimal("0")
+    insurance_pct: Decimal = Decimal("0")
+    fee_pct: Decimal = Decimal("0")
+    bond_pct: Decimal = Decimal("0")
+    markup_allowances: bool = False
     lines: list[EstimateLineCreate] = []
 
     @field_validator("lines")
@@ -87,7 +120,73 @@ class EstimateUpdate(StrictModel):
     notes: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    gc_pct: Optional[Decimal] = None
+    insurance_pct: Optional[Decimal] = None
+    fee_pct: Optional[Decimal] = None
+    bond_pct: Optional[Decimal] = None
+    markup_allowances: Optional[bool] = None
     lines: Optional[list[EstimateLineCreate]] = None
+
+
+class EstimatePackageTotal(BaseModel):
+    package_id: Optional[int] = None
+    package_name: str
+    cost: Decimal
+    price: Decimal
+    line_count: int
+
+
+class EstimateAlternateOut(BaseModel):
+    id: Optional[int] = None
+    description: Optional[str] = None
+    amount: Decimal
+    accepted: bool
+
+
+class EstimateUnitPriceOut(BaseModel):
+    id: Optional[int] = None
+    description: Optional[str] = None
+    unit: Optional[str] = None
+    rate: Decimal
+    quantity: Decimal
+
+
+class EstimateTotals(BaseModel):
+    """The bid math (#551): the lines stay at cost, the four markups are their
+    own figures under the subtotal, the bid total is subtotal + markups
+    (pre-tax), and the package / alternate / unit-price breakdowns."""
+
+    markup_allowances: bool = False
+    markup_base: Decimal
+    gc_pct: Decimal
+    insurance_pct: Decimal
+    fee_pct: Decimal
+    bond_pct: Decimal
+    gc: Decimal
+    insurance: Decimal
+    fee: Decimal
+    bond: Decimal
+    markup_total: Decimal
+    priced_direct: Decimal
+    allowance_total: Decimal
+    subtotal: Decimal
+    bid_total: Decimal
+    bid_tax: Decimal
+    bid_total_with_tax: Decimal
+    by_package: list[EstimatePackageTotal] = []
+    alternates: list[EstimateAlternateOut] = []
+    unit_prices: list[EstimateUnitPriceOut] = []
+
+
+class EstimateAccept(StrictModel):
+    job_id: Optional[int] = None
+
+
+def totals_from_dict(data: dict) -> EstimateTotals:
+    """Build the totals model from estimate_totals()'s dict, so the response
+    carries a real EstimateTotals (not a raw dict Pydantic would re-serialize
+    with a warning)."""
+    return EstimateTotals.model_validate(data)
 
 
 class EstimateResponse(BaseModel):
@@ -101,12 +200,19 @@ class EstimateResponse(BaseModel):
     tax_rate: TaxRateOut
     tax_amount: Decimal
     total: Decimal
+    gc_pct: Decimal = Decimal("0")
+    insurance_pct: Decimal = Decimal("0")
+    fee_pct: Decimal = Decimal("0")
+    bond_pct: Decimal = Decimal("0")
+    markup_allowances: bool = False
+    accepted_at: Optional[datetime] = None
     notes: Optional[str]
     class_id: Optional[int] = None
     job_id: Optional[int] = None
     converted_invoice_id: Optional[int]
     lines: list[EstimateLineResponse] = []
     customer_name: Optional[str] = None
+    totals: Optional[EstimateTotals] = None
     created_at: datetime
     updated_at: datetime
 

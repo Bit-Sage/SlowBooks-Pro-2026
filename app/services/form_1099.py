@@ -19,8 +19,11 @@ from decimal import Decimal
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.models.accounts import AccountType
 from app.models.contacts import Vendor
 from app.models.bills import BillPayment
+from app.models.transactions import Transaction
+from app.services.bank_register import voided_transaction_ids
 from app.services.accounting import _q
 from app.services.pdf_service import _jinja_env, render_pdf
 
@@ -93,15 +96,84 @@ def paid_bill_payments(
     return q
 
 
+def register_entries(
+    db: Session,
+    start: date | None = None,
+    end: date | None = None,
+    vendor_id: int | None = None,
+) -> list[tuple]:
+    """The register entries that name a vendor (#590, and bank-feed lines
+    added to one, #491), oldest first, as (transaction, amount paid, voided).
+    Only a bank_entry carries a vendor, so a transfer is never here. The
+    amount is what left the bank or card: money out positive, a refund
+    back negative."""
+    q = db.query(Transaction).filter(
+        Transaction.vendor_id.isnot(None), Transaction.source_type == "bank_entry"
+    )
+    if vendor_id is not None:
+        q = q.filter(Transaction.vendor_id == vendor_id)
+    if start:
+        q = q.filter(Transaction.date >= start)
+    if end:
+        q = q.filter(Transaction.date <= end)
+    txns = q.order_by(Transaction.date, Transaction.id).all()
+    voided = voided_transaction_ids(db, [t.id for t in txns])
+    out = []
+    for t in txns:
+        bank = next((ln for ln in t.lines if ln.account and ln.account.bank_kind), None)
+        if bank is None:
+            continue
+        paid = Decimal(str(bank.credit or 0)) - Decimal(str(bank.debit or 0))
+        out.append((t, paid, t.id in voided))
+    return out
+
+
+def reportable_amount(t: Transaction) -> Decimal | None:
+    """What a register entry adds to a vendor's 1099-NEC, or None when it
+    adds nothing. Only an entry paid from a bank account counts: a card
+    charge is reported by the card processor on a 1099-K. And only the
+    entry's expense and cost-of-goods lines count, not the bank amount, so
+    a payment to A/P, sales tax or a loan is not income to the vendor and
+    a split counts its expense part. A refund nets off (a credit line)."""
+    banks = [ln.account for ln in t.lines if ln.account and ln.account.bank_kind]
+    if not banks or any(a.bank_kind == "credit_card" for a in banks):
+        return None
+    return sum(
+        (
+            Decimal(str(ln.debit or 0)) - Decimal(str(ln.credit or 0))
+            for ln in t.lines
+            if ln.account
+            and ln.account.account_type in (AccountType.EXPENSE, AccountType.COGS)
+        ),
+        Decimal("0"),
+    )
+
+
+def register_payment_totals(db: Session, year: int) -> dict[int, Decimal]:
+    """Sum the year's register entries per vendor (see reportable_amount),
+    voided ones left out: the second source of money paid to a vendor
+    beside bill payments."""
+    totals: dict[int, Decimal] = {}
+    for t, _paid, voided in register_entries(db, date(year, 1, 1), date(year, 12, 31)):
+        amount = None if voided else reportable_amount(t)
+        if amount is not None:
+            totals[t.vendor_id] = totals.get(t.vendor_id, Decimal("0")) + amount
+    return totals
+
+
 def _vendor_payment_totals(db: Session, year: int) -> dict[int, Decimal]:
-    """Sum bill payments per vendor for the given calendar year."""
+    """Sum payments per vendor for the given calendar year: bill payments
+    plus register entries that name the vendor (#590)."""
     rows = (
         paid_bill_payments(db, date(year, 1, 1), date(year, 12, 31))
         .with_entities(BillPayment.vendor_id, func.sum(BillPayment.amount))
         .group_by(BillPayment.vendor_id)
         .all()
     )
-    return {vid: _q(total) for vid, total in rows if vid is not None}
+    totals = {vid: _q(total) for vid, total in rows if vid is not None}
+    for vid, paid in register_payment_totals(db, year).items():
+        totals[vid] = _q(totals.get(vid, Decimal("0")) + paid)
+    return totals
 
 
 def compute_1099_data(db: Session, year: int) -> list[dict]:

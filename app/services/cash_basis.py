@@ -1,0 +1,736 @@
+# ============================================================================
+# Reports on a cash basis (#483, docs/design/cash-basis.md).
+#
+# Every ledger line carries a basis. An invoice's or bill's lines count on
+# the accrual basis only; a payment writes, into its own entry, the cash
+# recognition of what it collected or paid — the document's income or
+# expense lines prorated by the amount applied — and those count on the
+# cash basis only. The reading a query gets is chosen on the session
+# (app/models/transactions.py); this module says which lines are which,
+# builds the cash lines, and backfills a file that predates the column.
+# ============================================================================
+
+from __future__ import annotations
+
+import logging
+from decimal import Decimal
+
+from sqlalchemy import exists, select
+from sqlalchemy.orm import Session
+
+from app.models.accounts import AccountType
+from app.models.bills import Bill, BillPayment, BillPaymentAllocation
+from app.models.invoices import Invoice
+from app.models.payments import Payment, PaymentAllocation
+from app.models.transactions import (
+    BASIS_ACCRUAL,
+    BASIS_BOTH,
+    BASIS_CASH,
+    LEDGER_BASIS_OPTION,
+    READ_ACCRUAL,
+    READ_ALL,
+    READ_CASH,
+    Transaction,
+    TransactionLine,
+)
+
+log = logging.getLogger(__name__)
+
+# Payments written between commits by the backfill.
+BACKFILL_BATCH = 200
+
+# Entries whose every line counts on the accrual basis only: the documents
+# that put something on A/R or A/P, their voids and the adjustments an edit
+# posts beside them. Everything else is "both" unless a line says otherwise.
+ACCRUAL_SOURCE_TYPES = frozenset(
+    {
+        "invoice",
+        "invoice_void",
+        "invoice_edit",
+        "late_fee",
+        "bill",
+        "bill_void",
+        "bill_edit",
+        "credit_memo",
+        "credit_memo_void",
+        "vendor_credit",
+        "vendor_credit_void",
+    }
+)
+
+# The entries a customer payment's cash lines are prorated over: the
+# invoice's own posting, the cost-of-goods entry the stock movement posts
+# under the same source, a late fee added to it, and an edit's adjustment.
+INVOICE_SOURCE_TYPES = ("invoice", "invoice_edit", "late_fee")
+BILL_SOURCE_TYPES = ("bill", "bill_edit")
+
+# The company default, and what the report parameter may say.
+REPORT_BASES = (READ_ACCRUAL, READ_CASH)
+SETTING_KEY = "report_basis"
+
+# QuickBooks' accounts for money received or paid against no document yet,
+# created on demand like 3900 and 6999 are.
+UNAPPLIED_INCOME = ("4950", "Unapplied Cash Payment Income", AccountType.INCOME)
+UNAPPLIED_EXPENSE = (
+    "6990",
+    "Unapplied Cash Bill Payment Expense",
+    AccountType.EXPENSE,
+)
+
+
+def default_basis_for(source_type: str | None) -> str:
+    """The basis a line takes when it names none: accrual for the documents
+    in ACCRUAL_SOURCE_TYPES, both for everything else."""
+    return BASIS_ACCRUAL if source_type in ACCRUAL_SOURCE_TYPES else BASIS_BOTH
+
+
+def company_basis(db: Session) -> str:
+    """The company's default report basis (Settings → Company)."""
+    from app.services.settings_service import get_setting_raw
+
+    value = (get_setting_raw(db, SETTING_KEY) or "").strip().lower()
+    return value if value in REPORT_BASES else READ_ACCRUAL
+
+
+def resolve_basis(db: Session, requested: str | None) -> str:
+    """The basis a report runs on: the `basis` parameter when given, else
+    the company default. Anything else is a 422 saying what is accepted."""
+    if requested is None or requested == "":
+        return company_basis(db)
+    if not isinstance(requested, str) or requested.lower() not in REPORT_BASES:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=422, detail="basis must be accrual, cash or left out"
+        )
+    return requested.lower()
+
+
+def reading(basis: str) -> dict:
+    """Execution options that read the ledger on `basis`, for
+    `.execution_options(**reading(basis))`."""
+    return {LEDGER_BASIS_OPTION: basis}
+
+
+def receivable_note(db: Session, as_of, basis: str) -> str | None:
+    """A short note for a cash-basis report when A/R or A/P is not zero at
+    `as_of`, else None. History that came in as journal entries (a QuickBooks
+    Desktop ledger import, opening A/R and A/P) counts on both bases and is
+    not converted, so a balance left there must not be read as cash."""
+    if basis != READ_CASH:
+        return None
+    from sqlalchemy import func
+
+    from app.services.accounting import get_ap_account_id, get_ar_account_id
+    from app.services.control_accounts import MissingControlAccount
+
+    ids = []
+    for resolve in (get_ar_account_id, get_ap_account_id):
+        try:
+            ids.append(resolve(db))
+        except MissingControlAccount:
+            pass
+    if not ids:
+        return None
+    rows = (
+        db.query(
+            TransactionLine.account_id,
+            func.coalesce(func.sum(TransactionLine.debit - TransactionLine.credit), 0),
+        )
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id.in_(ids), Transaction.date <= as_of)
+        .group_by(TransactionLine.account_id)
+        .execution_options(**reading(READ_CASH))
+        .all()
+    )
+    if not any(_q(net) != 0 for _, net in rows):
+        return None
+    return (
+        "Accounts Receivable or Accounts Payable is not zero on this cash-basis "
+        "report. That balance came in as journal entries (an imported ledger or "
+        "opening balances), which are not converted to cash, so do not read that "
+        "history as cash."
+    )
+
+
+def unapplied_income_id(db: Session) -> int:
+    from app.services.accounting import ensure_account
+
+    return ensure_account(db, *UNAPPLIED_INCOME).id
+
+
+def unapplied_expense_id(db: Session) -> int:
+    from app.services.accounting import ensure_account
+
+    return ensure_account(db, *UNAPPLIED_EXPENSE).id
+
+
+# ---------------------------------------------------------------------------
+# Recognition lines of a document
+# ---------------------------------------------------------------------------
+
+
+def _q(value) -> Decimal:
+    from app.services.accounting import _q as quantize
+
+    return quantize(value)
+
+
+def document_lines(
+    db: Session, source_types, source_id: int, control_account_id: int
+) -> list[dict]:
+    """The lines a document recognizes, netted by account and dimensions:
+    every line of its entries except the control account's (A/R or A/P),
+    each as {account_id, amount, class_id, job_id, cost_code_id, cost_type,
+    function}, `amount` signed credit-positive. Read on every basis: the
+    entries are accrual ones, and a repair may run before they are tagged."""
+    rows = (
+        db.query(TransactionLine)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(
+            Transaction.source_type.in_(tuple(source_types)),
+            Transaction.source_id == source_id,
+            TransactionLine.account_id != control_account_id,
+        )
+        .order_by(TransactionLine.id)
+        .execution_options(**reading(READ_ALL))
+        .all()
+    )
+    netted: dict[tuple, dict] = {}
+    for ln in rows:
+        key = (
+            ln.account_id,
+            ln.class_id,
+            ln.job_id,
+            ln.cost_code_id,
+            ln.cost_type,
+            ln.function,
+        )
+        entry = netted.setdefault(
+            key,
+            {
+                "account_id": ln.account_id,
+                "class_id": ln.class_id,
+                "job_id": ln.job_id,
+                "cost_code_id": ln.cost_code_id,
+                "cost_type": ln.cost_type,
+                "function": ln.function,
+                "amount": Decimal("0"),
+            },
+        )
+        entry["amount"] += Decimal(str(ln.credit or 0)) - Decimal(str(ln.debit or 0))
+    return [e for e in netted.values() if e["amount"] != 0]
+
+
+def prorate(lines: list[dict], applied: Decimal, total: Decimal) -> list[dict]:
+    """Each line's share of `applied` out of `total`, to the cent, the
+    rounding cent on the largest share, so the shares add up to `applied`
+    exactly. Lines keep their sign (a discount stays a debit)."""
+    applied = _q(applied)
+    if total == 0 or applied == 0 or not lines:
+        return []
+    ratio = applied / total
+    shares = []
+    for line in lines:
+        share = _q(line["amount"] * ratio)
+        if share != 0:
+            shares.append({**line, "amount": share})
+    if not shares:
+        return []
+    off = applied - sum((s["amount"] for s in shares), Decimal("0"))
+    if off != 0:
+        biggest = max(shares, key=lambda s: abs(s["amount"]))
+        biggest["amount"] += off
+    return [s for s in shares if s["amount"] != 0]
+
+
+def _cash_line(line: dict, memo: str) -> dict:
+    """A recognition line as create_journal_entry takes it: a positive
+    amount is a credit, a negative one a debit."""
+    amount = line["amount"]
+    return {
+        "account_id": line["account_id"],
+        "debit": -amount if amount < 0 else Decimal("0"),
+        "credit": amount if amount > 0 else Decimal("0"),
+        "description": memo,
+        "class_id": line.get("class_id"),
+        "job_id": line.get("job_id"),
+        "cost_code_id": line.get("cost_code_id"),
+        "cost_type": line.get("cost_type"),
+        "function": line.get("function"),
+        "basis": BASIS_CASH,
+    }
+
+
+def _ledger_posted(db: Session, document) -> bool:
+    """Whether the QuickBooks Online ledger import posted this invoice and
+    that posting stands. Its lines are `both`: its income and A/R already
+    count on the cash view, so a payment on it recognizes nothing more."""
+    from app.services.qbo_documents import import_posting, invoice_origin
+
+    return import_posting(db, invoice_origin(db, document)) is not None
+
+
+def _recognition(
+    db: Session,
+    source_types,
+    document_id: int,
+    control_id: int,
+    applied_home: Decimal,
+    memo: str,
+    fallback_account_id,
+) -> list[dict]:
+    """The cash lines recognizing `applied_home` of one document: its
+    recognition lines prorated, each on the same side as on the document.
+    A document with no recognition lines of its own (an import that posted
+    none) is recognized to the unapplied account instead."""
+    lines = document_lines(db, source_types, document_id, control_id)
+    total = sum((ln["amount"] for ln in lines), Decimal("0"))
+    shares = prorate(lines, applied_home, total) if total else []
+    if not shares:
+        if applied_home == 0:
+            return []
+        shares = [{"account_id": fallback_account_id(db), "amount": applied_home}]
+    return [_cash_line(s, memo) for s in shares]
+
+
+def customer_payment_cash_lines(
+    db: Session, ar_id: int, applied: list[tuple], unapplied_home, memo: str
+) -> list[dict]:
+    """The cash lines of a customer payment's entry (#483): for each
+    (invoice, applied_home) the invoice's income, discount, sales tax and
+    cost lines prorated; the unapplied remainder to Unapplied Cash Payment
+    Income; and one Dr A/R for the whole, so the cash lines balance."""
+    out: list[dict] = []
+    for invoice, applied_home in applied:
+        if _ledger_posted(db, invoice):
+            continue
+        out.extend(
+            _recognition(
+                db,
+                INVOICE_SOURCE_TYPES,
+                invoice.id,
+                ar_id,
+                _q(applied_home),
+                memo,
+                unapplied_income_id,
+            )
+        )
+    unapplied_home = _q(unapplied_home or 0)
+    if unapplied_home > 0:
+        out.append(
+            _cash_line(
+                {"account_id": unapplied_income_id(db), "amount": unapplied_home}, memo
+            )
+        )
+    return _balanced_on(out, ar_id, memo)
+
+
+def bill_payment_cash_lines(
+    db: Session, ap_id: int, applied: list[tuple], unapplied_home, memo: str
+) -> list[dict]:
+    """The mirror for a bill payment: each bill's expense, cost and inventory
+    lines prorated (debits), the remainder to Unapplied Cash Bill Payment
+    Expense, and one Cr A/P for the whole."""
+    out: list[dict] = []
+    for bill, applied_home in applied:
+        # a bill's lines are debits: recognize -applied of credit
+        out.extend(
+            _recognition(
+                db,
+                BILL_SOURCE_TYPES,
+                bill.id,
+                ap_id,
+                -_q(applied_home),
+                memo,
+                unapplied_expense_id,
+            )
+        )
+    unapplied_home = _q(unapplied_home or 0)
+    if unapplied_home > 0:
+        out.append(
+            _cash_line(
+                {"account_id": unapplied_expense_id(db), "amount": -unapplied_home},
+                memo,
+            )
+        )
+    return _balanced_on(out, ap_id, memo)
+
+
+def _balanced_on(lines: list[dict], control_id: int, memo: str) -> list[dict]:
+    """Add the control-account cash line that balances the recognition
+    lines: Dr A/R when they are net credits (income), Cr A/P when net
+    debits (expense)."""
+    if not lines:
+        return []
+    net = sum((ln["credit"] - ln["debit"] for ln in lines), Decimal("0"))
+    if net == 0:
+        return lines
+    return lines + [
+        {
+            "account_id": control_id,
+            "debit": net if net > 0 else Decimal("0"),
+            "credit": -net if net < 0 else Decimal("0"),
+            "description": memo,
+            "basis": BASIS_CASH,
+        }
+    ]
+
+
+def apply_reclass_lines(
+    db: Session, ar_id: int, invoice, applied_home, memo: str
+) -> list[dict]:
+    """When an unapplied remainder is applied to an invoice later: the
+    invoice's recognition lines, and Unapplied Cash Payment Income debited
+    for the same. Cash lines only; the accrual reading sees nothing.
+    An invoice the QuickBooks ledger import posted already counts its income
+    on cash (`both`), so the unapplied income is simply taken back to A/R."""
+    if _ledger_posted(db, invoice):
+        applied_home = _q(applied_home)
+        if applied_home == 0:
+            return []
+        return [
+            _cash_line(
+                {"account_id": unapplied_income_id(db), "amount": -applied_home}, memo
+            ),
+            {
+                "account_id": ar_id,
+                "debit": Decimal("0"),
+                "credit": applied_home,
+                "description": memo,
+                "basis": BASIS_CASH,
+            },
+        ]
+    lines = _recognition(
+        db,
+        INVOICE_SOURCE_TYPES,
+        invoice.id,
+        ar_id,
+        _q(applied_home),
+        memo,
+        unapplied_income_id,
+    )
+    if not lines:
+        return []
+    net = sum((ln["credit"] - ln["debit"] for ln in lines), Decimal("0"))
+    if net == 0:
+        return lines
+    return lines + [
+        _cash_line({"account_id": unapplied_income_id(db), "amount": -net}, memo)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Backfill: a file written before lines carried a basis
+# ---------------------------------------------------------------------------
+
+
+def _has_cash_line(db: Session, transaction_id: int) -> bool:
+    return (
+        db.query(
+            exists().where(
+                TransactionLine.transaction_id == transaction_id,
+                TransactionLine.basis == BASIS_CASH,
+            )
+        )
+        .execution_options(**reading(READ_ALL))
+        .scalar()
+    )
+
+
+def _tag_accrual_entries(db: Session) -> int:
+    """Every line of an accrual entry still marked both → accrual."""
+    ids = select(Transaction.id).where(
+        Transaction.source_type.in_(tuple(ACCRUAL_SOURCE_TYPES))
+    )
+    q = db.query(TransactionLine).filter(
+        TransactionLine.transaction_id.in_(ids),
+        TransactionLine.basis == BASIS_BOTH,
+    )
+    return q.update({TransactionLine.basis: BASIS_ACCRUAL}, synchronize_session=False)
+
+
+def append_cash_lines(db: Session, txn: Transaction, lines: list[dict]) -> int:
+    """Append cash lines to an existing entry: the backfill, and the
+    reclass when an unapplied remainder is applied later. Straight inserts
+    — the entry is dated and closing-date checked already, and the stored
+    balance never takes a cash line — but the lines must balance among
+    themselves, as create_journal_entry would insist."""
+    from app.services.classes_service import default_function_of
+    from app.services.safe_errors import DataProblem
+
+    out = sum(
+        (_q(ln.get("debit", 0)) - _q(ln.get("credit", 0)) for ln in lines),
+        Decimal("0"),
+    )
+    if out != 0:
+        raise DataProblem(
+            f"The cash-basis lines of this entry are out of balance by ${abs(out):,.2f}"
+        )
+    fn_cache: dict = {}
+    for line in lines:
+        debit = _q(line.get("debit", 0))
+        credit = _q(line.get("credit", 0))
+        if debit == 0 and credit == 0:
+            continue
+        class_id = line.get("class_id")
+        function = (
+            line["function"]
+            if "function" in line
+            else default_function_of(db, class_id, fn_cache)
+        )
+        db.add(
+            TransactionLine(
+                transaction_id=txn.id,
+                account_id=line["account_id"],
+                debit=debit,
+                credit=credit,
+                description=line.get("description", ""),
+                job_id=line.get("job_id"),
+                class_id=class_id,
+                function=function,
+                cost_code_id=line.get("cost_code_id"),
+                cost_type=line.get("cost_type"),
+                basis=BASIS_CASH,
+            )
+        )
+    return len(lines)
+
+
+def _payments_without_cash_lines(db: Session):
+    cash_lines = select(TransactionLine.transaction_id).where(
+        TransactionLine.basis == BASIS_CASH
+    )
+    return (
+        db.query(Payment)
+        .filter(
+            Payment.transaction_id.isnot(None),
+            Payment.is_voided.isnot(True),
+            Payment.transaction_id.notin_(cash_lines),
+        )
+        .order_by(Payment.date, Payment.id)
+        .execution_options(**reading(READ_ALL))
+        .all()
+    )
+
+
+def _bill_payments_without_cash_lines(db: Session):
+    cash_lines = select(TransactionLine.transaction_id).where(
+        TransactionLine.basis == BASIS_CASH
+    )
+    return (
+        db.query(BillPayment)
+        .filter(
+            BillPayment.transaction_id.isnot(None),
+            BillPayment.is_voided.isnot(True),
+            BillPayment.transaction_id.notin_(cash_lines),
+        )
+        .order_by(BillPayment.date, BillPayment.id)
+        .execution_options(**reading(READ_ALL))
+        .all()
+    )
+
+
+def _customer_payment_lines(db: Session, payment: Payment, ar_id: int):
+    """(entry, cash lines) for a customer payment that has none yet."""
+    from app.services.currency import to_home
+
+    txn = db.get(Transaction, payment.transaction_id)
+    if txn is None or _has_cash_line(db, txn.id):
+        return None, []
+    pay_rate = Decimal(str(payment.exchange_rate or 1))
+    allocations = (
+        db.query(PaymentAllocation)
+        .filter(PaymentAllocation.payment_id == payment.id)
+        .all()
+    )
+    applied = []
+    applied_total = Decimal("0")
+    for alloc in allocations:
+        invoice = db.get(Invoice, alloc.invoice_id)
+        if invoice is None:
+            continue
+        applied.append(
+            (invoice, to_home(alloc.amount, invoice.exchange_rate or Decimal("1")))
+        )
+        applied_total += Decimal(str(alloc.amount))
+    unapplied = to_home(
+        max(Decimal(str(payment.amount)) - applied_total, Decimal("0")), pay_rate
+    )
+    return txn, customer_payment_cash_lines(
+        db, ar_id, applied, unapplied, txn.description or "Payment"
+    )
+
+
+def _bill_payment_lines(db: Session, payment: BillPayment, ap_id: int):
+    """(entry, cash lines) for a bill payment that has none yet."""
+    from app.services.currency import to_home
+
+    txn = db.get(Transaction, payment.transaction_id)
+    if txn is None or _has_cash_line(db, txn.id):
+        return None, []
+    pay_rate = Decimal(str(payment.exchange_rate or 1))
+    allocations = (
+        db.query(BillPaymentAllocation)
+        .filter(BillPaymentAllocation.bill_payment_id == payment.id)
+        .all()
+    )
+    applied = []
+    applied_total = Decimal("0")
+    for alloc in allocations:
+        bill = db.get(Bill, alloc.bill_id)
+        if bill is None:
+            continue
+        applied.append(
+            (bill, to_home(alloc.amount, bill.exchange_rate or Decimal("1")))
+        )
+        applied_total += Decimal(str(alloc.amount))
+    unapplied = to_home(
+        max(Decimal(str(payment.amount)) - applied_total, Decimal("0")), pay_rate
+    )
+    return txn, bill_payment_cash_lines(
+        db, ap_id, applied, unapplied, txn.description or "Bill payment"
+    )
+
+
+def add_payment_cash_lines(db: Session, payment: Payment) -> int:
+    """Give one posted customer payment its cash lines now, when it has none
+    (a payment posted before the invoice it pays had its own entry). Returns
+    the number of lines written."""
+    from app.services.accounting import get_ar_account_id
+
+    txn, lines = _customer_payment_lines(db, payment, get_ar_account_id(db))
+    return append_cash_lines(db, txn, lines) if lines else 0
+
+
+class _Progress:
+    """Counts the backfill's writes and commits every BACKFILL_BATCH of them
+    so a big book never holds one long write transaction."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.pending = 0
+        self.failed = 0
+
+    def run(self, payments, make_lines, label: str) -> int:
+        """Write the cash lines of each payment inside its own savepoint:
+        one broken payment is logged by id and skipped, the rest go on."""
+        wrote = 0
+        for payment in payments:
+            payment_id = payment.id  # read before a failure expires the row
+            try:
+                with self.db.begin_nested():
+                    txn, lines = make_lines(self.db, payment)
+                    if not lines:
+                        continue
+                    append_cash_lines(self.db, txn, lines)
+            except Exception:
+                self.failed += 1
+                log.exception(
+                    "Cash-basis backfill skipped %s %s (entry %s)",
+                    label,
+                    payment_id,
+                    getattr(payment, "transaction_id", None),
+                )
+                continue
+            wrote += 1
+            self.pending += 1
+            if self.pending >= BACKFILL_BATCH:
+                self.db.commit()
+                self.pending = 0
+        return wrote
+
+
+def backfill(db: Session) -> dict:
+    """Tag the accrual entries and write the cash lines of every payment
+    that has none (#483). Idempotent: a second run finds nothing. Commits
+    as it goes (every BACKFILL_BATCH payments) and a payment that fails is
+    logged and skipped, not fatal. Returns counts for the start-up log:
+    tagged, payments, bill_payments and failed."""
+    from app.services.accounting import get_ap_account_id, get_ar_account_id
+    from app.services.control_accounts import MissingControlAccount
+
+    tagged = _tag_accrual_entries(db)
+    db.commit()
+    progress = _Progress(db)
+    payments = bills = 0
+
+    try:
+        ar_id = get_ar_account_id(db)
+    except MissingControlAccount:
+        ar_id = None
+    if ar_id is not None:
+        payments = progress.run(
+            _payments_without_cash_lines(db),
+            lambda d, p: _customer_payment_lines(d, p, ar_id),
+            "payment",
+        )
+
+    try:
+        ap_id = get_ap_account_id(db)
+    except MissingControlAccount:
+        ap_id = None
+    if ap_id is not None:
+        bills = progress.run(
+            _bill_payments_without_cash_lines(db),
+            lambda d, p: _bill_payment_lines(d, p, ap_id),
+            "bill payment",
+        )
+
+    db.commit()
+    return {
+        "tagged": tagged,
+        "payments": payments,
+        "bill_payments": bills,
+        "failed": progress.failed,
+    }
+
+
+def backfill_after_import(db: Session) -> dict:
+    """Give the payments an importer just created their cash lines (#483),
+    so the cash reports are right without a restart. Never fails the import:
+    a payment that cannot be given cash lines is logged and retried at the
+    next start."""
+    try:
+        return backfill(db)
+    except Exception:
+        db.rollback()
+        log.exception("Cash-basis backfill after an import failed")
+        return {"tagged": 0, "payments": 0, "bill_payments": 0, "failed": 0}
+
+
+def pending_backfill(db: Session) -> bool:
+    """Whether the backfill has anything to do (the tests' check)."""
+    untagged = (
+        db.query(TransactionLine.id)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(
+            Transaction.source_type.in_(tuple(ACCRUAL_SOURCE_TYPES)),
+            TransactionLine.basis == BASIS_BOTH,
+        )
+        .execution_options(**reading(READ_ALL))
+        .first()
+    )
+    if untagged:
+        return True
+    return bool(_payments_without_cash_lines(db)) or bool(
+        _bill_payments_without_cash_lines(db)
+    )
+
+
+__all__ = [
+    "ACCRUAL_SOURCE_TYPES",
+    "add_payment_cash_lines",
+    "append_cash_lines",
+    "apply_reclass_lines",
+    "backfill",
+    "bill_payment_cash_lines",
+    "company_basis",
+    "customer_payment_cash_lines",
+    "default_basis_for",
+    "pending_backfill",
+    "reading",
+    "resolve_basis",
+    "unapplied_expense_id",
+    "unapplied_income_id",
+]

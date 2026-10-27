@@ -36,6 +36,10 @@ DEFAULT_SETTINGS = {
     # presets and default periods, the dashboard's profit card and nonprofit
     # FY-to-date; payroll forms (W-2, 941) stay on the calendar year by law.
     "fiscal_year_start_month": "1",
+    # Which basis the Profit & Loss and Balance Sheet run on unless the
+    # report says otherwise (#483, docs/design/cash-basis.md): accrual |
+    # cash. Every other report reads accrual until it takes the switch.
+    "report_basis": "accrual",
     # Legal entity type (#488) — separate from company_type, and placed away
     # from it so a sibling PR editing that line merges cleanly. Drives which
     # federal return the company files (Schedule C only for a sole proprietor

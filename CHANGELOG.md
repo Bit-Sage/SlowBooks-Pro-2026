@@ -49,8 +49,10 @@ other exports. `GET /api/vendors/{id}/payment-history` answers the page
 date leaves the other side open); `GET /api/vendors/{id}/payments/csv` keeps
 its address and its all-time default. The bill-payment subtotal is summed by
 the 1099 query itself, so for a 1099 vendor over a year it is the vendor's
-1099-NEC figure; direct expenses and bank entries, which the 1099 leaves out,
-are subtotalled beside it rather than folded in. The list's search box
+1099-NEC figure before the register entries that name the vendor (#590, which
+count by their expense lines from bank accounts only); direct expenses, which
+the 1099 leaves out, are subtotalled beside it rather
+than folded in. The list's search box
 (#335) stays as it was — name, company, phone, email — and the list route's
 `search` parameter now covers the same four fields instead of the name alone.
 
@@ -125,6 +127,75 @@ alone when numbers are off. A control account's note no longer says it is "found
 by its number"; it says the software relies on the account. The CSVs keep their
 number column. docs/migrate-from-quickbooks.md
 answers what happens to the starter accounts after a real chart is imported.
+
+**The QuickBooks ledger import warns about a report over 12 months** (#568,
+@ContractorKeith). A Transaction Detail by Account export whose period — read
+from the title QuickBooks prints above the columns — runs more than 12 months
+imports as it always has, with a warning in the result: for a range over a
+year QuickBooks prints the balance sheet accounts for the whole range but the
+income and expense accounts for its last year only, so the earlier years can
+come across half-complete; export one year per file and import them oldest
+first. A July–June fiscal year is 12 months and says nothing, and the
+adjusting-entries import never warns. If such a file also fails the "does not
+balance" check, the first of those errors carries the same explanation. The
+migration guide says the same under *One year per file*.
+
+**The register keeps the last entry's date, and the date keys move it**
+(#566, from discussion #561, @ContractorKeith). After a post, the register's
+entry row and the + Entry dialog open on the date of the entry just posted
+rather than snapping back to today — each register keeps its own, for the
+page's life (until a reload or sign-in); no preference. In any date box, + and −
+step the date a day, T is today, M and H are the first and last day of its
+month, Y and R the first and last day of its year — QuickBooks-style keys,
+one handler for every date box in the app. The "date far from today"
+question (#481) is asked when the date is typed or moved, not again for a
+date carried over from the last entry.
+
+**The register's payee box suggests vendors and links the entry to the one
+named** (#590, from discussion #561, @ContractorKeith). Typing in the payee
+box — the entry row or + Entry — lists the vendors; picking one, or typing a
+name that is exactly a vendor's, puts that vendor on the entry (`vendor_id`,
+as a bank-feed line has, #491), so the entry shows on the vendor's payment
+history (#569). `POST /api/banking/transactions` and `PUT
+/api/banking/entries/{id}` take `vendor_id`, or match the payee by name when
+it is left out, and the entry comes back with `vendor_id` and `vendor_name`.
+A name that is not a vendor stays text and is still offered "Add as a
+vendor?". A linked entry counts toward the vendor's 1099-NEC and the 1099
+Summary with its bill payments, under the same rules (1099 vendor, NEC type,
+$600, voided left out; a linked bank-feed line counts too); a transfer or an
+unlinked payee does not. Only entries paid from a bank account count, never a
+credit card (the card processor reports those on a 1099-K), and only the
+entry's expense and cost-of-goods lines, not the bank amount, so a payment to
+Accounts Payable or Sales Tax Payable adds nothing and a split counts its
+expense part. A reprinted 1099-NEC or 1099 Summary for an earlier year can
+differ from the one filed when register entries were linked to the vendor
+since.
+
+**Reports on a cash basis, step 1** (#483, @ContractorKeith). The Profit &
+Loss and the Balance Sheet run on the cash basis: income when the customer's
+payment lands, a bill's expense when it is paid, each prorated over the
+document's lines (and their items' accounts, classes, jobs and sales tax)
+by the part paid, with Accounts Receivable and Accounts Payable at zero and
+a payment taken before its invoice as Unapplied Cash Payment Income (a bill
+payment's remainder as Unapplied Cash Bill Payment Expense) until applied.
+Settings → Company has a Report Basis default (accrual, as before), and
+each of the two statements a Basis choice beside Sort by (`?basis=cash` on
+their API, PDF and CSV, which say "cash basis" when they are). Every ledger
+line now carries a basis; a file from an earlier build is tagged and its
+payments' cash lines written once at the next start, in batches of 200
+with a savepoint per payment (one that fails is logged by id and skipped,
+and start-up warns with the count), on a new index of
+`transactions(source_type, source_id)` that took the backfill from minutes
+to seconds on a big book. The IIF, QuickBooks report and QuickBooks Online
+imports write their payments' cash lines at the end of the import. Online card payments with a clearing account write their cash lines too, as does the payment of a QuickBooks Online sales receipt or invoice once an edit makes it ours; an invoice the old QuickBooks Online connector posted counts once on cash, on its posting's date. An
+account, job or cost code that has only cash-basis lines (Unapplied Cash
+Payment Income, say) counts as in use and cannot be deleted. When A/R or
+A/P is not zero on a cash-basis report (history that came in as journal
+entries), a note under the report says so, on screen and in the PDF. The
+Accountant's Package follows the company's report basis for its Profit &
+Loss and Balance Sheet, and its README says which. Every other report,
+the registers, agings and exports stay accrual until a later step. Design:
+`docs/design/cash-basis.md`.
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
@@ -222,6 +293,124 @@ is), no new accounting, no change orders / draws / pay applications screens,
 no COI-expiry warning in Pay Bills, and nothing references a trade package
 yet (bids and commitments are later steps). A prompt to collect a Sub's W-9
 is a follow-up. See [docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Construction estimating** (#551, @ContractorKeith). The construction
+estimate becomes a commercial bid. Its lines now belong to the trade packages
+(#550) a general contractor awards, each line is a plain base line, an
+**allowance**, an add/deduct **alternate**, or a **unit price** (a rate card,
+not part of the total), and each carries a unit of measure. The **lines stay
+at cost** — a base or alternate line with a unit cost is priced at cost, one
+with no unit cost is priced direct and never marked up — and the four markups
+are their own figures **under the subtotal**, **compounding in order**:
+general conditions, then insurance, then fee, then bond, each figured on the
+running total before it. On a $100,000 cost of work at 8 / 1.5 / 5 / 1 percent
+that is $8,000 GC, $1,620 insurance, $5,481 fee and $1,151.01 bond, a
+**$116,252.01 bid total**. The bid total is pre-tax; tax covers the lines and
+the markups together (nothing when the customer is exempt), and the Total is
+subtotal + markups + tax. An alternate with a unit cost is shown at its
+marked-up price, and accepting it adds its cost to the markup base; an
+allowance budgets its amount as cost. The customer PDF groups the lines by
+package with the section code, then the allowances, alternates (marked-up
+price) and unit prices in their own blocks, and foots Subtotal, a row per
+non-zero markup, Bid total, Tax and Total. Converting carries the markups onto
+the invoice as their own lines, so it foots to the bid.
+
+The GC decides where markup goes: **markup on allowances is off by default**,
+a per-estimate flag the form, view, totals panel and PDF show as On or Off;
+on, the allowances join the markup base. **General conditions are both**: the
+GC percent stays markup revenue and its amount is also budgeted as a cost (a
+"GC" General Conditions budget row) when the estimate is accepted. A code
+budgeted by hand keeps its own share of the markups instead of pushing it onto
+the other rows.
+
+Accepting an estimate **locks the job budget to it**: the estimate seeds the
+budget from the bought scope (a row you edited by hand still wins), and those
+rows are then locked — the lock is per row, so a manual budget row on a code
+the estimate never touched still saves afterward, but a locked row's own key,
+or re-seeding the whole budget from another estimate, is refused. There is no
+unlock: a new estimate or, later, a change order moves a locked budget, and a
+construction estimate that locked a budget refuses changes to its lines,
+markups, customer, job, tax and status (moving it back to pending would
+re-seed the locked budget); a save that resends the same values still goes
+through, and Business and Nonprofit estimates are never frozen.
+Converting an accepted estimate to an invoice drops the unit-price lines and
+any un-accepted alternate, and now carries each line's cost type and unit cost
+onto the invoice so the cost basis isn't lost. A Business or Nonprofit
+company's estimate form and PDF are exactly as they were. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**The contract on the job** (#552, @ContractorKeith). Review fixes: the
+contract sum and contingency edit freely until the job has billing on the
+schedule of values or a change order, then lock (409 `contract_sum_locked` /
+`contingency_locked`; a change order moves them from there), so a sum typed
+before the bid is just corrected; the original follows the sum until then;
+building from an estimate stamps the original even when the job form set the
+sum first, and never gives a cleared sum a new one; contract amounts are
+rounded to the cent, schedule values too, the money fields are bounded to what the
+database stores, and the fee percent is limited to 0-100; a fixed fee shows
+no `fee_period`; and building defaults the job's fee percent from the
+estimate's when the job has none. A construction job can
+now carry a contract — a **lump sum**, a **GMP** (guaranteed maximum price) or
+**cost-plus** — with a fee (a percent of cost or a fixed amount, the fixed fee
+winning), a cap (the GMP maximum, or a cost-plus not-to-exceed), owner
+contingency and a retainage percent held on each billing. A new **Contract**
+tab on the job (construction mode only) shows the terms, summary tiles
+(contract sum, changes, fee, cost to date, cap remaining, contingency
+remaining, billed to date and %) and the owner's **schedule of values** — the
+contract sum broken into billable lines (item no, description, package,
+section, kind, scheduled value), which must balance to the contract sum; the
+balance stays highlighted until it does. The contract sum is **pre-tax** —
+tax is added on each invoice. **Build from accepted estimate**
+(`POST /api/jobs/{id}/contract/from-estimate/{estimate_id}`) lays the schedule
+out from the estimate — one work line per trade package (its base lines plus
+any accepted alternates, **at cost**), an allowance line per allowance, one
+line per non-zero markup (general conditions, insurance, fee, bond), and a
+contingency line when one is set — and defaults the contract
+sum to the estimate's pre-tax bid plus the contingency, so a freshly built
+schedule balances to zero. `GET`/`PUT /api/jobs/{id}/contract` read and set the
+terms, `PUT /api/jobs/{id}/sov` edits the schedule (a line may be negative — a
+deduct alternate nets the sum down), and the Job Profitability report gains the
+contract type and, for cost-plus/GMP, the period fee (`fee_period`, the fee on
+that period's cost — the job-to-date contract fee lives on the contract
+summary). The original contract amount is stamped once and kept while the
+current sum moves. Later issues move the contract with change orders (#554)
+and bill it as owner pay applications with retainage held and released (#555).
+A Business or Nonprofit job is exactly as it was. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Buyout and commitments** (#553, @ContractorKeith). A commitment is a
+purchase order: in construction mode a PO is either a **purchase order** or a
+**subcontract**, its lines are its schedule of values, and it bills in parts.
+The PO form grows a Type select, a Package, a Retainage % and scope notes
+(construction only; a business company's PO is unchanged), and a subcontract
+to a vendor not marked a Sub is allowed with a one-line note that its license
+and insurance aren't tracked. `POST /api/purchase-orders/{id}/convert-to-bill`
+now takes an optional `lines: [{line_id, amount}]` so a commitment bills a
+period at a time: each line tracks billed-to-date, the PO goes **partial**
+while anything remains and **closed** when fully billed. A commitment with a
+**retainage %** holds that percent of each bill's subtotal on **Retainage
+Payable** (2050) instead of A/P, so Pay Bills pays the net; a hand-entered bill
+can hold retainage the same way. Committed cost now means the **remaining**
+(unbilled) open commitment, with **committed total** and **billed to date**
+alongside it in the job overview and cost tree. A new **Buyout** tab on the job
+(and `GET /api/jobs/{id}/buyout`) pairs each trade package's bid against what
+has been bought — variance, committed-remaining, billed-to-date and the
+commitments behind it. Bills and Pay Bills carry each Sub vendor's compliance
+(`vendor_compliance`: W-9 on file, COI expiry); a missing W-9 or COI warns,
+while a Sub whose COI has **expired** is not paid without an override (Pay Bills
+confirms and says why; `coi_override` on `POST /api/bill-payments`, recorded on
+the payment). Pay Bills also offers a per-bill lien-waiver status saved through
+`PUT /api/bills/{id}`, which works on closed-period bills since it posts
+nothing. The To Bill dialog takes a **bill date** (default today; `date` on
+`convert-to-bill`) used for the bill, its journal and the closing-date check,
+editing a converted bill's lines keeps the commitment link and re-tallies
+billed-to-date, and the 2050 retainage line carries the job. Editing a converted bill's lines re-computes its retainage at the commitment's rate (an explicit `retainage_held` still wins), and a fully billed commitment refuses a higher amount with a 409 pointing to a sub change order.
+Sub change orders (#554), progress billing with retainage released (#555) and
+the buyout report / job cost by vendor (#556) build on this. A Business or
+Nonprofit company sees none of it. One behaviour change for everyone: a $0
+(description-only) PO line is no longer copied onto the bill a PO becomes —
+the converted bill carries only the lines with money on them. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
