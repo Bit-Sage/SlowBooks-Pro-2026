@@ -305,7 +305,12 @@ def test_the_repair_is_linear_in_blocking_tables(tmp_path):
 
     from alembic import command
 
-    for n in range(1, len(pending) + 1):
+    # Each round is a full upgrade, and the list of pending tables grows with
+    # every feature (21 by the construction stack), which put the loop past
+    # the Windows runner's timeout. Linear vs 2**N - 1 is told apart at 2 and
+    # 3 already; the last point keeps the full count honest.
+    points = sorted({1, 2, 3, len(pending)})
+    for n in points:
         db = tmp_path / f"linear{n}.db"
         command.upgrade(_cfg(db), "e7f8a9b0c1d2")
         engine = create_engine(f"sqlite:///{db}")
