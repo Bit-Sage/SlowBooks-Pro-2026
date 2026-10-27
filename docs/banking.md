@@ -121,8 +121,12 @@ a bank-feed line has (#491) — so it shows on the vendor's payment history
 (#569) with the bill payments and expenses; an API caller sends `vendor_id`,
 or just the payee, and gets the same. Editing the payee to another vendor's
 name moves the link, and to a name no vendor has drops it; a transfer has no
-vendor. The 1099-NEC still counts bill payments only, as the payment history
-says. A payee typed there, or in + Entry, that is not already a customer's
+vendor. A linked entry counts toward that vendor's 1099-NEC, and the 1099
+Summary, beside its bill payments (QuickBooks counts a register check the
+same way), subject to the same vendor rules — a 1099 vendor of NEC type, the
+$600 threshold, voided entries left out; a refund linked to the vendor nets
+off. A bank-feed line linked to a vendor counts the same. A transfer, and
+text with no vendor, do not. A payee typed there, or in + Entry, that is not already a customer's
 or a vendor's name is offered as one — a customer for money in (a deposit),
 a vendor for money out, matching the categorized import — with Add / Not
 now; the entry posts either way, and Add names the party so the entry's

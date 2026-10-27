@@ -120,3 +120,60 @@ def test_the_page_suggests_vendors_and_sends_the_one_picked():
     # both payee boxes list the vendors, and both posts carry the link
     assert JS.count('list="') >= 2 and "_vendorDatalist(" in JS
     assert JS.count("vendor_id:") >= 2 or "_payeeVendorId(" in JS
+
+
+def _nec(client, vendor_id, year=2026):
+    rows = client.get(f"/api/tax-forms/1099?year={year}")
+    assert rows.status_code == 200, rows.text
+    return next(
+        (v for v in rows.json()["vendors"] if v["vendor_id"] == vendor_id), None
+    )
+
+
+def _summary(client, vendor_id):
+    r = client.get("/api/reports/1099-summary?year=2026").json()
+    return next(i for i in r["items"] if i["vendor_id"] == vendor_id)
+
+
+def test_a_linked_register_entry_counts_toward_the_1099(client, seed_accounts):
+    v = client.post(
+        "/api/vendors", json={"name": "Sub Co", "is_1099_vendor": True}
+    ).json()
+    _post(client, seed_accounts, payee="Sub Co", amount="-500.00")
+    assert _nec(client, v["id"])["total_paid"] == 500.00
+    assert not _nec(client, v["id"])["reportable"]
+    _post(client, seed_accounts, payee="x", vendor_id=v["id"], amount="-150.00")
+    nec = _nec(client, v["id"])
+    assert nec["total_paid"] == 650.00 and nec["reportable"]
+    assert _summary(client, v["id"])["total_paid"] == 650.0
+    # a refund linked to the vendor nets off; a voided entry is left out
+    _post(client, seed_accounts, payee="Sub Co", amount="25.00")
+    assert _nec(client, v["id"])["total_paid"] == 625.00
+    last = _post(client, seed_accounts, payee="Sub Co", amount="-100.00")
+    assert client.post(f"/api/banking/entries/{last['id']}/void").status_code in (
+        200,
+        201,
+    )
+    assert _nec(client, v["id"])["total_paid"] == 625.00
+
+
+def test_an_unlinked_payee_and_a_transfer_do_not_count(client, seed_accounts):
+    v = client.post(
+        "/api/vendors", json={"name": "Sub Co", "is_1099_vendor": True}
+    ).json()
+    _post(client, seed_accounts, payee="Sub Co Inc", amount="-900.00")  # text only
+    _post(
+        client,
+        seed_accounts,
+        payee="Sub Co",
+        amount="-900.00",
+        category_account_id=seed_accounts["1010"].id,
+    )  # a transfer
+    assert _nec(client, v["id"])["total_paid"] == 0.00
+    assert _summary(client, v["id"])["total_paid"] == 0
+
+
+def test_a_linked_entry_to_a_vendor_off_1099_is_not_on_the_form(client, seed_accounts):
+    v = client.post("/api/vendors", json={"name": "Lumber Yard"}).json()
+    _post(client, seed_accounts, payee="Lumber Yard", amount="-900.00")
+    assert _nec(client, v["id"]) is None

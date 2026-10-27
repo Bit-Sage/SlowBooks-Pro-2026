@@ -387,7 +387,7 @@ def report_1099_summary(
 
     from app.models.bills import BillPayment, BillPaymentAllocation
 
-    from app.services.form_1099 import is_1099_vendor
+    from app.services.form_1099 import is_1099_vendor, register_payment_totals
 
     # The same rule as the 1099-NEC / 1096, so a vendor on this summary is
     # on those forms too (NEC type).
@@ -413,6 +413,10 @@ def report_1099_summary(
         .group_by(BillPayment.vendor_id)
         .all()
     )
+    # plus the register entries that name the vendor (#590): the same source
+    # the 1099-NEC adds beside bill payments
+    for vid, paid in register_payment_totals(db, year).items():
+        totals_by_vendor[vid] = Decimal(str(totals_by_vendor.get(vid, 0))) + paid
 
     items = []
     total = Decimal(0)

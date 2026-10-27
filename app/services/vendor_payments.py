@@ -7,9 +7,11 @@
 #   - direct expenses (a Transaction of source_type "expense" whose
 #     source_id is the vendor), voided by an "expense_void" reversal
 #   - bank-feed entries that name the vendor (#491, Transaction.vendor_id)
-# The 1099-NEC counts bill payments only; the history lists all three and
-# subtotals them by kind, so the bill-payment subtotal for a year is the
-# vendor's 1099 figure and the rest is visible beside it, not hidden in it.
+# The 1099-NEC counts bill payments and register entries (#590; form_1099's
+# paid_bill_payments and register_entries); direct expenses are left out. The
+# history lists all three kinds and subtotals them, so for a 1099 vendor over
+# a year the bill-payment and bank-entry subtotals add up to the 1099 figure
+# and the expenses sit beside it, not hidden in it.
 # ============================================================================
 
 from datetime import date
@@ -21,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.models.bills import BillPayment
 from app.models.transactions import Transaction
 from app.services.bank_register import source_link, voided_transaction_ids
-from app.services.form_1099 import paid_bill_payments
+from app.services.form_1099 import paid_bill_payments, register_entries
 
 KINDS = ("bill_payment", "expense", "bank_entry")
 
@@ -104,20 +106,9 @@ def bank_entries_for(
     """The register entries that name this vendor (#491) — lines added
     from a bank feed — oldest first. `amount` is what was paid: money out
     of the bank or onto the card is positive, a refund back negative."""
-    q = db.query(Transaction).filter(
-        Transaction.vendor_id == vendor_id, Transaction.source_type == "bank_entry"
-    )
-    if start_date:
-        q = q.filter(Transaction.date >= start_date)
-    if end_date:
-        q = q.filter(Transaction.date <= end_date)
-    txns = q.order_by(Transaction.date, Transaction.id).all()
-    voided = voided_transaction_ids(db, [t.id for t in txns])
     out = []
-    for t in txns:
-        bank = next((ln for ln in t.lines if ln.account and ln.account.bank_kind), None)
-        if bank is None:
-            continue
+    for t, paid, voided in register_entries(db, start_date, end_date, vendor_id):
+        bank = next(ln for ln in t.lines if ln.account and ln.account.bank_kind)
         memo = next((ln.description for ln in t.lines if ln.description), "") or ""
         out.append(
             {
@@ -127,10 +118,8 @@ def bank_entries_for(
                 "memo": memo,
                 "account_id": bank.account_id,
                 "account_name": bank.account.name,
-                "amount": str(
-                    Decimal(str(bank.credit or 0)) - Decimal(str(bank.debit or 0))
-                ),
-                "is_voided": t.id in voided,
+                "amount": str(paid),
+                "is_voided": voided,
                 "link": source_link(t),
             }
         )
@@ -164,7 +153,8 @@ def vendor_payment_history(
     """Every payment to the vendor in the range, oldest first, each row with
     the running total so far; voided rows are listed, marked, and left out
     of the totals. `totals` is by kind — the bill-payment figure summed by
-    the 1099 query itself, so it is the vendor's 1099 total for a year —
+    the 1099 query itself, and the bank-entry figure from the 1099's own
+    register source, so the two together are the vendor's 1099 total for a year —
     and `total` the sum of the three."""
     rows = (
         _bill_payment_rows(db, vendor_id, start, end)
