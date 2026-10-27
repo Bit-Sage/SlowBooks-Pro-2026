@@ -537,14 +537,11 @@ retainage outstanding, cost to complete and projected gross profit — on the
 earned) is a liability and under billing (earned − billed) an asset. Every figure
 reads **as of the date** — cost and posted revenue to that day, billing and
 retainage from the applications approved by then, the revised contract with the
-change orders approved by then — and cost to complete is floored at zero so the
-projected gross profit falls below the estimated one on an overrun. Billing reads
+change orders approved by then. Billing reads
 from the approved pay applications' completed-to-date when the job has one by the
 date, else the posted revenue carrying the job (`billed_basis` says which). The
-report **posts nothing** — the over/under figure is the accountant's adjusting
-entry between Billings in Excess of Costs and Estimated Earnings / Costs and
-Estimated Earnings in Excess of Billings and the earned-revenue and cost
-accounts, which the report names but never writes. **Cost to Complete**
+report **posts nothing** (see the WIP additions below for the adjusting entry
+it computes). **Cost to Complete**
 (`/reports/cost-to-complete`) is per job and cost code (division › section) —
 budget, committed, actual, cost to complete (remaining budget plus open
 commitments), projected final, variance and percent — a tree in JSON, flattened
@@ -560,8 +557,23 @@ date, retainage held outstanding and open A/P; cost is period-filtered, the bill
 figures job-to-date and prorated by the job's share of each bill's line amounts
 (a split bill splits). Job Profitability and Job Budget vs Actual gained the PDF
 and CSV routes they lacked (honouring `customer_id` / `include_inactive`). A
-Business or Nonprofit company sees none of the five. See
+Business or Nonprofit company sees none of these reports. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Job reports, WIP additions** (#556). The WIP schedule now shows
+the **adjusting entry with amounts**, per job and net: under-billings (asset),
+over-billings (liability), the revenue offset and any loss provision, balanced,
+in the JSON, a second PDF grid, a CSV block and on screen (computed, never
+posted). A **cost-to-complete forecast** per job, section and cost type
+(`job_cost_to_complete`, migration `b4d6f8a0c2e3`; `GET`/`PUT
+/api/jobs/{id}/cost-to-complete-forecast`; report `cost-to-complete-forecast`
+with PDF and CSV) defaults to budget − actual floored at zero, and the WIP
+schedule's estimated cost is now actual + cost to complete, so a job past budget
+with work left reads under 100% instead of 100%. A **projected loss** is booked in
+full when projected cost passes the contract: the provision is loss × (1 −
+percent complete), added to the entry. A **commitment status** report
+(`commitment-status`, PDF and CSV) lists each PO and subcontract with committed,
+billed, retainage held and remaining, totals per job.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 

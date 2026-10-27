@@ -581,6 +581,8 @@ _REPORTS = {
     "change-order-log": "Number",
     "buyout": "Package",
     "job-cost-by-vendor": "Vendor",
+    "cost-to-complete-forecast": "Section",
+    "commitment-status": "Commitment",
 }
 
 
@@ -669,8 +671,9 @@ console.log(JSON.stringify({con:run(true), biz:run(false)}));
         "buyout",
         "job-cost-by-vendor",
     ]
-    assert all(v in res["con"]["views"] for v in five)
-    assert all(v not in res["biz"]["views"] for v in five)
+    added = ["cost-to-complete-forecast", "commitment-status"]
+    assert all(v in res["con"]["views"] for v in five + added)
+    assert all(v not in res["biz"]["views"] for v in five + added)
     # the Construction group leads: three existing, then the five new
     assert (
         res["con"]["views"][:8]
@@ -774,7 +777,10 @@ def test_wip_as_of_before_billing_reads_zero(db_session, seed_accounts):
     assert today["billed_basis"] == "pay_applications"
 
 
-def test_wip_overrun_projected_gp_diverges(db_session, seed_accounts):
+def test_wip_overrun_with_no_forecast_estimates_actual(db_session, seed_accounts):
+    """Past budget with nothing left to do (the default cost to complete is
+    floored at 0) the estimate is the actual cost, so estimated and projected
+    gross profit agree and the job reads 100%."""
     customer = _customer(db_session)
     ensure_default_cost_types(db_session)
     job = Job(
@@ -800,9 +806,10 @@ def test_wip_overrun_projected_gp_diverges(db_session, seed_accounts):
     r = job_reports.wip_schedule(db_session, as_of=date(2026, 6, 1))["rows"][0]
     assert r["percent_complete"] == 100.0
     assert r["cost_to_complete"] == 0.0  # floored
-    assert r["estimated_gross_profit"] == 50000.0  # revised 100k − estimate 50k
-    assert r["projected_gross_profit"] == 40000.0  # revised 100k − cost 60k
-    assert r["projected_gross_profit"] != r["estimated_gross_profit"]
+    assert r["estimated_total_cost"] == 60000.0  # actual + 0
+    assert r["estimated_gross_profit"] == 40000.0
+    assert r["projected_gross_profit"] == 40000.0
+    assert r["projected_loss"] == 0.0
 
 
 def test_wip_zero_budget_row(db_session, seed_accounts):
@@ -1045,3 +1052,406 @@ def test_job_cost_by_vendor_reversed_dates_refused(client, db_session, seed_acco
             f"/api/reports/job-cost-by-vendor{ext}?start_date=2026-12-31&end_date=2026-01-01"
         )
         assert r.status_code == 400, (ext, r.text)
+
+
+# ── WIP review round: forecast, projected loss, adjusting entry, commitments ──
+
+
+def _contract_job(db, customer, name, contract, budget=None, cost=None, when=None):
+    """A lump-sum job with a whole-type material budget and posted cost, no
+    pay applications (billing falls back to posted revenue, here 0)."""
+    ensure_default_cost_types(db)
+    job = Job(
+        customer_id=customer.id,
+        name=name,
+        status="in_progress",
+        contract_type="lump_sum",
+        contract_amount=Decimal(str(contract)),
+        original_contract_amount=Decimal(str(contract)),
+    )
+    db.add(job)
+    db.flush()
+    if budget is not None:
+        db.add(
+            JobBudget(
+                job_id=job.id,
+                cost_type="material",
+                amount=Decimal(str(budget)),
+                source="manual",
+            )
+        )
+    if cost is not None:
+        _post_cost(db, job.id, _cogs(db), str(cost), when or date(2026, 3, 1))
+    db.commit()
+    return job
+
+
+def _wip(db):
+    return job_reports.wip_schedule(db, as_of=date(2026, 6, 1))
+
+
+def test_over_budget_job_with_cost_to_complete_is_not_100_percent(
+    db_session, seed_accounts
+):
+    """Budget 50k, actual 60k: by default nothing is left (100%). Entering 20k
+    still to spend makes the estimate 80k and the job 75% complete."""
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Past budget", 100000, 50000, 60000)
+    assert _wip(db_session)["rows"][0]["percent_complete"] == 100.0
+
+    job_reports.set_ctc_entries(
+        db_session, job, [{"cost_code_id": None, "cost_type": "", "amount": 20000}]
+    )
+    r = _wip(db_session)["rows"][0]
+    assert r["cost_to_complete"] == 20000.0
+    assert r["estimated_total_cost"] == 80000.0
+    assert r["percent_complete"] == 75.0
+    assert r["earned_revenue"] == 75000.0
+    assert r["percent_complete"] < 100.0
+
+
+def test_forecast_defaults_to_budget_less_actual_floored_per_cell(
+    db_session, seed_accounts
+):
+    customer = _customer(db_session)
+    ensure_default_cost_types(db_session)
+    job = Job(customer_id=customer.id, name="Cells", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    div = _division(db_session, "03", "Concrete")
+    sec_a = _section(db_session, "03 30 00", "Slab", div)
+    sec_b = _section(db_session, "03 40 00", "Precast", div)
+    sub = CostCode(
+        code="03 30 00.10",
+        name="Slab edge",
+        cost_type="material",
+        parent_id=sec_a.id,
+    )
+    db_session.add(sub)
+    db_session.flush()
+    for code, amt in ((sec_a, "10000"), (sec_b, "10000")):
+        db_session.add(
+            JobBudget(
+                job_id=job.id,
+                cost_code_id=code.id,
+                cost_type="material",
+                amount=Decimal(amt),
+                source="manual",
+            )
+        )
+    # section A is over (12k on a sub-code that rolls up to it), B has 2k spent
+    _post_cost(db_session, job.id, _cogs(db_session), "12000", date(2026, 3, 1), sub.id)
+    _post_cost(
+        db_session, job.id, _cogs(db_session), "2000", date(2026, 3, 1), sec_b.id
+    )
+    db_session.commit()
+
+    f = job_reports.ctc_forecast(db_session, job, date(2026, 6, 1))
+    rows = {r["cost_code_id"]: r for r in f["rows"]}
+    assert len(rows) == 2  # the sub-code rolls into its section
+    assert rows[sec_a.id]["actual"] == 12000.0
+    assert rows[sec_a.id]["default_cost_to_complete"] == 0.0  # floored, not -2,000
+    assert rows[sec_b.id]["default_cost_to_complete"] == 8000.0
+    assert rows[sec_b.id]["entered"] is None
+    # the total is the sum of the floored cells, not budget − actual
+    assert f["totals"]["cost_to_complete"] == 8000.0
+    assert f["totals"]["projected_final"] == 22000.0
+
+    # an entry replaces the default for its cell, and clearing restores it
+    job_reports.set_ctc_entries(
+        db_session,
+        job,
+        [{"cost_code_id": sec_a.id, "cost_type": "material", "amount": 1500}],
+    )
+    f = job_reports.ctc_forecast(db_session, job, date(2026, 6, 1))
+    a = {r["cost_code_id"]: r for r in f["rows"]}[sec_a.id]
+    assert a["entered"] == 1500.0 and a["cost_to_complete"] == 1500.0
+    assert f["totals"]["cost_to_complete"] == 9500.0
+    job_reports.set_ctc_entries(
+        db_session,
+        job,
+        [{"cost_code_id": sec_a.id, "cost_type": "material", "amount": None}],
+    )
+    f = job_reports.ctc_forecast(db_session, job, date(2026, 6, 1))
+    assert f["totals"]["cost_to_complete"] == 8000.0
+
+
+def test_forecast_entry_is_persisted_and_upserted(db_session, seed_accounts):
+    from app.models.job_costing import JobCostToComplete
+
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Upsert", 10000, 5000, 1000)
+    cell = [{"cost_code_id": None, "cost_type": "", "amount": 3000}]
+    job_reports.set_ctc_entries(db_session, job, cell)
+    job_reports.set_ctc_entries(db_session, job, [{**cell[0], "amount": 3500}])
+    rows = db_session.query(JobCostToComplete).filter_by(job_id=job.id).all()
+    assert len(rows) == 1 and rows[0].amount == Decimal("3500.00")
+
+
+def test_forecast_routes_save_and_validate(client, db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Routes", 100000, 50000, 20000)
+    div = _division(db_session, "05", "Metals")
+    sec = _section(db_session, "05 12 00", "Steel", div)
+    db_session.commit()
+    url = f"/api/jobs/{job.id}/cost-to-complete-forecast"
+
+    got = client.get(url)
+    assert got.status_code == 200
+    assert got.json()["totals"]["cost_to_complete"] == 30000.0  # 50k − 20k
+
+    ok = client.put(
+        url,
+        json={"entries": [{"cost_code_id": None, "cost_type": "", "amount": "45000"}]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["totals"]["cost_to_complete"] == 45000.0
+    assert client.get(url).json()["rows"][0]["entered"] == 45000.0
+
+    bad = [
+        {"cost_code_id": None, "cost_type": "", "amount": "-1"},  # negative
+        {"cost_code_id": sec.id, "cost_type": "nope", "amount": "1"},  # unknown type
+        {"cost_code_id": div.id + 999, "cost_type": "material", "amount": "1"},
+        {"cost_code_id": None, "cost_type": "material", "amount": "1"},
+    ]
+    for entry in bad:
+        r = client.put(url, json={"entries": [entry]})
+        assert r.status_code == 422, (entry, r.text)
+    # a code under a section is refused: enter it on the section
+    sub = CostCode(
+        code="05 12 00.1", name="Beams", cost_type="material", parent_id=sec.id
+    )
+    db_session.add(sub)
+    db_session.commit()
+    r = client.put(
+        url,
+        json={
+            "entries": [
+                {"cost_code_id": sub.id, "cost_type": "material", "amount": "1"}
+            ]
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_projected_loss_is_recognised_in_full(db_session, seed_accounts):
+    """Contract 100k; 60k spent and 60k still to spend: projected cost 120k, a
+    20k loss. At 50% complete 10k of it is already in earned revenue (50k earned
+    on 60k cost), so the provision books the other 10k and the whole 20k is
+    recognised now."""
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Loser", 100000, 90000, 60000)
+    job_reports.set_ctc_entries(
+        db_session, job, [{"cost_code_id": None, "cost_type": "", "amount": 60000}]
+    )
+    r = _wip(db_session)["rows"][0]
+    assert r["estimated_total_cost"] == 120000.0
+    assert r["percent_complete"] == 50.0
+    assert r["earned_revenue"] == 50000.0
+    assert r["projected_loss"] == 20000.0
+    assert r["loss_provision"] == 10000.0
+    gp_to_date = r["earned_revenue"] - r["cost_to_date"]  # -10,000 already
+    assert gp_to_date - r["loss_provision"] == -r["projected_loss"]
+    # and it is in the entry
+    entry = _wip(db_session)["adjusting_entry"]
+    accounts = {ln["account"]: ln for ln in entry["lines"]}
+    assert accounts[job_reports.WIP_LOSS_EXPENSE_ACCOUNT]["debit"] == 10000.0
+    assert accounts[job_reports.WIP_LOSS_ACCOUNT]["credit"] == 10000.0
+
+
+def test_no_loss_when_projected_cost_is_under_the_contract(db_session, seed_accounts):
+    customer = _customer(db_session)
+    _contract_job(db_session, customer, "Fine", 100000, 80000, 40000)
+    r = _wip(db_session)["rows"][0]
+    assert r["projected_loss"] == 0.0 and r["loss_provision"] == 0.0
+
+
+def test_adjusting_entry_per_job_and_net(db_session, seed_accounts):
+    customer = _customer(db_session)
+    _wip_job(db_session, customer)  # over-billed 5,000
+    _contract_job(db_session, customer, "Under", 100000, 50000, 25000)  # under 50,000
+    entry = _wip(db_session)["adjusting_entry"]
+    assert entry["posted"] is False
+
+    jobs = {j["job_name"]: j for j in entry["jobs"]}
+    assert jobs["Tower"]["over_billing"] == 5000.0
+    assert jobs["Tower"]["under_billing"] == 0.0
+    assert jobs["Tower"]["net_under_over"] == -5000.0
+    assert jobs["Under"]["under_billing"] == 50000.0
+    # a job's own lines balance
+    for j in jobs.values():
+        assert sum(ln["debit"] for ln in j["lines"]) == sum(
+            ln["credit"] for ln in j["lines"]
+        )
+    tower = {ln["account"]: ln for ln in jobs["Tower"]["lines"]}
+    assert tower[job_reports.WIP_REVENUE_ACCOUNT]["debit"] == 5000.0
+    assert tower[job_reports.WIP_OVERBILLING_ACCOUNT]["credit"] == 5000.0
+
+    t = entry["totals"]
+    assert t["under_billing"] == 50000.0 and t["over_billing"] == 5000.0
+    assert t["net_under_over"] == 45000.0
+    net = {ln["account"]: ln for ln in entry["lines"]}
+    assert net[job_reports.WIP_UNDERBILLING_ACCOUNT]["debit"] == 50000.0
+    assert net[job_reports.WIP_OVERBILLING_ACCOUNT]["credit"] == 5000.0
+    assert net[job_reports.WIP_REVENUE_ACCOUNT]["credit"] == 45000.0
+    assert entry["total_debits"] == entry["total_credits"] == 50000.0
+
+
+def test_adjusting_entry_empty_when_nothing_to_adjust(db_session, seed_accounts):
+    customer = _customer(db_session)
+    _contract_job(db_session, customer, "Quiet", 100000, 50000)  # no cost, no billing
+    entry = _wip(db_session)["adjusting_entry"]
+    assert entry["jobs"] == [] and entry["lines"] == []
+    assert entry["total_debits"] == entry["total_credits"] == 0.0
+
+
+def test_wip_csv_carries_the_adjusting_entry(client, db_session, seed_accounts):
+    customer = _customer(db_session)
+    _wip_job(db_session, customer)
+    csv = client.get("/api/reports/wip-schedule/csv?as_of=2026-06-01").text
+    assert "WIP Adjusting Entry" in csv
+    assert job_reports.WIP_OVERBILLING_ACCOUNT in csv
+    assert "Net entry" in csv
+
+
+def test_wip_pdf_sections_include_the_adjusting_entry(db_session, seed_accounts):
+    """The PDF stage is checked on the section builders, which run without
+    WeasyPrint's native stack."""
+    from app.routes.reports import construction
+
+    customer = _customer(db_session)
+    _wip_job(db_session, customer)
+    data = _wip(db_session)
+    sections = construction._wip_sections(data) + construction._wip_entry_sections(data)
+    assert [s["title"] for s in sections] == ["WIP Schedule", "WIP Adjusting Entry"]
+    entry = sections[1]
+    assert entry["columns"] == ["Job", "Account", "Debit", "Credit"]
+    texts = [c for r in entry["rows"] for c in r["cells"]]
+    assert job_reports.WIP_OVERBILLING_ACCOUNT in texts and "Net entry" in texts
+
+
+def _commitment(db, job, vendor, number, subtotal, status=POStatus.SENT, when=None):
+    po = PurchaseOrder(
+        po_number=number,
+        vendor_id=vendor.id,
+        status=status,
+        date=when or date(2026, 2, 1),
+        job_id=job.id,
+        subtotal=Decimal(str(subtotal)),
+        commitment_type="subcontract",
+    )
+    db.add(po)
+    db.flush()
+    return po
+
+
+def _po_bill(db, po, number, subtotal, held="0", released="0", when=None):
+    db.add(
+        Bill(
+            bill_number=number,
+            vendor_id=po.vendor_id,
+            status=BillStatus.UNPAID,
+            po_id=po.id,
+            date=when or date(2026, 3, 1),
+            job_id=po.job_id,
+            subtotal=Decimal(str(subtotal)),
+            total=Decimal(str(subtotal)),
+            balance_due=Decimal(str(subtotal)),
+            retainage_held=Decimal(held),
+            retainage_released=Decimal(released),
+        )
+    )
+    db.flush()
+
+
+def test_commitment_status_per_commitment_and_totals(db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Subs", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v1, v2 = Vendor(name="Framer"), Vendor(name="Roofer")
+    db_session.add_all([v1, v2])
+    db_session.flush()
+    sub = _commitment(db_session, job, v1, "SC-1", 10000)
+    _po_bill(db_session, sub, "F-1", 4000, held="400")
+    _po_bill(db_session, sub, "F-2", 2000, held="200", when=date(2026, 5, 1))
+    # a retainage release pays money already billed: not new billing
+    _po_bill(db_session, sub, "RET-SC-1", 300, released="300", when=date(2026, 5, 15))
+    closed = _commitment(db_session, job, v2, "SC-2", 5000, status=POStatus.CLOSED)
+    _po_bill(db_session, closed, "R-1", 5000, held="500")
+    _commitment(db_session, job, v2, "SC-3", 9999, status=POStatus.DRAFT)
+    db_session.commit()
+
+    data = job_reports.commitment_status(db_session, as_of=date(2026, 6, 1))
+    rows = {r["number"]: r for r in data["jobs"][0]["rows"]}
+    assert set(rows) == {"SC-1", "SC-2"}  # the draft is not a commitment yet
+    sc1 = rows["SC-1"]
+    assert sc1["committed"] == 10000.0
+    assert sc1["billed"] == 6000.0
+    assert sc1["retainage_held"] == 300.0  # 600 held − 300 released
+    assert sc1["remaining"] == 4000.0
+    assert rows["SC-2"]["remaining"] == 0.0  # closed
+    assert rows["SC-2"]["retainage_held"] == 500.0
+    t = data["jobs"][0]["totals"]
+    assert t == {
+        "committed": 15000.0,
+        "billed": 11000.0,
+        "retainage_held": 800.0,
+        "remaining": 4000.0,
+    }
+    assert data["totals"] == t
+
+
+def test_commitment_status_as_of_dates_bills_and_commitments(db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Dated", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="Late Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-9", 8000, when=date(2026, 2, 1))
+    _po_bill(db_session, po, "L-1", 3000, held="300", when=date(2026, 4, 1))
+    _commitment(db_session, job, v, "SC-10", 1000, when=date(2026, 7, 1))
+    db_session.commit()
+
+    early = job_reports.commitment_status(db_session, as_of=date(2026, 3, 1))
+    rows = early["jobs"][0]["rows"]
+    assert [r["number"] for r in rows] == ["SC-9"]  # SC-10 is dated later
+    assert rows[0]["billed"] == 0.0 and rows[0]["remaining"] == 8000.0
+    late = job_reports.commitment_status(db_session, as_of=date(2026, 6, 1))
+    assert late["jobs"][0]["rows"][0]["billed"] == 3000.0
+
+
+def test_commitment_status_and_forecast_exports(client, db_session, seed_accounts):
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Export", 100000, 50000, 10000)
+    v = Vendor(name="Exp Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-X", 7000)
+    _po_bill(db_session, po, "X-1", 2000, held="200")
+    db_session.commit()
+
+    cs = client.get("/api/reports/commitment-status/csv?as_of=2026-06-01").text
+    assert "Retainage held" in cs and "SC-X" in cs and "Total Export" in cs
+    fc = client.get("/api/reports/cost-to-complete-forecast/csv?as_of=2026-06-01").text
+    assert "Cost to complete" in fc and "Total Export" in fc
+
+    from app.routes.reports import construction
+
+    for data, title in (
+        (
+            job_reports.commitment_status(db_session, as_of=date(2026, 6, 1)),
+            "Commitment Status",
+        ),
+        (
+            job_reports.ctc_forecast_report(db_session, as_of=date(2026, 6, 1)),
+            "Cost-to-Complete Forecast",
+        ),
+    ):
+        section = construction._per_job_grid_sections(data, title, "x")[0]
+        assert (
+            section["title"] == title
+            and section["rows"][-1]["cells"][0] == "Grand total"
+        )

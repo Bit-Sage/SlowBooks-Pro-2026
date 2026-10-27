@@ -22,7 +22,11 @@ from app.models.cost_codes import CostCode
 from app.models.trade_packages import TradePackage
 from app.models.jobs import Job, SovLine
 from app.models.transactions import Transaction, TransactionLine
-from app.schemas.job_costing import JobBudgetResponse, JobBudgetSave
+from app.schemas.job_costing import (
+    CostToCompleteSave,
+    JobBudgetResponse,
+    JobBudgetSave,
+)
 from app.schemas.jobs import (
     ContractResponse,
     ContractSummary,
@@ -680,6 +684,29 @@ def _save_sov_with_billings(db: Session, job: Job, lines, kept, billed) -> None:
     for co_line in kept:
         n += 1
         co_line.line_no = n
+
+
+@router.get("/{job_id}/cost-to-complete-forecast")
+def get_cost_to_complete_forecast(
+    job_id: int, as_of: date = Query(default=None), db: Session = Depends(get_db)
+):
+    """The job's cost-to-complete forecast (#556): per section and cost type,
+    the budget, actual, default (budget − actual, floored at zero), entered
+    amount and the cost to complete the WIP schedule uses."""
+    from app.services.job_reports import ctc_forecast
+
+    return ctc_forecast(db, _get(db, job_id), as_of or date.today())
+
+
+@router.put("/{job_id}/cost-to-complete-forecast")
+def save_cost_to_complete_forecast(
+    job_id: int, data: CostToCompleteSave, db: Session = Depends(get_db)
+):
+    """Save entered cost-to-complete amounts; an amount of null puts that cell
+    back to its default. Returns the refreshed forecast."""
+    from app.services.job_reports import set_ctc_entries
+
+    return set_ctc_entries(db, _get(db, job_id), [e.model_dump() for e in data.entries])
 
 
 @router.get("/{job_id}/buyout")

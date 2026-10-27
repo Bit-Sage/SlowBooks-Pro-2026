@@ -635,7 +635,7 @@ change orders and the pay applications above.
 
 ## Job reports
 
-Five reports sit on the Report Center for a construction company (they lead the
+Seven reports sit on the Report Center for a construction company (they lead the
 grid; a Business or Nonprofit company never sees them), each a plain grid with a
 JSON route, a PDF and a CSV like P&L by Job. Each takes an `as_of` date (or
 `start_date`/`end_date` where a period applies) and optional `job_id`,
@@ -646,23 +646,62 @@ jobs are left out.
 with a contract — contract sum, approved change orders, revised contract,
 estimated total cost and gross profit, cost to date, percent complete, earned
 revenue, billed to date, over and under billing, retainage outstanding, cost to
-complete and projected gross profit; a job with no contract terms is listed with
-blanks. It is **cost-to-cost**: percent complete is cost to date ÷ estimated
-total cost (capped at 100%), earned revenue is the revised contract times that
-percent, and **over billing** (billed − earned, a liability — billings in excess
-of costs and estimated earnings) or **under billing** (earned − billed, an asset
-— costs and estimated earnings in excess of billings) is the difference. Every
-figure reads **as of the date**: cost to date and posted revenue to that day,
-billing and retainage from the applications approved by then, and the revised
-contract with the change orders approved by then (so the schedule reproduces the
-books on an earlier close). Billed to date is the sum of the approved pay
-applications' completed-to-date when the job has one by the date (else the posted
-revenue carrying the job — the `billed_basis` column says which). Cost to complete
-is floored at zero, so an overrun's projected final cost is max(cost, estimate)
-and the projected gross profit falls below the estimated one. **The report posts
-nothing**: the over/under figure is the adjusting entry an accountant would post
-between the two WIP accounts named above and the earned-revenue and cost
-accounts; the schedule names the accounts but never writes the journal.
+complete, projected gross profit, projected loss and loss provision; a job with
+no contract terms is listed with blanks. It is **cost-to-cost**: percent complete
+is cost to date ÷ estimated total cost (capped at 100%), earned revenue is the
+revised contract times that percent, and **over billing** (billed − earned, a
+liability — billings in excess of costs and estimated earnings) or **under
+billing** (earned − billed, an asset — costs and estimated earnings in excess of
+billings) is the difference. The **estimated total cost is actual cost plus the
+cost-to-complete forecast** (below), so a job past its budget with work still to
+do reads under 100%; with no forecast entered the default is budget − actual per
+cell, floored at zero, and a job with no budget at all has nothing to measure
+against and stays at 0%. Every figure reads **as of the date**: cost to date and
+posted revenue to that day, billing and retainage from the applications approved
+by then, and the revised contract with the change orders approved by then (so the
+schedule reproduces the books on an earlier close). Billed to date is the sum of
+the approved pay applications' completed-to-date when the job has one by the date
+(else the posted revenue carrying the job — the `billed_basis` column says which).
+
+**Projected loss.** When actual + cost to complete is over the revised contract,
+the whole loss is recognised now, the usual treatment of a loss contract. Earned
+revenue at the percent complete already carries percent × loss, so the **loss
+provision** is the rest: loss × (1 − percent). Example: contract 100,000, cost to
+date 60,000, 60,000 still to spend — projected cost 120,000, loss 20,000, 50%
+complete, 50,000 earned (so 10,000 of the loss is already in), provision 10,000.
+
+**The adjusting entry** (`adjusting_entry` in the JSON, a second grid in the PDF,
+a block under the grid in the CSV and a table on screen). Per job and net, with
+amounts:
+
+| line | debit | credit |
+|---|---|---|
+| Costs and Estimated Earnings in Excess of Billings (under-billing, asset) | under | |
+| Billings in Excess of Costs and Estimated Earnings (over-billing, liability) | | over |
+| Contract Revenue (WIP adjustment) | over − under when over is larger | under − over when under is larger |
+| Loss on Uncompleted Contracts (expense) | provision | |
+| Provision for Loss on Uncompleted Contracts (liability) | | provision |
+
+The entry balances. These are the balances to carry **as of the date**; if an
+earlier WIP entry was posted, reverse it first or post only the difference. **The
+report posts nothing** — there is no post button; the entry is for the accountant
+to journal.
+
+**Cost-to-complete forecast** (`cost-to-complete-forecast`). A per-job table of
+section × cost type: budget, actual (to the date), the default cost to complete
+(budget − actual, floored at zero), the amount you entered, the cost to complete
+that counts, and the projected final. A sub-code rolls up to its section; budget
+and cost with no code share one Unassigned cell. Type an amount in the Report
+Center table (or `PUT /api/jobs/{id}/cost-to-complete-forecast` with
+`{"entries": [{"cost_code_id", "cost_type", "amount"}]}`; `null` clears a cell
+back to its default). Entries are stored in `job_cost_to_complete` and are
+job-to-date, not dated. PDF and CSV like the other reports.
+
+**Commitment status** (`commitment-status`). Each commitment (PO or subcontract,
+not a draft, dated by `as_of`) per job: committed (pre-tax value), billed to date
+(bills dated by then; a retainage-release bill pays money already billed and is
+not counted), retainage held (held less released) and remaining (committed less
+billed, open commitments only), with totals per job and grand. PDF and CSV.
 
 **Cost to complete** (`cost-to-complete`). Per job, per cost code (division ›
 section), with budget revised, committed (remaining), actual, cost to complete
@@ -730,9 +769,10 @@ W-9 on file is a fact you record, not a default, so it stays No.
 
 The Report Center leads with a **Construction** group: the three reports that
 always existed — **Job Profitability**, **Job Budget vs Actual** and **P&L by
-Job** — then the five added in #556: **WIP Schedule**, **Cost to Complete**,
-**Change Order Log**, **Buyout Report** and **Job Cost by Vendor** (see *Job
-reports* above). The five show in construction mode only. Every other report
+Job** — then the seven added in #556: **WIP Schedule**, **Cost to Complete**,
+**Change Order Log**, **Buyout Report**, **Job Cost by Vendor**,
+**Cost-to-Complete Forecast** and **Commitment Status** (see *Job reports*
+above). The seven show in construction mode only. Every other report
 stays where it is.
 
 ## What this mode does not do yet

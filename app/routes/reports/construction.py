@@ -29,7 +29,9 @@ from app.services.fiscal_year import fiscal_year_start
 from app.services.job_reports import (
     buyout_report,
     change_order_log,
+    commitment_status,
     cost_to_complete,
+    ctc_forecast_report,
     job_cost_by_vendor,
     wip_schedule,
 )
@@ -101,9 +103,10 @@ def wip_schedule_route(
     include_closed: _CLOSED_Q = False,
 ):
     """The work-in-progress schedule (cost-to-cost): one row per job with a
-    contract, over and under billing, retainage and cost to complete. It posts
-    nothing — the over/under figure is the accountant's adjusting entry between
-    the two WIP accounts named in `adjustment_accounts`."""
+    contract, over and under billing, retainage, cost to complete (from the
+    cost-to-complete forecast) and any projected loss. `adjusting_entry` is the
+    entry with amounts, per job and net, between the WIP accounts named in
+    `adjustment_accounts`. It posts nothing."""
     return wip_schedule(db, as_of, job_id, customer_id, status, include_closed)
 
 
@@ -134,7 +137,96 @@ def _wip_sections(data: dict) -> list[dict]:
     ]
 
 
-def _grid_csv(data: dict, company: str, report: str, period: str) -> str:
+_ENTRY_COLUMNS = ["Job", "Account", "Debit", "Credit"]
+
+
+def _wip_entry_sections(data: dict) -> list[dict]:
+    """The adjusting entry as a second printed grid: each job's lines, then the
+    net entry to post."""
+    entry = data["adjusting_entry"]
+    rows = []
+    for job in entry["jobs"]:
+        for i, ln in enumerate(job["lines"]):
+            rows.append(
+                {
+                    "cells": [
+                        job["job_name"] if i == 0 else "",
+                        ln["account"],
+                        _pdf_cell(ln["debit"] or None, "money"),
+                        _pdf_cell(ln["credit"] or None, "money"),
+                    ]
+                }
+            )
+    for i, ln in enumerate(entry["lines"]):
+        rows.append(
+            {
+                "cells": [
+                    "Net entry" if i == 0 else "",
+                    ln["account"],
+                    _pdf_cell(ln["debit"] or None, "money"),
+                    _pdf_cell(ln["credit"] or None, "money"),
+                ],
+                "style": "grand-total" if i == 0 else "subtotal",
+            }
+        )
+    if entry["lines"]:
+        rows.append(
+            {
+                "cells": [
+                    "",
+                    "Total",
+                    _pdf_cell(entry["total_debits"], "money"),
+                    _pdf_cell(entry["total_credits"], "money"),
+                ],
+                "style": "grand-total",
+            }
+        )
+    return [
+        {
+            "title": "WIP Adjusting Entry",
+            "period": f"As of {data['as_of']} · computed, not posted",
+            "columns": _ENTRY_COLUMNS,
+            "text_columns": 2,
+            "rows": rows,
+        }
+    ]
+
+
+def _wip_entry_csv_rows(data: dict, w) -> None:
+    entry = data["adjusting_entry"]
+    w.writerow([])
+    w.writerow(["WIP Adjusting Entry (computed, not posted)"])
+    w.writerow(_ENTRY_COLUMNS)
+    for job in entry["jobs"]:
+        for ln in job["lines"]:
+            w.writerow(
+                [
+                    job["job_name"],
+                    ln["account"],
+                    _csv_cell(ln["debit"] or None, "money"),
+                    _csv_cell(ln["credit"] or None, "money"),
+                ]
+            )
+    for ln in entry["lines"]:
+        w.writerow(
+            [
+                "Net entry",
+                ln["account"],
+                _csv_cell(ln["debit"] or None, "money"),
+                _csv_cell(ln["credit"] or None, "money"),
+            ]
+        )
+    w.writerow(
+        [
+            "",
+            "Total",
+            _csv_cell(entry["total_debits"], "money"),
+            _csv_cell(entry["total_credits"], "money"),
+        ]
+    )
+
+
+def _grid_csv(data: dict, company: str, report: str, period: str, extra=None) -> str:
     """A plain grid CSV: the preamble, the column header, a row per data row and
     a Total row."""
     cols = data["columns"]
@@ -154,6 +246,8 @@ def _grid_csv(data: dict, company: str, report: str, period: str) -> str:
         else:
             row.append("")
     w.writerow(row)
+    if extra is not None:
+        extra(data, w)
     return out.getvalue()
 
 
@@ -168,7 +262,10 @@ def wip_schedule_pdf(
 ):
     data = wip_schedule(db, as_of, job_id, customer_id, status, include_closed)
     return _pdf_response(
-        _wip_sections(data), db, f"wip-schedule_{data['as_of']}.pdf", landscape=True
+        _wip_sections(data) + _wip_entry_sections(data),
+        db,
+        f"wip-schedule_{data['as_of']}.pdf",
+        landscape=True,
     )
 
 
@@ -184,7 +281,11 @@ def wip_schedule_csv(
 ):
     data = wip_schedule(db, as_of, job_id, customer_id, status, include_closed)
     text = _grid_csv(
-        data, _company_name(db), "WIP Schedule", f"As of {data['as_of']} (cost-to-cost)"
+        data,
+        _company_name(db),
+        "WIP Schedule",
+        f"As of {data['as_of']} (cost-to-cost)",
+        extra=_wip_entry_csv_rows,
     )
     return _csv_download(text, f"wip-schedule_{data['as_of']}.csv", request)
 
@@ -315,6 +416,124 @@ def cost_to_complete_csv(
     return _csv_download(
         _ctc_csv(data, _company_name(db)),
         f"cost-to-complete_{data['as_of']}.csv",
+        request,
+    )
+
+
+# ── 2b. Cost-to-complete forecast ─────────────────────────────────────────
+
+
+@router.get("/cost-to-complete-forecast")
+def cost_to_complete_forecast_route(
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    """The cost-to-complete forecast the WIP schedule reads: per job, section
+    and cost type, the budget, actual, the default (budget less actual, floored
+    at zero), any amount entered and the cost to complete that counts. Enter
+    amounts with PUT /api/jobs/{id}/cost-to-complete-forecast."""
+    return ctc_forecast_report(db, as_of, job_id, customer_id, status, include_closed)
+
+
+@router.get("/cost-to-complete-forecast/pdf")
+def cost_to_complete_forecast_pdf(
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    data = ctc_forecast_report(db, as_of, job_id, customer_id, status, include_closed)
+    return _pdf_response(
+        _per_job_grid_sections(
+            data, "Cost-to-Complete Forecast", f"As of {data['as_of']}"
+        ),
+        db,
+        f"cost-to-complete-forecast_{data['as_of']}.pdf",
+        landscape=True,
+    )
+
+
+@router.get("/cost-to-complete-forecast/csv")
+def cost_to_complete_forecast_csv(
+    request: Request,
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    data = ctc_forecast_report(db, as_of, job_id, customer_id, status, include_closed)
+    return _csv_download(
+        _per_job_grid_csv(
+            data,
+            _company_name(db),
+            "Cost-to-Complete Forecast",
+            f"As of {data['as_of']}",
+        ),
+        f"cost-to-complete-forecast_{data['as_of']}.csv",
+        request,
+    )
+
+
+# ── 6. Commitment status ──────────────────────────────────────────────────
+
+
+@router.get("/commitment-status")
+def commitment_status_route(
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    """Each commitment (PO or subcontract) per job: committed, billed to date,
+    retainage held and remaining, with totals per job and grand. As of
+    `as_of`, only commitments and bills dated by then count."""
+    return commitment_status(db, as_of, job_id, customer_id, status, include_closed)
+
+
+@router.get("/commitment-status/pdf")
+def commitment_status_pdf(
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    data = commitment_status(db, as_of, job_id, customer_id, status, include_closed)
+    return _pdf_response(
+        _per_job_grid_sections(data, "Commitment Status", f"As of {data['as_of']}"),
+        db,
+        f"commitment-status_{data['as_of']}.pdf",
+        landscape=True,
+    )
+
+
+@router.get("/commitment-status/csv")
+def commitment_status_csv(
+    request: Request,
+    as_of: date = Query(default=None),
+    db: Session = Depends(get_db),
+    job_id: _JOB_Q = None,
+    customer_id: _CUST_Q = None,
+    status: _STATUS_Q = None,
+    include_closed: _CLOSED_Q = False,
+):
+    data = commitment_status(db, as_of, job_id, customer_id, status, include_closed)
+    return _csv_download(
+        _per_job_grid_csv(
+            data, _company_name(db), "Commitment Status", f"As of {data['as_of']}"
+        ),
+        f"commitment-status_{data['as_of']}.csv",
         request,
     )
 
@@ -490,7 +709,7 @@ def _per_job_grid_sections(data: dict, title: str, period: str = "") -> list[dic
             "title": title,
             "period": period,
             "columns": [c["label"] for c in cols],
-            "text_columns": 1,
+            "text_columns": _text_columns(cols),
             "rows": out_rows,
         }
     ]

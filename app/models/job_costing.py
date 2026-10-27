@@ -207,3 +207,33 @@ class JobBudget(Base):
 
     job = relationship("Job")
     cost_code = relationship("CostCode")
+
+
+class JobCostToComplete(Base):
+    """A user-entered estimate of the cost still to come on a job, per section
+    and cost type (#556). It replaces the default (budget − actual, floored at
+    zero) for that cell, and the WIP schedule reads actual + cost to complete as
+    the job's estimated total cost. cost_code_id is the section (or the code
+    itself when it has none); NULL with cost_type "" is the job's unassigned
+    cell (budget or cost with no code). The service upserts, so one cell is one
+    row even where a NULL keeps the unique key from refusing a duplicate."""
+
+    __tablename__ = "job_cost_to_complete"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id", "cost_code_id", "cost_type", name="uq_job_cost_to_complete"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(
+        Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    cost_type = Column(String(20), nullable=False, default="")
+    amount = Column(Numeric(15, 2), nullable=False, default=0)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

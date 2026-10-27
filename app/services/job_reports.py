@@ -6,7 +6,8 @@
 # Pure functions over the figures the other services already compute — the
 # contract summary (#552), the cost tree and budgets (M3), buyout (#553), change
 # orders (#554) and pay applications (#555). Nothing here posts: the WIP
-# over/under adjustment is the accountant's journal, named but never written.
+# adjusting entry is computed with its amounts for the accountant to post, never
+# written. The one thing stored is the cost-to-complete forecast the user types.
 # Money is Decimal, quantized to cents half-up through accounting._q.
 # ============================================================================
 
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.accounts import Account, AccountType
 from app.models.cost_codes import CostCode
-from app.models.job_costing import JobBudget
+from app.models.job_costing import JobBudget, JobCostToComplete
 from app.models.jobs import Job
 from app.models.transactions import Transaction, TransactionLine
 from app.services.accounting import _q
@@ -74,16 +75,24 @@ def _customer_name(job: Job) -> str:
 
 # ── 1. WIP schedule ─────────────────────────────────────────────────────────
 #
-# Cost-to-cost: percent complete is cost to date ÷ estimated total cost, earned
-# revenue is the revised contract times that percent, and billings over earned
-# are a liability (billings in excess of costs and estimated earnings), under
-# are an asset (costs and estimated earnings in excess of billings). The
-# adjusting entry an accountant would post is between those two accounts and
-# the earned-revenue / cost accounts — this report computes it, it does not
-# post it.
+# Cost-to-cost: percent complete is cost to date ÷ estimated total cost, where
+# the estimated total cost is actual + the cost-to-complete forecast (below), so
+# an overrun job with work still to do reads under 100%. Earned revenue is the
+# revised contract times that percent; billings over earned are a liability
+# (billings in excess of costs and estimated earnings), under are an asset
+# (costs and estimated earnings in excess of billings).
+#
+# When the projected total cost goes over the contract the whole projected loss
+# is recognised now (the usual treatment of a loss contract): the part not
+# already in earned revenue is booked as a provision. wip_adjusting_entry turns
+# the rows into the entry with amounts — per job and net. It computes the entry;
+# it does not post it.
 
 WIP_OVERBILLING_ACCOUNT = "Billings in Excess of Costs and Estimated Earnings"
 WIP_UNDERBILLING_ACCOUNT = "Costs and Estimated Earnings in Excess of Billings"
+WIP_REVENUE_ACCOUNT = "Contract Revenue (WIP adjustment)"
+WIP_LOSS_EXPENSE_ACCOUNT = "Loss on Uncompleted Contracts"
+WIP_LOSS_ACCOUNT = "Provision for Loss on Uncompleted Contracts"
 
 WIP_COLUMNS = [
     {"key": "customer_name", "label": "Customer", "kind": "text"},
@@ -103,6 +112,8 @@ WIP_COLUMNS = [
     {"key": "retainage_outstanding", "label": "Retainage", "kind": "money"},
     {"key": "cost_to_complete", "label": "Cost to complete", "kind": "money"},
     {"key": "projected_gross_profit", "label": "Proj. GP", "kind": "money"},
+    {"key": "projected_loss", "label": "Proj. loss", "kind": "money"},
+    {"key": "loss_provision", "label": "Loss provision", "kind": "money"},
 ]
 
 # The figures a totals row sums straight across.
@@ -120,6 +131,8 @@ _WIP_SUMMED = (
     "retainage_outstanding",
     "cost_to_complete",
     "projected_gross_profit",
+    "projected_loss",
+    "loss_provision",
 )
 
 
@@ -180,7 +193,14 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
 
     totals = job_cost_tree(db, job.id, end_date=as_of)["totals"]
     cost_to_date = _q(totals["actual"])
-    est_total_cost = _q(totals["revised"])  # budget original + changes (cost side)
+    # Estimated total cost = actual + the cost-to-complete forecast. A job with
+    # no budget and no forecast has nothing to measure against, so it stays 0.
+    forecast = ctc_forecast(db, job, as_of)
+    cost_to_complete = _q(forecast["totals"]["cost_to_complete"])
+    if forecast["has_basis"]:
+        est_total_cost = _q(cost_to_date + cost_to_complete)
+    else:
+        est_total_cost = _ZERO
     posted_revenue = _q(totals["act_revenue"])
 
     summary = contract_summary(
@@ -213,15 +233,17 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     earned = _q(revised * pct)
     over = _q(billed - earned) if billed > earned else _ZERO
     under = _q(earned - billed) if earned > billed else _ZERO
-    # Floored at zero: an overrun does not create negative work to do, so the
-    # projected final cost is max(cost to date, estimate) and the projected
-    # gross profit diverges from the estimated one once a job runs over.
-    cost_to_complete = _q(est_total_cost - cost_to_date)
-    if cost_to_complete < _ZERO:
-        cost_to_complete = _ZERO
+    # Cost to complete is the forecast (never negative), so the projected final
+    # cost is cost to date + forecast, which is also the estimated total cost.
     projected_final_cost = _q(cost_to_date + cost_to_complete)
     projected_gp = _q(revised - projected_final_cost)
     estimated_gp = _q(revised - est_total_cost)
+    # A loss contract books its whole projected loss now. Earned revenue at the
+    # percent complete already carries pct × loss, so the provision is the rest.
+    projected_loss = _q(projected_final_cost - revised)
+    if projected_loss < _ZERO:
+        projected_loss = _ZERO
+    loss_provision = _q(projected_loss * (_ONE - pct))
     margin = _q(estimated_gp / revised * 100) if revised else None
 
     basis = (
@@ -252,6 +274,8 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
         "retainage_outstanding": float(retainage_out),
         "cost_to_complete": float(cost_to_complete),
         "projected_gross_profit": float(projected_gp),
+        "projected_loss": float(projected_loss),
+        "loss_provision": float(loss_provision),
     }
 
 
@@ -291,7 +315,307 @@ def wip_schedule(
         "adjustment_accounts": {
             "over_billing": WIP_OVERBILLING_ACCOUNT,
             "under_billing": WIP_UNDERBILLING_ACCOUNT,
+            "revenue": WIP_REVENUE_ACCOUNT,
+            "loss_expense": WIP_LOSS_EXPENSE_ACCOUNT,
+            "loss_provision": WIP_LOSS_ACCOUNT,
         },
+        "adjusting_entry": wip_adjusting_entry(rows, as_of),
+    }
+
+
+# ── WIP adjusting entry ───────────────────────────────────────────────────
+
+
+def _entry_line(account: str, debit: Decimal, credit: Decimal) -> dict:
+    return {"account": account, "debit": float(debit), "credit": float(credit)}
+
+
+def _job_entry_lines(under: Decimal, over: Decimal, provision: Decimal) -> list:
+    """The lines for one job's balances: an under-billing is an asset against
+    revenue, an over-billing is revenue deferred to a liability, and the loss
+    provision is an expense against its liability."""
+    lines = []
+    if under > _ZERO:
+        lines.append(_entry_line(WIP_UNDERBILLING_ACCOUNT, under, _ZERO))
+    if over > _ZERO:
+        lines.append(_entry_line(WIP_OVERBILLING_ACCOUNT, _ZERO, over))
+    net_revenue = under - over  # credit when under-billed, debit when over
+    if net_revenue > _ZERO:
+        lines.append(_entry_line(WIP_REVENUE_ACCOUNT, _ZERO, net_revenue))
+    elif net_revenue < _ZERO:
+        lines.append(_entry_line(WIP_REVENUE_ACCOUNT, -net_revenue, _ZERO))
+    if provision > _ZERO:
+        lines.append(_entry_line(WIP_LOSS_EXPENSE_ACCOUNT, provision, _ZERO))
+        lines.append(_entry_line(WIP_LOSS_ACCOUNT, _ZERO, provision))
+    return lines
+
+
+def wip_adjusting_entry(rows: list[dict], as_of: date) -> dict:
+    """The WIP adjusting entry with amounts, per job and net, from the schedule
+    rows. The balances are carried to `as_of` in full — if an earlier entry was
+    posted, the accountant reverses it first or posts the difference. Computed
+    only: nothing is written to the books."""
+    jobs = []
+    t_under = t_over = t_prov = _ZERO
+    for r in rows:
+        if not r["has_contract"]:
+            continue
+        under = Decimal(str(r["under_billing"]))
+        over = Decimal(str(r["over_billing"]))
+        prov = Decimal(str(r["loss_provision"]))
+        if under == _ZERO and over == _ZERO and prov == _ZERO:
+            continue
+        t_under += under
+        t_over += over
+        t_prov += prov
+        jobs.append(
+            {
+                "job_id": r["job_id"],
+                "job_name": r["job_name"],
+                "customer_name": r["customer_name"],
+                "under_billing": float(under),
+                "over_billing": float(over),
+                "net_under_over": float(_q(under - over)),
+                "projected_loss": r["projected_loss"],
+                "loss_provision": float(prov),
+                "lines": _job_entry_lines(under, over, prov),
+            }
+        )
+    net = _job_entry_lines(_q(t_under), _q(t_over), _q(t_prov))
+    debits = sum((Decimal(str(ln["debit"])) for ln in net), _ZERO)
+    credits = sum((Decimal(str(ln["credit"])) for ln in net), _ZERO)
+    return {
+        "as_of": as_of.isoformat(),
+        "posted": False,
+        "jobs": jobs,
+        "totals": {
+            "under_billing": float(_q(t_under)),
+            "over_billing": float(_q(t_over)),
+            "net_under_over": float(_q(t_under - t_over)),
+            "loss_provision": float(_q(t_prov)),
+        },
+        "lines": net,
+        "total_debits": float(_q(debits)),
+        "total_credits": float(_q(credits)),
+    }
+
+
+# ── Cost-to-complete forecast (per job, section and cost type) ───────────────
+#
+# A cell is a section × cost type. Its default cost to complete is the budget
+# less the actual cost, floored at zero; a typed amount (job_cost_to_complete)
+# replaces the default. Budget and cost with no code share one Unassigned cell,
+# so an uncoded budget is measured against uncoded cost.
+
+
+def _section_id(code: CostCode, code_by_id: dict) -> int:
+    """The section a code rolls up to: itself or its nearest ancestor at level
+    'section'; a code with no section above it is its own cell."""
+    cur, seen = code, set()
+    while cur is not None and cur.id not in seen:
+        if cur.level == "section":
+            return cur.id
+        seen.add(cur.id)
+        cur = code_by_id.get(cur.parent_id)
+    return code.id
+
+
+def ctc_forecast(db: Session, job: Job, as_of: Optional[date] = None) -> dict:
+    """The forecast table for one job: a row per section × cost type with the
+    budget, actual (to `as_of`), the default cost to complete, the typed
+    amount (or None) and the cost to complete that counts. `has_basis` is False
+    when the job has no budget and no typed amounts — nothing to measure
+    percent complete against."""
+    from app.services.job_costing import cost_type_map
+
+    types = cost_type_map(db)
+    code_by_id = {c.id: c for c in db.query(CostCode).all()}
+
+    def eff_type(code_id, line_type):
+        t = line_type or (
+            code_by_id[code_id].cost_type if code_id in code_by_id else ""
+        )
+        return t if t in types else "other"
+
+    def key_for(code_id, line_type):
+        if code_id and code_id in code_by_id:
+            return (
+                _section_id(code_by_id[code_id], code_by_id),
+                eff_type(code_id, line_type),
+            )
+        return (None, "")
+
+    cells: dict = {}
+
+    def cell(key):
+        return cells.setdefault(key, {"budget": _ZERO, "actual": _ZERO, "typed": None})
+
+    for b in db.query(JobBudget).filter(JobBudget.job_id == job.id):
+        cell(key_for(b.cost_code_id, b.cost_type))["budget"] += Decimal(str(b.amount))
+
+    q = (
+        db.query(
+            TransactionLine.cost_code_id,
+            TransactionLine.cost_type,
+            sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0),
+            sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0),
+        )
+        .select_from(TransactionLine)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .join(Account, TransactionLine.account_id == Account.id)
+        .filter(
+            job_attribution() == job.id,
+            Account.account_type.in_((AccountType.COGS, AccountType.EXPENSE)),
+        )
+    )
+    if as_of is not None:
+        q = q.filter(Transaction.date <= as_of)
+    for code_id, line_type, dr, cr in q.group_by(
+        TransactionLine.cost_code_id, TransactionLine.cost_type
+    ).all():
+        cell(key_for(code_id, line_type))["actual"] += Decimal(str(dr)) - Decimal(
+            str(cr)
+        )
+
+    saved = db.query(JobCostToComplete).filter(JobCostToComplete.job_id == job.id).all()
+    for row in saved:
+        cell((row.cost_code_id, row.cost_type or ""))["typed"] = _q(row.amount)
+
+    rows = []
+    for (section_id, cost_type), c in cells.items():
+        budget, actual = _q(c["budget"]), _q(c["actual"])
+        default = max(_q(budget - actual), _ZERO)
+        ctc = c["typed"] if c["typed"] is not None else default
+        section = code_by_id.get(section_id)
+        rows.append(
+            {
+                "cost_code_id": section_id,
+                "section": section.label if section else "Unassigned",
+                "cost_type": cost_type,
+                "cost_type_name": (types[cost_type].name if cost_type in types else ""),
+                "budget": float(budget),
+                "actual": float(actual),
+                "default_cost_to_complete": float(default),
+                "entered": float(c["typed"]) if c["typed"] is not None else None,
+                "cost_to_complete": float(ctc),
+                "projected_final": float(_q(actual + ctc)),
+            }
+        )
+    rows.sort(key=lambda r: (r["cost_code_id"] is None, r["section"], r["cost_type"]))
+
+    def total(key):
+        return float(_q(sum((Decimal(str(r[key])) for r in rows), _ZERO)))
+
+    totals = {
+        k: total(k) for k in ("budget", "actual", "cost_to_complete", "projected_final")
+    }
+    return {
+        "job_id": job.id,
+        "job_name": job.name,
+        "customer_id": job.customer_id,
+        "customer_name": _customer_name(job),
+        "as_of": as_of.isoformat() if as_of else None,
+        "has_basis": bool(saved) or totals["budget"] > 0,
+        "rows": rows,
+        "totals": totals,
+    }
+
+
+def set_ctc_entries(db: Session, job: Job, entries: list[dict]) -> dict:
+    """Save typed cost-to-complete amounts. Each entry names a section
+    (cost_code_id, or None with cost_type "" for the Unassigned cell), a cost
+    type and an amount; an amount of None removes the entry so the cell goes
+    back to its default. Raises 422 on a negative amount, an unknown type or a
+    code that is not a section cell of the chart."""
+    from fastapi import HTTPException
+
+    from app.services.job_costing import cost_type_map
+
+    types = cost_type_map(db)
+    code_by_id = {c.id: c for c in db.query(CostCode).all()}
+    for e in entries:
+        code_id = e.get("cost_code_id")
+        cost_type = e.get("cost_type") or ""
+        amount = e.get("amount")
+        if code_id is None:
+            if cost_type != "":
+                raise HTTPException(422, "The Unassigned cell takes no cost type")
+        else:
+            code = code_by_id.get(code_id)
+            if code is None:
+                raise HTTPException(422, f"Unknown cost code {code_id}")
+            if _section_id(code, code_by_id) != code.id:
+                raise HTTPException(
+                    422, f"{code.label} is under a section; enter it on the section"
+                )
+            if cost_type not in types:
+                raise HTTPException(422, f"Unknown cost type '{cost_type}'")
+        if amount is not None and Decimal(str(amount)) < _ZERO:
+            raise HTTPException(422, "Cost to complete cannot be negative")
+
+        row = (
+            db.query(JobCostToComplete)
+            .filter(
+                JobCostToComplete.job_id == job.id,
+                JobCostToComplete.cost_code_id.is_(None)
+                if code_id is None
+                else JobCostToComplete.cost_code_id == code_id,
+                JobCostToComplete.cost_type == cost_type,
+            )
+            .first()
+        )
+        if amount is None:
+            if row is not None:
+                db.delete(row)
+        elif row is None:
+            db.add(
+                JobCostToComplete(
+                    job_id=job.id,
+                    cost_code_id=code_id,
+                    cost_type=cost_type,
+                    amount=_q(amount),
+                )
+            )
+        else:
+            row.amount = _q(amount)
+    db.commit()
+    return ctc_forecast(db, job, date.today())
+
+
+CTCF_COLUMNS = [
+    {"key": "section", "label": "Section", "kind": "text"},
+    {"key": "cost_type_name", "label": "Cost type", "kind": "text"},
+    {"key": "budget", "label": "Budget", "kind": "money"},
+    {"key": "actual", "label": "Actual", "kind": "money"},
+    {"key": "default_cost_to_complete", "label": "Default", "kind": "money"},
+    {"key": "entered", "label": "Entered", "kind": "money"},
+    {"key": "cost_to_complete", "label": "Cost to complete", "kind": "money"},
+    {"key": "projected_final", "label": "Projected final", "kind": "money"},
+]
+
+
+def ctc_forecast_report(
+    db: Session,
+    as_of: Optional[date] = None,
+    job_id: Optional[int] = None,
+    customer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    include_closed: bool = False,
+) -> dict:
+    """The forecast table for every selected job, with totals per job and a
+    grand total — the table WIP reads its estimated total cost from."""
+    as_of = as_of or date.today()
+    jobs = select_jobs(db, job_id, customer_id, status, include_closed)
+    rows = [ctc_forecast(db, job, as_of) for job in jobs]
+    grand = {
+        k: float(_q(sum((Decimal(str(j["totals"][k])) for j in rows), _ZERO)))
+        for k in ("budget", "actual", "cost_to_complete", "projected_final")
+    }
+    return {
+        "as_of": as_of.isoformat(),
+        "jobs": rows,
+        "totals": grand,
+        "columns": CTCF_COLUMNS,
     }
 
 
@@ -926,4 +1250,116 @@ def job_cost_by_vendor(
         "jobs": rows,
         "totals": {k: float(_q(v)) for k, v in grand.items()},
         "columns": VENDOR_COLUMNS,
+    }
+
+
+# ── 6. Commitment status ──────────────────────────────────────────────────
+
+COMMITMENT_COLUMNS = [
+    {"key": "number", "label": "Commitment", "kind": "text"},
+    {"key": "vendor_name", "label": "Vendor", "kind": "text"},
+    {"key": "type", "label": "Type", "kind": "text"},
+    {"key": "status", "label": "Status", "kind": "text"},
+    {"key": "committed", "label": "Committed", "kind": "money"},
+    {"key": "billed", "label": "Billed to date", "kind": "money"},
+    {"key": "retainage_held", "label": "Retainage held", "kind": "money"},
+    {"key": "remaining", "label": "Remaining", "kind": "money"},
+]
+
+_COMMITMENT_SUMMED = ("committed", "billed", "retainage_held", "remaining")
+
+
+def _commitment_row(po, bills: list, as_of: date) -> dict:
+    """One commitment as of a date. Committed is the pre-tax value; billed is
+    the work billed on it by then (a retainage-release bill pays money already
+    billed, so it is not counted); retainage held is held less released on those
+    bills; remaining is committed less billed while the commitment is open."""
+    from app.models.purchase_orders import POStatus
+
+    billed = held = released = _ZERO
+    for b in bills:
+        released_here = Decimal(str(b.retainage_released or 0))
+        released += released_here
+        if released_here > _ZERO:
+            continue
+        billed += Decimal(str(b.subtotal or 0))
+        held += Decimal(str(b.retainage_held or 0))
+    committed = _q(po.subtotal or 0)
+    is_open = po.status in (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED)
+    remaining = _q(committed - billed) if is_open else _ZERO
+    return {
+        "id": po.id,
+        "number": po.po_number,
+        "vendor_name": po.vendor.name if po.vendor else "",
+        "type": po.commitment_type,
+        "status": po.status.value if hasattr(po.status, "value") else po.status,
+        "committed": float(committed),
+        "billed": float(_q(billed)),
+        "retainage_held": float(_q(held - released)),
+        "remaining": float(remaining),
+    }
+
+
+def commitment_status(
+    db: Session,
+    as_of: Optional[date] = None,
+    job_id: Optional[int] = None,
+    customer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    include_closed: bool = False,
+) -> dict:
+    """Every non-draft commitment (PO or subcontract) on each job dated by
+    `as_of`: committed, billed to date, retainage held and remaining, with
+    totals per job and grand. Only bills dated by `as_of` count."""
+    from app.models.bills import Bill, BillStatus
+    from app.models.purchase_orders import POStatus, PurchaseOrder
+
+    as_of = as_of or date.today()
+    jobs = select_jobs(db, job_id, customer_id, status, include_closed)
+    out = []
+    grand = {k: _ZERO for k in _COMMITMENT_SUMMED}
+    for job in jobs:
+        pos = (
+            db.query(PurchaseOrder)
+            .filter(
+                PurchaseOrder.job_id == job.id,
+                PurchaseOrder.status != POStatus.DRAFT,
+                PurchaseOrder.date <= as_of,
+            )
+            .order_by(PurchaseOrder.po_number)
+            .all()
+        )
+        rows = []
+        totals = {k: _ZERO for k in _COMMITMENT_SUMMED}
+        for po in pos:
+            bills = (
+                db.query(Bill)
+                .filter(
+                    Bill.po_id == po.id,
+                    Bill.status != BillStatus.VOID,
+                    Bill.date <= as_of,
+                )
+                .all()
+            )
+            row = _commitment_row(po, bills, as_of)
+            rows.append(row)
+            for k in _COMMITMENT_SUMMED:
+                totals[k] += Decimal(str(row[k]))
+        for k in _COMMITMENT_SUMMED:
+            grand[k] += totals[k]
+        out.append(
+            {
+                "job_id": job.id,
+                "job_name": job.name,
+                "customer_id": job.customer_id,
+                "customer_name": _customer_name(job),
+                "rows": rows,
+                "totals": {k: float(_q(v)) for k, v in totals.items()},
+            }
+        )
+    return {
+        "as_of": as_of.isoformat(),
+        "jobs": out,
+        "totals": {k: float(_q(v)) for k, v in grand.items()},
+        "columns": COMMITMENT_COLUMNS,
     }

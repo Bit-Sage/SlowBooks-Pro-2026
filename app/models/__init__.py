@@ -21,6 +21,7 @@ from app.models.job_costing import (  # noqa: F401 — registers the tables
     JobBudget,
     JobCost,
     JobCostLine,
+    JobCostToComplete,
 )
 from app.models.trade_packages import (  # noqa: F401 — registers the tables
     TradePackage,
