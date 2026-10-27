@@ -18,6 +18,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from app.models.accounts import Account, AccountType
 from app.models.estimates import Estimate
 from app.models.jobs import SovLine
@@ -147,12 +149,13 @@ def test_original_is_set_once_and_not_overwritten(client, seed_customer):
         f"/api/jobs/{job['id']}/contract",
         json={"contract_type": "lump_sum", "contract_amount": 100000},
     )
-    # the sum is locked once the original is stamped (see the lock tests below)
+    # before billing or a change order the sum is just an edit, and the
+    # original follows it (see the lock tests below for the locked case)
     r = client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": 125000})
-    assert r.status_code == 409
+    assert r.status_code == 200
     c = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
-    assert c["contract_amount"] == 100000.0
-    assert c["original_contract_amount"] == 100000.0
+    assert c["contract_amount"] == 125000.0
+    assert c["original_contract_amount"] == 125000.0
     assert c["changes"] == 0.0
 
 
@@ -169,9 +172,6 @@ def test_the_job_form_amount_then_a_type_keeps_the_original(client, seed_custome
     )
     # choosing a type stamps the original from the amount already on the job
     client.put(f"/api/jobs/{job['id']}/contract", json={"contract_type": "lump_sum"})
-    # the stamped original locks the sum: a later PUT cannot move it
-    r = client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": 130000})
-    assert r.status_code == 409
     c = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
     assert c["original_contract_amount"] == 100000.0
     assert c["contract_amount"] == 100000.0
@@ -211,29 +211,115 @@ def test_fee_pct_is_bounded_0_to_100_and_amounts_are_cent_rounded(
     assert c["original_contract_amount"] == 1000.01
 
 
-# ── The contract sum locks once the original is stamped ─────────────────
+# ── The contract sum and contingency lock at the first billing / CO ─────
 
 
-def test_contract_sum_is_locked_once_the_original_is_stamped(client, seed_customer):
+@pytest.fixture
+def billing_started(monkeypatch):
+    """Stand in for the first billing against the SOV (#576) or a change order
+    (#575), neither of which exists on this branch yet."""
+
+    def start():
+        monkeypatch.setattr("app.routes.jobs.contract_is_locked", lambda db, job: True)
+
+    return start
+
+
+def test_contract_sum_edits_freely_until_billing(client, seed_customer):
     job = _job(client, seed_customer.id)
     base = f"/api/jobs/{job['id']}/contract"
-    # before the original exists the sum is free to move
-    assert client.put(base, json={"contract_amount": 90000}).status_code == 200
     assert (
         client.put(base, json={"contract_type": "lump_sum", "contract_amount": 100000})
-    ).status_code == 200  # this stamps the original
+    ).status_code == 200
+    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+    r = client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 105000})
+    assert r.status_code == 200
+    assert client.put(base, json={"contract_amount": None}).status_code == 200
+
+
+def test_building_does_not_lock_the_sum_and_a_bid_correction_balances(
+    client, seed_customer
+):
+    est, _, _ = _build_estimate_with_shape(client, seed_customer)
+    job = _job(client, seed_customer.id, contract_amount=40000)
+    _accept(client, est["id"], job["id"])
+    c = client.post(f"/api/jobs/{job['id']}/contract/from-estimate/{est['id']}").json()[
+        "contract"
+    ]
+    assert c["contract_amount"] == 40000.0 and c["sov_balance"] != 0.0
+    bid = client.get(f"/api/estimates/{est['id']}").json()["totals"]["bid_total"]
+    r = client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": bid})
+    assert r.status_code == 200, r.text
+    c = r.json()["contract"]
+    assert c["sov_balance"] == 0.0
+    assert c["original_contract_amount"] == float(bid) and c["changes"] == 0.0
+    # contingency set after the build is an edit too: line and sum move together
+    r = client.put(
+        f"/api/jobs/{job['id']}/contract",
+        json={"contingency_amount": 5000, "contract_amount": float(bid) + 5000},
+    )
+    assert r.status_code == 200 and r.json()["contract"]["sov_balance"] == 0.0
+
+
+def test_sum_and_contingency_are_locked_once_billing_starts(
+    client, seed_customer, billing_started
+):
+    job = _job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    assert (
+        client.put(base, json={"contract_type": "lump_sum", "contract_amount": 100000})
+    ).status_code == 200
+    billing_started()
     r = client.put(base, json={"contract_amount": 110000})
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "contract_sum_locked"
     assert client.put(base, json={"contract_amount": None}).status_code == 409
-    # the plain job form cannot move it either
-    r = client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 110000})
+    assert (
+        client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 1}).status_code
+        == 409
+    )
+    r = client.put(base, json={"contingency_amount": 5000})
     assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "contingency_locked"
     # re-sending the same sum, and changing other terms, is fine
     assert client.put(base, json={"contract_amount": 100000}).status_code == 200
     assert client.put(base, json={"retainage_pct": 10}).status_code == 200
+    assert client.put(base, json={"contingency_amount": None}).status_code == 200
     c = client.get(base).json()["contract"]
     assert c["contract_amount"] == 100000.0 and c["changes"] == 0.0
+
+
+def test_money_fields_are_bounded_to_numeric_15_2(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    base = f"/api/jobs/{job['id']}/contract"
+    for field in ("contract_amount", "fee_amount", "cap_amount", "contingency_amount"):
+        assert client.put(base, json={field: 1e16}).status_code == 422, field
+    assert client.put(base, json={"fee_amount": 9999999999999.99}).status_code == 200
+    assert (
+        client.put(f"/api/jobs/{job['id']}", json={"contract_amount": 1e16}).status_code
+        == 422
+    )
+    bad = {"lines": [{"kind": "work", "scheduled_value": 1e16}]}
+    assert client.put(f"/api/jobs/{job['id']}/sov", json=bad).status_code == 422
+
+
+def test_put_sov_quantizes_three_decimal_values(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    client.put(f"/api/jobs/{job['id']}/contract", json={"contract_amount": 100})
+    r = client.put(
+        f"/api/jobs/{job['id']}/sov",
+        json={
+            "lines": [
+                {"kind": "work", "scheduled_value": 33.335},
+                {"kind": "work", "scheduled_value": 66.665},
+            ]
+        },
+    )
+    assert r.status_code == 200
+    sov = client.get(f"/api/jobs/{job['id']}/contract").json()["sov"]
+    assert [float(x["scheduled_value"]) for x in sov] == [33.34, 66.67]
+    # the balance sees what was stored, so the total's 0.01 over shows honestly
+    assert r.json()["sov_total"] == 100.01 and r.json()["sov_balance"] == -0.01
 
 
 # ── Summary math ────────────────────────────────────────────────────────

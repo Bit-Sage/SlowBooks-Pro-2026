@@ -242,9 +242,11 @@ not-to-exceed). The type decides how the fee and the cap read:
 
 The summary stamps the **original contract amount** once, the first time a sum
 is set with a type (building from an estimate stamps it too, even when the sum
-came from the job form). From then on the **contract sum is locked**: the
-Contract tab and the job form refuse a different sum (409
-`contract_sum_locked`), and only an approved change order (#554) moves it, so
+came from the job form). The **contract sum and the contingency edit freely**
+(and the original follows the sum) until the job has any billing on the
+schedule of values or any change order. From then on the Contract tab and the
+job form refuse a different sum or contingency (409 `contract_sum_locked` /
+`contingency_locked`), and only an approved change order (#554) moves them, so
 the tab shows original + changes = revised. Amounts are rounded to the cent and
 the fee percent must be between 0 and 100. Building from an estimate also
 copies the estimate's fee markup into the job's fee percent when the job has
