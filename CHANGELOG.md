@@ -466,9 +466,9 @@ a Business or Nonprofit company sees none of it. See
 now bills its owner from the schedule of values with a **pay application**:
 each SOV line carries previous, this period, materials presently stored,
 completed-to-date, percent complete, balance to finish and retainage, and the
-application totals the way the owner's certificate reads — completed and stored
+application totals the way the owner's payment application reads — completed and stored
 to date, retainage to date, total earned less retainage, less previous
-certificates, the current payment due, and the balance to finish. A new
+payment applications, the current payment due, and the balance to finish. A new
 application pre-fills every SOV line (change-order, allowance and contingency
 lines bill like work); only one may be open per job (409). **Approve** creates
 the invoice for the job's customer — one line per SOV line billed this period
@@ -496,7 +496,7 @@ SOV line has been billed cannot be voided (409 `co_billed`). A **Pay apps** tab
 (construction only, after Change orders) holds the application grid, the totals
 block, the deposits block and Save / Submit / Approve / Void / PDF
 (`GET /api/pay-applications/{id}/pdf` prints the pay application and its
-continuation sheet); the invoice view and PDF show the retainage lines. The
+line detail); the invoice view and PDF show the retainage lines. The
 WIP schedule, cost-to-complete, the change-order log, the buyout report and job
 cost by vendor (#556) build on this; a Business or Nonprofit company sees none
 of it. See [docs/contractor-mode.md](docs/contractor-mode.md).

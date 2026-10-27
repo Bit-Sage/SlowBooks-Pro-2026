@@ -93,7 +93,7 @@ def test_application_math_two_periods_and_release():
     # app 1: 30,000 this period + 5,000 stored on line 1, 10% retainage
     rows = _rows([(50000, 0, 30000, 5000), (50000, 0, 0, 0)])
     t1 = application_totals(
-        rows, retainage_pct=10, previous_retainage=0, previous_certificates=0
+        rows, retainage_pct=10, previous_retainage=0, previous_applications=0
     )
     assert t1["completed_to_date"] == Decimal("35000.00")
     assert t1["retainage_to_date"] == Decimal("3500.00")
@@ -107,12 +107,12 @@ def test_application_math_two_periods_and_release():
         rows,
         retainage_pct=10,
         previous_retainage=t1["retainage_to_date"],
-        previous_certificates=t1["current_due"],
+        previous_applications=t1["current_due"],
     )
     assert t2["completed_to_date"] == Decimal("55000.00")
     assert t2["retainage_to_date"] == Decimal("5500.00")
     assert t2["retainage_this_period"] == Decimal("2000.00")
-    assert t2["previous_certificates"] == Decimal("31500.00")
+    assert t2["previous_applications"] == Decimal("31500.00")
     assert t2["current_due"] == Decimal("18000.00")
 
     # a final application that releases the 5,500 held (previous now 50,000)
@@ -121,7 +121,7 @@ def test_application_math_two_periods_and_release():
         rows,
         retainage_pct=10,
         previous_retainage=t2["retainage_to_date"],
-        previous_certificates=Decimal("49500.00"),
+        previous_applications=Decimal("49500.00"),
         release_retainage=5500,
     )
     assert t3["retainage_this_period"] == Decimal("0.00")
@@ -451,8 +451,8 @@ def test_pdf_renders_both_sheets(client, db_session, seed_accounts, seed_custome
     html = render_pay_application_html(
         pa, out, db_session.query(Job).get(job["id"]), get_all_settings(db_session)
     )
-    assert "PAY APPLICATION" in html
-    assert "Continuation sheet" in html
+    assert "APPLICATION FOR PAYMENT" in html
+    assert "Line detail" in html
     assert "Current payment due" in html
 
 

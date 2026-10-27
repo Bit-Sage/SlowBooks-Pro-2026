@@ -1377,7 +1377,7 @@ const JobsPage = {
         return tile('Completed to date', t.completed_to_date)
             + tile('Retainage to date', t.retainage_to_date)
             + tile('Total earned less retainage', t.total_earned_less_retainage)
-            + tile('Less previous certificates', t.previous_certificates)
+            + tile('Less previous payment applications', t.previous_applications)
             + tile('Current payment due', t.current_due)
             + tile('Net due', t.net_due);
     },
@@ -1402,7 +1402,7 @@ const JobsPage = {
             completed += r.completed; retainage += r.retainage;
         });
         const prevRet = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_retainage) || 0;
-        const prevCert = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_certificates) || 0;
+        const prevCert = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_applications) || 0;
         const release = Number(($('#pa-release') ? $('#pa-release').value : 0) || 0);
         const deposit = Number(($('#pa-deposit') ? $('#pa-deposit').value : 0) || 0);
         // Retainage to date is net of every release, this one included.
@@ -1414,7 +1414,7 @@ const JobsPage = {
             completed_to_date: completed,
             retainage_to_date: retainage,
             total_earned_less_retainage: earnedLess,
-            previous_certificates: prevCert,
+            previous_applications: prevCert,
             current_due: currentDue,
             net_due: Math.round((currentDue - deposit) * 100) / 100,
         };

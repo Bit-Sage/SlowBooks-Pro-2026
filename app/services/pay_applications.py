@@ -53,7 +53,7 @@ def application_totals(
     *,
     retainage_pct,
     previous_retainage,
-    previous_certificates,
+    previous_applications,
     previous_released=0,
     release_retainage=0,
     deposit_applied=0,
@@ -62,7 +62,7 @@ def application_totals(
     scheduled_value / previous / this_period / stored. The scalars come from
     history: `previous_retainage` is the prior approved application's
     retainage_to_date, `previous_released` the retainage released on prior
-    approved applications, `previous_certificates` the sum of prior approved
+    approved applications, `previous_applications` the sum of prior approved
     applications' current_due.
 
     Retainage to date is NET of releases: what is still held on the work
@@ -78,7 +78,7 @@ def application_totals(
     balance_total = _q(sum((r["balance_to_finish"] for r in rows), _ZERO))
 
     prev_ret = _q(previous_retainage)
-    prev_cert = _q(previous_certificates)
+    prev_cert = _q(previous_applications)
     prev_released = _q(previous_released)
     release = _q(release_retainage)
     deposit = _q(deposit_applied)
@@ -101,7 +101,7 @@ def application_totals(
         "previous_released": prev_released,
         "retainage_this_period": retainage_this_period,
         "total_earned_less_retainage": total_earned_less_retainage,
-        "previous_certificates": prev_cert,
+        "previous_applications": prev_cert,
         "current_due": current_due,
         "balance_to_finish_total": balance_total,
         "release_retainage": release,
@@ -137,7 +137,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
     - `stored`    — SOV line id → the latest approved application's stored;
     - `prev_retainage` — the latest approved application's retainage_to_date
       (net of releases); `prev_released` — Σ releases so far;
-    - `prev_certificates` — Σ of the approved applications' current_due;
+    - `prev_applications` — Σ of the approved applications' current_due;
     - `billed`    — the latest approved application's completed_to_date
       (each application's figure is already cumulative; summing them would
       count every earlier period again).
@@ -164,7 +164,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
             rows,
             retainage_pct=app.retainage_pct,
             previous_retainage=prev_ret,
-            previous_certificates=prev_cert,
+            previous_applications=prev_cert,
             previous_released=prev_released,
             release_retainage=app.release_retainage,
             deposit_applied=app.deposit_applied,
@@ -185,7 +185,7 @@ def _history(db: Session, job_id: int, before_no=None) -> dict:
         "stored": stored,
         "prev_retainage": prev_ret,
         "prev_released": prev_released,
-        "prev_certificates": prev_cert,
+        "prev_applications": prev_cert,
         "billed": billed,
     }
 
@@ -217,7 +217,7 @@ def application_figures(db: Session, app) -> dict:
         rows,
         retainage_pct=app.retainage_pct,
         previous_retainage=h["prev_retainage"],
-        previous_certificates=h["prev_certificates"],
+        previous_applications=h["prev_applications"],
         previous_released=h["prev_released"],
         release_retainage=app.release_retainage,
         deposit_applied=app.deposit_applied,

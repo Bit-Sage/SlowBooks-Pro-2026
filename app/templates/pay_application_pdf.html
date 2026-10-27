@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Pay application</title>
+    <title>Application for Payment</title>
 <style>
     @page { size: letter; margin: 0.6in 0.75in; }
     body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 10pt; color: #1a1a2e; line-height: 1.4; }
@@ -45,7 +45,7 @@
             </div>
         </div>
         <div class="doc-title">
-            <h1>PAY APPLICATION</h1>
+            <h1>APPLICATION FOR PAYMENT</h1>
             <div class="doc-number">{{ app.number }}</div>
         </div>
     </div>
@@ -61,7 +61,7 @@
         <td class="meta-label">Status:</td><td>{{ app.status | title }}</td>
     </tr></table>
 
-    {# The certificate — the owner's summary of the application. #}
+    {# The summary of the payment application. #}
     <div class="cert"><table>
         <tr><td class="label">Original contract sum</td><td class="r">{{ header.contract_sum_original | currency }}</td></tr>
         <tr><td class="label">Net change by change orders</td><td class="r">{{ header.net_change | currency }}</td></tr>
@@ -69,7 +69,7 @@
         <tr><td class="label">Completed and stored to date</td><td class="r">{{ totals.completed_to_date | currency }}</td></tr>
         <tr><td class="label">Retainage to date</td><td class="r">{{ totals.retainage_to_date | currency }}</td></tr>
         <tr><td class="label">Total earned less retainage</td><td class="r">{{ totals.total_earned_less_retainage | currency }}</td></tr>
-        <tr><td class="label">Less previous certificates</td><td class="r">{{ totals.previous_certificates | currency }}</td></tr>
+        <tr><td class="label">Less previous payment applications</td><td class="r">{{ totals.previous_applications | currency }}</td></tr>
         {% if totals.release_retainage %}<tr><td class="label">Retainage released</td><td class="r">{{ totals.release_retainage | currency }}</td></tr>{% endif %}
         <tr><td class="label grand">Current payment due</td><td class="r grand">{{ totals.current_due | currency }}</td></tr>
         {% if totals.deposit_applied %}<tr><td class="label">Less deposit applied</td><td class="r">{{ totals.deposit_applied | currency }}</td></tr>
@@ -77,7 +77,7 @@
         <tr><td class="label">Balance to finish</td><td class="r">{{ totals.balance_to_finish_total | currency }}</td></tr>
     </table></div>
 
-    <h2 class="sheet">Continuation sheet</h2>
+    <h2 class="sheet">Line detail</h2>
     <table class="cont">
         <thead><tr>
             <th style="width:36px;">Item</th>

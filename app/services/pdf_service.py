@@ -312,10 +312,10 @@ def generate_change_order_pdf(co, totals: dict, company_settings: dict) -> bytes
 
 
 def render_pay_application_html(app, pa, job, company_settings: dict) -> str:
-    """The owner pay application (#555): the header certificate (contract
+    """The owner payment application (#555): the header summary (contract
     sum, net change by change orders, completed to date, retainage, total
-    earned less retainage, previous certificates, current payment due,
-    deposit applied, balance to finish) and the continuation sheet (the line
+    earned less retainage, previous applications, current payment due,
+    deposit applied, balance to finish) and the line detail (the line
     table). `pa` is the PayApplicationOut; `job` carries the owner."""
 
     def f(v):

@@ -489,7 +489,7 @@ report** (#556) will list every change order and its effect.
 
 Progress billing turns the owner's schedule of values into a **pay
 application** — the contractor's periodic bill against the contract, the
-counterpart to a commercial Pay application and its Continuation sheet (#555).
+counterpart to a commercial payment application and its line detail (#555).
 Each application bills a period; approving it creates the invoice.
 
 **The application and its math.** Every SOV line (work, allowance, contingency
@@ -507,12 +507,12 @@ and change-order lines all bill the same way) carries, per period:
 - **Retainage** = completed × the retainage percent (copied from the contract
   at creation, editable while the application is a draft).
 
-The application totals read the way the owner's certificate does: completed and
+The application totals read the way the owner's payment application does: completed and
 stored to date, **retainage to date** (the sum of the line retainage),
 **retainage this period** (retainage to date less the prior application's),
 **total earned less retainage** (completed − retainage to date), **less
-previous certificates** (the prior applications' payment due), the **current
-payment due** (total earned less retainage − previous certificates + any
+previous payment applications** (the prior applications' payment due), the **current
+payment due** (total earned less retainage − previous payment applications + any
 retainage released), and the balance to finish. A **deposit applied** (below)
 nets off the current due to the **net due**.
 

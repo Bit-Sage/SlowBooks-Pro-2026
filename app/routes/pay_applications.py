@@ -641,7 +641,7 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
             status_code=409, detail="Only an approved pay application can be voided."
         )
     # Later applications are figured from this one (previous work, retainage,
-    # certificates), and their invoices are already posted; so only the latest
+    # payment applications), and their invoices are already posted; so only the latest
     # approved application can be voided (#576).
     later = (
         db.query(PayApplication)
