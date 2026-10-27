@@ -1087,3 +1087,47 @@ def test_retainage_to_date_is_net_of_releases(
     assert inv.balance_due == Decimal("9000.00")
     assert _gl(db_session, "1150") == Decimal("2500.00")
     assert body["retainage_outstanding"] == 2500.0
+
+
+def _approved_30k(client, customer_id):
+    job, sov = _two_line_job(client, customer_id)
+    a1 = _new_app(client, job["id"])
+    r = _bill(
+        client,
+        a1["id"],
+        [
+            {"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0},
+            {"sov_line_id": sov[1]["id"], "this_period": 0, "stored": 0},
+        ],
+    )
+    assert r.status_code == 200, r.text
+    return job, sov, r.json()
+
+
+def test_pay_app_invoice_refuses_amount_edits_allows_notes(
+    client, db_session, seed_accounts, seed_customer
+):
+    _job_, _sov_, app = _approved_30k(client, seed_customer.id)
+    inv_id = app["invoice_id"]
+    before = _gl(db_session, "1150")
+
+    r = client.put(f"/api/invoices/{inv_id}", json={"tax_rate": 0.07})
+    assert r.status_code == 409, r.text
+    r = client.put(
+        f"/api/invoices/{inv_id}",
+        json={
+            "lines": [
+                {"description": "x", "quantity": 1, "rate": 5, "is_taxable": False}
+            ]
+        },
+    )
+    assert r.status_code == 409, r.text
+
+    r = client.put(f"/api/invoices/{inv_id}", json={"notes": "Sent by email"})
+    assert r.status_code == 200, r.text
+    assert r.json()["notes"] == "Sent by email"
+    inv = db_session.query(Invoice).filter_by(id=inv_id).first()
+    db_session.refresh(inv)
+    assert inv.total == Decimal("30000.00")
+    assert inv.retainage_held == Decimal("3000.00")
+    assert _gl(db_session, "1150") == before == Decimal("3000.00")

@@ -764,6 +764,16 @@ const InvoicesPage = {
         InvoicesPage.recalc();
         // Populate due_date for fresh invoices that don't already have one.
         if (!inv.due_date) InvoicesPage._recomputeDueDate();
+        // A pay application's invoice is changed on the application, not here:
+        // only the notes are editable (the server refuses the rest, #576).
+        InvoicesPage._payAppInvoice = !!inv.pay_application_id;
+        if (InvoicesPage._payAppInvoice) {
+            $$('#invoice-form input, #invoice-form select, #invoice-form textarea, #invoice-form button[type="button"]').forEach(el => {
+                if (el.name !== 'notes' && !/Cancel/.test(el.textContent || '')) el.disabled = true;
+            });
+            $('#invoice-form .form-actions').insertAdjacentHTML('beforebegin',
+                '<div class="form-hint">This invoice comes from a payment application. Change the application to change the amounts; only the notes can be edited here.</div>');
+        }
     },
 
     customerSelected(customerId) {
@@ -913,6 +923,14 @@ const InvoicesPage = {
     async save(e, id) {
         e.preventDefault();
         const form = e.target;
+        if (id && InvoicesPage._payAppInvoice) {
+            try {
+                await API.put(`/invoices/${id}`, { notes: form.notes.value || null });
+                toastPosted(Terms.text('Invoice updated'));
+                App.refresh();
+            } catch (err) { toast(err.message, 'error'); }
+            return;
+        }
         const lines = [];
         $$('#inv-lines tr').forEach((row, i) => {
             lines.push({

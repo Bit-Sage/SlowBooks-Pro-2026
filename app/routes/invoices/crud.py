@@ -275,6 +275,18 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         raise HTTPException(status_code=400, detail="Cannot edit voided invoice")
     check_closing_date(db, invoice.date)
     words = terms_from_db(db)
+    # A pay application's invoice carries the retainage leg (1150); an edit here
+    # would repost it without that leg, so only the notes change (#576).
+    if invoice.pay_application_id is not None:
+        other = set(data.model_fields_set) - {"notes"}
+        if other:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This invoice comes from a payment application; change the "
+                    "application instead. Only the notes can be edited here."
+                ),
+            )
 
     update_data = reject_null_updates(
         Invoice,
