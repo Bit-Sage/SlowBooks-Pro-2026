@@ -521,7 +521,6 @@ appear. Every other report stays where it is.
 - **No draws yet.** No pay applications or progress-billing screens
   (#555); change orders (#554) are in, but the accounts are there to post to
   by hand until progress billing lands.
->>>>>>> 11696f97 (docs: change orders (#554))
 - **Customer:Job** still prints with a space; the no-space form is deferred.
 - **No full section catalog** (the numbered catalog is a licensed product);
   the division titles and a set of common sections ship, and you import the
