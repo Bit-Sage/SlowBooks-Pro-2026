@@ -213,7 +213,10 @@ jobs:
           # 183 with the lien waiver PDF route test (#576,
           # test_pay_applications::test_lien_waiver_pdf_route, WeasyPrint's
           # native stack is not on the runner).
-          MAX_SKIPS: "183"
+          # 185 with the job-report PDF tests (#577,
+          # test_job_reports::test_report_routes_pdf and
+          # ::test_existing_reports_export_pdf, WeasyPrint again).
+          MAX_SKIPS: "185"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
