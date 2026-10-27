@@ -147,6 +147,7 @@ from app.models import (  # noqa: F401,E402
     in_kind as in_kind_model,
     items,
     job_deposits,
+    lien_waivers,
     pay_applications,
     nonprofit as nonprofit_model,
     payments,
