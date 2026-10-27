@@ -1233,6 +1233,10 @@ def run_import(db: Session, bundle: dict) -> dict:
         customers, vendors = _import_contacts(db, bundle)
         invoices, payments = _import_carried(db, plan)
         db.commit()
+        # the payments it created get their cash-basis lines now (#483)
+        from app.services.cash_basis import backfill_after_import
+
+        backfill_after_import(db)
     else:
         customers = vendors = 0
     result["imported_customers"] = customers

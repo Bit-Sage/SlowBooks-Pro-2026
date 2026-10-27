@@ -542,6 +542,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             balance_on_income=True,
         )
         invoice.transaction_id = txn.id if txn is not None else None
+        qbo_documents.post_adopted_cash_lines(db, invoice)
 
     # One payment-derived decision for total edits and status-only requests.
     # Unpaid invoices retain the explicitly supported draft/sent lifecycle.

@@ -1537,7 +1537,7 @@ const ReportsPage = {
             const total = (label, key, style) => `<tr style="${style}"><td>${totalLabel(label, key)}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
@@ -1584,8 +1584,9 @@ const ReportsPage = {
         const set = (section, c) => `ReportsPage.openSetDrillDown(${args({ section }, null, c.start_date, c.end_date, null, null, 'profit-loss', scope)})`;
         return `${ReportsPage._exportButtons('profit-loss', qs)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}${data.basis === 'cash' ? ', cash basis' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
             </div>
+            ${ReportsPage._basisNote(data)}
             ${ReportsPage._pivotGrid({
                 title: `${T('Profit & Loss')} by ${by === 'month' ? 'Month' : 'Quarter'}`,
                 noun,
@@ -1762,7 +1763,36 @@ const ReportsPage = {
         return { params, toolbar };
     },
     _sortQs(params) {
-        return (params && params.sort === 'name' ? '&sort=name' : '') + ReportsPage._adjQs(params);
+        return (params && params.sort === 'name' ? '&sort=name' : '') + ReportsPage._adjQs(params) + ReportsPage._basisQs(params);
+    },
+    // The statement's basis (#483): accrual, cash, or the company default
+    // when nothing is chosen. A report param like Sort by, so it rides on
+    // the address, the saved report and the PDF / CSV links.
+    _basisQs(params) {
+        const b = params && params.basis;
+        return b === 'cash' || b === 'accrual' ? `&basis=${b}` : '';
+    },
+    _basisOpts(prefill) {
+        const basis = prefill && ['cash', 'accrual'].includes(prefill.basis) ? prefill.basis : '';
+        const params = basis ? { basis } : {};
+        const toolbar = `<div class="form-group">
+                    <label for="report-basis-select">Basis</label>
+                    <select id="report-basis-select" data-no-search onchange="ReportsPage.setParam('basis', this.value)">
+                        <option value="" ${basis ? '' : 'selected'}>Company default</option>
+                        <option value="accrual" ${basis === 'accrual' ? 'selected' : ''}>Accrual</option>
+                        <option value="cash" ${basis === 'cash' ? 'selected' : ''}>Cash</option>
+                    </select>
+                </div>`;
+        return { params, toolbar };
+    },
+    // Cash basis with A/R or A/P left over from journal-entry history (#483)
+    _basisNote(data) {
+        return data && data.basis_note
+            ? `<p class="basis-note" style="margin-bottom:12px; font-size:12px; color:var(--gray-600);">${escapeHtml(data.basis_note)}</p>`
+            : '';
+    },
+    _basisWords(data) {
+        return data && data.basis === 'cash' ? ' &middot; cash basis' : '';
     },
     // "Without adjusting entries" (#341): the statement before the
     // accountant's corrections. Rides on the address and the exports.
@@ -1783,13 +1813,16 @@ const ReportsPage = {
     // the two statements' toolbar: the sort choice and the adjusting box
     _statementOpts(prefill) {
         const sort = ReportsPage._sortOpts(prefill);
+        const basis = ReportsPage._basisOpts(prefill);
         const adj = ReportsPage._adjOpts(prefill);
-        return { params: { ...sort.params, ...adj.params }, toolbar: sort.toolbar + adj.toolbar };
+        return { params: { ...sort.params, ...basis.params, ...adj.params }, toolbar: sort.toolbar + basis.toolbar + adj.toolbar };
     },
 
     async balanceSheet(prefill) {
         // Compare to the same date a year earlier, as the P&L does.
-        const opts = { ...ReportsPage._sortOpts(prefill) };
+        const sortOpts = ReportsPage._sortOpts(prefill);
+        const basisOpts = ReportsPage._basisOpts(prefill);
+        const opts = { params: { ...sortOpts.params, ...basisOpts.params }, toolbar: sortOpts.toolbar + basisOpts.toolbar };
         const bsParams = { ...opts.params, ...ReportsPage._compareParams(prefill) };
         await ReportsPage.openPeriodModal(T("Balance Sheet"), ReportsPage.defaultPeriod(), async (_period, params, live) => {
             const cmp = live.compare === 'prior_year';
@@ -1836,7 +1869,7 @@ const ReportsPage = {
                 ).join('');
             };
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
@@ -3866,7 +3899,7 @@ ReportsPage._compareParams = function (prefill) {
 // (sort, adjusting entries, comparison), not the drill-down's dates.
 ReportsPage._cmpKeep = function (params) {
     const keep = {};
-    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes', 'columns']) {
+    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes', 'columns', 'basis']) {
         if (params && params[k]) keep[k] = params[k];
     }
     return keep;

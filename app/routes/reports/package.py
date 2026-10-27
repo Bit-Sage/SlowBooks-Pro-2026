@@ -143,8 +143,13 @@ def build_package(
     notes: list[str] = []
 
     # 1. the statements pack
-    pl = profit_loss(start_date, end_date, db)
-    bs = balance_sheet(end_date, db)
+    # The statements follow the company's report basis (#483): a company that
+    # reports on a cash basis sends a cash P&L and Balance Sheet.
+    from app.services.cash_basis import company_basis
+
+    basis = company_basis(db)
+    pl = profit_loss(start_date, end_date, db, basis=basis)
+    bs = balance_sheet(end_date, db, basis=basis)
     tb = trial_balance(start_date, end_date, db)
     try:
         from app.services.pdf_service import generate_report_pdf
@@ -163,7 +168,12 @@ def build_package(
             (
                 f"financial-statements_{s}_{e}.pdf",
                 pdf,
-                "the Financial Statements Pack: Profit & Loss, Balance Sheet and Trial Balance",
+                "the Financial Statements Pack: Profit & Loss, Balance Sheet and Trial Balance"
+                + (
+                    " (Profit & Loss and Balance Sheet on a cash basis)"
+                    if basis == "cash"
+                    else ""
+                ),
             )
         )
     except Exception as exc:  # no PDF renderer on this install
@@ -287,6 +297,16 @@ def build_package(
     ]
     for name, _, about in files:
         readme.append(f"  {name}: {about}")
+    readme += [
+        "",
+        f"Report basis: {basis}. "
+        + (
+            "The Profit & Loss and Balance Sheet are on a cash basis; the General "
+            "Ledger, Trial Balance and agings are the books as posted (accrual)."
+            if basis == "cash"
+            else "The statements are on the accrual basis."
+        ),
+    ]
     if closing:
         readme += ["", f"Closing date in force: {closing.isoformat()}."]
     if notes:
@@ -307,6 +327,7 @@ def build_package(
         "end_date": e,
         "files": ["README.txt"] + [name for name, _, _ in files],
         "notes": notes,
+        "basis": basis,
         "closing_date": closing.isoformat() if closing else "",
     }
     return buf.getvalue(), manifest

@@ -17,6 +17,7 @@ from app.models.transactions import Transaction
 from app.schemas.payments import PaymentApply, PaymentCreate, PaymentResponse
 from app.services.accounting import (
     _q,
+    all_lines,
     create_journal_entry,
     get_ar_account_id,
     get_undeposited_funds_id,
@@ -31,7 +32,7 @@ from app.services.payments.clearing import (
     existing_clearing_account,
     is_fee_line,
 )
-from app.services import request_keys
+from app.services import cash_basis, request_keys
 from app.services.audit import _actor
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -268,6 +269,16 @@ def create_payment(
                     "description": f"Realized FX on payment from {customer.name}",
                 }
             )
+        # The cash-basis reading of this payment (#483): the invoices'
+        # income, tax and cost lines prorated by what was applied, the
+        # remainder as unapplied cash income, balanced on A/R.
+        journal_lines += cash_basis.customer_payment_cash_lines(
+            db,
+            ar_id,
+            list(zip(allocated_invoices, ar_home_credits)),
+            to_home(unallocated, pay_rate),
+            f"Payment from {customer.name}",
+        )
         txn = create_journal_entry(
             db,
             data.date,
@@ -337,6 +348,7 @@ def apply_payment(payment_id: int, data: PaymentApply, db: Session = Depends(get
     pay_rate = Decimal(str(payment.exchange_rate or 1))
     fx_home = Decimal("0")  # A/R still to relieve (+) or over-relieved (−)
     latest = payment.date
+    applied_now: list[tuple] = []  # (invoice, home amount) for the cash basis
     for alloc_data in data.allocations:
         invoice = (
             db.query(Invoice)
@@ -384,6 +396,9 @@ def apply_payment(payment_id: int, data: PaymentApply, db: Session = Depends(get
         fx_home += to_home(amount, Decimal(str(invoice.exchange_rate or 1))) - to_home(
             amount, pay_rate
         )
+        applied_now.append(
+            (invoice, to_home(amount, Decimal(str(invoice.exchange_rate or 1))))
+        )
         latest = max(latest, invoice.date)
         db.add(
             PaymentAllocation(
@@ -427,6 +442,11 @@ def apply_payment(payment_id: int, data: PaymentApply, db: Session = Depends(get
             reference=payment.reference or payment.check_number or "",
         )
 
+    # The cash basis (#483): the remainder was Unapplied Cash Payment
+    # Income on the payment's date; now that it pays these invoices, move
+    # it to their income. Cash lines only — the accrual reading sees nothing.
+    _reclass_unapplied(db, payment, applied_now)
+
     db.commit()
     db.refresh(payment)
     return _response(payment)
@@ -455,6 +475,28 @@ def _paid_out_warning(db, lines, provider) -> str | None:
         "reversed. Check the payout, and record the refund or dispute taken "
         "from the next one."
     )
+
+
+def _reclass_unapplied(db: Session, payment: Payment, applied) -> None:
+    """Move the applied part of the remainder from Unapplied Cash Payment
+    Income to the invoices' income, as cash lines appended to the payment's
+    own entry (#483): the cash was in hand on the payment's date, the
+    period's cash-basis net income does not change, only the account, and
+    the void reverses the entry whole."""
+    if not applied or not payment.transaction_id:
+        return
+    txn = db.get(Transaction, payment.transaction_id)
+    if txn is None:
+        return
+    customer = db.query(Customer).filter(Customer.id == payment.customer_id).first()
+    cname = customer.name if customer else "customer"
+    ar_id = get_ar_account_id(db)
+    lines = []
+    for invoice, home in applied:
+        lines += cash_basis.apply_reclass_lines(
+            db, ar_id, invoice, home, f"Payment from {cname} applied"
+        )
+    cash_basis.append_cash_lines(db, txn, lines)
 
 
 @router.post("/{payment_id}/void", response_model=PaymentResponse)
@@ -497,15 +539,10 @@ def void_payment(
     # does, so it is never left open with nothing in A/R.
     receipt = qbo_documents.sales_receipt_of(db, payment)
 
-    # Reverse journal entry
+    # Reverse journal entry — every line, the cash-basis ones included,
+    # each undone on its own basis (#483)
     if payment.transaction_id:
-        from app.models.transactions import TransactionLine
-
-        original_lines = (
-            db.query(TransactionLine)
-            .filter(TransactionLine.transaction_id == payment.transaction_id)
-            .all()
-        )
+        original_lines = all_lines(db, payment.transaction_id)
         provider = payment.method if payment.method in PROVIDER_NAMES else None
         # judged on the whole entry: what this payment added to clearing
         payout_warning = _paid_out_warning(db, original_lines, provider)
@@ -520,6 +557,12 @@ def void_payment(
                 "debit": ol.credit,
                 "credit": ol.debit,
                 "description": void_line_memo(ol.description),
+                "class_id": ol.class_id,
+                "job_id": ol.job_id,
+                "cost_code_id": ol.cost_code_id,
+                "cost_type": ol.cost_type,
+                "function": ol.function,
+                "basis": ol.basis,
             }
             for ol in original_lines
         ]
@@ -556,7 +599,7 @@ def void_payment(
             db,
             applied_fx.date,
             f"VOID {applied_fx.description or ''}".strip(),
-            reversing_lines(applied_fx.lines),
+            reversing_lines(all_lines(db, applied_fx.id)),
             source_type="payment_apply_void",
             source_id=applied_fx.id,
             reference=applied_fx.reference or "",

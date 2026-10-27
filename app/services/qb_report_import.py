@@ -1589,4 +1589,8 @@ def import_qb_report(
             base["errors"][i] = f"{unbalanced}. {long_period_note(period)}"
         else:
             base["warnings"].append(long_period_note(period))
+    # the payments it created get their cash-basis lines now (#483)
+    from app.services.cash_basis import backfill_after_import
+
+    backfill_after_import(db)
     return base

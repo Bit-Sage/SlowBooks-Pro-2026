@@ -171,6 +171,32 @@ expense part. A reprinted 1099-NEC or 1099 Summary for an earlier year can
 differ from the one filed when register entries were linked to the vendor
 since.
 
+**Reports on a cash basis, step 1** (#483, @ContractorKeith). The Profit &
+Loss and the Balance Sheet run on the cash basis: income when the customer's
+payment lands, a bill's expense when it is paid, each prorated over the
+document's lines (and their items' accounts, classes, jobs and sales tax)
+by the part paid, with Accounts Receivable and Accounts Payable at zero and
+a payment taken before its invoice as Unapplied Cash Payment Income (a bill
+payment's remainder as Unapplied Cash Bill Payment Expense) until applied.
+Settings → Company has a Report Basis default (accrual, as before), and
+each of the two statements a Basis choice beside Sort by (`?basis=cash` on
+their API, PDF and CSV, which say "cash basis" when they are). Every ledger
+line now carries a basis; a file from an earlier build is tagged and its
+payments' cash lines written once at the next start, in batches of 200
+with a savepoint per payment (one that fails is logged by id and skipped,
+and start-up warns with the count), on a new index of
+`transactions(source_type, source_id)` that took the backfill from minutes
+to seconds on a big book. The IIF, QuickBooks report and QuickBooks Online
+imports write their payments' cash lines at the end of the import. Online card payments with a clearing account write their cash lines too, as does the payment of a QuickBooks Online sales receipt or invoice once an edit makes it ours; an invoice the old QuickBooks Online connector posted counts once on cash, on its posting's date. An
+account, job or cost code that has only cash-basis lines (Unapplied Cash
+Payment Income, say) counts as in use and cannot be deleted. When A/R or
+A/P is not zero on a cash-basis report (history that came in as journal
+entries), a note under the report says so, on screen and in the PDF. The
+Accountant's Package follows the company's report basis for its Profit &
+Loss and Balance Sheet, and its README says which. Every other report,
+the registers, agings and exports stay accrual until a later step. Design:
+`docs/design/cash-basis.md`.
+
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general
 partnership, limited partnership, limited liability partnership, LLC (with its

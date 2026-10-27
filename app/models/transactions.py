@@ -18,16 +18,35 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     CheckConstraint,
+    Index,
     func,
 )
+from sqlalchemy import event
 from sqlalchemy import false as sa_false
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session, relationship, with_loader_criteria
 
 from app.database import Base
+
+# The three values of transaction_lines.basis.
+BASIS_BOTH = "both"
+BASIS_ACCRUAL = "accrual"
+BASIS_CASH = "cash"
+BASES = (BASIS_BOTH, BASIS_ACCRUAL, BASIS_CASH)
+
+# Session execution option naming the reading a query wants: "accrual"
+# (the default when the option is absent), "cash", or "all" (every line,
+# for a void copying the entry it reverses, or a repair).
+LEDGER_BASIS_OPTION = "ledger_basis"
+READ_ACCRUAL = "accrual"
+READ_CASH = "cash"
+READ_ALL = "all"
 
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    # Documents' entries are found by their source (a payment's invoices,
+    # the cash-basis backfill, a void): without this each lookup scans.
+    __table_args__ = (Index("ix_transactions_source", "source_type", "source_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, nullable=False, index=True)
@@ -117,8 +136,48 @@ class TransactionLine(Base):
     deposit_transaction_id = Column(
         Integer, ForeignKey("transactions.id"), nullable=True, index=True
     )
+    # Which basis the line counts on (#483, docs/design/cash-basis.md):
+    # "both" (the default: the figure is the same either way), "accrual"
+    # (an invoice, bill, credit memo... and their voids) or "cash" (the
+    # income / expense recognition a payment writes). The accrual view is
+    # both + accrual, the cash view both + cash; see LEDGER_BASIS_OPTION.
+    basis = Column(
+        String(10), nullable=False, default=BASIS_BOTH, server_default=BASIS_BOTH
+    )
 
     transaction = relationship(
         "Transaction", back_populates="lines", foreign_keys=[transaction_id]
     )
     account = relationship("Account", back_populates="transaction_lines")
+
+
+def read_basis_of(options: dict) -> str:
+    """The reading a statement's execution options ask for; accrual when
+    they say nothing."""
+    value = options.get(LEDGER_BASIS_OPTION) if options else None
+    return value if value in (READ_ACCRUAL, READ_CASH, READ_ALL) else READ_ACCRUAL
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _ledger_reads_one_basis(state) -> None:
+    """Every ORM select that touches a ledger line reads one basis (#483).
+
+    Without an execution option the reading is accrual — both + accrual —
+    so each of the hundred-odd query sites that sum TransactionLine keeps
+    the figures it had before cash lines existed. A report that wants the
+    cash basis passes ``execution_options(ledger_basis="cash")``; a path
+    that needs every line (a void reversing a payment's entry) passes
+    "all". The criteria rides into joins, column sums, subqueries and
+    relationship loads alike (with_loader_criteria), which a filter at
+    each site could not promise."""
+    if not state.is_select:
+        return
+    reading = read_basis_of(state.execution_options)
+    if reading == READ_ALL:
+        return
+    hidden = BASIS_CASH if reading == READ_ACCRUAL else BASIS_ACCRUAL
+    state.statement = state.statement.options(
+        with_loader_criteria(
+            TransactionLine, lambda cls: cls.basis != hidden, include_aliases=True
+        )
+    )
