@@ -162,9 +162,10 @@ def clearing_balance(db: Session, provider_name: str) -> Decimal:
 def payouts_allowed(db: Session, provider_name: str) -> bool:
     """A payout can be recorded while clearing is on, and after it is turned
     off for as long as money is still waiting in the clearing account."""
-    return clearing_enabled_db(db, provider_name) or clearing_balance(
-        db, provider_name
-    ) > 0
+    return (
+        clearing_enabled_db(db, provider_name)
+        or clearing_balance(db, provider_name) > 0
+    )
 
 
 def fee_line_memo(provider_name: str) -> str:
