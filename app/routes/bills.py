@@ -17,7 +17,7 @@ from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
-from app.models.purchase_orders import PurchaseOrderLine
+from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
 from app.schemas.bills import (
     BillCreate,
     BillLineCreate,
