@@ -1100,3 +1100,95 @@ def test_migration_upgrades_downgrades_and_backfills(tmp_path):
 
     assert run("downgrade", "-1").returncode == 0
     assert run("upgrade", "head").returncode == 0
+
+
+# ── Retainage follows a converted bill's edited lines (#553) ─────────────
+
+
+def _converted_4000_at_10(client, seed_accounts):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES, retainage_pct=10)
+    ids = [ln["id"] for ln in po["lines"]]
+    bill_id = _convert(
+        client, po["id"], lines=[{"line_id": ids[0], "amount": 4000}]
+    ).json()["bill_id"]
+    line = client.get(f"/api/bills/{bill_id}").json()["lines"][0]
+    return po, ids, bill_id, line
+
+
+def _edit_body(ids, line, rate, **extra):
+    return {
+        "lines": [
+            {
+                "purchase_order_line_id": ids[0],
+                "account_id": line["account_id"],
+                "description": line["description"],
+                "quantity": 1,
+                "rate": rate,
+            }
+        ],
+        **extra,
+    }
+
+
+def test_editing_converted_bill_lines_recomputes_retainage(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 3000))
+    assert r.status_code == 200, r.text
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("300.00")
+    assert _gl(db_session, seed_accounts["2000"].id) == Decimal("-2700.00")
+    assert _gl(db_session, _retainage_account(db_session).id) == Decimal("-300.00")
+
+    # Down to 300 is accepted, with 30 held (it used to be refused).
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 300))
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("30.00")
+
+
+def test_explicit_retainage_held_wins_on_a_line_edit(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    r = client.put(
+        f"/api/bills/{bill_id}",
+        json=_edit_body(ids, line, 3000, retainage_held=150),
+    )
+    assert r.status_code == 200, r.text
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("150.00")
+
+
+def test_raising_a_closed_commitment_is_refused(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_po(client, v["id"], SUB_LINES)
+    assert _convert(client, po["id"]).status_code == 200
+    ids = [ln["id"] for ln in po["lines"]]
+
+    def put(rate):
+        return client.put(
+            f"/api/purchase-orders/{po['id']}",
+            json={
+                "lines": [
+                    {
+                        "id": ids[0],
+                        "description": "Foundations",
+                        "quantity": 1,
+                        "rate": rate,
+                    },
+                    {"id": ids[1], "description": "Slab", "quantity": 1, "rate": 5000},
+                ]
+            },
+        )
+
+    r = put(12000)
+    assert r.status_code == 409, r.text
+    assert "sub change order" in r.text
+    assert put(10000).status_code == 200  # unchanged amounts still save

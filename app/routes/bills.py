@@ -707,6 +707,17 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         # Checked here, before anything is torn down, so a bad edit mutates
         # nothing.
         retainage_held = _q(update_data.get("retainage_held", bill.retainage_held) or 0)
+        # A bill converted from a commitment with a retainage rate follows its
+        # lines: held is the rate on the new subtotal unless the request
+        # names an amount.
+        if "retainage_held" not in update_data and bill.po_id:
+            from app.models.purchase_orders import PurchaseOrder
+
+            po = db.get(PurchaseOrder, bill.po_id)
+            if po and po.retainage_pct:
+                retainage_held = _q(
+                    subtotal * Decimal(str(po.retainage_pct)) / Decimal("100")
+                )
         if retainage_held > subtotal:
             raise HTTPException(
                 status_code=422,
@@ -811,6 +822,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             txn.job_id = bill.job_id
 
         # retainage_held was validated above, before the teardown.
+        bill.retainage_held = retainage_held
         bill.subtotal = subtotal
         bill.tax_rate = tax_rate
         bill.tax_amount = tax_amount

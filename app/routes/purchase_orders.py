@@ -163,6 +163,7 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
+    was_closed = po.status == POStatus.CLOSED
     update_data = reject_null_updates(
         PurchaseOrder, data.model_dump(exclude_unset=True, exclude={"lines"})
     )
@@ -198,6 +199,22 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                         status_code=409,
                         detail={"code": "commitment_billed", "message": _billed},
                     )
+
+        # A fully billed (closed) commitment cannot take more dollars: it
+        # would stay closed and the extra could never be billed.
+        if was_closed and sum(line_amounts, Decimal("0")) > sum(
+            (Decimal(str(ln.amount or 0)) for ln in po.lines), Decimal("0")
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "commitment_closed",
+                    "message": (
+                        "This commitment is fully billed; raise it with a "
+                        "sub change order."
+                    ),
+                },
+            )
 
         for ln in list(po.lines):
             if ln.id not in incoming_ids:

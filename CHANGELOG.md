@@ -272,7 +272,7 @@ the payment). Pay Bills also offers a per-bill lien-waiver status saved through
 nothing. The To Bill dialog takes a **bill date** (default today; `date` on
 `convert-to-bill`) used for the bill, its journal and the closing-date check,
 editing a converted bill's lines keeps the commitment link and re-tallies
-billed-to-date, and the 2050 retainage line carries the job.
+billed-to-date, and the 2050 retainage line carries the job. Editing a converted bill's lines re-computes its retainage at the commitment's rate (an explicit `retainage_held` still wins), and a fully billed commitment refuses a higher amount with a 409 pointing to a sub change order.
 Sub change orders (#554), progress billing with retainage released (#555) and
 the buyout report / job cost by vendor (#556) build on this. A Business or
 Nonprofit company sees none of it. One behaviour change for everyone: a $0
