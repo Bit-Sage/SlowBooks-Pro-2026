@@ -19,6 +19,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.models.accounts import AccountType
 from app.models.contacts import Vendor
 from app.models.bills import BillPayment
 from app.models.transactions import Transaction
@@ -127,13 +128,36 @@ def register_entries(
     return out
 
 
+def reportable_amount(t: Transaction) -> Decimal | None:
+    """What a register entry adds to a vendor's 1099-NEC, or None when it
+    adds nothing. Only an entry paid from a bank account counts: a card
+    charge is reported by the card processor on a 1099-K. And only the
+    entry's expense and cost-of-goods lines count, not the bank amount, so
+    a payment to A/P, sales tax or a loan is not income to the vendor and
+    a split counts its expense part. A refund nets off (a credit line)."""
+    banks = [ln.account for ln in t.lines if ln.account and ln.account.bank_kind]
+    if not banks or any(a.bank_kind == "credit_card" for a in banks):
+        return None
+    return sum(
+        (
+            Decimal(str(ln.debit or 0)) - Decimal(str(ln.credit or 0))
+            for ln in t.lines
+            if ln.account
+            and ln.account.account_type in (AccountType.EXPENSE, AccountType.COGS)
+        ),
+        Decimal("0"),
+    )
+
+
 def register_payment_totals(db: Session, year: int) -> dict[int, Decimal]:
-    """Sum the year's register entries per vendor, voided ones left out: the
-    second source of money paid to a vendor beside bill payments."""
+    """Sum the year's register entries per vendor (see reportable_amount),
+    voided ones left out: the second source of money paid to a vendor
+    beside bill payments."""
     totals: dict[int, Decimal] = {}
-    for t, paid, voided in register_entries(db, date(year, 1, 1), date(year, 12, 31)):
-        if not voided:
-            totals[t.vendor_id] = totals.get(t.vendor_id, Decimal("0")) + paid
+    for t, _paid, voided in register_entries(db, date(year, 1, 1), date(year, 12, 31)):
+        amount = None if voided else reportable_amount(t)
+        if amount is not None:
+            totals[t.vendor_id] = totals.get(t.vendor_id, Decimal("0")) + amount
     return totals
 
 

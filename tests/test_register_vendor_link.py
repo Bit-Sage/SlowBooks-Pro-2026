@@ -5,6 +5,8 @@ line does, #491), so it shows on the vendor's payment history (#569). A
 payee no vendor has stays text. The page side is source-checked here; the
 browser walks the suggestion box in test_browser_register_vendor.py."""
 
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 JS = (Path(__file__).resolve().parents[1] / "app/static/js/banking.js").read_text(
@@ -177,3 +179,67 @@ def test_a_linked_entry_to_a_vendor_off_1099_is_not_on_the_form(client, seed_acc
     v = client.post("/api/vendors", json={"name": "Lumber Yard"}).json()
     _post(client, seed_accounts, payee="Lumber Yard", amount="-900.00")
     assert _nec(client, v["id"]) is None
+
+
+def _1099_vendor(client):
+    return client.post(
+        "/api/vendors", json={"name": "Sub Co", "is_1099_vendor": True}
+    ).json()
+
+
+def test_a_card_charge_to_a_1099_vendor_does_not_count(client, seed_accounts):
+    v = _1099_vendor(client)
+    _post(
+        client,
+        seed_accounts,
+        account_id=seed_accounts["2100"].id,
+        payee="Sub Co",
+        amount="-700.00",
+    )
+    assert seed_accounts["2100"].bank_kind == "credit_card"
+    assert _nec(client, v["id"])["total_paid"] == 0.00
+    _post(client, seed_accounts, payee="Sub Co", amount="-300.00")  # a check
+    assert _nec(client, v["id"])["total_paid"] == 300.00
+
+
+def test_an_entry_to_accounts_payable_alone_counts_zero(client, seed_accounts):
+    v = _1099_vendor(client)
+    _post(
+        client,
+        seed_accounts,
+        payee="Sub Co",
+        amount="-900.00",
+        category_account_id=seed_accounts["2000"].id,
+    )
+    assert _nec(client, v["id"])["total_paid"] == 0.00
+
+
+def test_a_split_counts_only_its_expense_and_cogs_lines(
+    client, db_session, seed_accounts
+):
+    from app.models.transactions import Transaction, TransactionLine
+
+    v = _1099_vendor(client)
+    t = Transaction(
+        date=date(2026, 9, 10),
+        source_type="bank_entry",
+        vendor_id=v["id"],
+        description="split",
+    )
+    amounts = [
+        ("6000", "400.00", "0"),  # expense
+        ("5000", "100.00", "0"),  # cost of goods
+        ("2000", "250.00", "0"),  # A/P, not the vendor's pay for work
+        ("1000", "0", "750.00"),  # the bank pays the lot
+    ]
+    for num, debit, credit in amounts:
+        t.lines.append(
+            TransactionLine(
+                account_id=seed_accounts[num].id,
+                debit=Decimal(debit),
+                credit=Decimal(credit),
+            )
+        )
+    db_session.add(t)
+    db_session.commit()
+    assert _nec(client, v["id"])["total_paid"] == 500.00

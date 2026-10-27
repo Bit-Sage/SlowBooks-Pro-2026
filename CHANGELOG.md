@@ -49,8 +49,9 @@ other exports. `GET /api/vendors/{id}/payment-history` answers the page
 date leaves the other side open); `GET /api/vendors/{id}/payments/csv` keeps
 its address and its all-time default. The bill-payment subtotal is summed by
 the 1099 query itself, so for a 1099 vendor over a year it is the vendor's
-1099-NEC figure (with the register entries that name the vendor, #590);
-direct expenses, which the 1099 leaves out, are subtotalled beside it rather
+1099-NEC figure before the register entries that name the vendor (#590, which
+count by their expense lines from bank accounts only); direct expenses, which
+the 1099 leaves out, are subtotalled beside it rather
 than folded in. The list's search box
 (#335) stays as it was — name, company, phone, email — and the list route's
 `search` parameter now covers the same four fields instead of the name alone.
@@ -94,7 +95,13 @@ A name that is not a vendor stays text and is still offered "Add as a
 vendor?". A linked entry counts toward the vendor's 1099-NEC and the 1099
 Summary with its bill payments, under the same rules (1099 vendor, NEC type,
 $600, voided left out; a linked bank-feed line counts too); a transfer or an
-unlinked payee does not.
+unlinked payee does not. Only entries paid from a bank account count, never a
+credit card (the card processor reports those on a 1099-K), and only the
+entry's expense and cost-of-goods lines, not the bank amount, so a payment to
+Accounts Payable or Sales Tax Payable adds nothing and a split counts its
+expense part. A reprinted 1099-NEC or 1099 Summary for an earlier year can
+differ from the one filed when register entries were linked to the vendor
+since.
 
 **A legal entity type on the company** (#488, @ContractorKeith). Settings →
 Company now asks for the company's legal form — sole proprietor, general

@@ -7,11 +7,11 @@
 #   - direct expenses (a Transaction of source_type "expense" whose
 #     source_id is the vendor), voided by an "expense_void" reversal
 #   - bank-feed entries that name the vendor (#491, Transaction.vendor_id)
-# The 1099-NEC counts bill payments and register entries (#590; form_1099's
-# paid_bill_payments and register_entries); direct expenses are left out. The
-# history lists all three kinds and subtotals them, so for a 1099 vendor over
-# a year the bill-payment and bank-entry subtotals add up to the 1099 figure
-# and the expenses sit beside it, not hidden in it.
+# The 1099-NEC counts bill payments and the expense and cost-of-goods lines of
+# register entries paid from a bank account (#590; form_1099's
+# paid_bill_payments and register_payment_totals); direct expenses and card
+# charges are left out. The history lists every kind and subtotals them, so
+# the bank-entry subtotal can exceed what the 1099 counts of it.
 # ============================================================================
 
 from datetime import date
