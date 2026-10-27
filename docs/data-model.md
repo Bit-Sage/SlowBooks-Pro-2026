@@ -206,16 +206,21 @@ lines from its bill; downgrade reverses). Retainage release (a debit back to
 
 How a locked budget, its contract and its commitments move. Two new tables:
 
-- `change_orders` — the document: `job_id` (FK, CASCADE), `number` String(20)
-  unique (`PCO-0001` / `CO-0001` / `SCO-0001` per kind), `kind` String(8)
+- `change_orders` — the document: `job_id` (FK, CASCADE), `number` String(80)
+  unique (per job and kind: `<job number>-CO-001` / `-PCO-001` / `-SCO-001`,
+  a PCO revision adds `-R2`; older `CO-0001` rows keep theirs), `kind` String(8)
   (`pco` | `owner` | `sub`), `status` String(10) (`draft` | `pending` |
-  `approved` | `rejected` | `void` | `promoted`), `title`, `description`,
+  `approved` | `rejected` | `void` | `promoted` | `superseded`), `title`, `description`,
   `date`, `funding` String(12) (`contract` | `allowance` | `contingency`),
   `allowance_sov_line_id` (FK `sov_lines.id`, SET NULL — required when funding
   = allowance), `markup_pct` Numeric(7,4) (the CO's default markup, null →
   the job's `co_markup_pct`), `commitment_id` (FK `purchase_orders.id`, SET
   NULL — required for a sub CO), `owner_change_order_id` (FK self, SET NULL),
-  `source_pco_id` (FK self, SET NULL), `approved_at`, `voided_at`.
+  `source_pco_id` (FK self, SET NULL), `apply_markup` Boolean (default true;
+  the API defaults it off for allowance/contingency funding), `revision`
+  Integer (default 1) and `supersedes_id` (FK self, SET NULL — the PCO revision
+  this one replaced), `promoted_to_id` (FK self, SET NULL — the owner CO a PCO
+  was rolled into; several PCOs may share one), `approved_at`, `voided_at`.
 - `change_order_lines` — `change_order_id` (FK, CASCADE), `line_order`,
   `description`, `cost_type` String(20) NOT NULL (validated against
   `cost_types`), `cost_code_id`, `trade_package_id`, `quantity`, `unit`,
@@ -231,7 +236,8 @@ is added to `SOV_KINDS`). The math and the apply/reverse effects live in
 `app/routes/purchase_orders.py`. On approve an owner CO writes `job_budgets`
 rows with `source = change`, `locked = True` (the one path that may move a
 locked budget), which the job-cost tree reads into its Changes column.
-Migration `a7c9e1f3b5d6_construction_change_orders` (additive; downgrade
+Migrations `a7c9e1f3b5d6_construction_change_orders` and
+`b8d0f2a4c6e8_change_order_revisions_markup_flag` (additive; downgrade
 reverses). Progress billing against the revised SOV is #555; the change-order
 log report is #556.
 

@@ -41,11 +41,13 @@ def line_cost(quantity, unit_cost) -> Decimal:
     return _q(Decimal(str(quantity or 0)) * Decimal(str(unit_cost or 0)))
 
 
-def effective_markup(line_markup, co_markup, job_markup, funding: str) -> Decimal:
+def effective_markup(
+    line_markup, co_markup, job_markup, funding: str, apply_markup: bool = False
+) -> Decimal:
     """The percent that applies to a line: the line's own, else the CO's, else
-    the job's default, else zero — but forced to zero when an allowance pays
-    for the work (an allowance carries no markup)."""
-    if funding == "allowance":
+    the job's default, else zero. Allowance- and contingency-funded work
+    carries none unless the CO turns markup on (apply_markup)."""
+    if funding != "contract" and not apply_markup:
         return _ZERO
     for pct in (line_markup, co_markup, job_markup):
         if pct is not None:
@@ -63,11 +65,11 @@ def line_sell(cost: Decimal, markup: Decimal, kind: str) -> Decimal:
 
 def compute_line(line: ChangeOrderLine, co: ChangeOrder, job: Job) -> None:
     """Stamp a line's server-computed amount (cost) and sell_amount in place,
-    from the effective markup (line → CO → job → 0, forced to 0 under an
-    allowance)."""
+    from the effective markup (line → CO → job → 0; 0 for allowance-/
+    contingency-funded work unless the CO applies markup)."""
     cost = line_cost(line.quantity, line.unit_cost)
     markup = effective_markup(
-        line.markup_pct, co.markup_pct, job.co_markup_pct, co.funding
+        line.markup_pct, co.markup_pct, job.co_markup_pct, co.funding, co.apply_markup
     )
     line.amount = cost
     line.sell_amount = line_sell(cost, markup, co.kind)
@@ -90,7 +92,11 @@ def _freeze(co: ChangeOrder, job: Job) -> None:
     for line in co.lines:
         cost = line_cost(line.quantity, line.unit_cost)
         markup = effective_markup(
-            line.markup_pct, co.markup_pct, job.co_markup_pct, co.funding
+            line.markup_pct,
+            co.markup_pct,
+            job.co_markup_pct,
+            co.funding,
+            co.apply_markup,
         )
         line.markup_pct = markup  # stamp the effective markup on the line
         line.amount = cost
@@ -355,6 +361,63 @@ def remove_commitment_lines(db: Session, po: PurchaseOrder, co: ChangeOrder) -> 
     db.flush()
 
 
+# ── Reference guards ────────────────────────────────────────────────────────
+
+
+def check_allowance_line(db: Session, job_id: int, sov_line_id) -> SovLine:
+    """The allowance SOV line an allowance-funded CO spends: it must exist on
+    this job and be an allowance line. Another job's line is reported as not
+    found; a non-allowance line of this job is a 400."""
+    line = db.get(SovLine, sov_line_id) if sov_line_id is not None else None
+    if line is None or line.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Allowance line not found")
+    if line.kind != "allowance":
+        raise HTTPException(
+            status_code=400, detail="That schedule-of-values line is not an allowance."
+        )
+    return line
+
+
+def check_owner_link(db: Session, job_id: int, owner_id) -> None:
+    """A sub CO's backing owner CO must exist, be an owner CO and be on the
+    same job."""
+    if owner_id is None:
+        return
+    owner = db.get(ChangeOrder, owner_id)
+    if owner is None or owner.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Owner change order not found")
+    if owner.kind != "owner":
+        raise HTTPException(
+            status_code=400,
+            detail="A sub change order is backed by an owner change order.",
+        )
+
+
+def refuse_with_approved_sub(db: Session, owner: ChangeOrder, action: str) -> None:
+    """An owner CO cannot be rejected or voided while an approved sub CO
+    stands under it: the commitment it raised would be left with no owner
+    change (and, if linked, no budget) behind it. Void the sub CO first."""
+    if owner.kind != "owner":
+        return
+    sub = (
+        db.query(ChangeOrder)
+        .filter(
+            ChangeOrder.owner_change_order_id == owner.id,
+            ChangeOrder.kind == "sub",
+            ChangeOrder.status == "approved",
+        )
+        .first()
+    )
+    if sub is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "approved_sub_co",
+                "message": f"{sub.number} is approved under this change order; void it before you {action} this one.",
+            },
+        )
+
+
 # ── Apply / reverse ─────────────────────────────────────────────────────────
 
 
@@ -406,17 +469,16 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                     status_code=422,
                     detail="An allowance-funded change order needs an allowance line.",
                 )
-            sov_line = db.get(SovLine, co.allowance_sov_line_id)
-            if sov_line is not None:
-                already = allowance_used(db, job, sov_line.id)
-                if _q(already + totals["cost_total"]) > _q(sov_line.scheduled_value):
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "code": "allowance_exceeded",
-                            "message": "This change order would spend more than the allowance holds.",
-                        },
-                    )
+            sov_line = check_allowance_line(db, co.job_id, co.allowance_sov_line_id)
+            already = allowance_used(db, job, sov_line.id)
+            if _q(already + totals["cost_total"]) > _q(sov_line.scheduled_value):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "allowance_exceeded",
+                        "message": "This change order would spend more than the allowance holds.",
+                    },
+                )
             _write_change_budgets(db, job.id, co, with_revenue=False)
     elif co.kind == "sub":
         if co.commitment_id is None:
@@ -427,6 +489,18 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
         if po is None:
             raise HTTPException(status_code=404, detail="Commitment not found")
         _check_commitment(po, co)
+        if co.owner_change_order_id is not None:
+            owner = db.get(ChangeOrder, co.owner_change_order_id)
+            if owner is None or owner.status != "approved":
+                # A linked sub CO writes no budget of its own; it relies on
+                # its owner CO having carried the cost.
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "owner_co_not_approved",
+                        "message": "Approve the owner change order first; this sub change order is backed by it.",
+                    },
+                )
         from app.routes.purchase_orders import append_commitment_lines
 
         append_commitment_lines(db, po, co.lines, co.id)
@@ -442,6 +516,7 @@ def reverse_change_order(db: Session, co: ChangeOrder) -> None:
     """Undo apply_change_order from the CO's frozen figures, in the route's
     transaction."""
     job = co.job
+    refuse_with_approved_sub(db, co, "void")
     totals = co_totals(co, job)  # frozen — the figures approve applied
     sell_total = totals["sell_total"]
 

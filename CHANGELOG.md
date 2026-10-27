@@ -420,8 +420,10 @@ copying its lines, when they say yes); an **owner change order** revises the
 contract; a **sub change order** appends scope to a commitment. Material and
 labor are priced separately, each line carrying its own markup — the line's,
 else the change order's, else the job's new **Markup on change orders**
-contract term — and work an allowance pays for carries **none** (the allowance
-already held the money). An owner change order's **funding** decides the
+contract term (kept between -100% and 1000%) — and allowance- and
+contingency-funded work carries **none by default**, with an **Apply markup**
+flag on the change order to turn it on (the record, form and PDF show whether
+markup was applied). An owner change order's **funding** decides the
 effect on approve: *contract* adds its sell total to the contract amount,
 appends a read-only `change_order` line to the schedule of values and writes
 locked `source=change` budget rows with the sell as revenue (the job-cost
@@ -433,7 +435,20 @@ open commitment on the same job (409 when it is on another job or not open),
 and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
 changing a contract term afterward never moves an approved CO. Every effect
 reverses on **void** — except a commitment line already billed against, which
-refuses the void (409 `co_billed`), and the budget key widens to include
+refuses the void (409 `co_billed`). **Numbers run per job**: the job number,
+then `CO-001`, `PCO-001`, `SCO-001` (a job with no number uses `J<id>`; older
+company-wide numbers keep theirs). A **PCO can be revised** (`POST
+/api/change-orders/{id}/revise`): the new revision (`…-R2`) supersedes the
+prior one, which stays as history, the list shows the latest, and only the
+latest promotes. **Several PCOs roll up into one owner CO** (`POST
+/{id}/promote` with `pco_ids`): the owner CO carries all their lines and each
+PCO links to it. The commitment and budget can no longer drift apart: a sub CO
+made from an owner CO approves only once that owner CO is approved, an owner CO
+with an approved sub CO under it cannot be rejected or voided (void the sub CO
+first), the allowance line must be an allowance on the same job, and a plain
+purchase-order edit cannot drop or reprice the lines a sub CO added (409
+`commitment_co_line`). A sub CO on a fully billed commitment is still refused
+(409 `commitment_not_open`). The budget key widens to include
 `source` so a change row sits beside an estimate-locked one. A **Change
 orders** tab (construction only, after Buyout) holds the log, the line form
 with live cost and sell per cost type, and Submit / Approve / Reject / Void /

@@ -158,15 +158,36 @@ def next_po_number(db: Session) -> str:
     )
 
 
-def next_change_order_number(db: Session, kind: str) -> str:
-    """The next change-order number for its kind (#554): PCO-0001 for a
-    potential change, CO-0001 for an owner change order, SCO-0001 for a sub.
-    Each kind shares one unique `number` column, so the candidate is still
-    collision-checked across all three series."""
+def next_change_order_number(db: Session, job, kind: str) -> str:
+    """The next change-order number for a job and kind (#554): the job number,
+    then PCO-001 / CO-001 / SCO-001 — each job counts its own. A job with no
+    job number uses J<id>. Rows numbered the old company-wide way (CO-0001)
+    keep their numbers and simply don't match this job's series. The
+    candidate is still checked against every number, since two jobs can share
+    a job number."""
+    import re
+
     from app.models.change_orders import ChangeOrder
 
-    prefix = {"pco": "PCO-", "owner": "CO-", "sub": "SCO-"}.get(kind, "CO-")
-    return next_document_number(db, ChangeOrder.number, prefix=prefix, first=1, pad=4)
+    stem = f"{job.job_number or 'J' + str(job.id)}-{_CO_PREFIX.get(kind, 'CO')}-"
+    pattern = re.compile(re.escape(stem) + r"(\d+)(?:-R\d+)?$")
+    n = 0
+    for (number,) in db.query(ChangeOrder.number).filter(ChangeOrder.job_id == job.id):
+        m = pattern.match(number or "")
+        if m:
+            n = max(n, int(m.group(1)))
+    n += 1
+    while True:
+        candidate = f"{stem}{n:03d}"
+        if (
+            db.query(ChangeOrder.id).filter(ChangeOrder.number == candidate).first()
+            is None
+        ):
+            return candidate
+        n += 1
+
+
+_CO_PREFIX = {"pco": "PCO", "owner": "CO", "sub": "SCO"}
 
 
 def next_estimate_number(db: Session) -> str:

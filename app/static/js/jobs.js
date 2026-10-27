@@ -907,7 +907,7 @@ const JobsPage = {
     // reverses on void.
     CO_KINDS: { pco: 'Potential', owner: 'Owner', sub: 'Sub' },
     CO_FUNDING: { contract: 'Contract', allowance: 'Allowance', contingency: 'Contingency' },
-    CO_STATUS_LABELS: { draft: 'Draft', pending: 'Pending', approved: 'Approved', rejected: 'Rejected', void: 'Void', promoted: 'Promoted' },
+    CO_STATUS_LABELS: { draft: 'Draft', pending: 'Pending', approved: 'Approved', rejected: 'Rejected', void: 'Void', promoted: 'Promoted', superseded: 'Superseded' },
 
     async changeOrdersHtml() {
         const job = JobsPage._job;
@@ -931,11 +931,11 @@ const JobsPage = {
         list = list || [];
         const m = JobsPage.money;
         const body = list.map(co => `<tr>
-            <td>${escapeHtml(co.number)}</td>
+            <td>${co.kind === 'pco' && (co.status === 'draft' || co.status === 'pending') ? `<input type="checkbox" class="co-pick" value="${co.id}" aria-label="Select ${escapeHtml(co.number)} to roll up"> ` : ''}${escapeHtml(co.number)}${co.revision > 1 ? ` <span style="color:var(--text-muted)">rev ${co.revision}</span>` : ''}</td>
             <td>${escapeHtml(JobsPage.CO_KINDS[co.kind] || co.kind)}</td>
             <td><span class="badge">${escapeHtml(JobsPage.CO_STATUS_LABELS[co.status] || co.status)}</span></td>
             <td>${escapeHtml(co.title || '')}</td>
-            <td>${escapeHtml(JobsPage.CO_FUNDING[co.funding] || co.funding)}</td>
+            <td>${escapeHtml(JobsPage.CO_FUNDING[co.funding] || co.funding)}${co.funding !== 'contract' && co.apply_markup ? ' <span style="color:var(--text-muted)">+ markup</span>' : ''}</td>
             <td class="amount">${m(co.cost_total)}</td>
             <td class="amount">${m(co.markup_total)}</td>
             <td class="amount">${m(co.sell_total)}</td>
@@ -944,6 +944,7 @@ const JobsPage = {
         </tr>`).join('');
         return `<div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
                 <button class="btn btn-primary" onclick="JobsPage.coNew()">+ New change order</button>
+                <button class="btn btn-secondary" onclick="JobsPage.coPromoteSelected()" title="Tick two or more potential change orders to roll them into one owner change order">Promote selected PCOs</button>
             </div>
             <div class="table-container"><table class="data-table" id="co-log" style="font-size:12px">
                 <thead><tr>
@@ -964,6 +965,7 @@ const JobsPage = {
         if (co.status === 'pending' && co.kind !== 'pco') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coApprove(${id})">Approve</button>`);
         if (draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coReject(${id})">Reject</button>`);
         if (co.kind === 'pco' && draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coPromote(${id})">Promote</button>`);
+        if (co.kind === 'pco' && draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coRevise(${id})">Revise</button>`);
         if (co.status === 'approved') parts.push(`<button data-destructive class="btn btn-sm btn-danger" onclick="JobsPage.coVoid(${id})">Void</button>`);
         if (co.kind === 'owner' && co.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coMakeSub(${id})">Make sub order</button>`);
         if (co.kind !== 'sub') parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/change-orders/${id}/pdf','_blank')">PDF</button>`);
@@ -998,10 +1000,11 @@ const JobsPage = {
             <div class="form-grid">
                 <div class="form-group"><label>Title</label><input id="co-title" ${d} maxlength="200" value="${escapeHtml(co.title || '')}"></div>
                 <div class="form-group"><label>Kind</label><select id="co-kind" ${d || (co.id ? 'disabled' : '')}>${kindOpts}</select></div>
-                <div class="form-group"><label>Funding</label><select id="co-funding" ${d} onchange="JobsPage.coRecalc()">${fundOpts}</select></div>
+                <div class="form-group"><label>Funding</label><select id="co-funding" ${d} onchange="JobsPage.coFundingChanged()">${fundOpts}</select></div>
                 <div class="form-group"><label>Allowance line</label><select id="co-allowance" ${d}>${allowOpts}</select></div>
                 <div class="form-group"><label>Commitment (sub)</label><select id="co-commitment" ${d}>${commitOpts}</select></div>
-                <div class="form-group"><label>Markup %</label><input id="co-markup" ${d} type="number" step="0.0001" min="0" value="${co.markup_pct ?? ''}" placeholder="default from contract" oninput="JobsPage.coRecalc()"></div>
+                <div class="form-group"><label>Apply markup</label><label style="font-weight:400"><input id="co-apply-markup" ${d} type="checkbox" ${(co.apply_markup ?? (co.funding === 'contract')) ? 'checked' : ''} onchange="JobsPage.coRecalc()"> ${co.funding === 'contract' ? 'Markup applied' : 'Add markup to this allowance/contingency work'}</label></div>
+                <div class="form-group"><label>Markup %</label><input id="co-markup" ${d} type="number" step="0.0001" min="-99.9999" max="1000" value="${co.markup_pct ?? ''}" placeholder="default from contract" oninput="JobsPage.coRecalc()"></div>
                 <div class="form-group"><label>Date</label><input id="co-date" ${d} type="date" value="${co.date || ''}"></div>
                 <div class="form-group full-width"><label>Description</label><textarea id="co-desc" ${d} rows="2">${escapeHtml(co.description || '')}</textarea></div>
             </div>
@@ -1038,7 +1041,7 @@ const JobsPage = {
             <td><input class="co-l-qty" data-write type="number" step="0.0001" value="${line.quantity ?? 1}" style="width:64px;text-align:right" oninput="JobsPage.coRecalc()"></td>
             <td><input class="co-l-unit" data-write maxlength="20" value="${escapeHtml(line.unit || '')}" style="width:52px"></td>
             <td><input class="co-l-cost" data-write type="number" step="0.0001" value="${line.unit_cost ?? 0}" style="width:84px;text-align:right" oninput="JobsPage.coRecalc()"></td>
-            <td><input class="co-l-markup" data-write type="number" step="0.0001" min="0" value="${line.markup_pct ?? ''}" style="width:64px;text-align:right" placeholder="dflt" oninput="JobsPage.coRecalc()"></td>
+            <td><input class="co-l-markup" data-write type="number" step="0.0001" min="-99.9999" max="1000" value="${line.markup_pct ?? ''}" style="width:64px;text-align:right" placeholder="dflt" oninput="JobsPage.coRecalc()"></td>
             <td class="amount co-l-amt">0.00</td>
             <td class="amount co-l-sell">0.00</td>
             <td><button type="button" class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coRemoveLine(this)">✕</button></td>
@@ -1046,17 +1049,25 @@ const JobsPage = {
     },
 
     // Pure line math (#554): cost = qty × unit cost; effective markup is the
-    // line's, else the CO's, else the job's, forced to 0 under an allowance;
-    // a sub CO carries no markup.
-    coLineMath(qty, unitCost, lineMarkup, coMarkup, jobMarkup, funding, kind) {
+    // line's, else the CO's, else the job's; zero for allowance-/contingency-
+    // funded work unless markup is applied; a sub CO carries none.
+    coLineMath(qty, unitCost, lineMarkup, coMarkup, jobMarkup, funding, kind, applyMarkup) {
         const cost = Math.round((Number(qty || 0) * Number(unitCost || 0)) * 100) / 100;
         let markup = 0;
-        if (funding !== 'allowance' && kind !== 'sub') {
+        if ((funding === 'contract' || applyMarkup) && kind !== 'sub') {
             const pick = [lineMarkup, coMarkup, jobMarkup].find(v => v !== null && v !== undefined && v !== '');
             markup = Number(pick || 0);
         }
         const sell = Math.round(cost * (1 + markup / 100) * 100) / 100;
         return { cost, sell };
+    },
+
+    // Changing what pays for the change resets markup to that funding's
+    // default: on for contract, off for allowance and contingency.
+    coFundingChanged() {
+        const box = $('#co-apply-markup');
+        if (box) box.checked = $('#co-funding').value === 'contract';
+        JobsPage.coRecalc();
     },
 
     coAddLine() {
@@ -1071,6 +1082,7 @@ const JobsPage = {
         const funding = $('#co-funding') ? $('#co-funding').value : 'contract';
         const kind = $('#co-kind') ? $('#co-kind').value : 'owner';
         const coMarkup = $('#co-markup') ? $('#co-markup').value : '';
+        const applyMarkup = $('#co-apply-markup') ? $('#co-apply-markup').checked : true;
         const jobMarkup = (JobsPage._coContract && JobsPage._coContract.co_markup_pct) || null;
         const byType = {};
         let cost = 0, sell = 0;
@@ -1079,7 +1091,7 @@ const JobsPage = {
             const uc = tr.querySelector('.co-l-cost').value;
             const lm = tr.querySelector('.co-l-markup').value;
             const t = tr.querySelector('.co-l-type').value;
-            const r = JobsPage.coLineMath(q, uc, lm, coMarkup, jobMarkup, funding, kind);
+            const r = JobsPage.coLineMath(q, uc, lm, coMarkup, jobMarkup, funding, kind, applyMarkup);
             tr.querySelector('.co-l-amt').textContent = formatCurrency(r.cost);
             tr.querySelector('.co-l-sell').textContent = formatCurrency(r.sell);
             cost += r.cost; sell += r.sell;
@@ -1118,6 +1130,7 @@ const JobsPage = {
             allowance_sov_line_id: $('#co-allowance').value ? parseInt($('#co-allowance').value) : null,
             commitment_id: $('#co-commitment').value ? parseInt($('#co-commitment').value) : null,
             markup_pct: num('#co-markup'),
+            apply_markup: $('#co-apply-markup').checked,
             date: $('#co-date').value || null,
             description: $('#co-desc').value.trim() || null,
             lines: JobsPage.coReadLines(),
@@ -1135,13 +1148,25 @@ const JobsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    CO_VERB_PAST: { submit: 'submitted', approve: 'approved', reject: 'rejected', void: 'voided', promote: 'promoted' },
+    CO_VERB_PAST: { submit: 'submitted', approve: 'approved', reject: 'rejected', void: 'voided', promote: 'promoted', revise: 'revised' },
 
     async _coAction(id, verb, confirmMsg) {
         if (confirmMsg && !confirm(confirmMsg)) return;
         try {
             await API.post(`/change-orders/${id}/${verb}`, {});
             toast(`Change order ${JobsPage.CO_VERB_PAST[verb] || verb}`);
+            await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+    coRevise(id) { JobsPage._coAction(id, 'revise', 'Start a new revision of this potential change order? The current one is kept as history.'); },
+    // Roll the ticked PCOs into one owner change order.
+    async coPromoteSelected() {
+        const ids = $$('.co-pick:checked').map(el => parseInt(el.value));
+        if (ids.length < 2) { toast('Tick two or more potential change orders to roll up', 'error'); return; }
+        if (!confirm(`Roll ${ids.length} potential change orders into one owner change order?`)) return;
+        try {
+            await API.post(`/change-orders/${ids[0]}/promote`, { pco_ids: ids.slice(1) });
+            toast('Change order promoted');
             await JobsPage.setTab('changeorders');
         } catch (err) { toast(err.message, 'error'); }
     },

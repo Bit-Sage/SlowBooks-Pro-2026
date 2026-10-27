@@ -377,7 +377,18 @@ pays for, which carries none.
 - A **potential change order (PCO)** prices a change the owner has not yet
   approved. It has no effect on the books; when the owner says yes you
   **promote** it to an owner change order (copying its lines), and the PCO is
-  marked *promoted*.
+  marked *promoted*. Tick several PCOs on one job (same funding, allowance line
+  and markup setting) and **Promote selected PCOs** rolls them into **one**
+  owner change order: it carries all their lines, its amount is the sum, and
+  each PCO links to it. A PCO can be **revised** (*Revise*): the new revision
+  (`…-PCO-001-R2`) starts as a draft copy and supersedes the prior one, which is
+  kept as history (the log shows the latest; `GET /api/change-orders?job_id=…&history=true`
+  shows them all). Only the latest revision can be revised or promoted.
+
+**Numbering.** Change orders are numbered **per job**: the job number, then
+`CO-001`, `CO-002`… (`PCO-001`… for PCOs, `SCO-001`… for sub change orders), so
+two jobs each start at `CO-001`. A job without a job number uses `J<id>`.
+Numbers from before this (`CO-0001`) keep theirs.
 - An **owner change order** revises the owner's contract. On approve it moves
   the contract amount, adds a schedule-of-values line and writes the budget.
 - A **sub change order** revises a commitment (a purchase order) — it appends
@@ -396,12 +407,26 @@ material marked up 10%: labor sells at 500 × 1.15 = **$575.00**, material at
 1,000 × 1.10 = **$1,100.00**, a change order total of **$1,675.00** on
 **$1,500.00** of cost (**$175.00** of markup).
 
-**No markup when an allowance pays.** An owner change order has a **funding**:
-*contract* (it adds to the contract sum), *contingency* (it draws the owner's
-contingency down) or *allowance* (it spends an allowance line). Work an
-allowance pays for carries **no markup** — the sell equals the cost — because
-the allowance already held the money. The same $1,500 of cost funded by an
-allowance sells at $1,500.
+**Markup is off by default when an allowance or contingency pays.** An owner
+change order has a **funding**: *contract* (it adds to the contract sum),
+*contingency* (it draws the owner's contingency down) or *allowance* (it spends
+an allowance line, which must be an allowance line on the same job). Allowance-
+and contingency-funded work carries **no markup** by default — the sell equals
+the cost — because the money was already held. The contractor can still mark it
+up: the change order's **Apply markup** flag turns it on, and the form, the log
+(*+ markup*) and the PDF show whether markup was applied. Switching a change
+order's funding resets the flag to that funding's default. The same $1,500 of
+cost funded by an allowance sells at $1,500 unless markup is applied. A markup
+percent must be above -100% and at most 1000%.
+
+**Commitment and budget stay together.** A sub change order made from an owner
+change order writes no budget of its own, so it approves only once that owner
+change order is approved (409 `owner_co_not_approved`); an owner change order
+cannot be rejected or voided while an approved sub change order stands under it
+(409 `approved_sub_co`; void the sub CO first). A plain purchase-order edit
+cannot drop a line a sub change order added or change its amount (409
+`commitment_co_line`), and a sub change order is still refused on a fully billed
+commitment (409 `commitment_not_open`).
 
 **What approve does.** Every effect lands on **approve**, in one transaction,
 and reverses on **void**:

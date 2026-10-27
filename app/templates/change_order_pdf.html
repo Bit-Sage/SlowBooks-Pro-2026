@@ -46,7 +46,7 @@
         </div>
         <div class="doc-title">
             <h1>CHANGE ORDER</h1>
-            <div class="doc-number">#{{ co.number }}</div>
+            <div class="doc-number">#{{ co.number }}{% if co.revision and co.revision > 1 %} (revision {{ co.revision }}){% endif %}</div>
         </div>
     </div>
 
@@ -54,6 +54,8 @@
         <td class="meta-label">Date:</td><td>{{ co.date | fdate }}</td>
         <td class="meta-label">Status:</td><td>{{ co.status | title }}</td>
         <td class="meta-label">Funding:</td><td>{{ co.funding | title }}</td>
+        {# Whether markup was applied is on the record; the amount stays in the app. #}
+        {% if co.funding != 'contract' %}<td class="meta-label">Markup:</td><td>{{ 'Applied' if co.apply_markup else 'Not applied' }}</td>{% endif %}
     </tr></table>
 
     {% if co.title %}<div class="co-title">{{ co.title }}</div>{% endif %}

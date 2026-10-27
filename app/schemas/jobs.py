@@ -126,6 +126,12 @@ def _check_contract_type(v):
     return v
 
 
+def _bounded_markup(v):
+    if v is not None and not (-100 < v <= 1000):
+        raise ValueError("co_markup_pct must be above -100 and at most 1000")
+    return v
+
+
 class ContractTerms(StrictModel):
     """The PUT body for a job's contract terms. Every field is optional —
     a field left out is unchanged; a field sent as null clears it."""
@@ -141,6 +147,7 @@ class ContractTerms(StrictModel):
     contract_date: Optional[dt_date] = None
 
     _type = field_validator("contract_type")(_check_contract_type)
+    _comarkup = field_validator("co_markup_pct")(_bounded_markup)
 
     @field_validator("fee_pct")
     @classmethod

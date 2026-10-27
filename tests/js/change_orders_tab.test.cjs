@@ -70,6 +70,25 @@ test('the line form math prices with markup and forces zero under an allowance',
     assert.equal(page.coLineMath(1, 1000, '', '', 20, 'contract', 'owner').sell, 1200);
 });
 
+test('markup is off for allowance and contingency unless the CO applies it', () => {
+    const page = jobsContext(true).JobsPage;
+    assert.equal(page.coLineMath(10, 50, 15, null, null, 'contingency', 'owner', false).sell, 500);
+    assert.equal(page.coLineMath(10, 50, 15, null, null, 'contingency', 'owner', true).sell, 575);
+    assert.equal(page.coLineMath(10, 50, 15, null, null, 'allowance', 'owner', true).sell, 575);
+});
+
+test('a PCO row offers revise and roll-up, and shows its revision and markup', () => {
+    const page = jobsContext(true).JobsPage;
+    const log = page.coLogHtml([
+        { id: 4, number: '1-PCO-001-R2', revision: 2, kind: 'pco', status: 'draft', funding: 'contingency', apply_markup: true, cost_total: 1, markup_total: 0, sell_total: 1 },
+    ]);
+    assert.match(log, /rev 2/);
+    assert.match(log, /co-pick/);
+    assert.match(log, /coRevise\(4\)/);
+    assert.match(log, /\+ markup/);
+    assert.match(log, /coPromoteSelected/);
+});
+
 test('the change-order log carries its columns and the New button is guarded', () => {
     const page = jobsContext(true).JobsPage;
     const log = page.coLogHtml([

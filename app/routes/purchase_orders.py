@@ -235,8 +235,24 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                     status_code=409,
                     detail={"code": "commitment_billed", "message": _billed},
                 )
+        # Lines a sub change order added belong to it: a plain edit can
+        # neither drop them nor change their amount (void the sub CO).
+        _co_owned = "A sub change order added a line on this commitment; void that change order to change it."
+        for ln in po.lines:
+            if ln.change_order_id is not None and ln.id not in incoming_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "commitment_co_line", "message": _co_owned},
+                )
         for ld, amt in zip(data.lines, line_amounts):
             if ld.id and ld.id in existing:
+                if existing[ld.id].change_order_id is not None and amt != _q(
+                    existing[ld.id].amount
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "commitment_co_line", "message": _co_owned},
+                    )
                 billed = Decimal(str(existing[ld.id].billed_amount or 0))
                 if billed > 0 and amt < billed:
                     raise HTTPException(

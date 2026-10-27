@@ -9,12 +9,14 @@
 #   - sub    — a sub change order that revises a commitment (a purchase order).
 #
 # Material and labor are priced separately, each carrying its own markup —
-# except work an allowance pays for, which carries none. Every effect on the
+# except allowance- and contingency-funded work, which carries none unless the
+# change order turns markup on. Every effect on the
 # contract, the SOV, the budget and the commitment happens on approve, in one
 # transaction, and reverses on void. See app/services/change_orders.py.
 # ============================================================================
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Date,
     DateTime,
@@ -34,11 +36,22 @@ CO_KINDS = ("pco", "owner", "sub")
 
 # Lifecycle. "promoted" is only ever a PCO's — the state it lands in once it
 # has been promoted to an owner CO.
-CO_STATUSES = ("draft", "pending", "approved", "rejected", "void", "promoted")
+# "superseded" is only ever a PCO's — replaced by a newer revision.
+CO_STATUSES = (
+    "draft",
+    "pending",
+    "approved",
+    "rejected",
+    "void",
+    "promoted",
+    "superseded",
+)
 
 # What pays for an owner change order. "contract" adds to the contract sum;
 # "contingency" draws the owner's contingency down; "allowance" spends an
-# allowance SOV line (and carries no markup).
+# allowance SOV line. Markup applies to contract-funded work always; on an
+# allowance- or contingency-funded change only when apply_markup is on (off by
+# default).
 CO_FUNDING = ("contract", "allowance", "contingency")
 
 
@@ -49,8 +62,10 @@ class ChangeOrder(Base):
     job_id = Column(
         Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # PCO-0001 / CO-0001 / SCO-0001, per kind (numbering.next_document_number).
-    number = Column(String(20), unique=True, nullable=False)
+    # Per job and kind: <job number>-CO-001 / -PCO-001 / -SCO-001 (a PCO
+    # revision adds -R2); see numbering.next_change_order_number. Older rows
+    # keep their company-wide CO-0001 numbers.
+    number = Column(String(80), unique=True, nullable=False)
     kind = Column(String(8), nullable=False)  # pco | owner | sub
     status = Column(String(10), nullable=False, default="draft")
     title = Column(String(200), nullable=True)
@@ -65,6 +80,9 @@ class ChangeOrder(Base):
     )
     # The CO's own default markup; null falls back to the job's co_markup_pct.
     markup_pct = Column(Numeric(7, 4), nullable=True)
+    # Whether markup is applied. True for contract-funded work; defaults off
+    # for allowance- and contingency-funded work (the GC may turn it on).
+    apply_markup = Column(Boolean, nullable=False, default=True)
 
     # Required for a sub CO: the commitment (purchase order) it revises.
     commitment_id = Column(
@@ -76,6 +94,18 @@ class ChangeOrder(Base):
     )
     # An owner CO promoted from a PCO names the PCO it came from.
     source_pco_id = Column(
+        Integer, ForeignKey("change_orders.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # PCO revisions: revision counts up from 1; a revision names the one it
+    # replaced, which is kept (status "superseded") as history.
+    revision = Column(Integer, nullable=False, default=1)
+    supersedes_id = Column(
+        Integer, ForeignKey("change_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    # A promoted PCO names the owner CO it rolled into (several PCOs may share
+    # one); the owner CO's source_pco_id names the first.
+    promoted_to_id = Column(
         Integer, ForeignKey("change_orders.id", ondelete="SET NULL"), nullable=True
     )
 
@@ -101,7 +131,7 @@ class ChangeOrder(Base):
 class ChangeOrderLine(Base):
     """A priced line on a change order. Cost is quantity × unit_cost (server-
     computed); sell carries the effective markup (none when the CO is funded
-    by an allowance, and none at all on a sub CO — a commitment moves by
+    by an allowance or contingency without markup turned on, and none at all on a sub CO — a commitment moves by
     cost)."""
 
     __tablename__ = "change_order_lines"

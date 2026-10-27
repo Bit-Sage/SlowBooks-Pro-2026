@@ -132,10 +132,10 @@ def test_numbering_per_kind(client, seed_customer):
     job = _job(client, seed_customer.id)
     pco = _co(client, job["id"], [LABOR], kind="pco")
     owner = _co(client, job["id"], [LABOR], kind="owner")
-    assert pco["number"] == "PCO-0001"
-    assert owner["number"] == "CO-0001"
+    assert pco["number"] == "J1-PCO-001"
+    assert owner["number"] == "J1-CO-001"
     owner2 = _co(client, job["id"], [LABOR], kind="owner")
-    assert owner2["number"] == "CO-0002"
+    assert owner2["number"] == "J1-CO-002"
 
 
 # ── Lifecycle + 409s ────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ def test_owner_co_moves_contract_and_appends_sov(client, db_session, seed_custom
     co_line = [line for line in sov["sov"] if line["kind"] == "change_order"]
     assert len(co_line) == 1
     assert float(co_line[0]["scheduled_value"]) == 1675.0
-    assert co_line[0]["description"].startswith("CO-0001")
+    assert co_line[0]["description"].startswith("J1-CO-001")
     assert sov["contract"]["sov_balance"] == 0.0  # 101675 sum vs 101675 contract
 
 
@@ -277,7 +277,10 @@ def test_contingency_used_and_exceeded(client, seed_customer):
         contract_amount=100000,
         contingency_amount=2000,
     )
-    co = _co(client, job["id"], [LABOR, MATERIAL], funding="contingency")  # sell 1675
+    # markup turned on explicitly: a contingency draw is at sell (1675)
+    co = _co(
+        client, job["id"], [LABOR, MATERIAL], funding="contingency", apply_markup=True
+    )
     assert _submit_approve(client, co["id"]).status_code == 200
     contract = client.get(f"/api/jobs/{job['id']}/contract").json()["contract"]
     assert contract["contract_amount"] == 100000.0  # contingency does not add
@@ -285,7 +288,9 @@ def test_contingency_used_and_exceeded(client, seed_customer):
     assert contract["contingency_remaining"] == 325.0
 
     # a second contingency CO would pass the 2000 limit → 409
-    co2 = _co(client, job["id"], [MATERIAL], funding="contingency")  # sell 1100
+    co2 = _co(
+        client, job["id"], [MATERIAL], funding="contingency", apply_markup=True
+    )  # sell 1100
     client.post(f"/api/change-orders/{co2['id']}/submit")
     r = client.post(f"/api/change-orders/{co2['id']}/approve")
     assert r.status_code == 409
@@ -295,8 +300,8 @@ def test_contingency_used_and_exceeded(client, seed_customer):
 # ── Allowance funding ───────────────────────────────────────────────────────
 
 
-def _allowance_job(client, customer_id):
-    job = _job(client, customer_id, contract_amount=0)
+def _allowance_job(client, customer_id, name="Tower"):
+    job = _job(client, customer_id, name=name, contract_amount=0)
     _contract(client, job["id"], contract_type="lump_sum", contract_amount=100000)
     client.put(
         f"/api/jobs/{job['id']}/sov",
@@ -440,6 +445,7 @@ def test_sub_co_appends_and_keeps_billed_amount(
     ).json()
     assert sub["kind"] == "sub"
     assert sub["sell_total"] == 2500.0  # no markup on a sub CO
+    assert _submit_approve(client, owner["id"]).status_code == 200
     assert _submit_approve(client, sub["id"]).status_code == 200
 
     fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
@@ -488,6 +494,7 @@ def test_sub_co_grows_a_partial_commitment_and_buyout(
         f"/api/change-orders/{owner['id']}/sub-order",
         json={"commitment_id": po["id"]},
     ).json()
+    assert _submit_approve(client, owner["id"]).status_code == 200
     assert _submit_approve(client, sub["id"]).status_code == 200
 
     fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
@@ -561,6 +568,7 @@ def test_void_sub_co_removes_exactly_its_line_not_an_identical_original(
     sub = client.post(
         f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
     ).json()
+    assert _submit_approve(client, owner["id"]).status_code == 200
     assert _submit_approve(client, sub["id"]).status_code == 200
     assert len(client.get(f"/api/purchase-orders/{po['id']}").json()["lines"]) == 2
 
@@ -599,6 +607,7 @@ def test_void_sub_co_refuses_when_billed(
     sub = client.post(
         f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
     ).json()
+    assert _submit_approve(client, owner["id"]).status_code == 200
     assert _submit_approve(client, sub["id"]).status_code == 200
     # bill the whole commitment (both lines) → the added line is now billed
     conv = client.post(f"/api/purchase-orders/{po['id']}/convert-to-bill", json=None)
@@ -765,13 +774,16 @@ def test_approved_co_is_frozen_against_a_later_term_change(client, seed_customer
 
 def test_numbering_collision_retries(client, db_session, seed_customer):
     job = _job(client, seed_customer.id)
-    # pre-seed CO-0001 (what the owner series computes first)
+    other = _job(client, seed_customer.id, name="Other")
+    # another job already holds J1-CO-001 (two jobs can share a job number)
     db_session.add(
-        ChangeOrder(number="CO-0001", job_id=job["id"], kind="owner", status="draft")
+        ChangeOrder(
+            number="J1-CO-001", job_id=other["id"], kind="owner", status="draft"
+        )
     )
     db_session.commit()
     owner = _co(client, job["id"], [LABOR])
-    assert owner["number"] == "CO-0002"  # skipped the taken number, no 500
+    assert owner["number"] == "J1-CO-002"  # skipped the taken number, no 500
 
 
 def test_deduct_co_sharing_a_key_leaves_the_add_on_void(
@@ -844,9 +856,356 @@ def test_pdf_html_renders_for_an_owner_co(client, db_session, seed_customer):
         row, co_totals(row, row.job), get_all_settings(db_session)
     )
     assert "CHANGE ORDER" in html
-    assert "CO-0001" in html
+    assert "J1-CO-001" in html
     assert "Steel upgrade" in html
     assert "Total" in html
+
+
+# ── Review round: guards, markup flag, numbering, revisions, roll-up ─────────
+
+
+def _commit_with_sub_co(client, seed_accounts, seed_customer, approve_owner=True):
+    """A job, an open subcontract, a $2,000 owner CO and its linked sub CO."""
+    job = _job(client, seed_customer.id)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_commitment(
+        client,
+        vendor["id"],
+        job["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    owner = _co(client, job["id"], [_sub_line("Extra", 2000)])
+    sub = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
+    ).json()
+    if approve_owner:
+        assert _submit_approve(client, owner["id"]).status_code == 200
+    return job, po, owner, sub
+
+
+def test_linked_sub_co_cannot_approve_while_its_owner_co_is_draft(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(
+        client, seed_accounts, seed_customer, approve_owner=False
+    )
+    r = _submit_approve(client, sub["id"])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "owner_co_not_approved"
+    # the commitment did not move
+    assert float(client.get(f"/api/purchase-orders/{po['id']}").json()["total"]) == 5000
+    # once the owner CO is approved the sub CO can follow
+    assert client.post(f"/api/change-orders/{owner['id']}/approve").status_code == 409
+    client.post(f"/api/change-orders/{owner['id']}/submit")
+    assert client.post(f"/api/change-orders/{owner['id']}/approve").status_code == 200
+    assert client.post(f"/api/change-orders/{sub['id']}/approve").status_code == 200
+
+
+def test_owner_co_with_an_approved_sub_co_cannot_be_rejected(
+    client, db_session, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    # force the owner CO back to pending: the guard is the last line of defence
+    row = db_session.get(ChangeOrder, owner["id"])
+    row.status = "pending"
+    db_session.commit()
+    r = client.post(f"/api/change-orders/{owner['id']}/reject")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "approved_sub_co"
+
+
+def test_owner_co_with_an_approved_sub_co_cannot_be_voided(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    r = client.post(f"/api/change-orders/{owner['id']}/void")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "approved_sub_co"
+    assert float(client.get(f"/api/purchase-orders/{po['id']}").json()["total"]) == 7000
+    # void the sub CO first, then the owner CO goes
+    assert client.post(f"/api/change-orders/{sub['id']}/void").status_code == 200
+    assert client.post(f"/api/change-orders/{owner['id']}/void").status_code == 200
+
+
+def test_allowance_line_must_belong_to_the_job_and_be_an_allowance(
+    client, db_session, seed_customer
+):
+    job_a, allowance_a = _allowance_job(client, seed_customer.id)
+    job_b, _ = _allowance_job(client, seed_customer.id, name="Other")
+    # job B cannot spend job A's allowance
+    r = client.post(
+        "/api/change-orders",
+        json={
+            "job_id": job_b["id"],
+            "funding": "allowance",
+            "allowance_sov_line_id": allowance_a,
+            "lines": [LABOR],
+        },
+    )
+    assert r.status_code == 404
+    # a bogus id is refused, not skipped
+    r = client.post(
+        "/api/change-orders",
+        json={
+            "job_id": job_a["id"],
+            "funding": "allowance",
+            "allowance_sov_line_id": 99999,
+            "lines": [LABOR],
+        },
+    )
+    assert r.status_code == 404
+    # a work line of the same job is not an allowance
+    sov = client.get(f"/api/jobs/{job_a['id']}/contract").json()["sov"]
+    work_id = next(line["id"] for line in sov if line["kind"] == "work")
+    r = client.post(
+        "/api/change-orders",
+        json={
+            "job_id": job_a["id"],
+            "funding": "allowance",
+            "allowance_sov_line_id": work_id,
+            "lines": [LABOR],
+        },
+    )
+    assert r.status_code == 400
+    # an edit is checked the same way
+    co = _co(
+        client,
+        job_a["id"],
+        [LABOR],
+        funding="allowance",
+        allowance_sov_line_id=allowance_a,
+    )
+    r = client.put(
+        f"/api/change-orders/{co['id']}", json={"allowance_sov_line_id": 99999}
+    )
+    assert r.status_code == 404
+    # and approve never skips the limit for a line that has gone bad
+    row = db_session.get(ChangeOrder, co["id"])
+    row.allowance_sov_line_id = 99999
+    db_session.commit()
+    client.post(f"/api/change-orders/{co['id']}/submit")
+    r = client.post(f"/api/change-orders/{co['id']}/approve")
+    assert r.status_code == 404
+
+
+def test_plain_po_edit_cannot_drop_or_reprice_a_sub_co_line(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    lines = client.get(f"/api/purchase-orders/{po['id']}").json()["lines"]
+    assert len(lines) == 2
+    base = next(ln for ln in lines if ln["description"] == "Base")
+    added = next(ln for ln in lines if ln["description"] == "Extra")
+
+    def edit(rows):
+        return client.put(f"/api/purchase-orders/{po['id']}", json={"lines": rows})
+
+    def keep(ln, **over):
+        row = {
+            "id": ln["id"],
+            "description": ln["description"],
+            "quantity": float(ln["quantity"]),
+            "rate": float(ln["rate"]),
+        }
+        row.update(over)
+        return row
+
+    # dropping the CO-added line
+    r = edit([keep(base)])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "commitment_co_line"
+    # changing its amount
+    r = edit([keep(base), keep(added, rate=1)])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "commitment_co_line"
+    # sending it back unchanged (the PO form does) is fine, and so is editing
+    # an original line
+    assert edit([keep(base, rate=5100), keep(added)]).status_code == 200
+    fresh = client.get(f"/api/purchase-orders/{po['id']}").json()
+    assert float(fresh["total"]) == 7100
+
+
+def test_sub_co_approve_refused_once_the_commitment_is_fully_billed(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    conv = client.post(f"/api/purchase-orders/{po['id']}/convert-to-bill", json=None)
+    assert conv.status_code == 200, conv.text
+    r = _submit_approve(client, sub["id"])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "commitment_not_open"
+
+
+def test_markup_defaults_off_for_allowance_and_contingency_and_is_recorded(
+    client, seed_customer
+):
+    job, allowance_id = _allowance_job(client, seed_customer.id)
+    contract = _co(client, job["id"], [LABOR])
+    assert contract["apply_markup"] is True and contract["sell_total"] == 575.0
+    cont = _co(client, job["id"], [LABOR], funding="contingency")
+    assert cont["apply_markup"] is False
+    assert cont["sell_total"] == cont["cost_total"] == 500.0
+    allow = _co(
+        client,
+        job["id"],
+        [LABOR],
+        funding="allowance",
+        allowance_sov_line_id=allowance_id,
+    )
+    assert allow["apply_markup"] is False and allow["sell_total"] == 500.0
+    # the GC can turn it on, and the record says so
+    on = _co(client, job["id"], [LABOR], funding="contingency", apply_markup=True)
+    assert on["apply_markup"] is True and on["sell_total"] == 575.0
+    # an edit that switches the funding resets to that funding's default
+    r = client.put(f"/api/change-orders/{on['id']}", json={"funding": "contract"})
+    assert r.json()["apply_markup"] is True
+    r = client.put(f"/api/change-orders/{on['id']}", json={"funding": "contingency"})
+    assert r.json()["apply_markup"] is False and r.json()["sell_total"] == 500.0
+    assert effective_markup(Decimal("15"), None, None, "contingency") == 0
+    assert effective_markup(Decimal("15"), None, None, "contingency", True) == 15
+
+
+def test_markup_pct_is_bounded(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    for bad in (-150, -100, 1000.5):
+        r = client.post(
+            "/api/change-orders",
+            json={"job_id": job["id"], "markup_pct": bad, "lines": [LABOR]},
+        )
+        assert r.status_code == 422, bad
+    r = client.post(
+        "/api/change-orders",
+        json={
+            "job_id": job["id"],
+            "lines": [{**LABOR, "markup_pct": -150}],
+        },
+    )
+    assert r.status_code == 422
+    r = client.put(f"/api/jobs/{job['id']}/contract", json={"co_markup_pct": -150})
+    assert r.status_code == 422
+    ok = _co(client, job["id"], [{**LABOR, "markup_pct": -10}], markup_pct=1000)
+    assert ok["sell_total"] == 450.0  # the line's own -10% wins
+
+
+def test_numbers_run_per_job(client, seed_customer):
+    a = _job(client, seed_customer.id, name="A", job_number="1001")
+    b = _job(client, seed_customer.id, name="B", job_number="1002")
+    a1 = _co(client, a["id"], [LABOR])
+    a2 = _co(client, a["id"], [LABOR])
+    b1 = _co(client, b["id"], [LABOR])
+    p_b = _co(client, b["id"], [LABOR], kind="pco")
+    assert (a1["number"], a2["number"]) == ("1001-CO-001", "1001-CO-002")
+    assert b1["number"] == "1002-CO-001"  # each job starts at 001
+    assert p_b["number"] == "1002-PCO-001"
+
+
+def test_old_company_wide_numbers_stay(client, db_session, seed_customer):
+    job = _job(client, seed_customer.id, job_number="7")
+    db_session.add(
+        ChangeOrder(number="CO-0009", job_id=job["id"], kind="owner", status="draft")
+    )
+    db_session.commit()
+    assert _co(client, job["id"], [LABOR])["number"] == "7-CO-001"
+    assert db_session.query(ChangeOrder).filter_by(number="CO-0009").count() == 1
+
+
+def test_pco_revision_supersedes_and_keeps_history(client, seed_customer):
+    job = _job(client, seed_customer.id, job_number="55")
+    pco = _co(client, job["id"], [LABOR], kind="pco", title="Option A")
+    r = client.post(f"/api/change-orders/{pco['id']}/revise")
+    assert r.status_code == 201, r.text
+    rev2 = r.json()
+    assert rev2["number"] == "55-PCO-001-R2"
+    assert (rev2["revision"], rev2["supersedes_id"], rev2["status"]) == (
+        2,
+        pco["id"],
+        "draft",
+    )
+    assert rev2["sell_total"] == pco["sell_total"]  # lines carried over
+    # edit the revision, revise again
+    client.put(f"/api/change-orders/{rev2['id']}", json={"lines": [MATERIAL]})
+    rev3 = client.post(f"/api/change-orders/{rev2['id']}/revise").json()
+    assert rev3["number"] == "55-PCO-001-R3" and rev3["revision"] == 3
+    # the list shows the latest only; history keeps the rest
+    shown = client.get(f"/api/change-orders?job_id={job['id']}").json()
+    assert [c["id"] for c in shown] == [rev3["id"]]
+    every = client.get(f"/api/change-orders?job_id={job['id']}&history=true").json()
+    assert [c["status"] for c in every] == ["superseded", "superseded", "draft"]
+    # a superseded revision can be neither revised nor promoted
+    for path in ("revise", "promote"):
+        r = client.post(f"/api/change-orders/{pco['id']}/{path}")
+        assert r.status_code == 409, path
+    # the latest promotes
+    owner = client.post(f"/api/change-orders/{rev3['id']}/promote").json()
+    assert owner["kind"] == "owner" and owner["source_pco_id"] == rev3["id"]
+    # only a PCO can be revised
+    assert client.post(f"/api/change-orders/{owner['id']}/revise").status_code == 409
+
+
+def test_several_pcos_roll_up_into_one_owner_co(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    p1 = _co(client, job["id"], [LABOR], kind="pco", title="Crew")
+    p2 = _co(client, job["id"], [MATERIAL], kind="pco", title="Steel")
+    r = client.post(
+        f"/api/change-orders/{p1['id']}/promote", json={"pco_ids": [p2["id"]]}
+    )
+    assert r.status_code == 200, r.text
+    owner = r.json()
+    assert owner["kind"] == "owner" and len(owner["lines"]) == 2
+    assert owner["sell_total"] == p1["sell_total"] + p2["sell_total"] == 1675.0
+    assert owner["source_pco_ids"] == [p1["id"], p2["id"]]
+    for pco in (p1, p2):
+        got = client.get(f"/api/change-orders/{pco['id']}").json()
+        assert got["status"] == "promoted" and got["promoted_to_id"] == owner["id"]
+    # approving it moves the contract by the sum
+    assert _submit_approve(client, owner["id"]).status_code == 200
+
+
+def test_rolled_up_pcos_must_agree_and_be_promotable(client, seed_customer):
+    job = _job(client, seed_customer.id)
+    other = _job(client, seed_customer.id, name="Other")
+    p1 = _co(client, job["id"], [LABOR], kind="pco")
+    p_cont = _co(client, job["id"], [LABOR], kind="pco", funding="contingency")
+    p_other = _co(client, other["id"], [LABOR], kind="pco")
+    for bad in (p_cont, p_other):
+        r = client.post(
+            f"/api/change-orders/{p1['id']}/promote", json={"pco_ids": [bad["id"]]}
+        )
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "pco_mismatch"
+    # nothing was promoted by the refused attempts
+    assert client.get(f"/api/change-orders/{p1['id']}").json()["status"] == "draft"
+    owner = _co(client, job["id"], [LABOR])
+    r = client.post(
+        f"/api/change-orders/{p1['id']}/promote", json={"pco_ids": [owner["id"]]}
+    )
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "not_a_pco"
+
+
+def test_pdf_says_whether_markup_was_applied_and_the_revision(
+    client, db_session, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    pco = _co(client, job["id"], [LABOR], kind="pco", funding="contingency")
+    rev = client.post(f"/api/change-orders/{pco['id']}/revise").json()
+    row = db_session.get(ChangeOrder, rev["id"])
+    html = render_change_order_html(
+        row, co_totals(row, row.job), get_all_settings(db_session)
+    )
+    assert "Not applied" in html and "revision 2" in html
+    row.apply_markup = True
+    assert "Applied" in render_change_order_html(
+        row, co_totals(row, row.job), get_all_settings(db_session)
+    )
+    # contract-funded work shows no markup row at all
+    owner = db_session.get(ChangeOrder, _co(client, job["id"], [LABOR])["id"])
+    assert "Markup:" not in render_change_order_html(
+        owner, co_totals(owner, owner.job), get_all_settings(db_session)
+    )
 
 
 # ── Migration ───────────────────────────────────────────────────────────────

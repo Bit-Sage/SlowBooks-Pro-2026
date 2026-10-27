@@ -8,6 +8,14 @@ from app.models.change_orders import CO_FUNDING, CO_KINDS
 from app.schemas.common import StrictModel
 
 
+def _bounded_markup(v):
+    """A markup percent must keep the sell above zero (more than -100%) and
+    stay sane (up to 1000%)."""
+    if v is not None and not (Decimal("-100") < v <= Decimal("1000")):
+        raise ValueError("markup_pct must be above -100 and at most 1000")
+    return v
+
+
 class ChangeOrderLineIn(StrictModel):
     description: Optional[str] = None
     cost_type: str
@@ -17,6 +25,8 @@ class ChangeOrderLineIn(StrictModel):
     unit: Optional[str] = None
     unit_cost: Decimal = Decimal("0")
     markup_pct: Optional[Decimal] = None
+
+    _markup = field_validator("markup_pct")(_bounded_markup)
 
 
 class ChangeOrderCreate(StrictModel):
@@ -28,9 +38,13 @@ class ChangeOrderCreate(StrictModel):
     funding: str = "contract"
     allowance_sov_line_id: Optional[int] = None
     markup_pct: Optional[Decimal] = None
+    # None = the default for the funding: on for contract, off otherwise.
+    apply_markup: Optional[bool] = None
     commitment_id: Optional[int] = None
     owner_change_order_id: Optional[int] = None
     lines: List[ChangeOrderLineIn] = []
+
+    _markup = field_validator("markup_pct")(_bounded_markup)
 
     @field_validator("kind")
     @classmethod
@@ -58,9 +72,12 @@ class ChangeOrderUpdate(StrictModel):
     funding: Optional[str] = None
     allowance_sov_line_id: Optional[int] = None
     markup_pct: Optional[Decimal] = None
+    apply_markup: Optional[bool] = None
     commitment_id: Optional[int] = None
     owner_change_order_id: Optional[int] = None
     lines: Optional[List[ChangeOrderLineIn]] = None
+
+    _markup = field_validator("markup_pct")(_bounded_markup)
 
     @field_validator("funding")
     @classmethod
@@ -74,7 +91,9 @@ class ChangeOrderUpdate(StrictModel):
 
 
 class PromoteIn(StrictModel):
-    pass
+    # Roll several PCOs (all on one job, same funding) into one owner CO. The
+    # PCO in the URL is included automatically. Empty = just that PCO.
+    pco_ids: Optional[List[int]] = None
 
 
 class SubOrderIn(StrictModel):
@@ -113,9 +132,15 @@ class ChangeOrderOut(BaseModel):
     funding: str
     allowance_sov_line_id: Optional[int] = None
     markup_pct: Optional[Decimal] = None
+    apply_markup: bool = True
     commitment_id: Optional[int] = None
     owner_change_order_id: Optional[int] = None
     source_pco_id: Optional[int] = None
+    revision: int = 1
+    supersedes_id: Optional[int] = None
+    promoted_to_id: Optional[int] = None
+    # On an owner CO promoted from PCOs: every PCO rolled into it.
+    source_pco_ids: List[int] = []
     approved_at: Optional[datetime] = None
     voided_at: Optional[datetime] = None
     lines: List[ChangeOrderLineOut] = []

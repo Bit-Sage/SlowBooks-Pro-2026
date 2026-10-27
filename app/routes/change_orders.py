@@ -7,6 +7,8 @@
 # reverses on void, in one transaction (app/services/change_orders.py).
 # ============================================================================
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from fastapi.responses import Response
@@ -28,8 +30,11 @@ from app.schemas.change_orders import (
 from app.services.change_orders import (
     _check_commitment,
     apply_change_order,
+    check_allowance_line,
+    check_owner_link,
     co_totals,
     recompute,
+    refuse_with_approved_sub,
     reverse_change_order,
 )
 from app.services.job_costing import line_cost_type
@@ -59,6 +64,13 @@ def _co_out(db: Session, co: ChangeOrder) -> ChangeOrderOut:
         line_out.trade_package_name = (
             line.trade_package.name if line.trade_package else None
         )
+    if co.kind == "owner":
+        out.source_pco_ids = [
+            r[0]
+            for r in db.query(ChangeOrder.id)
+            .filter(ChangeOrder.promoted_to_id == co.id)
+            .order_by(ChangeOrder.id)
+        ]
     totals = co_totals(co, co.job)
     out.cost_total = float(totals["cost_total"])
     out.markup_total = float(totals["markup_total"])
@@ -113,15 +125,19 @@ def _set_lines(db: Session, co: ChangeOrder, lines) -> None:
     recompute(co, co.job)
 
 
-def _create_numbered(db: Session, **fields) -> ChangeOrder:
-    """Build and flush a ChangeOrder with the next number for its kind, with
-    the create_po race-retry pattern: next_change_order_number is MAX+1 with
-    no row lock, so two concurrent creates can collide on the `number` UNIQUE
+def _create_numbered(db: Session, job: Job, number=None, **fields) -> ChangeOrder:
+    """Build and flush a ChangeOrder with the next number for its job and kind
+    (or the given `number`, for a PCO revision), with the create_po
+    race-retry pattern: next_change_order_number is MAX+1 with no row lock, so two concurrent creates can collide on the `number` UNIQUE
     constraint. Rebuild the row inside the loop after a rollback (a rolled-back
     ORM object cannot be re-flushed)."""
     last_err = None
     for _ in range(10):
-        co = ChangeOrder(number=next_change_order_number(db, fields["kind"]), **fields)
+        co = ChangeOrder(
+            number=number or next_change_order_number(db, job, fields["kind"]),
+            job_id=job.id,
+            **fields,
+        )
         db.add(co)
         try:
             db.flush()
@@ -136,9 +152,30 @@ def _create_numbered(db: Session, **fields) -> ChangeOrder:
     ) from last_err
 
 
-def _copy_lines(db: Session, change_order_id: int, lines) -> None:
-    """Copy ChangeOrderLine rows onto another change order (promote / sub)."""
-    for i, line in enumerate(lines):
+def _check_refs(db: Session, co_job_id: int, funding: str, allowance_id, owner_id):
+    """Validate what a CO points at: its allowance line (allowance funding)
+    and its backing owner CO (sub CO)."""
+    if funding == "allowance":
+        if allowance_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="An allowance-funded change order needs an allowance line.",
+            )
+        check_allowance_line(db, co_job_id, allowance_id)
+    check_owner_link(db, co_job_id, owner_id)
+
+
+def _default_apply_markup(funding: str) -> bool:
+    """Markup is on for contract-funded work, off for allowance/contingency."""
+    return funding == "contract"
+
+
+def _copy_lines(
+    db: Session, change_order_id: int, lines, start: int = 0, default_markup=None
+) -> None:
+    """Copy ChangeOrderLine rows onto another change order (promote / sub /
+    revise). `default_markup` fills a line that has none of its own."""
+    for i, line in enumerate(lines, start):
         db.add(
             ChangeOrderLine(
                 change_order_id=change_order_id,
@@ -150,7 +187,9 @@ def _copy_lines(db: Session, change_order_id: int, lines) -> None:
                 quantity=line.quantity,
                 unit=line.unit,
                 unit_cost=line.unit_cost,
-                markup_pct=line.markup_pct,
+                markup_pct=(
+                    line.markup_pct if line.markup_pct is not None else default_markup
+                ),
             )
         )
     db.flush()
@@ -160,13 +199,18 @@ def _copy_lines(db: Session, change_order_id: int, lines) -> None:
 
 
 @router.get("", response_model=list[ChangeOrderOut])
-def list_change_orders(job_id: int = Query(...), db: Session = Depends(get_db)):
-    cos = (
-        db.query(ChangeOrder)
-        .filter(ChangeOrder.job_id == job_id)
-        .order_by(ChangeOrder.id)
-        .all()
-    )
+def list_change_orders(
+    job_id: int = Query(...),
+    history: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """The job's change orders. A PCO revision replaces the one before it, so
+    the list shows the latest revision only; history=true adds the superseded
+    ones."""
+    q = db.query(ChangeOrder).filter(ChangeOrder.job_id == job_id)
+    if not history:
+        q = q.filter(ChangeOrder.status != "superseded")
+    cos = q.order_by(ChangeOrder.id).all()
     return [_co_out(db, co) for co in cos]
 
 
@@ -180,18 +224,16 @@ def create_change_order(data: ChangeOrderCreate, db: Session = Depends(get_db)):
     job = db.get(Job, data.job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    if data.funding == "allowance" and data.allowance_sov_line_id is None:
-        raise HTTPException(
-            status_code=422,
-            detail="An allowance-funded change order needs an allowance line.",
-        )
     if data.kind == "sub" and data.commitment_id is None:
         raise HTTPException(
             status_code=422, detail="A sub change order needs a commitment."
         )
+    _check_refs(
+        db, job.id, data.funding, data.allowance_sov_line_id, data.owner_change_order_id
+    )
     co = _create_numbered(
         db,
-        job_id=job.id,
+        job,
         kind=data.kind,
         status="draft",
         title=data.title,
@@ -200,6 +242,11 @@ def create_change_order(data: ChangeOrderCreate, db: Session = Depends(get_db)):
         funding=data.funding,
         allowance_sov_line_id=data.allowance_sov_line_id,
         markup_pct=data.markup_pct,
+        apply_markup=(
+            _default_apply_markup(data.funding)
+            if data.apply_markup is None
+            else data.apply_markup
+        ),
         commitment_id=data.commitment_id,
         owner_change_order_id=data.owner_change_order_id,
     )
@@ -223,13 +270,16 @@ def update_change_order(
             },
         )
     fields = data.model_dump(exclude_unset=True, exclude={"lines"})
+    if fields.get("funding") not in (None, co.funding) and "apply_markup" not in fields:
+        # Changing what pays for the change resets markup to that funding's default.
+        fields["apply_markup"] = _default_apply_markup(fields["funding"])
     for key, val in fields.items():
+        if key == "apply_markup" and val is None:
+            continue
         setattr(co, key, val)
-    if co.funding == "allowance" and co.allowance_sov_line_id is None:
-        raise HTTPException(
-            status_code=422,
-            detail="An allowance-funded change order needs an allowance line.",
-        )
+    _check_refs(
+        db, co.job_id, co.funding, co.allowance_sov_line_id, co.owner_change_order_id
+    )
     if data.lines is not None:
         _set_lines(db, co, data.lines)
     db.commit()
@@ -309,6 +359,7 @@ def reject_change_order(co_id: int, db: Session = Depends(get_db)):
                 "message": f"A {co.status} change order cannot be rejected.",
             },
         )
+    refuse_with_approved_sub(db, co, "reject")
     co.status = "rejected"
     db.commit()
     db.refresh(co)
@@ -336,44 +387,132 @@ def void_change_order(co_id: int, db: Session = Depends(get_db)):
 def promote_change_order(
     co_id: int, data: PromoteIn | None = None, db: Session = Depends(get_db)
 ):
-    """Promote a PCO to a new owner change order, copying its lines. The PCO
-    becomes `promoted`; the new owner CO is returned."""
-    pco = _get(db, co_id)
-    if pco.kind != "pco":
+    """Promote a PCO to a new owner change order, copying its lines. With
+    `pco_ids`, several PCOs (this one included) roll up into the one owner CO:
+    its lines are all of theirs, so its amount is their sum. Each PCO becomes
+    `promoted` and links to the owner CO; the owner CO is returned."""
+    first = _get(db, co_id)
+    extra = dict.fromkeys(
+        i for i in (data.pco_ids if data else None) or [] if i != co_id
+    )
+    pcos = [first] + [_get(db, i) for i in extra]
+    for pco in pcos:
+        if pco.kind != "pco":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "not_a_pco",
+                    "message": "Only a potential change order can be promoted.",
+                },
+            )
+        if pco.status not in ("draft", "pending"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "co_not_promotable",
+                    "message": f"A {pco.status} potential change order cannot be promoted.",
+                },
+            )
+    # One owner CO has one job and one source of money.
+    sig = lambda p: (
+        p.job_id,
+        p.funding,
+        p.allowance_sov_line_id,
+        p.apply_markup,
+    )  # noqa: E731
+    if any(sig(p) != sig(first) for p in pcos[1:]):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "pco_mismatch",
+                "message": "PCOs rolled into one change order must share a job, funding, allowance line and markup setting.",
+            },
+        )
+    same_markup = len({p.markup_pct for p in pcos}) == 1
+    owner = _create_numbered(
+        db,
+        db.get(Job, first.job_id),
+        kind="owner",
+        status="draft",
+        title=" / ".join(p.title for p in pcos if p.title)[:200] or None,
+        description=(
+            first.description
+            if len(pcos) == 1
+            else "\n".join(p.description for p in pcos if p.description) or None
+        ),
+        date=first.date,
+        funding=first.funding,
+        allowance_sov_line_id=first.allowance_sov_line_id,
+        apply_markup=first.apply_markup,
+        markup_pct=first.markup_pct if same_markup else None,
+        source_pco_id=first.id,
+    )
+    order = 0
+    for pco in pcos:
+        # A line without its own markup would otherwise inherit the owner CO's
+        # one default; keep what its PCO priced it at.
+        _copy_lines(
+            db,
+            owner.id,
+            pco.lines,
+            start=order,
+            default_markup=(None if same_markup else pco.markup_pct),
+        )
+        order += len(pco.lines)
+    # Set after the numbering retry loop: a collision's rollback would undo it.
+    for pco in pcos:
+        pco.status = "promoted"
+        pco.promoted_to_id = owner.id
+    db.commit()
+    db.refresh(owner)
+    return _co_out(db, owner)
+
+
+@router.post("/{co_id}/revise", response_model=ChangeOrderOut, status_code=201)
+def revise_pco(co_id: int, db: Session = Depends(get_db)):
+    """Revise a PCO: a new draft revision (same lines, to edit) replaces the
+    current one, which stays as history (`superseded`). Only the latest
+    revision can be revised or promoted."""
+    prior = _get(db, co_id)
+    if prior.kind != "pco":
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "not_a_pco",
-                "message": "Only a potential change order can be promoted.",
+                "message": "Only a potential change order can be revised.",
             },
         )
-    if pco.status not in ("draft", "pending"):
+    if prior.status not in ("draft", "pending"):
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "co_not_promotable",
-                "message": f"A {pco.status} potential change order cannot be promoted.",
+                "code": "co_not_revisable",
+                "message": f"A {prior.status} potential change order cannot be revised.",
             },
         )
-    owner = _create_numbered(
+    root = re.sub(r"-R\d+$", "", prior.number)
+    rev = prior.revision + 1
+    new = _create_numbered(
         db,
-        job_id=pco.job_id,
-        kind="owner",
+        db.get(Job, prior.job_id),
+        number=f"{root}-R{rev}",
+        kind="pco",
         status="draft",
-        title=pco.title,
-        description=pco.description,
-        date=pco.date,
-        funding=pco.funding,
-        allowance_sov_line_id=pco.allowance_sov_line_id,
-        markup_pct=pco.markup_pct,
-        source_pco_id=pco.id,
+        title=prior.title,
+        description=prior.description,
+        date=prior.date,
+        funding=prior.funding,
+        allowance_sov_line_id=prior.allowance_sov_line_id,
+        markup_pct=prior.markup_pct,
+        apply_markup=prior.apply_markup,
+        revision=rev,
+        supersedes_id=prior.id,
     )
-    _copy_lines(db, owner.id, pco.lines)
-    # Set after the numbering retry loop: a collision's rollback would undo it.
-    pco.status = "promoted"
+    _copy_lines(db, new.id, prior.lines)
+    prior.status = "superseded"
     db.commit()
-    db.refresh(owner)
-    return _co_out(db, owner)
+    db.refresh(new)
+    return _co_out(db, new)
 
 
 @router.post("/{co_id}/sub-order", response_model=ChangeOrderOut)
@@ -405,7 +544,7 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
         )
     sub = _create_numbered(
         db,
-        job_id=owner.job_id,
+        db.get(Job, owner.job_id),
         kind="sub",
         status="draft",
         title=owner.title,
