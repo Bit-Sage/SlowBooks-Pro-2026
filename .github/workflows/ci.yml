@@ -210,7 +210,11 @@ jobs:
           # 182 with the register date's browser test
           # (test_browser_register_date.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "182"
+          # 184 with the deposit-line donor tests
+          # (test_deposit_split_names.py::test_one_deposit_of_two_gifts_counts_for_each_donor_and_a_void_drops_out
+          # and ::test_a_split_deposit_line_gets_an_acknowledgment_letter, which
+          # render the giving statement and the letter PDF, so WeasyPrint-skipped here).
+          MAX_SKIPS: "184"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
