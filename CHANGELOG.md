@@ -490,6 +490,8 @@ live). On the **sub** side, a commitment's schedule drives a **Sub pay app**
 **Retainage Payable** (2050) / CR A/P, payable through Pay Bills; 422 over what
 is held, and voiding it restores the figure. Lien waivers ride on both sides:
 an application warns about sub bills still missing a waiver for the period. The
+first pay application locks the contract sum and contingency (409
+`contract_sum_locked` / `contingency_locked` until it is voided). The
 schedule can no longer be rebuilt once billed (409 `sov_has_billings`), a line
 cannot shrink below what it has billed (422), and an owner change order whose
 SOV line has been billed cannot be voided (409 `co_billed`). A **Pay apps** tab
