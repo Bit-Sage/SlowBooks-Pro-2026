@@ -132,6 +132,18 @@ since a name changes no amount, and each donor line can print or email the
 same thank-you letter a donation gets. Check images on a deposit are not part of
 this.
 
+**Print the checks Pay Bills wrote in one go** (#603, from Discussion #594).
+Each check used to print on its own from its payment. Pay Bills by check with
+Check # left blank now leaves the checks waiting, and **Bills → Print Checks**
+(offered right after Pay Bills, too) lists them for a bank account with a tick
+box on each. The starting check number is filled from the next number on the
+account and numbers the ticked checks in order; any row's number can be
+adjusted. Print Checks makes one PDF with a check to a page on the usual
+voucher stock, gives each check the number it printed with, and takes it off
+the list. A number the account already has, a void payment and a payment
+dated in a closed period are refused. For API users:
+`GET /api/checks/unprinted` and `POST /api/checks/print-batch`.
+
 **A bill's memo prints on the check that pays it** (#602, from Discussion
 #594). A check printed from a bill payment had a blank memo line, though the
 bill carried the account or invoice number the vendor wants on it. Paying

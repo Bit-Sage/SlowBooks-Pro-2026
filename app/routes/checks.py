@@ -5,6 +5,7 @@
 from datetime import date
 from decimal import Decimal
 
+from pydantic import Field
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -15,7 +16,11 @@ from app.models.bills import BillPayment, Bill
 from app.models.contacts import Vendor
 from app.models.transactions import Transaction
 from app.services.bank_register import payees_for, voided_transaction_ids
-from app.services.pdf_service import generate_check_pdf
+from app.models.accounts import Account
+from app.schemas.common import StrictModel
+from app.services.check_numbers import next_check_number, unprinted_payments, uses_of
+from app.services.closing_date import check_closing_date
+from app.services.pdf_service import generate_check_pdf, generate_checks_pdf
 from app.services.request_utils import content_disposition
 from app.routes.settings import ENUM_SETTINGS, _get_all as get_settings
 from app.services.settings_service import SettingValueError, clean_setting_value
@@ -105,6 +110,41 @@ def register_check_data(db: Session, txn_id: int) -> dict:
     }
 
 
+def bill_payment_check_data(db: Session, bp: BillPayment) -> dict:
+    """The check a bill payment prints: the vendor, the payment's memo and
+    each bill it paid on the stub, shared by the single and the batch print."""
+    vendor = db.query(Vendor).filter(Vendor.id == bp.vendor_id).first()
+    check_data = {
+        "payee": vendor.name if vendor else "Unknown",
+        "date": bp.date,
+        "amount": bp.amount,
+        "check_number": bp.check_number or "",
+        "memo": (bp.notes or "").strip(),
+        "details": [],
+    }
+    for alloc in bp.allocations:
+        bill = db.query(Bill).filter(Bill.id == alloc.bill_id).first()
+        check_data["details"].append(
+            {
+                "description": (
+                    f"Bill #{bill.bill_number}" if bill else f"Bill #{alloc.bill_id}"
+                ),
+                "amount": alloc.amount,
+            }
+        )
+    # The stub adds up to the check: a part paid ahead of any bill is
+    # listed as such rather than left out.
+    applied = sum((a.amount for a in bp.allocations), Decimal("0"))
+    if bp.amount - applied > 0:
+        check_data["details"].append(
+            {
+                "description": "Paid ahead (not applied to a bill)",
+                "amount": bp.amount - applied,
+            }
+        )
+    return check_data
+
+
 @router.get("/test-print")
 def test_print_check(
     check_stock: str = Query(default=None),
@@ -181,37 +221,7 @@ def print_check(
         bp = db.query(BillPayment).filter(BillPayment.id == bill_payment_id).first()
         if not bp:
             raise HTTPException(status_code=404, detail="Bill payment not found")
-        vendor = db.query(Vendor).filter(Vendor.id == bp.vendor_id).first()
-        check_data = {
-            "payee": vendor.name if vendor else "Unknown",
-            "date": bp.date,
-            "amount": bp.amount,
-            "check_number": bp.check_number or "",
-            "memo": (bp.notes or "").strip(),
-            "details": [],
-        }
-        for alloc in bp.allocations:
-            bill = db.query(Bill).filter(Bill.id == alloc.bill_id).first()
-            check_data["details"].append(
-                {
-                    "description": (
-                        f"Bill #{bill.bill_number}"
-                        if bill
-                        else f"Bill #{alloc.bill_id}"
-                    ),
-                    "amount": alloc.amount,
-                }
-            )
-        # The stub adds up to the check: a part paid ahead of any bill is
-        # listed as such rather than left out.
-        applied = sum((a.amount for a in bp.allocations), Decimal("0"))
-        if bp.amount - applied > 0:
-            check_data["details"].append(
-                {
-                    "description": "Paid ahead (not applied to a bill)",
-                    "amount": bp.amount - applied,
-                }
-            )
+        check_data = bill_payment_check_data(db, bp)
     elif transaction_id:
         check_data = register_check_data(db, transaction_id)
     else:
@@ -229,6 +239,120 @@ def print_check(
                 f"Check_{check_data['check_number']}.pdf"
                 if check_data["check_number"]
                 else "Check.pdf"
+            )
+        },
+    )
+
+
+class BatchCheck(StrictModel):
+    bill_payment_id: int
+    check_number: str = Field(min_length=1, max_length=50)
+
+
+class PrintBatch(StrictModel):
+    bank_account_id: int
+    checks: list[BatchCheck] = Field(min_length=1)
+
+
+def _bank_account(db: Session, account_id: int) -> Account:
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.bank_kind != "bank":
+        raise HTTPException(
+            status_code=400, detail="Checks are written on a bank account."
+        )
+    return account
+
+
+@router.get("/unprinted")
+def unprinted_checks(
+    bank_account_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    """The checks Pay Bills wrote on a bank account that are waiting to be
+    printed (#603), oldest first, with the number the next one would take."""
+    _bank_account(db, bank_account_id)
+    payments = unprinted_payments(db, bank_account_id)
+    vendors = {
+        v.id: v.name
+        for v in db.query(Vendor).filter(Vendor.id.in_({p.vendor_id for p in payments}))
+    }
+    return {
+        "bank_account_id": bank_account_id,
+        "next_check_number": next_check_number(db, bank_account_id),
+        "checks": [
+            {
+                "bill_payment_id": p.id,
+                "payee": vendors.get(p.vendor_id, "Unknown"),
+                "date": p.date.isoformat(),
+                "amount": f"{p.amount:.2f}",
+                "memo": (p.notes or "").strip(),
+            }
+            for p in payments
+        ],
+    }
+
+
+@router.post("/print-batch")
+def print_check_batch(data: PrintBatch, db: Session = Depends(get_db)):
+    """Print several waiting checks as one PDF, one per page of the
+    3-per-page stock in the order sent, and mark each printed by giving it
+    the number it was printed with (#603). The numbers are the person's:
+    each is digits, none repeats within the batch, none is already on the
+    account. Nothing is numbered unless every check is accepted and the PDF
+    renders."""
+    _bank_account(db, data.bank_account_id)
+    ids = [c.bill_payment_id for c in data.checks]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="A check is listed twice.")
+    numbers = [c.check_number.strip() for c in data.checks]
+    if not all(n.isdigit() for n in numbers):
+        raise HTTPException(
+            status_code=400, detail="A check number is digits alone, like 1051."
+        )
+    # "1051" and "01051" are different text but one check: compare as numbers
+    if len({int(n) for n in numbers}) != len(numbers):
+        raise HTTPException(
+            status_code=400, detail="Two checks in the batch have the same number."
+        )
+    waiting = {p.id: p for p in unprinted_payments(db, data.bank_account_id)}
+    payments = []
+    for pid in ids:
+        bp = waiting.get(pid)
+        if bp is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Bill payment {pid} is not waiting to be printed on this "
+                    "account (already numbered, void, or paid another way)."
+                ),
+            )
+        check_closing_date(db, bp.date)
+        payments.append(bp)
+    for number in numbers:
+        if uses_of(db, data.bank_account_id, number):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Check number {int(number)} is already used on this account.",
+            )
+    checks = []
+    for bp, number in zip(payments, numbers):
+        check = bill_payment_check_data(db, bp)
+        check["check_number"] = number
+        checks.append(check)
+    pdf_bytes = generate_checks_pdf(checks, get_settings(db))
+    for bp, number in zip(payments, numbers):
+        bp.check_number = number
+    db.commit()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": content_disposition(
+                f"Checks_{numbers[0]}-{numbers[-1]}.pdf"
+                if len(numbers) > 1
+                else f"Check_{numbers[0]}.pdf"
             )
         },
     )
