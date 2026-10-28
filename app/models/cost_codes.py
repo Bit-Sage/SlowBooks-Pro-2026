@@ -5,8 +5,7 @@
 # the cost posts to: the account says *what kind of expense*, the cost code
 # says *which part of the job*.
 #
-# Codes follow the two-level division/section numbering used in commercial
-# construction specifications — a `level` of "division" ("DD") or "section"
+# Codes follow the two-level division/section numbering — a `level` of "division" ("DD") or "section"
 # ("DD SS SS", optional ".SS") — and a section sits under its division through
 # parent_id. A code that isn't division/section shaped (L-100, EQ) keeps level
 # null and is left as typed. Each code carries a cost type as its per-line
