@@ -210,7 +210,10 @@ jobs:
           # 182 with the register date's browser test
           # (test_browser_register_date.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "182"
+          # 183 with the batch check print's PDF test
+          # (test_check_batch_print.py::test_the_pdf_has_one_page_of_the_stock_per_check,
+          # which renders the checks through WeasyPrint, not on the runner).
+          MAX_SKIPS: "183"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

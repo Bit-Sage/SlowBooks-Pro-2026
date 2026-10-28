@@ -178,6 +178,29 @@ field; **Print Check** there saves what is in it, then opens the check
 (`PUT /api/bill-payments/{id}/memo`, `{"notes": "..."}`; blank clears it; a
 void payment is refused).
 
+### Printing several checks at once
+
+Pay Bills by check with **Check #** left blank writes the check without a
+number; it waits to be printed. **Bills → Print Checks** (also offered right
+after such a Pay Bills) lists the waiting checks for a bank account, oldest
+first: payee, date, amount and memo, each with a tick box. **Starting check #**
+is filled from one past the highest number on the account and numbers the
+ticked rows in order; any row's number can be changed before printing (a gap
+is yours to choose; a number the account already has is refused). **Print
+Checks** opens one PDF with a check to a page of the same voucher stock as a
+single check, in the order listed, and gives each check the number it printed
+with, so it leaves the list. A void payment is not listed. A check printed
+once reprints singly from its payment (Print Check).
+
+`GET /api/checks/unprinted?bank_account_id=` answers `next_check_number` and
+`checks` (`bill_payment_id`, `payee`, `date`, `amount`, `memo`).
+`POST /api/checks/print-batch` takes `{"bank_account_id": 1, "checks":
+[{"bill_payment_id": 7, "check_number": "1051"}, ...]}` and answers the PDF;
+a number that is not digits, repeats in the batch, or is already on the
+account, a check that is not waiting on that account, or a payment dated in
+a closed period is refused, and nothing is numbered unless the whole batch
+prints.
+
 ### Pre-printed check stock
 
 Settings → Check Printing chooses how every check prints, for the whole

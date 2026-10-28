@@ -19,6 +19,7 @@ const BillsPage = {
             headerHtml: `<div class="btn-group">
                     <button class="btn btn-primary" ${App.shortcutAttrs('B', 'Enter Bill')} onclick="BillsPage.showForm()">+ Enter Bill</button>
                     <button class="btn btn-secondary" onclick="BillsPage.showPayForm()">Pay Bills</button>
+                    <button class="btn btn-secondary" onclick="BillsPage.showPrintChecks()" title="Print the checks Pay Bills wrote, in one go">Print Checks</button>
                     <button class="btn btn-secondary" data-write onclick="App.navigate('#/bill-entry')" title="A stack of bills, one after another">Quick Entry</button>
                 </div>` + (all ? '' : listCapNote(rows, 500, 'BillsPage.showAll()', 'bills')),
             filter: {
@@ -208,6 +209,109 @@ const BillsPage = {
         const url = `/api/checks/print?bill_payment_id=${p.id}`;
         const open = withMemo ? `BillsPage.printPaymentCheck(${p.id}, '${url}')` : `window.open('${url}','_blank')`;
         return `<button class="btn btn-sm btn-secondary" onclick="${open}">Print Check</button> `;
+    },
+
+    // ==== Print Checks: the checks Pay Bills wrote, in one go (#603) ====
+
+    // The numbers the checked rows take: the starting number for the first,
+    // each next one a step up; an unchecked row has none. Digits only, as a
+    // check number is; anything else leaves every row blank to be typed.
+    _batchNumbers(start, checked) {
+        const first = /^\d+$/.test(String(start || '').trim()) ? parseInt(start, 10) : null;
+        let n = first;
+        return checked.map(on => {
+            if (!on || n === null) return '';
+            return String(n++);
+        });
+    },
+
+    _printChecksHtml(accounts, accountId, list) {
+        const opts = accounts.map(a =>
+            `<option value="${a.id}"${a.id == accountId ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+        const rows = list.checks.map(c => `
+            <tr class="batch-check-row" data-id="${c.bill_payment_id}">
+                <td><input type="checkbox" class="batch-check" checked aria-label="Print the check to ${escapeHtml(c.payee)}" onchange="BillsPage.renumberChecks()"></td>
+                <td><input class="batch-number" inputmode="numeric" style="width:90px;" aria-label="Check number for ${escapeHtml(c.payee)}"></td>
+                <td>${escapeHtml(c.payee)}</td>
+                <td>${formatDate(c.date)}</td>
+                <td class="amount">${formatCurrency(c.amount)}</td>
+                <td>${escapeHtml(c.memo || '')}</td>
+            </tr>`).join('');
+        const body = list.checks.length
+            ? `<div class="table-container"><table>
+                    <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Check #</th><th scope="col">Pay to</th>
+                    <th scope="col">Date</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th></tr></thead>
+                    <tbody>${rows}</tbody></table></div>`
+            : '<p style="color:var(--text-muted);">No checks are waiting to be printed on this account. Pay Bills by check with Check # left blank to queue them here.</p>';
+        return `
+            <div class="form-grid">
+                <div class="form-group"><label for="batch-account">Bank account</label>
+                    <select id="batch-account" onchange="BillsPage.showPrintChecks(this.value)">${opts}</select></div>
+                <div class="form-group"><label for="batch-start">Starting check #</label>
+                    <input id="batch-start" inputmode="numeric" value="${escapeHtml(list.next_check_number)}" oninput="BillsPage.renumberChecks()"></div>
+            </div>
+            ${body}
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button>
+                ${list.checks.length ? '<button type="button" id="batch-print" class="btn btn-primary" onclick="BillsPage.printSelectedChecks()">Print Checks</button>' : ''}
+            </div>`;
+    },
+
+    // Opens the list for a bank account (the first when none is named).
+    async showPrintChecks(accountId = null) {
+        try {
+            const accounts = await API.get('/accounts?bank=1&active_only=true');
+            const banks = accounts.filter(a => a.bank_kind === 'bank');
+            const id = accountId || (banks[0] && banks[0].id);
+            if (!id) { toast('There is no bank account to print checks on', 'error'); return; }
+            const list = await API.get(`/checks/unprinted?bank_account_id=${id}`);
+            openModal('Print Checks', BillsPage._printChecksHtml(banks, id, list));
+            BillsPage.renumberChecks();
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Fills the numbers of the checked rows from the starting number.
+    renumberChecks() {
+        const rows = [...document.querySelectorAll('.batch-check-row')];
+        const numbers = BillsPage._batchNumbers(
+            document.getElementById('batch-start').value,
+            rows.map(r => r.querySelector('.batch-check').checked));
+        rows.forEach((r, i) => { r.querySelector('.batch-number').value = numbers[i]; });
+    },
+
+    // Prints the checked rows as one PDF, in the order listed, each with the
+    // number in its box (adjust any before printing); the server numbers
+    // them, so they leave the list.
+    async printSelectedChecks() {
+        const checks = [...document.querySelectorAll('.batch-check-row')]
+            .filter(r => r.querySelector('.batch-check').checked)
+            .map(r => ({ bill_payment_id: parseInt(r.dataset.id), check_number: r.querySelector('.batch-number').value.trim() }));
+        if (!checks.length) { toast('Check the checks to print', 'error'); return; }
+        if (checks.some(c => !/^\d+$/.test(c.check_number))) { toast('Every check to print needs a number (digits only)', 'error'); return; }
+        const button = document.getElementById('batch-print');
+        if (button) button.disabled = true;
+        const accountId = parseInt(document.getElementById('batch-account').value);
+        try {
+            const res = await fetch('/api/checks/print-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Slowbooks-Desktop': '1' },
+                body: JSON.stringify({ bank_account_id: accountId, checks }),
+            });
+            if (!res.ok) throw new Error(await API.responseError(res, 'Could not print the checks'));
+            const blob = await res.blob();
+            const desktop = window.SlowbooksDesktop;
+            if (!(desktop && await desktop.saveFile(blob, 'Checks.pdf'))) {
+                const url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            }
+            toast(checks.length === 1 ? 'Check printed' : `${checks.length} checks printed`);
+            // the printed checks have their numbers and are off the list
+            await BillsPage.showPrintChecks(accountId);
+        } catch (err) {
+            toast(err.message, 'error');
+            if (button) button.disabled = false;
+        }
     },
 
     _items: [],
@@ -862,7 +966,9 @@ const BillsPage = {
             BillsPage._payKey = null;
             toastPosted(byVendor.size > 1 ? `Bills paid: ${byVendor.size} payments, one per vendor` : 'Bills paid');
             closeModal();
-            App.navigate('#/bills');
+            await App.navigate('#/bills');
+            // checks written with no number wait to be printed together
+            if (form.method.value === 'check' && !checkNumber) BillsPage.showPrintChecks(fromId);
         } catch (err) {
             // Each vendor's payment is its own record: say which went through.
             if (paid.length) {

@@ -488,14 +488,25 @@ def render_check_html(check_data: dict, company_settings: dict, options=None) ->
     alignment nudge come from check_print_options(); pass ``options={}`` to
     render with none of that context (the pre-#440 face, for a byte-for-byte
     comparison)."""
+    return render_checks_html([check_data], company_settings, options)
+
+
+def render_checks_html(checks: list, company_settings: dict, options=None) -> str:
+    """One or more checks, each on its own page of the 3-per-page stock
+    (two stubs and the check), in the order given (#603)."""
     template = _jinja_env.get_template("check_pdf.html")
-    check_data["amount_words"] = _amount_to_words(check_data.get("amount", 0))
+    for check_data in checks:
+        check_data["amount_words"] = _amount_to_words(check_data.get("amount", 0))
     opts = check_print_options(company_settings) if options is None else options
-    return template.render(check=check_data, company=company_settings, **opts)
+    return template.render(checks=checks, company=company_settings, **opts)
 
 
 def generate_check_pdf(check_data: dict, company_settings: dict) -> bytes:
     return render_pdf(render_check_html(check_data, company_settings))
+
+
+def generate_checks_pdf(checks: list, company_settings: dict) -> bytes:
+    return render_pdf(render_checks_html(checks, company_settings))
 
 
 def generate_report_pdf(
