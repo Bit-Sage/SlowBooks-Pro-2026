@@ -33,18 +33,20 @@ from app.services.estimating import (
 
 def contract_is_locked(db: Session, job: Job) -> bool:
     """True once the contract sum and contingency can only move by change
-    order: the job has billing against its schedule of values or a change
-    order. Until then both edit freely, so a sum typed before the bid (or a
-    contingency set after the build) is just an edit.
+    order: the job has billing against its schedule of values or an approved
+    owner change order. Until then both edit freely, so a sum typed before the
+    bid (or a contingency set after the build) is just an edit.
 
-    A change order counts while it is live: draft, pending, approved or
-    promoted. A void, rejected or superseded one leaves no mark on the sum.
-    #576 (progress billing) adds the billing condition here."""
+    Only an approved owner change order counts: a draft or pending one, a
+    potential change order and a sub change order do not move the sum, and a
+    void puts it back. #576 (progress billing) adds the billing condition
+    here."""
     from app.models.change_orders import ChangeOrder
 
     live = db.query(ChangeOrder.id).filter(
         ChangeOrder.job_id == job.id,
-        ChangeOrder.status.notin_(("void", "rejected", "superseded")),
+        ChangeOrder.kind == "owner",
+        ChangeOrder.status == "approved",
     )
     return db.query(live.exists()).scalar() or False
 

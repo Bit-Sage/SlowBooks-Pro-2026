@@ -1284,29 +1284,122 @@ def test_contract_funded_co_is_always_marked_up(client, seed_customer):
     assert r.json()["apply_markup"] is True
 
 
-def test_second_sub_co_on_the_same_owner_lines_is_refused(
+def _po_total(client, po):
+    return float(client.get(f"/api/purchase-orders/{po['id']}").json()["total"])
+
+
+def test_editing_a_linked_sub_co_past_its_owner_co_cannot_approve(
     client, seed_accounts, seed_customer
 ):
     job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
-    url = f"/api/change-orders/{owner['id']}/sub-order"
-    r = client.post(url, json={"commitment_id": po["id"]})
+    r = client.put(
+        f"/api/change-orders/{sub['id']}", json={"lines": [_sub_line("Extra", 20000)]}
+    )
+    assert r.status_code == 200, r.text
+    r = _submit_approve(client, sub["id"])
     assert r.status_code == 409
-    assert r.json()["detail"]["code"] == "owner_co_lines_already_ordered"
-    # still refused while the first is pending or approved
-    client.post(f"/api/change-orders/{sub['id']}/submit")
-    assert client.post(url, json={"commitment_id": po["id"]}).status_code == 409
-    assert client.post(f"/api/change-orders/{sub['id']}/approve").status_code == 200
-    assert client.post(url, json={"commitment_id": po["id"]}).status_code == 409
+    assert r.json()["detail"]["code"] == "owner_co_budget_exceeded"
+    assert _po_total(client, po) == 5000
 
 
-def test_rejected_sub_co_frees_its_owner_lines(client, seed_accounts, seed_customer):
+def test_second_full_amount_sub_co_posted_directly_is_refused(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    second = _co(
+        client,
+        job["id"],
+        [_sub_line("Extra", 2000)],
+        kind="sub",
+        commitment_id=po["id"],
+        owner_change_order_id=owner["id"],
+    )
+    r = _submit_approve(client, second["id"])
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "owner_co_budget_exceeded"
+    assert _po_total(client, po) == 7000
+
+
+def test_sub_cos_that_fit_the_owner_co_cost_both_approve(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    for amount in (1200, 800):
+        extra = _co(
+            client,
+            job["id"],
+            [_sub_line("Part", amount)],
+            kind="sub",
+            commitment_id=po["id"],
+            owner_change_order_id=owner["id"],
+        )
+        assert _submit_approve(client, extra["id"]).status_code == 200
+    assert _po_total(client, po) == 7000
+    # the owner CO's $2,000 is spent; one more cent is not
+    over = _co(
+        client,
+        job["id"],
+        [_sub_line("Part", 0.01)],
+        kind="sub",
+        commitment_id=po["id"],
+        owner_change_order_id=owner["id"],
+    )
+    assert _submit_approve(client, over["id"]).status_code == 409
+
+
+def test_identical_owner_co_lines_can_go_to_two_subs(
+    client, seed_accounts, seed_customer
+):
+    job = _job(client, seed_customer.id)
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    pos = [
+        _sent_commitment(
+            client,
+            vendor["id"],
+            job["id"],
+            [{"description": "Base", "quantity": 1, "rate": 5000}],
+            commitment_type="subcontract",
+        )
+        for _ in range(2)
+    ]
+    owner = _co(client, job["id"], [_sub_line("Pour", 1000), _sub_line("Pour", 1000)])
+    assert _submit_approve(client, owner["id"]).status_code == 200
+    ids = [ln["id"] for ln in owner["lines"]]
+    for po, line_id in zip(pos, ids):
+        r = client.post(
+            f"/api/change-orders/{owner['id']}/sub-order",
+            json={"commitment_id": po["id"], "line_ids": [line_id]},
+        )
+        assert r.status_code == 200, r.text
+        assert _submit_approve(client, r.json()["id"]).status_code == 200
+    assert [_po_total(client, po) for po in pos] == [6000, 6000]
+
+
+def test_rejected_sub_co_does_not_count_toward_the_owner_co_cost(
+    client, seed_accounts, seed_customer
+):
     job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
     client.post(f"/api/change-orders/{sub['id']}/submit")
     assert client.post(f"/api/change-orders/{sub['id']}/reject").status_code == 200
-    r = client.post(
+    again = client.post(
         f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
-    )
-    assert r.status_code == 200, r.text
+    ).json()
+    assert _submit_approve(client, again["id"]).status_code == 200
+    assert _po_total(client, po) == 7000
+
+
+def test_voided_sub_co_does_not_count_toward_the_owner_co_cost(
+    client, seed_accounts, seed_customer
+):
+    job, po, owner, sub = _commit_with_sub_co(client, seed_accounts, seed_customer)
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    assert client.post(f"/api/change-orders/{sub['id']}/void").status_code == 200
+    again = client.post(
+        f"/api/change-orders/{owner['id']}/sub-order", json={"commitment_id": po["id"]}
+    ).json()
+    assert _submit_approve(client, again["id"]).status_code == 200
+    assert _po_total(client, po) == 7000
 
 
 def test_plain_po_edit_cannot_move_a_sub_co_line_to_another_job(
@@ -1346,24 +1439,58 @@ def test_plain_po_edit_cannot_move_a_sub_co_line_to_another_job(
     assert float(fresh["total"]) == 7000
 
 
-def test_a_change_order_locks_the_contract_sum_and_contingency(
+def test_only_an_approved_owner_co_locks_the_contract_sum_and_contingency(
     client, seed_accounts, seed_customer
 ):
-    """The sum and contingency edit freely until the job has a change order;
-    from then on they move by change order only (#552, #554). A rejected CO
-    frees them again."""
+    """The sum and contingency edit freely until the job has an approved owner
+    change order; from then on they move by change order only (#552, #554). A
+    draft or pending one, a PCO or a sub CO does not lock; a void frees them."""
     job = _job(client, seed_customer.id)
     base = f"/api/jobs/{job['id']}/contract"
     _contract(client, job["id"], contract_type="lump_sum", contract_amount=100000)
     assert client.put(base, json={"contract_amount": 110000}).status_code == 200
+
+    # a PCO, a draft and a pending owner CO leave the sum alone
+    _co(client, job["id"], [LABOR], kind="pco")
     co = _co(client, job["id"], [LABOR])
+    assert client.put(base, json={"contract_amount": 111000}).status_code == 200
+    assert client.post(f"/api/change-orders/{co['id']}/submit").status_code == 200
+    assert client.put(base, json={"contract_amount": 112000}).status_code == 200
+
+    # a rejected one leaves nothing behind
+    assert client.post(f"/api/change-orders/{co['id']}/reject").status_code == 200
+    assert client.put(base, json={"contract_amount": 113000}).status_code == 200
+
+    # an approved sub CO does not lock on its own
+    vendor = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    po = _sent_commitment(
+        client,
+        vendor["id"],
+        job["id"],
+        [{"description": "Base", "quantity": 1, "rate": 5000}],
+        commitment_type="subcontract",
+    )
+    sub = _co(
+        client,
+        job["id"],
+        [_sub_line("Extra", 500)],
+        kind="sub",
+        commitment_id=po["id"],
+    )
+    assert _submit_approve(client, sub["id"]).status_code == 200
+    assert client.put(base, json={"contract_amount": 114000}).status_code == 200
+
+    # an approved owner CO locks both
+    owner = _co(client, job["id"], [LABOR])
+    assert _submit_approve(client, owner["id"]).status_code == 200
     r = client.put(base, json={"contract_amount": 120000})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "contract_sum_locked"
     r = client.put(base, json={"contingency_amount": 5000})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "contingency_locked"
     # the same value is not a change
-    assert client.put(base, json={"contract_amount": 110000}).status_code == 200
-    assert client.post(f"/api/change-orders/{co['id']}/submit").status_code == 200
-    r = client.post(f"/api/change-orders/{co['id']}/reject")
-    assert r.status_code == 200, r.text
+    same = client.get(base).json()["contract"]["contract_amount"]
+    assert client.put(base, json={"contract_amount": same}).status_code == 200
+
+    # a void puts it back
+    assert client.post(f"/api/change-orders/{owner['id']}/void").status_code == 200
     assert client.put(base, json={"contract_amount": 120000}).status_code == 200

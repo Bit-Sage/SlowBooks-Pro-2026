@@ -8,7 +8,6 @@
 # ============================================================================
 
 import re
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
@@ -559,37 +558,6 @@ def sub_order_from_owner(co_id: int, data: SubOrderIn, db: Session = Depends(get
         owner_change_order_id=owner.id,
     )
 
-    # One owner CO line raises a commitment once: a pending or approved sub CO
-    # already covering it blocks a second (a rejected or void one frees it).
-    def sig(ln):
-        return (
-            ln.description,
-            ln.cost_type,
-            ln.cost_code_id,
-            Decimal(str(ln.quantity or 0)),
-            Decimal(str(ln.unit_cost or 0)),
-        )
-
-    taken = {
-        sig(ln)
-        for other in db.query(ChangeOrder)
-        .filter(
-            ChangeOrder.owner_change_order_id == owner.id,
-            ChangeOrder.kind == "sub",
-            ChangeOrder.status.in_(("draft", "pending", "approved")),
-        )
-        .all()
-        for ln in other.lines
-    }
-    if any(sig(ln) in taken for ln in chosen):
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "owner_co_lines_already_ordered",
-                "message": "A sub change order already covers these lines of the owner change order.",
-            },
-        )
     _copy_lines(db, sub.id, chosen)
     db.commit()
     db.refresh(sub)

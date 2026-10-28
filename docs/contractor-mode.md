@@ -245,7 +245,9 @@ The summary stamps the **original contract amount** once, the first time a sum
 is set with a type (building from an estimate stamps it too, even when the sum
 came from the job form). The **contract sum and the contingency edit freely**
 (and the original follows the sum) until the job has any billing on the
-schedule of values or any change order. From then on the Contract tab and the
+schedule of values or any approved owner change order (a draft or pending
+one, a potential change order or a sub change order does not lock it, and a void
+frees it again). From then on the Contract tab and the
 job form refuse a different sum or contingency (409 `contract_sum_locked` /
 `contingency_locked`), and only an approved change order (#554) moves them, so
 the tab shows original + changes = revised. Amounts are rounded to the cent and
@@ -429,10 +431,11 @@ change order is approved (409 `owner_co_not_approved`); an owner change order
 cannot be rejected or voided while an approved sub change order stands under it
 (409 `approved_sub_co`; void the sub CO first). A plain purchase-order edit
 cannot drop a line a sub change order added or change its amount, quantity,
-rate, job, cost code or cost type (409 `commitment_co_line`); one owner change
-order line raises a commitment once, so a second pending or approved sub change
-order on the same lines is refused (409 `owner_co_lines_already_ordered`; a
-rejected or void one frees them), and a sub change order is still refused on a fully billed
+rate, job, cost code or cost type (409 `commitment_co_line`); a linked sub change
+order cannot raise commitments past its owner change order: at approve, the cost
+of the approved sub change orders under it plus this one cannot exceed the owner
+change order's cost (409 `owner_co_budget_exceeded`; a rejected or void one does
+not count), and a sub change order is still refused on a fully billed
 commitment (409 `commitment_not_open`).
 
 **What approve does.** Every effect lands on **approve**, in one transaction,

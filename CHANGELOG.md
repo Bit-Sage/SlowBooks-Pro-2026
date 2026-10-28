@@ -341,7 +341,7 @@ company's estimate form and PDF are exactly as they were. See
 
 **The contract on the job** (#552, @ContractorKeith). Review fixes: the
 contract sum and contingency edit freely until the job has billing on the
-schedule of values or a change order, then lock (409 `contract_sum_locked` /
+schedule of values or an approved owner change order, then lock (409 `contract_sum_locked` /
 `contingency_locked`; a change order moves them from there), so a sum typed
 before the bid is just corrected; the original follows the sum until then;
 building from an estimate stamps the original even when the job form set the
@@ -431,7 +431,7 @@ tree's Changes column); *contingency* draws the owner's contingency down (409
 `contingency_exceeded`), and *allowance* spends an allowance line at its sell price, markup included, as contingency does (409
 `allowance_exceeded`), both writing the cost with no revenue (the contract
 already carries that money). A sub change order appends cost-only lines to an
-open commitment (one sub change order per owner change order line: a second on the same lines is 409 `owner_co_lines_already_ordered`; the lines a change order added keep their job, cost code, type, quantity and rate on a plain purchase-order edit) on the same job (409 when it is on another job or not open),
+open commitment (a sub change order linked to an owner change order approves only while the cost of the approved ones under it, this one included, stays within the owner change order's cost: 409 `owner_co_budget_exceeded`; the lines a change order added keep their job, cost code, type, quantity and rate on a plain purchase-order edit) on the same job (409 when it is on another job or not open),
 and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
 changing a contract term afterward never moves an approved CO. Every effect
 reverses on **void** — except a commitment line already billed against, which

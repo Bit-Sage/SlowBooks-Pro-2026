@@ -501,6 +501,35 @@ def apply_change_order(db: Session, co: ChangeOrder) -> None:
                         "message": "Approve the owner change order first; this sub change order is backed by it.",
                     },
                 )
+            # The commitment can rise by no more than the owner CO carried:
+            # approved linked sub COs plus this one, by cost.
+            taken = sum(
+                (
+                    co_totals(o, job)["cost_total"]
+                    for o in db.query(ChangeOrder)
+                    .filter(
+                        ChangeOrder.owner_change_order_id == owner.id,
+                        ChangeOrder.kind == "sub",
+                        ChangeOrder.status == "approved",
+                        ChangeOrder.id != co.id,
+                    )
+                    .all()
+                ),
+                Decimal("0"),
+            )
+            owner_cost = co_totals(owner, job)["cost_total"]
+            if _q(taken + totals["cost_total"]) > owner_cost:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "owner_co_budget_exceeded",
+                        "message": (
+                            f"{owner.number} carries ${owner_cost:,.2f} of cost and "
+                            f"${taken:,.2f} is already approved under it; this "
+                            f"${totals['cost_total']:,.2f} would raise the commitment past it."
+                        ),
+                    },
+                )
         from app.routes.purchase_orders import append_commitment_lines
 
         append_commitment_lines(db, po, co.lines, co.id)
