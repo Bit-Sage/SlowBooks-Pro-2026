@@ -24,6 +24,9 @@ class _EmailInvoiceRequest(StrictModel):
     # before it reached any of the code below. The box was not merely
     # ignored; it broke the button it sat on (issue #140, mdornich).
     message: _Optional[str] = None
+    # Copies on this send (#611): comma-separated addresses, or none.
+    cc: _Optional[str] = None
+    bcc: _Optional[str] = None
 
 
 @router.get("/{invoice_id}/pdf")
@@ -172,6 +175,8 @@ def email_invoice(
             ),
             entity_type="invoice",
             entity_id=inv.id,
+            cc=data.cc,
+            bcc=data.bcc,
         )
         # It returns False rather than raising when SMTP is unconfigured or
         # the send fails; reporting "sent" regardless would be a lie.

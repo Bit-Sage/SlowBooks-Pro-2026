@@ -90,6 +90,14 @@ or an expense-typed one posts to 5000 as before. Entries already posted stay
 where they are: one journal entry moving them from 5000 to the right
 sub-account cleans up history.
 
+**CC and BCC on email** (#611, from Discussion #607, @PeterRichardsonGolf).
+The Email Invoice dialog now has CC and BCC boxes, comma-separated. Settings →
+Email (SMTP) gains *Always CC* and *Always BCC*: addresses copied on every email
+the program sends, so statements, collection letters and acknowledgments carry
+them too, with no dialog. Bcc is never written into the message, only the
+envelope. Recent sends shows the copies under the recipient. API: `POST
+/api/invoices/{id}/email` accepts `cc` and `bcc`.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

@@ -109,6 +109,10 @@ DEFAULT_SETTINGS = {
     "smtp_from_email": "",
     "smtp_from_name": "",
     "smtp_use_tls": "true",
+    # Copied on every email the program sends (#611): comma-separated
+    # addresses; Cc shows to the recipient, Bcc does not.
+    "smtp_always_cc": "",
+    "smtp_always_bcc": "",
     # Feature 15: Company Logo
     "company_logo_path": "",
     "invoice_show_logo": "true",

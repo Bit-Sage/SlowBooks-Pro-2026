@@ -4,6 +4,7 @@
 # ============================================================================
 
 import logging
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -34,12 +35,38 @@ def _get_smtp_settings(db: Session) -> dict:
         "smtp_from_email",
         "smtp_from_name",
         "smtp_use_tls",
+        "smtp_always_cc",
+        "smtp_always_bcc",
     ]
     from app.services.settings_service import _maybe_decrypt
 
     rows = db.query(Settings).filter(Settings.key.in_(keys)).all()
     settings = {r.key: _maybe_decrypt(r.key, r.value) for r in rows}
     return settings
+
+
+def clean_addresses(value) -> list:
+    """Addresses typed as a comma- or semicolon-separated string, or given as
+    a list, with header-injection characters stripped and blanks and
+    duplicates dropped. Order is kept."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[,;]", value)
+    else:
+        parts = list(value)
+    out = []
+    for raw in parts:
+        addr = str(raw or "").replace("\r", "").replace("\n", "").strip()
+        if addr and addr.lower() not in {a.lower() for a in out}:
+            out.append(addr)
+    return out
+
+
+def _without(addresses: list, taken: list) -> list:
+    """``addresses`` minus any already in ``taken`` (case-insensitive)."""
+    lower = {a.lower() for a in taken}
+    return [a for a in addresses if a.lower() not in lower]
 
 
 def send_email(
@@ -51,8 +78,18 @@ def send_email(
     attachment_name: str = None,
     entity_type: str = None,
     entity_id: int = None,
+    cc=None,
+    bcc=None,
 ) -> bool:
-    """Send an email via SMTP. Returns True on success."""
+    """Send an email via SMTP. Returns True on success.
+
+    ``cc`` and ``bcc`` are addresses (list, or a comma-separated string)
+    copied on this one send. Settings ``smtp_always_cc`` /
+    ``smtp_always_bcc`` are added to every send (#611), so batch sends
+    (statements, collection letters, acknowledgments) carry them too. Cc
+    goes in the headers; Bcc is envelope-only and never written as a
+    header, which is the whole point of a blind copy.
+    """
     smtp = _get_smtp_settings(db)
 
     host = smtp.get("smtp_host", "")
@@ -63,11 +100,24 @@ def send_email(
     from_name = smtp.get("smtp_from_name", "Slowbooks Pro")
     use_tls = smtp.get("smtp_use_tls", "true").lower() == "true"
 
+    # Sanitize email headers to prevent injection
+    to_email = to_email.replace("\r", "").replace("\n", "").strip()
+    subject = subject.replace("\r", "").replace("\n", " ").strip()
+    cc_list = clean_addresses(cc) + clean_addresses(smtp.get("smtp_always_cc", ""))
+    bcc_list = clean_addresses(bcc) + clean_addresses(smtp.get("smtp_always_bcc", ""))
+    # An address already receiving the mail is not copied on it again.
+    cc_list = _without(cc_list, [to_email])
+    bcc_list = _without(bcc_list, [to_email] + cc_list)
+    cc_text = ", ".join(cc_list) or None
+    bcc_text = ", ".join(bcc_list) or None
+
     if not host or not from_email:
         log = EmailLog(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
+            cc=cc_text,
+            bcc=bcc_text,
             subject=subject,
             status="failed",
             error_message="SMTP not configured",
@@ -76,13 +126,11 @@ def send_email(
         db.commit()
         return False
 
-    # Sanitize email headers to prevent injection
-    to_email = to_email.replace("\r", "").replace("\n", "").strip()
-    subject = subject.replace("\r", "").replace("\n", " ").strip()
-
     msg = MIMEMultipart()
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = to_email
+    if cc_list:
+        msg["Cc"] = cc_text
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html"))
 
@@ -106,7 +154,7 @@ def send_email(
         if user and password:
             server.login(user, password)
 
-        server.sendmail(from_email, [to_email], msg.as_string())
+        server.sendmail(from_email, [to_email] + cc_list + bcc_list, msg.as_string())
         server.quit()
         server = None
 
@@ -114,6 +162,8 @@ def send_email(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
+            cc=cc_text,
+            bcc=bcc_text,
             subject=subject,
             status="sent",
         )
@@ -131,6 +181,8 @@ def send_email(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
+            cc=cc_text,
+            bcc=bcc_text,
             subject=subject,
             status="failed",
             error_message=str(e),

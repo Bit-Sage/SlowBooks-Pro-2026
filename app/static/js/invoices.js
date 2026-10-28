@@ -552,6 +552,10 @@ const InvoicesPage = {
                 <div class="form-grid">
                     <div class="form-group full-width"><label>Recipient Email *</label>
                         <input name="recipient" type="email" required value="${escapeHtml(email)}"></div>
+                    <div class="form-group"><label>CC <span class="form-hint">Optional. Separate addresses with commas.</span></label>
+                        <input name="cc" placeholder="office@example.com"></div>
+                    <div class="form-group"><label>BCC <span class="form-hint">Optional. Hidden from the recipient.</span></label>
+                        <input name="bcc" placeholder="books@example.com"></div>
                     <div class="form-group full-width"><label>Subject</label>
                         <input name="subject" placeholder="Loading from your template…"></div>
                     <div class="form-group full-width"><label>Message <span class="form-hint">Appears at the top of the email. Leave it blank to send your template as it is.</span></label>
@@ -605,6 +609,8 @@ const InvoicesPage = {
         try {
             await API.post(`/invoices/${id}/email`, {
                 recipient: form.recipient.value,
+                cc: form.cc.value.trim() || null,
+                bcc: form.bcc.value.trim() || null,
                 subject: form.subject.value,
                 message: form.message.value,
             });
