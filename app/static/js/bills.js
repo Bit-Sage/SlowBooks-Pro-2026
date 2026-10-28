@@ -166,19 +166,48 @@ const BillsPage = {
             ${rows ? `<div class="table-container"><table>
                 <thead><tr><th scope="col">Bill #</th><th scope="col">Date</th><th scope="col" class="amount">Applied</th><th scope="col"></th></tr></thead>
                 <tbody>${rows}</tbody></table></div>` : ''}
+            ${BillsPage._checkMemoHtml(p)}
             ${!p.is_voided && ahead > 0 ? `<p style="font-size:11px; color:var(--text-muted);">${formatCurrency(ahead)} paid ahead, not applied to a bill.</p>` : ''}
             <div class="form-actions">
-                ${p.is_voided ? '' : `${BillsPage._printCheckButton(p)}<button data-destructive type="button" class="btn btn-danger" onclick="BillsPage.voidBillPayment(${p.id}, ${firstBill})">Void</button>`}
+                ${p.is_voided ? '' : `${BillsPage._printCheckButton(p, true)}<button data-destructive type="button" class="btn btn-danger" onclick="BillsPage.voidBillPayment(${p.id}, ${firstBill})">Void</button>`}
                 <button type="button" class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
     },
 
-    // A payment by check (or one that carries a check number) prints its
-    // check; ACH, cash and card payments have none to print.
-    _printCheckButton(p) {
+    // The check's memo line, editable before the check prints (#602): a
+    // payment of one bill starts with that bill's memo, a payment of
+    // several starts blank. Only a payment that prints a check shows it.
+    _checkMemoHtml(p) {
         const byCheck = !p.method || p.method === 'check' || !!p.check_number;
         if (p.is_voided || !byCheck) return '';
-        return `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/checks/print?bill_payment_id=${p.id}','_blank')">Print Check</button> `;
+        return `<div class="form-group" style="margin-bottom:12px;">
+                <label for="bill-payment-memo">Check memo</label>
+                <input id="bill-payment-memo" value="${escapeHtml(p.notes || '')}">
+            </div>`;
+    },
+
+    // Save the memo as typed, then open the check with it on the memo line.
+    async printPaymentCheck(id, url) {
+        const memo = document.getElementById('bill-payment-memo');
+        const tab = window.open('', '_blank');
+        try {
+            if (memo) await API.put(`/bill-payments/${id}/memo`, { notes: memo.value });
+            if (tab) tab.location = url; else window.open(url, '_blank');
+        } catch (err) {
+            if (tab) tab.close();
+            toast(err.message, 'error');
+        }
+    },
+
+    // A payment by check (or one that carries a check number) prints its
+    // check; ACH, cash and card payments have none to print.
+    // `withMemo`: the payment's own view, which saves its memo field first.
+    _printCheckButton(p, withMemo = false) {
+        const byCheck = !p.method || p.method === 'check' || !!p.check_number;
+        if (p.is_voided || !byCheck) return '';
+        const url = `/api/checks/print?bill_payment_id=${p.id}`;
+        const open = withMemo ? `BillsPage.printPaymentCheck(${p.id}, '${url}')` : `window.open('${url}','_blank')`;
+        return `<button class="btn btn-sm btn-secondary" onclick="${open}">Print Check</button> `;
     },
 
     _items: [],

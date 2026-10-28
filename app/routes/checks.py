@@ -187,7 +187,7 @@ def print_check(
             "date": bp.date,
             "amount": bp.amount,
             "check_number": bp.check_number or "",
-            "memo": "",
+            "memo": (bp.notes or "").strip(),
             "details": [],
         }
         for alloc in bp.allocations:
