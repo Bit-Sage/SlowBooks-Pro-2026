@@ -24,6 +24,7 @@
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.items import (
@@ -76,22 +77,35 @@ def get_cogs_account_id(db: Session, item: Optional[Item] = None) -> Optional[in
     return acc.id if acc else None
 
 
-def _sale_cogs_account_id(db: Session, movement: InventoryMovement) -> Optional[int]:
-    """The account a sale movement's journal entry debited (its COGS side),
-    or None when the movement posted no entry."""
+def _sale_entry_accounts(db: Session, movement: InventoryMovement) -> tuple:
+    """(cogs_account_id, asset_account_id) of the entry a sale movement
+    posted: the COGS-typed debit line and the asset-typed credit line. Either
+    is None when the movement posted no entry or the line is not there."""
     if not movement.transaction_id:
-        return None
+        return None, None
     from app.models.transactions import TransactionLine
 
-    line = (
-        db.query(TransactionLine)
-        .filter(
-            TransactionLine.transaction_id == movement.transaction_id,
-            TransactionLine.debit > 0,
+    rows = (
+        db.query(
+            TransactionLine.account_id, TransactionLine.debit, Account.account_type
         )
-        .first()
+        .join(Account, Account.id == TransactionLine.account_id)
+        .filter(TransactionLine.transaction_id == movement.transaction_id)
+        .all()
     )
-    return line.account_id if line else None
+    cogs_id = next(
+        (a for a, debit, t in rows if debit and debit > 0 and t == AccountType.COGS),
+        None,
+    )
+    asset_id = next(
+        (
+            a
+            for a, debit, t in rows
+            if not (debit and debit > 0) and t == AccountType.ASSET
+        ),
+        None,
+    )
+    return cogs_id, asset_id
 
 
 def _append_movement(
@@ -498,14 +512,18 @@ def reverse_sale(
     if quantity <= 0:
         return None
 
-    # Look up the original sale's unit_cost so the reversal matches, and the
-    # account its cost was debited to, so the reversal comes off where it went
-    # on even if the item's COGS account was changed in between (#622; sb-qa).
-    # For invoice-void we know the original source is ("invoice", invoice_id).
-    unit_cost = None
-    original_cogs_id = None
+    # The reversal comes off where the sale went on. An invoice can hold more
+    # than one SALE movement for the item (each quantity-up edit adds one) and,
+    # since #622, they can sit on different accounts with different costs, so
+    # walk them newest first (the order earlier reversals consumed them in),
+    # skip what those reversals already took, and reverse each piece at its own
+    # cost against its own COGS and inventory accounts (sb-qa). With no
+    # original to match, legacy behaviour: current avg_cost, the chart's
+    # accounts.
+    pieces = []  # (quantity, unit_cost, cogs_account_id, asset_account_id)
+    remaining = quantity
     if original_source_type and original_source_id:
-        original = (
+        originals = (
             db.query(InventoryMovement)
             .filter(
                 InventoryMovement.item_id == item.id,
@@ -514,40 +532,73 @@ def reverse_sale(
                 InventoryMovement.movement_type == MovementType.SALE,
             )
             .order_by(InventoryMovement.id.desc())
-            .first()
+            .all()
         )
-        if original:
-            unit_cost = Decimal(str(original.unit_cost or 0))
-            original_cogs_id = _sale_cogs_account_id(db, original)
+        already = (
+            db.query(func.coalesce(func.sum(InventoryMovement.quantity), 0))
+            .filter(
+                InventoryMovement.item_id == item.id,
+                InventoryMovement.source_id == original_source_id,
+                InventoryMovement.movement_type == MovementType.VOID,
+                InventoryMovement.source_type.in_(
+                    (f"{original_source_type}_void", f"{original_source_type}_edit")
+                ),
+            )
+            .scalar()
+        )
+        skip = Decimal(str(already or 0))
+        for mv in originals:
+            if remaining <= 0:
+                break
+            available = abs(Decimal(str(mv.quantity)))
+            taken_before = min(available, skip)
+            skip -= taken_before
+            available -= taken_before
+            if available <= 0:
+                continue
+            take = min(available, remaining)
+            cogs_id, asset_id = _sale_entry_accounts(db, mv)
+            pieces.append((take, Decimal(str(mv.unit_cost or 0)), cogs_id, asset_id))
+            remaining -= take
+    if remaining > 0:
+        pieces.append((remaining, Decimal(str(item.avg_cost or 0)), None, None))
 
-    if unit_cost is None:
-        # Fallback: use current avg_cost. This is the legacy behavior and
-        # may produce a small GL imbalance if cost moved between sale/void.
-        unit_cost = Decimal(str(item.avg_cost or 0))
-
-    amount = _q(quantity * unit_cost)
+    amount = sum((_q(q * c) for q, c, _, _ in pieces), Decimal("0"))
+    unit_cost = quantize_to(amount / quantity, COST_Q) if quantity else Decimal("0")
 
     txn_id = None
     if amount > 0 and post_journal:
-        asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = original_cogs_id or get_cogs_account_id(db, item)
-        if asset_id and cogs_id:
+        fallback_asset = get_inventory_asset_account_id(db, item)
+        # a sale that posted no entry could only have gone to the chart's
+        # account, never the item's, so the fallback is item-less
+        fallback_cogs = get_cogs_account_id(db)
+        by_accounts = {}
+        for q, c, cogs_id, asset_id in pieces:
+            key = (asset_id or fallback_asset, cogs_id or fallback_cogs)
+            by_accounts[key] = by_accounts.get(key, Decimal("0")) + _q(q * c)
+        if all(a and c for a, c in by_accounts):
             from datetime import date as _date
 
-            lines = [
-                {
-                    "account_id": asset_id,
-                    "debit": amount,
-                    "credit": Decimal("0"),
-                    "description": f"Inventory reversal: {item.name}",
-                },
-                {
-                    "account_id": cogs_id,
-                    "debit": Decimal("0"),
-                    "credit": amount,
-                    "description": f"COGS reversal: {item.name}",
-                },
-            ]
+            lines = []
+            for (asset_id, cogs_id), piece_amount in by_accounts.items():
+                if piece_amount <= 0:
+                    continue
+                lines.append(
+                    {
+                        "account_id": asset_id,
+                        "debit": piece_amount,
+                        "credit": Decimal("0"),
+                        "description": f"Inventory reversal: {item.name}",
+                    }
+                )
+                lines.append(
+                    {
+                        "account_id": cogs_id,
+                        "debit": Decimal("0"),
+                        "credit": piece_amount,
+                        "description": f"COGS reversal: {item.name}",
+                    }
+                )
             txn = create_journal_entry(
                 db,
                 txn_date or _date.today(),
