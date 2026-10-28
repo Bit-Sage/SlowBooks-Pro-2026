@@ -94,6 +94,50 @@ def test_sales_tax_cash_basis_counts_tax_on_money_received(
     assert _bs_amount(_bs(client, "2026-07-31", "cash"), "2200") == D("6.00")
 
 
+def test_sales_tax_cash_basis_on_a_retainage_invoice_matches_its_cash_lines(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A pay application's invoice holds retainage back, so its amount due is
+    less than its total. The payment's cash lines prorate on the amount due;
+    the report prorated on the total and read less tax than 2200 took
+    (2.30.0 gate NEW-184). Both now move together, to the cent."""
+    from tests.test_pay_applications import (
+        _approve,
+        _edit,
+        _new_app,
+        _taxed_estimate_job,
+    )
+
+    job, sov = _taxed_estimate_job(client, seed_customer.id, rate="0.08")
+    app = _new_app(client, job["id"])
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 5000, "stored": 0}],
+    )
+    r = _approve(client, app["id"])
+    assert r.status_code == 200, r.text
+    inv = client.get(f"/api/invoices/{r.json()['invoice_id']}").json()
+    # 5,000 at 8%: tax 400, total 5,400, 500 held back, 4,900 due
+    assert D(str(inv["total"])) == D("5400.00")
+    assert D(str(inv["balance_due"])) == D("4900.00")
+    # half the amount due: half the tax, as the cash lines book it
+    _payment(client, seed_customer.id, "2026-07-10", 2450, [(inv["id"], 2450)])
+
+    cash = _tax(client, "cash")
+    assert cash["total_tax"] == 200.0 and cash["tax_on_sales"] == 200.0
+    assert cash["total_sales"] == 2500.0 and cash["total_taxable"] == 2500.0
+    assert cash["ledger"]["tax_posted"] == 200.0
+    assert cash["ledger"]["difference"] == 0.0
+    assert cash["ledger"]["balance"] == 200.0
+    assert _bs_amount(_bs(client, "2026-07-31", "cash"), "2200") == D("200.00")
+    # the rest of the amount due collects the rest of the tax
+    _payment(client, seed_customer.id, "2026-07-20", 2450, [(inv["id"], 2450)])
+    cash = _tax(client, "cash")
+    assert cash["total_tax"] == 400.0
+    assert cash["ledger"]["difference"] == 0.0
+
+
 def test_sales_tax_default_follows_the_company_basis(
     client, seed_accounts, seed_customer
 ):

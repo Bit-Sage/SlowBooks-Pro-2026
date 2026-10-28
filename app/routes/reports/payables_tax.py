@@ -168,11 +168,21 @@ def _sales_tax_cash(db: Session, start_date, end_date):
             if inv is None or inv.status == InvoiceStatus.VOID:
                 continue
             fx = Decimal(str(inv.exchange_rate or 1))
-            total = to_home(inv.total or 0, fx)
+            # The base the payment's own cash lines were prorated on: the
+            # invoice's amount due when it was issued, net of the retainage
+            # it holds back and with any it releases (a pay application's,
+            # #555). Dividing by the invoice total read less tax than 2200's
+            # cash lines took on a retainage invoice (2.30.0 gate NEW-184).
+            due = to_home(
+                Decimal(str(inv.total or 0))
+                - Decimal(str(inv.retainage_held or 0))
+                + Decimal(str(inv.retainage_released or 0)),
+                fx,
+            )
             applied = to_home(alloc.amount, fx)
-            if total == 0 or applied == 0:
+            if due == 0 or applied == 0:
                 continue
-            ratio = applied / total
+            ratio = applied / due
             tax_full = to_home(inv.tax_amount or 0, fx)
             taxable_full = (
                 to_home(taxable_subtotal(inv.lines), fx) if tax_full > 0 else _q(0)
