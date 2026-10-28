@@ -285,7 +285,8 @@ def list_pay_applications(job_id: int = Query(...), db: Session = Depends(get_db
 @router.get("/{app_id}/payments")
 def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
     """The payments received on this application's invoice, each with the lien
-    waivers already made for it — what the Waivers screen lists."""
+    waivers already made for it on this job — what the Waivers screen lists.
+    A payment split across two jobs' invoices has a waiver per job (#576)."""
     from app.models.lien_waivers import LienWaiver
     from app.models.payments import Payment, PaymentAllocation
 
@@ -305,7 +306,7 @@ def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
     for pay in payments:
         waivers = (
             db.query(LienWaiver)
-            .filter(LienWaiver.payment_id == pay.id)
+            .filter(LienWaiver.payment_id == pay.id, LienWaiver.job_id == app.job_id)
             .order_by(LienWaiver.id)
             .all()
         )

@@ -43,8 +43,8 @@ def _sov(client, job_id, lines):
     return client.get(f"/api/jobs/{job_id}/contract").json()["sov"]
 
 
-def _two_line_job(client, customer_id, retainage_pct=10):
-    job = _job(client, customer_id)
+def _two_line_job(client, customer_id, retainage_pct=10, name="Tower"):
+    job = _job(client, customer_id, name=name)
     _contract(
         client,
         job["id"],
@@ -1630,6 +1630,117 @@ def test_waiver_amount_is_the_part_paid_to_the_jobs_invoices(
     )
     assert w.status_code == 201, w.text
     assert float(w.json()["amount"]) == 300.0
+    # the invoice with no job does not make the payment's job ambiguous, and
+    # the waiver is the job's whatever the invoices' ids
+    assert w.json()["job_id"] == app["job_id"]
+    assert w.json()["pay_application_id"] == app["id"]
+
+
+def test_waiver_per_job_on_a_payment_split_across_two_jobs(
+    client, db_session, seed_accounts, seed_customer
+):
+    """A payment applied to two jobs' invoices gets a waiver per job, each for
+    the part applied to that job; the route needs to be told which (#576)."""
+    _ja, _sa, app_a = _approved_30k(client, seed_customer.id)
+    job_b, sov_b = _two_line_job(client, seed_customer.id, name="Annex")
+    b1 = _new_app(client, job_b["id"])
+    app_b = _bill(
+        client,
+        b1["id"],
+        [
+            {"sov_line_id": sov_b[0]["id"], "this_period": 20000, "stored": 0},
+            {"sov_line_id": sov_b[1]["id"], "this_period": 0, "stored": 0},
+        ],
+    ).json()
+    r = client.post(
+        "/api/payments",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-06-15",
+            "amount": 1000,
+            "method": "check",
+            "allocations": [
+                {"invoice_id": app_a["invoice_id"], "amount": 300},
+                {"invoice_id": app_b["invoice_id"], "amount": 700},
+            ],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    pay_id = r.json()["id"]
+    # no job named: refused, naming the jobs
+    r = client.post(
+        "/api/lien-waivers",
+        json={"payment_id": pay_id, "waiver_type": "conditional_progress"},
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["code"] == "job_required"
+    assert r.json()["detail"]["job_ids"] == sorted([app_a["job_id"], job_b["id"]])
+    assert "Tower" in r.json()["detail"]["message"]
+    assert "Annex" in r.json()["detail"]["message"]
+    # a job the payment does not pay
+    r = client.post(
+        "/api/lien-waivers",
+        json={
+            "payment_id": pay_id,
+            "job_id": 999999,
+            "waiver_type": "conditional_progress",
+        },
+    )
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "job_not_paid"
+    # one per job, each for its part
+    wa = client.post(
+        "/api/lien-waivers",
+        json={
+            "payment_id": pay_id,
+            "job_id": app_a["job_id"],
+            "waiver_type": "conditional_progress",
+        },
+    )
+    assert wa.status_code == 201, wa.text
+    assert float(wa.json()["amount"]) == 300.0
+    assert wa.json()["job_id"] == app_a["job_id"]
+    assert wa.json()["pay_application_id"] == app_a["id"]
+    wb = client.post(
+        "/api/lien-waivers",
+        json={
+            "payment_id": pay_id,
+            "job_id": job_b["id"],
+            "waiver_type": "conditional_progress",
+        },
+    )
+    assert wb.status_code == 201, wb.text
+    assert float(wb.json()["amount"]) == 700.0
+    assert wb.json()["job_id"] == job_b["id"]
+    assert wb.json()["pay_application_id"] == app_b["id"]
+    # the same type again for the same job is refused; another type is fine
+    r = client.post(
+        "/api/lien-waivers",
+        json={
+            "payment_id": pay_id,
+            "job_id": job_b["id"],
+            "waiver_type": "conditional_progress",
+        },
+    )
+    assert r.status_code == 409
+    r = client.post(
+        "/api/lien-waivers",
+        json={
+            "payment_id": pay_id,
+            "job_id": job_b["id"],
+            "waiver_type": "unconditional_progress",
+        },
+    )
+    assert r.status_code == 201, r.text
+    # listed by payment and by job; each application's screen shows its own
+    assert len(client.get(f"/api/lien-waivers?payment_id={pay_id}").json()) == 3
+    assert len(client.get(f"/api/lien-waivers?job_id={app_a['job_id']}").json()) == 1
+    rows = client.get(f"/api/pay-applications/{app_a['id']}/payments").json()
+    assert [w["id"] for w in rows[0]["waivers"]] == [wa.json()["id"]]
+    rows = client.get(f"/api/pay-applications/{app_b['id']}/payments").json()
+    assert {w["waiver_type"] for w in rows[0]["waivers"]} == {
+        "conditional_progress",
+        "unconditional_progress",
+    }
 
 
 def test_a_pay_application_locks_the_contract_sum_and_contingency(
