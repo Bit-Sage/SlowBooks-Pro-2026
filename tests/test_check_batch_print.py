@@ -47,14 +47,14 @@ def vendor(client, seed_accounts):
 _n = iter(range(1, 1000))
 
 
-def _pay(client, seed_accounts, vendor, amount=100.0, **extra):
+def _pay(client, seed_accounts, vendor, amount=100.0, date="2026-09-10", **extra):
     """A bill for `amount`, paid by check with no number unless told."""
     bill = client.post(
         "/api/bills",
         json={
             "vendor_id": vendor["id"],
             "bill_number": f"B-{next(_n)}",
-            "date": "2026-09-01",
+            "date": min(date, "2026-09-01"),
             "lines": [
                 {
                     "description": "Supplies",
@@ -67,7 +67,7 @@ def _pay(client, seed_accounts, vendor, amount=100.0, **extra):
     assert bill.status_code == 201, bill.text
     body = {
         "vendor_id": vendor["id"],
-        "date": "2026-09-10",
+        "date": date,
         "amount": amount,
         "method": "check",
         "allocations": [{"bill_id": bill.json()["id"], "amount": amount}],
@@ -164,16 +164,57 @@ def test_a_batch_numbers_each_check_in_the_order_sent(
     assert _list(client, _bank(seed_accounts))["next_check_number"] == "2003"
 
 
+def _warn(client, on=True):
+    r = client.put(
+        "/api/settings", json={"warn_duplicate_check_number": "true" if on else "false"}
+    )
+    assert r.status_code == 200, r.text
+
+
 def test_a_number_already_on_the_account_is_refused_and_nothing_is_numbered(
     client, seed_accounts, vendor, printed
 ):
+    """The same 409 a single check gets (#481): the code and the uses the
+    keep-or-edit question is built from, under the warning setting, and
+    allow_duplicate_check_number=true keeps the number."""
+    _warn(client)
     _pay(client, seed_accounts, vendor, 50.0, check_number="1040")
     a, b = (_pay(client, seed_accounts, vendor, amt) for amt in (10.0, 20.0))
     r = _batch(client, _bank(seed_accounts), [(a["id"], "1041"), (b["id"], "1040")])
     assert r.status_code == 409, r.text
-    assert "1040" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert detail["code"] == "duplicate_check_number"
+    assert detail["number"] == "1040"
+    assert "1040" in detail["message"]
+    assert [(u["payee"], u["amount"]) for u in detail["uses"]] == [
+        ("Harbor Supply", "50.00")
+    ]
     assert printed == []
     assert set(_ids(_list(client, _bank(seed_accounts)))) == {a["id"], b["id"]}
+    # keep it: the person answered the question
+    r = client.post(
+        "/api/checks/print-batch?allow_duplicate_check_number=true",
+        json={
+            "bank_account_id": _bank(seed_accounts),
+            "checks": [
+                {"bill_payment_id": a["id"], "check_number": "1041"},
+                {"bill_payment_id": b["id"], "check_number": "1040"},
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/bill-payments/{b['id']}").json()["check_number"] == "1040"
+
+
+def test_with_the_warning_off_a_used_number_prints_as_a_single_check_would(
+    client, seed_accounts, vendor, printed
+):
+    _warn(client, on=False)
+    _pay(client, seed_accounts, vendor, 50.0, check_number="1040")
+    a = _pay(client, seed_accounts, vendor, 10.0)
+    r = _batch(client, _bank(seed_accounts), [(a["id"], "1040")])
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/bill-payments/{a['id']}").json()["check_number"] == "1040"
 
 
 def test_a_number_repeated_in_the_batch_is_refused(
@@ -183,6 +224,29 @@ def test_a_number_repeated_in_the_batch_is_refused(
     r = _batch(client, _bank(seed_accounts), [(a["id"], "1050"), (b["id"], "1050")])
     assert r.status_code == 400, r.text
     assert printed == []
+    # " 1050" is 1050: the number is compared as it is stored, stripped
+    r = _batch(client, _bank(seed_accounts), [(a["id"], " 1050"), (b["id"], "1050 ")])
+    assert r.status_code == 400, r.text
+    assert printed == []
+
+
+def test_a_number_with_a_leading_zero_is_its_own_number_in_the_batch_and_on_the_account(
+    client, seed_accounts, vendor, printed
+):
+    """ "01051" and "1051" are two numbers to the duplicate lookup (uses_of
+    matches the stored text); the batch compares them the same way, so the
+    two are neither refused together nor refused against each other."""
+    _warn(client)
+    _pay(client, seed_accounts, vendor, 50.0, check_number="1051")
+    a, b = (_pay(client, seed_accounts, vendor, amt) for amt in (10.0, 20.0))
+    r = _batch(client, _bank(seed_accounts), [(a["id"], "01051"), (b["id"], "1052")])
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/bill-payments/{a['id']}").json()["check_number"] == "01051"
+    c, d = (_pay(client, seed_accounts, vendor, amt) for amt in (30.0, 40.0))
+    r = _batch(client, _bank(seed_accounts), [(c["id"], "1051"), (d["id"], "01051")])
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["number"] == "1051"
+    assert printed[-1][0]["check_number"] == "01051"
 
 
 def test_a_number_that_is_not_digits_is_refused(client, seed_accounts, vendor, printed):
@@ -225,15 +289,38 @@ def test_a_check_paid_from_another_account_is_refused(
     assert r.status_code == 400, r.text
 
 
-def test_a_check_in_a_closed_period_is_refused(client, seed_accounts, vendor, printed):
-    a = _pay(client, seed_accounts, vendor, 10.0)
+def test_a_check_in_a_closed_period_is_left_off_the_list_and_refused(
+    client, seed_accounts, vendor, printed
+):
+    """A company that paid by check for years without typing numbers is not
+    offered that history to renumber: a payment dated on or before the
+    closing date is not listed, and a batch of the open ones prints without
+    it standing in the way."""
+    old = _pay(client, seed_accounts, vendor, 10.0, date="2026-09-10")
+    on_the_day = _pay(client, seed_accounts, vendor, 15.0, date="2026-09-30")
+    a, b = (
+        _pay(client, seed_accounts, vendor, amt, date="2026-10-05")
+        for amt in (20.0, 30.0)
+    )
+    assert _ids(_list(client, _bank(seed_accounts))) == [
+        old["id"],
+        on_the_day["id"],
+        a["id"],
+        b["id"],
+    ]
     assert (
         client.put("/api/settings", json={"closing_date": "2026-09-30"}).status_code
         == 200
     )
-    r = _batch(client, _bank(seed_accounts), [(a["id"], "1050")])
-    assert r.status_code == 403, r.text
+    assert _ids(_list(client, _bank(seed_accounts))) == [a["id"], b["id"]]
+    r = _batch(client, _bank(seed_accounts), [(old["id"], "1050")])
+    assert r.status_code == 400, r.text
     assert printed == []
+    r = _batch(client, _bank(seed_accounts), [(a["id"], "1050"), (b["id"], "1051")])
+    assert r.status_code == 200, r.text
+    assert [x["check_number"] for x in printed[0]] == ["1050", "1051"]
+    assert client.get(f"/api/bill-payments/{old['id']}").json()["check_number"] is None
+    assert _ids(_list(client, _bank(seed_accounts))) == []
 
 
 def test_an_empty_batch_is_refused(client, seed_accounts):
@@ -294,3 +381,38 @@ def test_the_print_checks_screen_numbers_the_checked_rows_and_posts_them():
     }
     # then the list reloads without the printed checks
     assert ["get", "/checks/unprinted?bank_account_id=7"] in got["calls"]
+    # opened on its own, every waiting check is listed and none is ticked;
+    # after Pay Bills, only the checks it just wrote are (the older one is
+    # listed, unticked), and Select all ticks and numbers every row
+    assert got["ticked_alone"] == [False, False]
+    assert got["ticked_after_pay"] == [True, False]
+    assert got["select_all_after_pay"] == ""
+    assert got["select_all_every"] == " checked"
+    assert got["select_all_box"] is False
+    assert 'id="batch-select-all"' in html
+    assert got["all_ticked"] == [[True, "1051"], [True, "1052"], [True, "1053"]]
+    # a number the account already has (#481): the same keep-or-edit question
+    # as a single check, then the batch sent again with the number kept
+    assert got["dup_calls"][:3] == [
+        ["fetch", "/api/checks/print-batch"],
+        ["ask", "This check number is already used"],
+        ["fetch", "/api/checks/print-batch?allow_duplicate_check_number=true"],
+    ]
+    assert ["toast", "3 checks printed"] in got["dup_calls"]
+    # "go back and edit": nothing printed, Print works again
+    assert got["edit_calls"] == [
+        ["fetch", "/api/checks/print-batch"],
+        ["ask", "This check number is already used"],
+    ]
+    assert got["edit_button_enabled"] is True
+
+
+def test_pay_bills_opens_the_list_with_the_checks_it_just_wrote_ticked():
+    """The Pay Bills screen hands Print Checks the ids of the payments it
+    made (each POST /api/bill-payments response), and nothing else is
+    ticked: years of unnumbered history are not renumbered in one click."""
+    src = (ROOT / "app" / "static" / "js" / "bills.js").read_text(encoding="utf-8")
+    pay = src[src.index("async savePay(") : src.index("async voidBillPayment(")]
+    assert "written.push(done.id)" in pay
+    assert "BillsPage.showPrintChecks(fromId, written)" in pay
+    assert "showPrintChecks(fromId)" not in pay

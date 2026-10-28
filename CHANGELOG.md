@@ -142,7 +142,12 @@ adjusted. Print Checks makes one PDF with a check to a page on the usual
 voucher stock, gives each check the number it printed with, and takes it off
 the list. A number the account already has, a void payment and a payment
 dated in a closed period are refused. For API users:
-`GET /api/checks/unprinted` and `POST /api/checks/print-batch`.
+`GET /api/checks/unprinted` and `POST /api/checks/print-batch`. The list
+opened after Pay Bills ticks only the checks it just wrote, opened from the
+Bills page it ticks none (Select all is there), a payment dated on or before
+the closing date is not listed at all, and a number the account already has
+asks the same keep-or-edit question a single check does, under the same
+warning setting (`?allow_duplicate_check_number=true` keeps it).
 
 **A bill's memo prints on the check that pays it** (#602, from Discussion
 #594). A check printed from a bill payment had a blank memo line, though the

@@ -18,7 +18,11 @@ from app.models.transactions import Transaction
 from app.services.bank_register import payees_for, voided_transaction_ids
 from app.models.accounts import Account
 from app.schemas.common import StrictModel
-from app.services.check_numbers import next_check_number, unprinted_payments, uses_of
+from app.services.check_numbers import (
+    next_check_number,
+    refuse_duplicate,
+    unprinted_payments,
+)
 from app.services.closing_date import check_closing_date
 from app.services.pdf_service import generate_check_pdf, generate_checks_pdf
 from app.services.request_utils import content_disposition
@@ -295,13 +299,19 @@ def unprinted_checks(
 
 
 @router.post("/print-batch")
-def print_check_batch(data: PrintBatch, db: Session = Depends(get_db)):
+def print_check_batch(
+    data: PrintBatch,
+    db: Session = Depends(get_db),
+    allow_duplicate_check_number: bool = Query(False),
+):
     """Print several waiting checks as one PDF, one per page of the
     3-per-page stock in the order sent, and mark each printed by giving it
     the number it was printed with (#603). The numbers are the person's:
-    each is digits, none repeats within the batch, none is already on the
-    account. Nothing is numbered unless every check is accepted and the PDF
-    renders."""
+    each is digits and none repeats within the batch. A number the account
+    already has is refused the way a single check's is (#481): the 409 that
+    names the uses, under the duplicate-number warning setting, answered
+    with ?allow_duplicate_check_number=true to keep it. Nothing is numbered
+    unless every check is accepted and the PDF renders."""
     _bank_account(db, data.bank_account_id)
     ids = [c.bill_payment_id for c in data.checks]
     if len(set(ids)) != len(ids):
@@ -311,8 +321,9 @@ def print_check_batch(data: PrintBatch, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400, detail="A check number is digits alone, like 1051."
         )
-    # "1051" and "01051" are different text but one check: compare as numbers
-    if len({int(n) for n in numbers}) != len(numbers):
+    # A number is the text it is stored and looked up as ("01051" and "1051"
+    # are two numbers, as uses_of has it), so the batch is compared the same way
+    if len(set(numbers)) != len(numbers):
         raise HTTPException(
             status_code=400, detail="Two checks in the batch have the same number."
         )
@@ -331,11 +342,9 @@ def print_check_batch(data: PrintBatch, db: Session = Depends(get_db)):
         check_closing_date(db, bp.date)
         payments.append(bp)
     for number in numbers:
-        if uses_of(db, data.bank_account_id, number):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Check number {int(number)} is already used on this account.",
-            )
+        refuse_duplicate(
+            db, data.bank_account_id, number, allow=allow_duplicate_check_number
+        )
     checks = []
     for bp, number in zip(payments, numbers):
         check = bill_payment_check_data(db, bp)
