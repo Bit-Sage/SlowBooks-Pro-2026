@@ -275,6 +275,20 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD"
 
+      # xcrun stapler fetches and checks the notarization ticket from Apple's
+      # CloudKit over HTTP/3 (UDP 443) once the first response advertises it,
+      # and that path drops on GitHub-hosted macOS runners: "The network
+      # connection was lost" after ~7 s, stapler exit 68, on every other
+      # call (four sign jobs in a row on 2026-10-28; GitHub reproduced it,
+      # actions/runner-images#14924). Refusing UDP 443 for this job makes
+      # stapler fall back to HTTPS over TCP, which works every time.
+      # notarytool, the timestamp service and the artifact upload are TCP
+      # and unaffected. Product issue #634.
+      - name: Keep stapler on TCP (actions/runner-images#14924)
+        run: |
+          echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
+          sudo pfctl -E
+
       - name: Sign, notarize, and staple via release.py
         run: |
           set -euo pipefail

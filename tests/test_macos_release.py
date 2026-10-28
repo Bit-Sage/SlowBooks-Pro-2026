@@ -492,3 +492,27 @@ def test_a_broken_bundle_still_fails_with_the_staplers_words(monkeypatch, tmp_pa
     assert (
         sum(c[1:3] == ("stapler", "staple") for c in calls) == release.STAPLE_ATTEMPTS
     )
+
+
+def test_the_sign_job_keeps_stapler_on_tcp():
+    """#634: xcrun stapler reaches Apple's ticket service over HTTP/3 (UDP
+    443) once a response advertises it, and that path drops on GitHub's
+    macOS runners (actions/runner-images#14924, reproduced by GitHub). The
+    sign job refuses UDP 443 before release.py runs, so stapler stays on
+    TCP; the step sits right before the signing step, after the keychain
+    and the notary credentials are in place."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (MACOS_DIR.parent.parent / ".github/workflows/macos.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = workflow["jobs"]["sign"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    guard = names.index("Keep stapler on TCP (actions/runner-images#14924)")
+    signing = names.index("Sign, notarize, and staple via release.py")
+    assert guard == signing - 1
+    run = steps[guard]["run"]
+    assert "block return out quick proto udp from any to any port 443" in run
+    assert "sudo pfctl -f -" in run and "sudo pfctl -E" in run
