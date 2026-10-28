@@ -317,7 +317,7 @@ the journal still balances with the gross debits. Pay Bills pays only what's
 owed now, and the A/P aging and vendor balances show the net (the held amount
 sits on 2050, not A/P). A bill entered by hand can hold retainage the same way.
 The 2050 line carries the bill's job, so release can find it by job.
-Editing the lines of a converted bill re-computes the retainage at the commitment's rate on the new subtotal, unless the edit sends `retainage_held`. A fully billed (closed) commitment refuses a higher amount (409): raise it with a sub change order.
+Editing the lines of a converted bill re-computes the retainage at the commitment's rate on the new subtotal, unless the edit sends `retainage_held`. A retainage that was set by hand (sent as `retainage_held` through the API) is kept across later edits of the lines, tax or date; it still may not exceed the new subtotal or leave less than has been paid. A fully billed (closed) commitment refuses a higher amount (409): raise it with a sub change order.
 Releasing retainage (a debit back to 2050) is progress billing's job (#555);
 for now the figure is the retainage held to date.
 

@@ -7,6 +7,12 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A retainage set by hand on a converted bill survives a re-post.** Editing
+the lines, tax or date of a bill converted from a commitment re-computed the
+retainage held at the commitment's rate, wiping an amount that had been set
+by hand through the API. A hand-set retainage now stays; one that was just the
+commitment's rate on the old lines still follows the rate to the new lines.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
