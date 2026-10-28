@@ -5,7 +5,7 @@ part applied to that job, so the unique key widens from (payment, type) to
 (payment, job, type). Existing rows keep their job and amount.
 
 Revision ID: b5d7e9f1a3c5
-Revises: a4c6e8f0b2d4
+Revises: b5d7f9a1c3e5
 Create Date: 2026-10-28
 """
 
@@ -15,7 +15,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "b5d7e9f1a3c5"
-down_revision: Union[str, None] = "a4c6e8f0b2d4"
+down_revision: Union[str, None] = "b5d7f9a1c3e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
