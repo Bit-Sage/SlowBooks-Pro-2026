@@ -5,7 +5,7 @@ Recent sends says who else got the mail. Nullable, nothing backfilled;
 downgrade drops the two columns.
 
 Revision ID: a7c3e5f1b9d2
-Revises: f3b5d7e9a2c4
+Revises: f4c6e8a0b2d4
 Create Date: 2026-10-28
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "a7c3e5f1b9d2"
-down_revision: Union[str, None] = "f3b5d7e9a2c4"
+down_revision: Union[str, None] = "f4c6e8a0b2d4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -9,7 +9,7 @@ cascade into a payment's entry). Lines written before this revision stay
 NULL; the edit finds those by the rule in app/services/cash_basis.py.
 
 Revision ID: f4c6e8a0b2d4
-Revises: f3b5d7e9a2c4
+Revises: c6e8f0a2d4b6
 Create Date: 2026-10-28
 """
 
@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "f4c6e8a0b2d4"
-down_revision: Union[str, None] = "f3b5d7e9a2c4"
+down_revision: Union[str, None] = "c6e8f0a2d4b6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

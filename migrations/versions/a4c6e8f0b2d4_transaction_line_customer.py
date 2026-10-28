@@ -5,7 +5,7 @@ donor, so each income line carries the customer (donor) it came from, and
 the donor reports count it. Nullable, indexed: every existing line has none.
 
 Revision ID: a4c6e8f0b2d4
-Revises: f3b5d7e9a2c4
+Revises: a7c3e5f1b9d2
 Create Date: 2026-10-28
 """
 
@@ -15,7 +15,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "a4c6e8f0b2d4"
-down_revision: Union[str, None] = "f3b5d7e9a2c4"
+down_revision: Union[str, None] = "a7c3e5f1b9d2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
