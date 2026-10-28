@@ -57,11 +57,12 @@ def get_cogs_account_id(db: Session, item: Optional[Item] = None) -> Optional[in
     account, 5000, and the P&L showed "Direct postings to Cost of Goods Sold"
     instead of the sub-account) → the first COGS-typed account → #5000.
     An item pointed at an expense-typed account keeps the fallback: a sale's
-    cost side belongs in cost of goods, not operating expense.
+    cost side belongs in cost of goods, not operating expense. An account the
+    user has made inactive is not reopened by a sale either.
     """
     if item is not None and item.expense_account_id:
         own = db.get(Account, item.expense_account_id)
-        if own is not None and own.account_type == AccountType.COGS:
+        if own is not None and own.account_type == AccountType.COGS and own.is_active:
             return own.id
     acc = (
         db.query(Account)
@@ -73,6 +74,24 @@ def get_cogs_account_id(db: Session, item: Optional[Item] = None) -> Optional[in
         return acc.id
     acc = db.query(Account).filter(Account.account_number == "5000").first()
     return acc.id if acc else None
+
+
+def _sale_cogs_account_id(db: Session, movement: InventoryMovement) -> Optional[int]:
+    """The account a sale movement's journal entry debited (its COGS side),
+    or None when the movement posted no entry."""
+    if not movement.transaction_id:
+        return None
+    from app.models.transactions import TransactionLine
+
+    line = (
+        db.query(TransactionLine)
+        .filter(
+            TransactionLine.transaction_id == movement.transaction_id,
+            TransactionLine.debit > 0,
+        )
+        .first()
+    )
+    return line.account_id if line else None
 
 
 def _append_movement(
@@ -385,7 +404,9 @@ def record_adjustment(
     if post_journal and amount > 0:
         asset_id = get_inventory_asset_account_id(db, item)
         adj_acc = db.query(Account).filter(Account.account_number == "5900").first()
-        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db, item)
+        # An adjustment is not a sale; its offset stays 5900, else the chart's
+        # first COGS account, as before (#622 changes sales and their reversals).
+        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db)
         if asset_id and offset_id:
             from datetime import date as _date
 
@@ -477,9 +498,12 @@ def reverse_sale(
     if quantity <= 0:
         return None
 
-    # Look up the original sale's unit_cost so the reversal matches.
+    # Look up the original sale's unit_cost so the reversal matches, and the
+    # account its cost was debited to, so the reversal comes off where it went
+    # on even if the item's COGS account was changed in between (#622; sb-qa).
     # For invoice-void we know the original source is ("invoice", invoice_id).
     unit_cost = None
+    original_cogs_id = None
     if original_source_type and original_source_id:
         original = (
             db.query(InventoryMovement)
@@ -494,6 +518,7 @@ def reverse_sale(
         )
         if original:
             unit_cost = Decimal(str(original.unit_cost or 0))
+            original_cogs_id = _sale_cogs_account_id(db, original)
 
     if unit_cost is None:
         # Fallback: use current avg_cost. This is the legacy behavior and
@@ -505,7 +530,7 @@ def reverse_sale(
     txn_id = None
     if amount > 0 and post_journal:
         asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = get_cogs_account_id(db, item)
+        cogs_id = original_cogs_id or get_cogs_account_id(db, item)
         if asset_id and cogs_id:
             from datetime import date as _date
 

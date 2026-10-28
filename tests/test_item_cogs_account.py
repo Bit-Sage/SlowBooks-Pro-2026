@@ -126,3 +126,79 @@ def test_a_void_credits_the_same_sub_account(
     lines = _cogs_lines(db_session, item, MovementType.VOID)
     credits = {l.account_id: l.credit for l in lines if l.credit}
     assert credits == {sub.id: Decimal("40.00")}
+
+
+def test_an_inactive_cogs_account_on_the_item_is_not_reopened(
+    db_session, seed_accounts
+):
+    """A retired account stays retired: the sale falls back instead."""
+    sub = _sub_cogs(db_session, seed_accounts, number="5130", name="Retired COGS")
+    sub.is_active = False
+    db_session.commit()
+    item = _item(db_session, seed_accounts, sub.id)
+    assert get_cogs_account_id(db_session, item) == seed_accounts["5000"].id
+
+
+def test_a_void_reverses_against_the_account_the_sale_posted_to(
+    client, db_session, seed_accounts, seed_customer
+):
+    """The item's COGS account changed between the sale and the void: the
+    reversal still comes off the original account, or both sub-accounts
+    would carry a residual forever (found by the sb-qa skeptic)."""
+    first = _sub_cogs(db_session, seed_accounts, number="5110", name="Cost of Widgets")
+    second = _sub_cogs(db_session, seed_accounts, number="5120", name="Cost of Gadgets")
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, first.id)
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
+    item = db_session.query(Item).filter_by(id=item.id).first()
+    item.expense_account_id = second.id
+    db_session.commit()
+    assert client.post(f"/api/invoices/{inv['id']}/void").status_code == 200
+
+    db_session.expire_all()
+    lines = _cogs_lines(db_session, item, MovementType.VOID)
+    credits = {l.account_id: l.credit for l in lines if l.credit}
+    assert credits == {first.id: Decimal("40.00")}
+
+
+def test_a_quantity_down_edit_reverses_against_the_original_account(
+    client, db_session, seed_accounts, seed_customer
+):
+    first = _sub_cogs(db_session, seed_accounts, number="5110", name="Cost of Widgets")
+    second = _sub_cogs(db_session, seed_accounts, number="5120", name="Cost of Gadgets")
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, first.id)
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
+    item = db_session.query(Item).filter_by(id=item.id).first()
+    item.expense_account_id = second.id
+    db_session.commit()
+    full = client.get(f"/api/invoices/{inv['id']}").json()
+    line = full["lines"][0]
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "customer_id": full["customer_id"],
+            "date": full["date"],
+            "due_date": full["due_date"],
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": line["description"],
+                    "quantity": "1",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    db_session.expire_all()
+    lines = _cogs_lines(db_session, item, MovementType.VOID)
+    credits = {l.account_id: l.credit for l in lines if l.credit}
+    assert credits == {first.id: Decimal("30.00")}
