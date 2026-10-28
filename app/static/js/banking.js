@@ -1245,9 +1245,67 @@ const BankingPage = {
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Post Entry</button>
                 </div>
-            </form>`);
+            </form>
+            ${entry ? BankingPage._attachmentsHtml(entry.id) : ''}`);
         BankingPage._splitCats = catOpts;
         if (entry) BankingPage._fillEntryForm(entry);
+        if (entry) BankingPage.loadAttachments(entry.id);
+    },
+
+    // The receipt behind a register entry (#600): the same panel, files and
+    // routes as a journal entry's. Only an entry already posted has one.
+    _attachmentsHtml(id) {
+        return `<div style="margin-top:12px; border-top:1px solid var(--gray-300); padding-top:8px;">
+            <div style="font-weight:700; font-size:12px; margin-bottom:4px;">Attachments</div>
+            <div id="entry-attachments-list" style="margin-bottom:8px; font-size:11px;">Loading...</div>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input type="file" id="entry-attach-file" aria-label="File to attach" style="font-size:11px;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.uploadAttachment(${id})">Attach</button>
+            </div>
+        </div>`;
+    },
+
+    async loadAttachments(id) {
+        const el = $('#entry-attachments-list');
+        if (!el) return;
+        try {
+            const attachments = await API.get(`/attachments/bank_entry/${id}`);
+            if (attachments.length === 0) {
+                el.innerHTML = '<span style="color:var(--text-muted);">No attachments</span>';
+            } else {
+                el.innerHTML = attachments.map(a =>
+                    `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; padding:2px 0;">
+                        ${a.missing ? `<span>${escapeHtml(a.filename)}</span>` : `<a href="/api/attachments/download/${a.id}" target="_blank">${escapeHtml(a.filename)}</a>`}
+                        ${a.file_size == null ? '' : `<span style="color:var(--gray-400);">(${formatFileSize(a.file_size)})</span>`}
+                        <button type="button" data-destructive aria-label="Delete attachment" class="btn btn-sm btn-danger" onclick="BankingPage.deleteAttachment(${a.id},${id})" style="padding:0 4px; font-size:10px;">X</button>
+                        ${storedFileNote(a)}
+                    </div>`
+                ).join('');
+            }
+        } catch (e) { el.innerHTML = ''; }
+    },
+
+    async uploadAttachment(id) {
+        const fileInput = $('#entry-attach-file');
+        if (!fileInput?.files[0]) { toast('Select a file first', 'error'); return; }
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        try {
+            const resp = await fetch(`/api/attachments/bank_entry/${id}`, { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(await API.responseError(resp, 'Upload failed'));
+            toast('Attachment uploaded');
+            fileInput.value = '';
+            BankingPage.loadAttachments(id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async deleteAttachment(attachmentId, id) {
+        if (!confirm('Delete this attachment?')) return;
+        try {
+            await API.del(`/attachments/${attachmentId}`);
+            toast('Attachment deleted');
+            BankingPage.loadAttachments(id);
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // Edit (#388): a register entry opens in the + Entry form, filled in;

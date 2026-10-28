@@ -7,6 +7,14 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Receipts on register entries** (#600, from Discussion #593). A check, a
+deposit or a card charge typed straight into a bank or card register can now
+take attachments, the same Attachments panel a journal entry has. Open the
+entry with Edit and attach the receipt, the scanned check or the deposit
+slip; it stays with the entry, even if the entry is later voided. A firm that
+keeps a paper trail for every transaction no longer has to re-enter register
+entries as Expenses just to hold the file.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
