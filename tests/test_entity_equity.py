@@ -178,6 +178,49 @@ def test_a_change_of_mind_before_any_posting_swaps_again(
     assert r.json()["entity_equity"]["note"] == ""
 
 
+def test_with_account_numbers_off_the_note_names_accounts_alone(
+    client, db_session, seed_accounts
+):
+    """Every message names an account the way the company does (#567): with
+    numbers off, the note that lists the family's accounts says "Common
+    Stock", not "3000 Common Stock" (2.30.0 gate W-47)."""
+    r = client.put("/api/settings", json={"use_account_numbers": "false"})
+    assert r.status_code == 200, r.text
+    create_journal_entry(
+        db_session,
+        date(2026, 3, 1),
+        "an opening deposit",
+        [
+            {
+                "account_id": seed_accounts["1000"].id,
+                "debit": Decimal("100"),
+                "credit": 0,
+            },
+            {
+                "account_id": seed_accounts["3000"].id,
+                "debit": 0,
+                "credit": Decimal("100"),
+            },
+        ],
+    )
+    db_session.commit()
+    r = client.put("/api/settings", json={"entity_type": "s_corp"})
+    assert r.status_code == 200, r.text
+    equity = r.json()["entity_equity"]
+    assert equity["applied"] is False
+    assert equity["accounts"] == [
+        "Common Stock",
+        "Additional Paid-in Capital",
+        "Shareholder Distributions",
+        "Retained Earnings",
+    ]
+    assert equity["note"].endswith(
+        "Rename or add them under Chart of Accounts: Common Stock, "
+        "Additional Paid-in Capital, Shareholder Distributions."
+    )
+    assert "3000" not in equity["note"]
+
+
 def test_a_company_with_postings_is_left_alone(client, db_session, seed_accounts):
     # an owner's investment: the one posting is on the equity block itself
     create_journal_entry(
