@@ -290,6 +290,18 @@ def payees_for(db: Session, txns) -> dict[int, str]:
         pay_names = {p.id: customers.get(p.customer_id, "") for p in pays}
     else:
         pay_names = {}
+    # the names on a register deposit's lines (#606), one query for the page
+    entry_ids = [t.id for t in by_type.get("bank_entry", [])]
+    donors = defaultdict(list)
+    if entry_ids:
+        for txn_id, cname in (
+            db.query(TransactionLine.transaction_id, Customer.name)
+            .join(Customer, Customer.id == TransactionLine.customer_id)
+            .filter(TransactionLine.transaction_id.in_(entry_ids))
+            .order_by(TransactionLine.id)
+        ):
+            if cname not in donors[txn_id]:
+                donors[txn_id].append(cname)
     for t in txns:
         name = ""
         if t.source_type == "expense":
@@ -306,6 +318,11 @@ def payees_for(db: Session, txns) -> dict[int, str]:
         # its header (bank_entry_lines), not a counterparty: show it blank
         if t.source_type == "bank_entry" and name == BANK_ENTRY_HEADER:
             name = ""
+        # ...and with no payee typed, the name on its lines stands in: the
+        # donor of a one-name deposit, "Split (2 names)" for several
+        if t.source_type == "bank_entry" and not name and donors.get(t.id):
+            names = donors[t.id]
+            name = names[0] if len(names) == 1 else f"Split ({len(names)} names)"
         out[t.id] = name
     return out
 

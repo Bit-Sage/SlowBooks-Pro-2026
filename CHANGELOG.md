@@ -98,6 +98,20 @@ them too, with no dialog. Bcc is never written into the message, only the
 envelope. Recent sends shows the copies under the recipient. API: `POST
 /api/invoices/{id}/email` accepts `cc` and `bcc`.
 
+**One bank deposit, several donors** (#606). A deposit that is really two
+gifts, $750 each from two donors, can now be booked as one entry with a line
+per donor. In the register's + Entry (and in the bank feed's add call, which takes
+the same lines), every line has a Customer (Donor in a nonprofit) and, when you use
+classes or funds, its own Class or Fund; "+ New Customer" in the list adds
+one on the spot. The deposit matches the bank statement, and each donor's
+year-end giving statement and gift count include their own line; voiding the
+deposit takes them all back out. The register shows the donor's name on a
+one-donor deposit and "Split (2 names)" on several. An entry you booked
+earlier can have a donor added from its Edit form, a reconciled one included,
+since a name changes no amount, and each donor line can print or email the
+same thank-you letter a donation gets. Check images on a deposit are not part of
+this.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

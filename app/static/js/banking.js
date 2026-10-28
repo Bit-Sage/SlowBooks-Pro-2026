@@ -1202,10 +1202,14 @@ const BankingPage = {
             const vendors = await API.get('/vendors?active_only=true').catch(() => null);
             if (vendors) BankingPage._setVendors(vendors);
         }
-        if (!BankingPage._customerNames) {
-            const customers = await API.get('/customers?active_only=true').catch(() => null);
-            if (customers) BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
+        // the names a deposit line can carry (#606): every open of the form
+        // reads the list afresh, so a donor added elsewhere is there
+        const customers = await API.get('/customers?active_only=true').catch(() => null);
+        if (customers) {
+            BankingPage._customers = customers;
+            BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
         }
+        await Nonprofit.loadFunds();
         const classGroup = await classFormGroupHtml();
         // a new entry opens on the register's last posted date (#566); an
         // edit fills in its own
@@ -1228,10 +1232,13 @@ const BankingPage = {
                     <div class="form-group full-width"><label>Memo</label>
                         <input name="description"></div>
                     ${classGroup}
+                    <div class="form-group" id="entry-name-group"><label>${T('Customer')} <span style="font-weight:normal; color:var(--gray-500);">(who the money came from)</span></label>
+                        ${BankingPage.nameSelectHtml('entry-name', 'customer_id', null, `${T('Customer')}`)}</div>
                     <div class="form-group full-width" id="entry-splits" style="display:none;">
                         <label>Split across accounts <span style="font-weight:normal; color:var(--gray-500);">(each line's share of the amount; a loan payment's principal and interest, a check that pays several things, a card processor's deposit as the gross with the fee taken out)</span></label>
-                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Taken out</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
+                        <table class="data-table" style="font-size:12px;"><thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th><th scope="col">Taken out</th><th scope="col">${T('Customer')}</th>${Nonprofit.classHeadHtml()}<th scope="col">Memo</th><th scope="col"></th></tr></thead>
                         <tbody id="entry-split-rows"></tbody></table>
+                        ${BankingPage.newNameBoxHtml()}
                         <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
                             <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.addSplitRow()">+ Line</button>
                             <span id="entry-split-note" role="status" style="font-size:11px; color:var(--gray-500);"></span>
@@ -1278,6 +1285,7 @@ const BankingPage = {
         form.dataset.vendorId = entry.vendor_id || '';
         form.check_number.value = entry.reference || '';
         form.description.value = entry.description || '';
+        BankingPage._setName(form.customer_id, entry.customer_id, entry.customer_name);
         form.category_account_id.value = entry.category_account_id || '';
         if (form.class_id) {
             const sel = form.class_id;
@@ -1289,6 +1297,17 @@ const BankingPage = {
                 sel.appendChild(opt);
             }
             sel.value = want;
+        }
+        // a gift on a named donor's line gets the thank-you letter (#606)
+        if (Terms.isNonprofit() && entry.gift_letters && entry.gift_letters.length) {
+            const box = document.createElement('div');
+            box.className = 'form-group full-width';
+            box.id = 'entry-gift-letters';
+            box.innerHTML = entry.gift_letters.map(g =>
+                `<button type="button" class="btn btn-sm btn-secondary" onclick="window.open('/api/donors/gifts/bank-entry/${g.line_id}/acknowledgment/pdf','_blank')">Acknowledgment (PDF): ${escapeHtml(g.customer_name || '')} ${formatCurrency(g.amount)}</button> `
+                + `<button type="button" class="btn btn-sm btn-secondary" onclick="Donors.emailAcknowledgment('bank-entry', ${g.line_id})">Email</button>`).join('<br>');
+            const grid = form.querySelector('.form-grid');
+            if (grid) grid.appendChild(box);
         }
         const submit = form.querySelector('button[type="submit"]');
         if (submit) submit.textContent = 'Save';
@@ -1309,6 +1328,8 @@ const BankingPage = {
                 row.querySelector('.split-amt').value = (against ? -part : part).toFixed(2);
                 row.querySelector('.split-fee').checked = against;
                 row.querySelector('.split-memo').value = sp.description || '';
+                BankingPage._setName(row.querySelector('.split-name'), sp.customer_id, null);
+                BankingPage._setSplitClass(row, sp.class_id);
                 row.dataset.classId = sp.class_id || '';
                 row.dataset.jobId = sp.job_id || '';
             });
@@ -1354,9 +1375,108 @@ const BankingPage = {
         box.style.display = open ? '' : 'none';
         const toggle = document.getElementById('entry-split-toggle');
         if (toggle) toggle.textContent = open ? 'Not a split' : 'Split this entry…';
+        // each line names its own; the entry's single name is for a plain entry
+        const nameGroup = document.getElementById('entry-name-group');
+        if (nameGroup) nameGroup.style.display = open ? 'none' : '';
         if (open && !document.querySelectorAll('#entry-split-rows tr').length) { BankingPage.addSplitRow(); BankingPage.addSplitRow(); }
         BankingPage.splitNote();
     },
+    // The Name (customer, a donor in a nonprofit) on a deposit line (#606):
+    // a select of active customers with "+ New Customer" at the top, as the
+    // document forms have it. Small cell helpers in the journal form's mould.
+    _nameOptions(selected) {
+        const list = BankingPage._customers || [];
+        return `<option value="">—</option>`
+            + (App.isLocked() ? '' : `<option value="__new__">+ ${T('New Customer')}</option>`)
+            + list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    },
+    nameSelectHtml(id, name, selected, label) {
+        return `<select${id ? ` id="${id}"` : ''}${name ? ` name="${name}"` : ''} aria-label="${escapeHtml(label)}" onchange="BankingPage.nameChosen(this)">${BankingPage._nameOptions(selected)}</select>`;
+    },
+    nameCellHtml(cls, selected, label) {
+        return `<td><select class="${cls}" aria-label="${escapeHtml(label)}" onchange="BankingPage.nameChosen(this)">${BankingPage._nameOptions(selected)}</select></td>`;
+    },
+    nameFromRow(row) {
+        const v = row.querySelector('.split-name')?.value;
+        return v && v !== '__new__' ? parseInt(v, 10) : null;
+    },
+    // A name an edit opens on stays a choice though the customer has since
+    // gone inactive (the list holds active ones only).
+    _setName(sel, id, name) {
+        if (!sel) return;
+        const want = id ? String(id) : '';
+        if (want && ![...sel.options].some(o => o.value === want)) {
+            const opt = document.createElement('option');
+            opt.value = want;
+            opt.textContent = name || `${T('Customer')} ${want}`;
+            sel.appendChild(opt);
+        }
+        sel.value = want;
+    },
+    // a class archived since stays a choice on its line, as in the journal form
+    _setSplitClass(row, id) {
+        const sel = row.querySelector('.split-fund');
+        if (!sel) return;
+        const want = id ? String(id) : '';
+        if (want && ![...sel.options].some(o => o.value === want)) {
+            const opt = document.createElement('option');
+            opt.value = want;
+            opt.textContent = `${T('Class')} ${want} (archived)`;
+            sel.appendChild(opt);
+        }
+        sel.value = want;
+    },
+    // "+ New Customer" opens one small box under the form; Save adds the
+    // customer, offers it in every name picker and picks it where it was asked.
+    newNameBoxHtml() {
+        if (App.isLocked()) return '';
+        return `<div id="entry-new-name" style="display:none; margin-top:6px; padding:8px; border:1px solid var(--gray-300); border-radius:4px;" onkeydown="BankingPage.newNameKey(event)">
+            <div style="font-weight:700; font-size:11px; margin-bottom:4px;">Quick Add ${T('Customer')}</div>
+            <input id="entry-new-name-input" placeholder="Name *" aria-label="${T('Customer')} name" aria-required="true" maxlength="200" style="width:60%;">
+            <button type="button" class="btn btn-sm btn-primary" onclick="BankingPage.saveNewName()">Save</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="BankingPage.cancelNewName()">Cancel</button>
+        </div>`;
+    },
+    _newNameFor: null,
+    nameChosen(sel) {
+        const box = document.getElementById('entry-new-name');
+        if (!box || sel.value !== '__new__') { if (box && sel.value !== '__new__') box.style.display = 'none'; return; }
+        BankingPage._newNameFor = sel;
+        box.style.display = 'block';
+        const input = document.getElementById('entry-new-name-input');
+        if (input) input.focus();
+    },
+    newNameKey(e) {
+        if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); e.stopPropagation(); BankingPage.saveNewName(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); BankingPage.cancelNewName(); }
+    },
+    cancelNewName() {
+        const box = document.getElementById('entry-new-name');
+        if (box) box.style.display = 'none';
+        if (BankingPage._newNameFor) BankingPage._newNameFor.value = '';
+        BankingPage._newNameFor = null;
+    },
+    async saveNewName() {
+        const input = document.getElementById('entry-new-name-input');
+        const name = input ? input.value.trim() : '';
+        if (!name) { toast(`${T('Customer')} name is required`, 'error'); if (input) input.focus(); return; }
+        try {
+            const made = await API.post('/customers', { name });
+            (BankingPage._customers = BankingPage._customers || []).push(made);
+            if (BankingPage._customerNames) BankingPage._customerNames.add(name.toLowerCase());
+            const opt = `<option value="${made.id}">${escapeHtml(made.name)}</option>`;
+            document.querySelectorAll('#modal-body select[name="customer_id"], #modal-body .split-name')
+                .forEach(sel => sel.insertAdjacentHTML('beforeend', opt));
+            if (BankingPage._newNameFor) BankingPage._newNameFor.value = String(made.id);
+            input.value = '';
+            document.getElementById('entry-new-name').style.display = 'none';
+            BankingPage._newNameFor = null;
+        } catch (err) {
+            const dupes = err.status === 409 && err.detail && err.detail.duplicates;
+            toast(dupes ? `Not added: ${dupes.map(d => d.name).join(', ')} already exists` : err.message, 'error');
+        }
+    },
+
     addSplitRow() {
         const body = document.getElementById('entry-split-rows');
         if (!body) return;
@@ -1365,6 +1485,7 @@ const BankingPage = {
             <td><select class="split-cat" aria-label="Split line ${n} account" data-no-search><option value="">Select…</option>${BankingPage._splitCats || ''}</select></td>
             <td class="amount"><input class="split-amt money" type="number" step="0.01" aria-label="Split line ${n} amount" oninput="BankingPage.splitNote()" style="width:100px; text-align:right;"></td>
             <td style="text-align:center;"><input class="split-fee" type="checkbox" aria-label="Split line ${n} taken out" title="A fee the processor kept, or a refund netted against a check: this line goes the other way from the entry" onchange="BankingPage.splitNote()"></td>
+            ${BankingPage.nameCellHtml('split-name', null, `${T('Customer')}, line ${n}`)}${Nonprofit.classCellHtml('split', null)}
             <td><input class="split-memo" type="text" aria-label="Split line ${n} memo"></td>
             <td><button type="button" class="btn btn-sm btn-secondary" aria-label="Remove split line ${n}" onclick="this.closest('tr').remove(); BankingPage.splitNote();">×</button></td>
         </tr>`);
@@ -1418,8 +1539,13 @@ const BankingPage = {
                 category_account_id: parseInt(account, 10),
                 amount: BankingPage._splitAmount(r, sign).toFixed(2),
                 description: r.querySelector('.split-memo').value || null,
-                // a line's own class and job, carried from the entry (#388)
-                ...(r.dataset.classId ? { class_id: parseInt(r.dataset.classId, 10) } : {}),
+                // the name on the line (#606); null clears it
+                customer_id: BankingPage.nameFromRow(r),
+                // a line's own class: the picker's when the form shows one,
+                // else the one carried from the entry (#388)
+                ...(r.querySelector('.split-fund')
+                    ? (Nonprofit.fundFromRow(r, 'split') ? { class_id: Nonprofit.fundFromRow(r, 'split') } : {})
+                    : (r.dataset.classId ? { class_id: parseInt(r.dataset.classId, 10) } : {})),
                 ...(r.dataset.jobId ? { job_id: parseInt(r.dataset.jobId, 10) } : {}),
             });
         });
@@ -1445,6 +1571,8 @@ const BankingPage = {
             class_id: classIdFromForm(form),
             ...(splits ? { splits } : {}),
         };
+        // the plain entry's name (#606): on money in only, null clears it
+        if (!splits && parseFloat(form.amount.value || '0') > 0) data.customer_id = form.customer_id.value ? parseInt(form.customer_id.value, 10) : null;
         // an edit sends the entry's job back: the form has no box for it,
         // and leaving it out of the body would be read as "keep" anyway
         if (form.dataset.entryId) data.job_id = form.dataset.jobId ? parseInt(form.dataset.jobId, 10) : null;

@@ -464,6 +464,7 @@ def create_journal_entry(
             class_id=line_class_id,
             function=function,
             cost_code_id=line_data.get("cost_code_id"),
+            customer_id=line_data.get("customer_id"),
             cost_type=line_data.get("cost_type")
             or _cost_type_of(db, line_data.get("cost_code_id")),
             is_billable=bool(line_data.get("is_billable", False)),

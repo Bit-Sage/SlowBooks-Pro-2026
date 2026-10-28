@@ -76,6 +76,9 @@ class BankSplit(StrictModel):
     description: Optional[str] = None
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    # The name on the line (#606): the donor or customer a deposit line came
+    # from. Left out, it takes the entry's `customer_id`.
+    customer_id: Optional[int] = None
 
 
 class BankTransactionCreate(StrictModel):
@@ -103,6 +106,10 @@ class BankTransactionCreate(StrictModel):
     # The vendor paid (#590). Left out, a payee that is exactly a vendor's
     # name picks that vendor; one that is not stays text. A transfer has none.
     vendor_id: Optional[int] = None
+    # The customer (donor) a deposit came from (#606). On a plain entry it
+    # is the name on the income line; with `splits` it is the default for
+    # the lines that name none.
+    customer_id: Optional[int] = None
 
 
 class BankEntryUpdate(BankTransactionCreate):
@@ -133,6 +140,9 @@ class BankEntryResponse(BaseModel):
     status: str
     vendor_id: Optional[int] = None
     vendor_name: Optional[str] = None
+    # the name on the entry's one income line (#606); the split lines say theirs
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
 
 
 class BankSplitOut(BaseModel):
@@ -142,6 +152,7 @@ class BankSplitOut(BaseModel):
     # the line's own class and job, when they differ from the entry's
     class_id: Optional[int] = None
     job_id: Optional[int] = None
+    customer_id: Optional[int] = None
 
 
 class BankEntryDetail(BankEntryResponse):
@@ -158,6 +169,9 @@ class BankEntryDetail(BankEntryResponse):
     class_name: Optional[str] = None
     job_id: Optional[int] = None
     splits: Optional[list[BankSplitOut]] = None
+    # the lines that are gifts from a named donor (#606), each of which can
+    # get an acknowledgment letter: [{line_id, customer_name, amount}]
+    gift_letters: list[dict] = []
     reconciled_on: Optional[dt_date] = None
     reconciled_note: Optional[str] = None
     uncleared: list[dict] = []
@@ -206,6 +220,9 @@ class StatementAdd(StrictModel):
     job_id: Optional[int] = None
     # the vendor the entry names (#491); left out, the payee's vendor
     vendor_id: Optional[int] = None
+    # the customer (donor) the entry names (#606): the income line's name, or
+    # the default for split lines that name none
+    customer_id: Optional[int] = None
     # split the line across several accounts instead of one category (#584):
     # a provider payout clears its clearing account and books the fee. Signed
     # like a register split; mutually exclusive with category_account_id,

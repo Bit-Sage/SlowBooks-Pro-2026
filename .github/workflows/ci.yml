@@ -219,7 +219,11 @@ jobs:
           # 186 with the Trial Balance PDF test (#614,
           # test_trial_balance_balances::test_the_pdf_and_csv_carry_the_same_figures,
           # WeasyPrint again).
-          MAX_SKIPS: "186"
+                    # 188 with the deposit-line donor tests
+          # (test_deposit_split_names.py::test_one_deposit_of_two_gifts_counts_for_each_donor_and_a_void_drops_out
+          # and ::test_a_split_deposit_line_gets_an_acknowledgment_letter, which
+          # render the giving statement and the letter PDF, so WeasyPrint-skipped here).
+          MAX_SKIPS: "188"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

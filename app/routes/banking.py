@@ -45,7 +45,7 @@ from app.schemas.banking import (
     StatementMatch,
     ReconciliationResponse,
 )
-from app.models.contacts import Vendor
+from app.models.contacts import Customer, Vendor
 from app.models.transactions import Transaction
 from app.services.audit import log_event
 from app.services.bank_posting import (
@@ -432,6 +432,7 @@ def statement_add(
                 splits=data.splits,
                 amount=bt.amount,
                 category_account_id=data.category_account_id,
+                customer_id=data.customer_id,
             ),
         )
     bt = m.add(
@@ -444,6 +445,7 @@ def statement_add(
         job_id=data.job_id,
         vendor_id=data.vendor_id,
         splits=splits,
+        customer_id=_entry_customer(db, data.customer_id),
     )
     db.commit()
     db.refresh(bt)
@@ -666,7 +668,37 @@ def _entry_out(txn, account_id: int, db: Session, status: str = "recorded") -> d
         "status": status,
         "vendor_id": txn.vendor_id,
         "vendor_name": _vendor_name(db, txn.vendor_id),
+        **_one_customer(txn, account_id, db),
     }
+
+
+def _one_customer(txn, account_id: int, db: Session) -> dict:
+    """The name on the entry's single income line (#606); an entry of
+    several lines says each line's own in its splits."""
+    others = [ln for ln in txn.lines if ln.account_id != account_id]
+    cid = others[0].customer_id if len(others) == 1 else None
+    return {"customer_id": cid, "customer_name": _customer_name(db, cid)}
+
+
+def _customer_name(db: Session, customer_id):
+    customer = db.get(Customer, customer_id) if customer_id else None
+    return customer.name if customer else None
+
+
+def _entry_customer(db: Session, customer_id, own=()):
+    """A customer (donor) named on an entry or one of its lines (#606): it
+    must exist and be active, unless the entry already carries it (so a
+    memo fix on an old entry never trips over a donor made inactive since)."""
+    if customer_id is None:
+        return None
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    if not customer.is_active and customer_id not in own:
+        raise HTTPException(
+            status_code=422, detail=f"{customer.name} is inactive; pick another name"
+        )
+    return customer_id
 
 
 def _resolve_account(db: Session, account_id, bank_account_id) -> Account:
@@ -684,11 +716,17 @@ def _resolve_account(db: Session, account_id, bank_account_id) -> Account:
     return require_bank_account(db, account_id)
 
 
-def _category_and_splits(db: Session, account: Account, data) -> tuple:
+def _category_and_splits(
+    db: Session, account: Account, data, own_customers=()
+) -> tuple:
     """The other side of a register entry as the request names it: the
-    category account, and the split lines ([(account, amount, memo), …])
-    when there are any — the same checks for a new entry and an edit."""
+    category account, and the split lines ([(account, amount, memo, dims), …])
+    when there are any — the same checks for a new entry and an edit. A
+    line's name is its own, else the entry's (#606)."""
     splits = None
+    default_customer = _entry_customer(
+        db, getattr(data, "customer_id", None), own_customers
+    )
     if data.splits:
         # a split entry (#330): every line's account, the amounts adding up
         # to the entry's, no bank or card account among them (a transfer is
@@ -725,7 +763,14 @@ def _category_and_splits(db: Session, account: Account, data) -> tuple:
                     cat,
                     part.amount,
                     part.description,
-                    {"class_id": part.class_id, "job_id": part.job_id},
+                    {
+                        "class_id": part.class_id,
+                        "job_id": part.job_id,
+                        "customer_id": _entry_customer(
+                            db, part.customer_id, own_customers
+                        )
+                        or default_customer,
+                    },
                 )
             )
         total = sum((sp[1] for sp in splits), Decimal("0"))
@@ -761,6 +806,7 @@ def create_bank_transaction(
     account = _resolve_account(db, data.account_id, data.bank_account_id)
     category, splits = _category_and_splits(db, account, data)
     vendor = _entry_vendor(db, data.vendor_id, data.payee)
+    customer_id = _entry_customer(db, data.customer_id)
     if data.amount < 0:
         refuse_duplicate(
             db, account.id, data.check_number, allow=allow_duplicate_check_number
@@ -777,6 +823,7 @@ def create_bank_transaction(
         class_id=data.class_id,
         job_id=data.job_id,
         splits=splits,
+        customer_id=None if splits else customer_id,
     )
     _link_vendor(txn, vendor)
     db.commit()
@@ -810,6 +857,29 @@ def _reconciled_sentence(recon) -> str:
         "entry cannot be voided either). Its payee, memo, category, class "
         "and job can still be corrected."
     )
+
+
+def _gift_letters(db: Session, txn, status: str) -> list[dict]:
+    """The entry's income lines that name a donor, for the acknowledgment
+    letter buttons (#606); none on a void entry."""
+    from app.services.donor_documents import NotAGift, gift_from_bank_line
+
+    out = []
+    for ln in txn.lines:
+        if status == "void" or not ln.customer_id:
+            continue
+        try:
+            gift = gift_from_bank_line(db, ln, txn)
+        except NotAGift:
+            continue
+        out.append(
+            {
+                "line_id": ln.id,
+                "customer_name": _customer_name(db, ln.customer_id),
+                "amount": str(gift["amount"]),
+            }
+        )
+    return out
 
 
 def _entry_detail(
@@ -855,12 +925,14 @@ def _entry_detail(
                 ),
                 "class_id": own(ln, "class_id"),
                 "job_id": own(ln, "job_id"),
+                "customer_id": ln.customer_id,
             }
             for ln in others
         ]
         if len(others) > 1
         else None
     )
+    out["gift_letters"] = _gift_letters(db, txn, status)
     recon = reconciled_on(db, txn)
     out["reconciled_on"] = recon.statement_date if recon else None
     out["reconciled_note"] = _reconciled_sentence(recon) if recon else None
@@ -949,6 +1021,8 @@ def update_bank_entry(
     now = _entry_detail(txn, account.id, db)
     new_date = data.date if data.date is not None else txn.date
     new_amount = data.amount if data.amount is not None else now["amount"]
+    # the names the entry already carries (#606): kept without a new check
+    own_customers = {ln.customer_id for ln in txn.lines if ln.customer_id}
     if "splits" in given or "category_account_id" in given:
         category, splits = _category_and_splits(
             db,
@@ -957,7 +1031,9 @@ def update_bank_entry(
                 splits=data.splits,
                 category_account_id=data.category_account_id,
                 amount=new_amount,
+                customer_id=data.customer_id,
             ),
+            own_customers,
         )
     else:
         kept = [BankSplit(**sp) for sp in now["splits"]] if now["splits"] else None
@@ -969,6 +1045,7 @@ def update_bank_entry(
                 category_account_id=now["category_account_id"],
                 amount=new_amount,
             ),
+            own_customers,
         )
     if not splits and category.bank_kind:
         raise HTTPException(
@@ -1041,6 +1118,13 @@ def update_bank_entry(
         else None
     )
 
+    # the name on a plain entry's income line (#606): the one sent (null
+    # clears it), else the one it has
+    new_customer = _entry_customer(
+        db,
+        data.customer_id if "customer_id" in given else now["customer_id"],
+        own_customers,
+    )
     uncleared = replace_bank_entry(
         db,
         txn,
@@ -1054,6 +1138,7 @@ def update_bank_entry(
         class_id=keep("class_id", txn.class_id),
         job_id=keep("job_id", txn.job_id),
         splits=splits,
+        customer_id=None if splits else new_customer,
     )
     if relink:
         _link_vendor(txn, vendor)
