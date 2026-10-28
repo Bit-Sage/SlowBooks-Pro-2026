@@ -209,6 +209,9 @@ class BillResponse(BaseModel):
     balance_due: Decimal = Decimal("0")
     retainage_held: Decimal = Decimal("0")
     retainage_released: Decimal = Decimal("0")
+    # True when retainage_held was set by hand; False while it follows the
+    # commitment's rate.
+    retainage_manual: bool = False
     lien_waiver_status: Optional[str] = None
     notes: Optional[str] = None
     class_id: Optional[int] = None

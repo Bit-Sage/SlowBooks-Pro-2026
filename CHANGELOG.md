@@ -67,6 +67,9 @@ the lines, tax or date of a bill converted from a commitment re-computed the
 retainage held at the commitment's rate, wiping an amount that had been set
 by hand through the API. A hand-set retainage now stays; one that was just the
 commitment's rate on the old lines still follows the rate to the new lines.
+The bill records which it is (`retainage_manual`), so a derived retainage
+keeps following the commitment's rate after that rate is changed, instead
+of being mistaken for a hand-set figure and frozen at the old percent.
 
 **The desktop window zooms.** Ctrl +, Ctrl - and Ctrl 0 (Cmd on a Mac) now
 make the desktop app's window larger, smaller or normal again, and the level
