@@ -53,3 +53,18 @@ def test_launcher_open_external_uses_the_system_browser():
         bad = api.open_external("file:///etc/passwd")
         assert bad["success"] is False
         assert opened.call_count == 1
+
+
+def test_launcher_open_external_hands_a_mailto_to_the_mail_program():
+    """Contact support's Send is a mailto: link; WKWebView can't load one, so
+    the shim sends it over the bridge (2.30.0 gate NEW-185)."""
+    import desktop_launcher
+
+    api = desktop_launcher.PickerApi(3001)
+    href = "mailto:support@slowbookspro.com?subject=%5BSBP%5D%20hi&body=x"
+    with patch("webbrowser.open") as opened:
+        assert api.open_external(href) == {"success": True}
+        opened.assert_called_once_with(href)
+        assert api.open_external("MAILTO:support@slowbookspro.com")["success"]
+        assert api.open_external("javascript:alert(1)")["success"] is False
+        assert opened.call_count == 2

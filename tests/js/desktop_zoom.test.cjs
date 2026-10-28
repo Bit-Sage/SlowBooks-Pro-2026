@@ -8,12 +8,14 @@ const path = require('node:path');
 const { test } = require('node:test');
 const vm = require('node:vm');
 
-function load({ desktop = true, stored = {} } = {}) {
+function load({ desktop = true, stored = {}, userAgent } = {}) {
     const storage = Object.assign({}, stored);
+    const listeners = {};
+    const listen = (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); };
     const context = {
-        window: { open() {}, addEventListener() {}, pywebview: desktop ? { api: {} } : undefined },
-        navigator: { userAgent: desktop ? 'WebView2' : 'Firefox' },
-        document: { addEventListener() {}, documentElement: { style: {} } },
+        window: { open() {}, addEventListener: listen, pywebview: desktop ? { api: {} } : undefined },
+        navigator: { userAgent: userAgent || (desktop ? 'WebView2' : 'Firefox') },
+        document: { addEventListener: listen, documentElement: { style: {} } },
         localStorage: {
             getItem: k => (k in storage ? storage[k] : null),
             setItem: (k, v) => { storage[k] = String(v); },
@@ -25,7 +27,17 @@ function load({ desktop = true, stored = {} } = {}) {
     vm.createContext(context);
     const js = fs.readFileSync(path.join(__dirname, '../../app/static/js/desktop_shim.js'), 'utf8');
     vm.runInContext(js, context);
-    return { zoom: context.window.SlowbooksDesktop.zoom, style: context.document.documentElement.style, storage };
+    return {
+        zoom: context.window.SlowbooksDesktop.zoom,
+        style: context.document.documentElement.style,
+        storage,
+        window: context.window,
+        fire: (name, event) => (listeners[name] || []).forEach(fn => fn(event)),
+    };
+}
+
+function wheel(deltaY, mods = {}) {
+    return Object.assign({ deltaY, prevented: false, preventDefault() { this.prevented = true; } }, mods);
 }
 
 function key(k, mods = {}) {
@@ -89,4 +101,45 @@ test('any other key passes untouched, and so does every key in a browser', () =>
     const e = key('=', { ctrlKey: true });
     assert.equal(browser.zoom.handle(e), false);
     assert.equal(e.prevented, false);
+});
+
+test('Ctrl + wheel steps the same level, a notch at a time, in the shell only (NEW-186)', () => {
+    const { zoom, style, storage } = load();
+    const up = wheel(-100, { ctrlKey: true });
+    assert.equal(zoom.wheel(up), true);
+    assert.equal(up.prevented, true);  // WebView2's own zoom stays out of it
+    assert.equal(style.zoom, '1.1');
+    assert.equal(storage['slowbooks.desktop.zoom'], '1.1');
+    // a trackpad's run of small deltas adds up to one notch
+    for (const d of [-20, -20]) assert.equal(zoom.wheel(wheel(d, { metaKey: true })), true);
+    assert.equal(style.zoom, '1.1');
+    zoom.wheel(wheel(-20, { metaKey: true }));
+    assert.equal(style.zoom, '1.2');
+    zoom.wheel(wheel(100, { ctrlKey: true }));
+    zoom.wheel(wheel(100, { ctrlKey: true }));
+    assert.equal(style.zoom, '');
+    // a plain scroll, and every wheel in a browser, pass untouched
+    const plain = wheel(-100);
+    assert.equal(zoom.wheel(plain), false);
+    assert.equal(plain.prevented, false);
+    const browser = load({ desktop: false });
+    const e = wheel(-100, { ctrlKey: true });
+    assert.equal(browser.zoom.wheel(e), false);
+    assert.equal(e.prevented, false);
+});
+
+test('on Windows the stored level comes back when pywebview announces itself (W-46)', () => {
+    // WebView2's user agent has no "WebView2", and window.pywebview is not
+    // there yet when the shim loads: nothing can be applied at load time
+    const stored = { 'slowbooks.desktop.zoom': '1.3' };
+    const page = load({ desktop: false, stored, userAgent: 'Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0' });
+    assert.equal(page.style.zoom, undefined);
+    page.window.pywebview = { api: {} };
+    page.fire('pywebviewready');
+    assert.equal(page.style.zoom, '1.3');
+    // nothing stored: nothing applied
+    const fresh = load({ desktop: false, userAgent: 'Edg/156' });
+    fresh.window.pywebview = { api: {} };
+    fresh.fire('pywebviewready');
+    assert.equal(fresh.style.zoom, undefined);
 });

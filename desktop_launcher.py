@@ -1195,12 +1195,17 @@ class PickerApi:
         """Open a URL in the user's default browser (employee portal links —
         a separate cookie-based site that must NOT be rendered in a
         document window, where its own links have no origin to resolve
-        against). http(s) only."""
+        against), or a mailto: link in their mail program (Contact
+        support's Send, which WKWebView drops on its own: 2.30.0 gate
+        NEW-185). http(s) and mailto only."""
         try:
             import webbrowser
 
-            if not re.match(r"^https?://", str(url or ""), re.IGNORECASE):
-                return {"success": False, "error": "Only http(s) URLs can be opened"}
+            if not re.match(r"^(https?://|mailto:)", str(url or ""), re.IGNORECASE):
+                return {
+                    "success": False,
+                    "error": "Only http(s) and mailto links can be opened",
+                }
             webbrowser.open(str(url))
         except Exception as exc:
             return {"success": False, "error": str(exc)}

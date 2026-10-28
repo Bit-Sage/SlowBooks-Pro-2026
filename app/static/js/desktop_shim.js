@@ -195,11 +195,41 @@
         return true;
     }
     document.addEventListener('keydown', zoomKey, true);
-    if (inDesktopShell() && readZoom() !== 1) applyZoom(readZoom());
+
+    // Ctrl + wheel (Cmd on a Mac) steps the same zoom. pywebview's
+    // zoomable=True gives WebView2 its own Ctrl + wheel, which zooms the
+    // view without touching the stored level, and the Cocoa backend never
+    // reads the flag at all (2.30.0 gate NEW-186), so the shim takes the
+    // wheel on both: one notch (a wheel's 100, or a trackpad's run of
+    // small deltas adding up to it) is one tenth, and the level is kept
+    // like the keys'. preventDefault keeps WebView2's own zoom out of it.
+    let wheelRun = 0;
+    function zoomWheel(e) {
+        if (!(e.ctrlKey || e.metaKey) || !inDesktopShell()) return false;
+        e.preventDefault();
+        wheelRun += e.deltaY || 0;
+        if (Math.abs(wheelRun) < 50) return true;
+        const direction = wheelRun < 0 ? 1 : -1;
+        wheelRun = 0;
+        applyZoom(readZoom() + direction * ZOOM_STEP);
+        return true;
+    }
+    document.addEventListener('wheel', zoomWheel, { capture: true, passive: false });
+
+    // The stored level comes back on load. On Windows the shell can't be
+    // told at load time (no "WebView2" in the user agent, and pywebview
+    // arrives after DOMContentLoaded), so a relaunch came back at 100%
+    // with 1.1 still stored (2.30.0 gate W-46): the level is applied
+    // again when pywebview announces itself.
+    function restoreZoom() {
+        if (inDesktopShell() && readZoom() !== 1) applyZoom(readZoom());
+    }
+    restoreZoom();
+    window.addEventListener('pywebviewready', restoreZoom);
 
     window.SlowbooksDesktop = {
         saveFile: saveFile,
-        zoom: { handle: zoomKey, apply: applyZoom, read: readZoom },
+        zoom: { handle: zoomKey, wheel: zoomWheel, apply: applyZoom, read: readZoom, restore: restoreZoom },
     };
 
     // Backups download URLs are handled by save_backup_file() instead of a
@@ -351,6 +381,18 @@
     // path below.
     document.addEventListener('click', function (e) {
         if (!inDesktopShell()) return;
+        // A mailto: link (Contact support's Send) is the mail program's,
+        // not the web view's: WebView2 hands the scheme to Windows, but
+        // WKWebView can't load it and pywebview's delegate lets it drop
+        // (2.30.0 gate NEW-185), so the launcher bridge opens it.
+        const mail = e.target && e.target.closest
+            ? e.target.closest('a[href^="mailto:"]')
+            : null;
+        if (mail && window.pywebview && window.pywebview.api && window.pywebview.api.open_external) {
+            e.preventDefault();
+            window.pywebview.api.open_external(mail.href);
+            return;
+        }
         const a = e.target && e.target.closest
             ? e.target.closest('a[target="_blank"], a[download]')
             : null;
