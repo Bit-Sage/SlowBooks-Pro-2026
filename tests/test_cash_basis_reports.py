@@ -435,3 +435,72 @@ def test_an_unknown_basis_is_refused_everywhere(client, scene):
         assert r.status_code == 422, path
     r = client.get("/api/reports/account-transactions?account_id=1&basis=modified")
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Trial Balance
+# ---------------------------------------------------------------------------
+
+
+def test_trial_balance_cash_basis_has_no_receivable(client, scene, pdf_sections):
+    qs = dict(start_date="2026-01-01", end_date="2026-12-31")
+
+    def tb(basis=None):
+        return _get(client, "trial-balance", basis=basis, **qs).json()
+
+    def row(data, number):
+        return next((i for i in data["items"] if i["account_number"] == number), None)
+
+    accrual, cash = tb("accrual"), tb("cash")
+    assert tb() == accrual and accrual["basis"] == "accrual"
+    assert cash["basis"] == "cash" and cash["basis_note"] is None
+    # accrual: both invoices are income and $1,400 is still owed; cash: the
+    # paid $200 is income and nothing is owed
+    assert row(accrual, "4000")["total_credit"] == 1600.0
+    assert row(accrual, "1100")["net_balance"] == 1400.0
+    assert row(cash, "4000")["total_credit"] == 200.0
+    assert row(cash, "1100")["net_balance"] == 0.0
+    # each basis balances on its own
+    for data in (accrual, cash):
+        assert abs(data["difference"]) < 0.005
+        assert data["total_debit"] == data["total_credit"]
+    # the money itself reads the same on both
+    assert row(cash, "1200") == row(accrual, "1200")
+    assert row(cash, "1200")["net_balance"] == 200.0
+
+    assert "(cash basis)" in _pdf(
+        client, "trial-balance", pdf_sections, basis="cash", **qs
+    )
+    assert "(cash basis)" not in _pdf(client, "trial-balance", pdf_sections, **qs)
+    assert "(cash basis)" in _get(client, "trial-balance/csv", basis="cash", **qs).text
+    assert "(cash basis)" not in _get(client, "trial-balance/csv", **qs).text
+    client.put("/api/settings", json={"report_basis": "cash"})
+    assert tb()["basis"] == "cash" and row(tb(), "1100")["net_balance"] == 0.0
+    assert tb("accrual") == accrual
+    r = client.get("/api/reports/trial-balance?basis=modified")
+    assert r.status_code == 422
+
+
+def test_the_package_ledger_and_trial_balance_follow_the_company_basis(client, scene):
+    import io
+    import zipfile
+
+    def package():
+        r = client.get(f"/api/reports/accountants-package?{YEAR}")
+        assert r.status_code == 200, r.text
+        return zipfile.ZipFile(io.BytesIO(r.content))
+
+    names = package().namelist()
+    tb_name = next(n for n in names if n.startswith("trial-balance_"))
+    gl_name = next(n for n in names if n.startswith("general-ledger_"))
+    accrual = package()
+    assert "(cash basis)" not in accrual.read(tb_name).decode("utf-8-sig")
+    assert "as posted" not in accrual.read("README.txt").decode()
+
+    client.put("/api/settings", json={"report_basis": "cash"})
+    cash = package()
+    for name in (tb_name, gl_name):
+        assert "(cash basis)" in cash.read(name).decode("utf-8-sig"), name
+    readme = cash.read("README.txt").decode()
+    assert "Trial Balance and General Ledger are on a cash basis" in readme
+    assert "as posted (accrual)" in readme  # the agings only

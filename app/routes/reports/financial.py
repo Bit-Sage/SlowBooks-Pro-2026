@@ -1294,13 +1294,15 @@ def trial_balance(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     """Trial Balance as QuickBooks reads it: asset, liability and equity
     accounts at their balance as of the end date (one debit or credit
     figure), income, cost and expense accounts at their activity from the
     start date. The two readings differ by the net income of the periods
     before the start, so that sits in one derived equity row and the report
-    still foots."""
+    still foots. `basis` (#483): accrual or cash, else the company's default."""
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     exclude_adjusting = _flag(exclude_adjusting)
     if not start_date:
         start_date = fiscal_year_start(db, date.today())
@@ -1330,9 +1332,13 @@ def trial_balance(
     )
     if exclude_adjusting:
         q = q.filter(Transaction.is_adjusting == False)  # noqa: E712
-    results = q.group_by(
-        Account.id, Account.account_number, Account.name, Account.account_type
-    ).all()
+    results = (
+        q.group_by(
+            Account.id, Account.account_number, Account.name, Account.account_type
+        )
+        .execution_options(**cash_basis.reading(basis))
+        .all()
+    )
 
     items = []
     total_debit = Decimal(0)
@@ -1382,7 +1388,9 @@ def trial_balance(
     )
     if exclude_adjusting:
         prior = prior.filter(Transaction.is_adjusting == False)  # noqa: E712
-    prior_net = Decimal(prior.scalar() or 0)
+    prior_net = Decimal(
+        prior.execution_options(**cash_basis.reading(basis)).scalar() or 0
+    )
     if prior_net != 0:
         words = f"{terms_from_db(db)('Net Income')} (prior periods)"
         debit, credit = max(prior_net, Decimal(0)), max(-prior_net, Decimal(0))
@@ -1406,6 +1414,8 @@ def trial_balance(
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "exclude_adjusting": bool(exclude_adjusting),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "items": items,
         "total_debit": float(total_debit),
         "total_credit": float(total_credit),
@@ -2403,6 +2413,7 @@ def _tb_section(data: dict) -> dict:
         "period": _period_words(data),
         "columns": ["Account", "Debit", "Credit"],
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -2615,8 +2626,11 @@ def trial_balance_pdf(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
-    data = trial_balance(start_date, end_date, db, exclude_adjusting=exclude_adjusting)
+    data = trial_balance(
+        start_date, end_date, db, exclude_adjusting=exclude_adjusting, basis=basis
+    )
     return _pdf_response(
         [_tb_section(data)],
         db,
@@ -2631,10 +2645,13 @@ def trial_balance_csv_route(
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import trial_balance_csv
 
-    data = trial_balance(start_date, end_date, db, exclude_adjusting=exclude_adjusting)
+    data = trial_balance(
+        start_date, end_date, db, exclude_adjusting=exclude_adjusting, basis=basis
+    )
     return _csv_download(
         trial_balance_csv(data, _company_name(db)),
         f"trial-balance_{data['start_date']}_{data['end_date']}.csv",
@@ -3007,7 +3024,10 @@ def financial_statements_pdf(
     pl = profit_loss(start_date, end_date, db)
     bs = balance_sheet(date.fromisoformat(pl["end_date"]), db)
     tb = trial_balance(
-        date.fromisoformat(pl["start_date"]), date.fromisoformat(pl["end_date"]), db
+        date.fromisoformat(pl["start_date"]),
+        date.fromisoformat(pl["end_date"]),
+        db,
+        basis=pl["basis"],
     )
     t = terms_from_db(db)
     if t.is_nonprofit:

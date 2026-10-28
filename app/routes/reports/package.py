@@ -151,7 +151,7 @@ def build_package(
     basis = company_basis(db)
     pl = profit_loss(start_date, end_date, db, basis=basis)
     bs = balance_sheet(end_date, db, basis=basis)
-    tb = trial_balance(start_date, end_date, db)
+    tb = trial_balance(start_date, end_date, db, basis=basis)
     try:
         from app.services.pdf_service import generate_report_pdf
         from app.services.settings_service import get_all_settings
