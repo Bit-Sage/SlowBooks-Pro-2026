@@ -305,7 +305,11 @@ def test_the_repair_is_linear_in_blocking_tables(tmp_path):
 
     from alembic import command
 
-    for n in range(1, len(pending) + 1):
+    # 1, 2 and 3 blockers tell one pass (n drops) from the old retry loop
+    # (2**n - 1: 1, 3, 7), and the full count checks the whole revision. Each
+    # n runs the chain to e7f8a9b0c1d2 again, so every n up to the full count
+    # grew with each new table until the Windows job's time limit cut it off.
+    for n in sorted({1, 2, min(3, len(pending)), len(pending)}):
         db = tmp_path / f"linear{n}.db"
         command.upgrade(_cfg(db), "e7f8a9b0c1d2")
         engine = create_engine(f"sqlite:///{db}")
