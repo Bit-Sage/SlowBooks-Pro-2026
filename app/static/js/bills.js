@@ -225,12 +225,18 @@ const BillsPage = {
         });
     },
 
-    _printChecksHtml(accounts, accountId, list) {
+    // `ticked` is the set of payment ids ticked to start with: the checks
+    // Pay Bills just wrote when the list opens after it, none when it is
+    // opened on its own. Every waiting check is listed either way; a
+    // company that paid by check for years without typing numbers is not
+    // handed all of them ticked, to renumber in one click.
+    _printChecksHtml(accounts, accountId, list, ticked = null) {
         const opts = accounts.map(a =>
             `<option value="${a.id}"${a.id == accountId ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+        const on = c => !!ticked && ticked.has(c.bill_payment_id);
         const rows = list.checks.map(c => `
             <tr class="batch-check-row" data-id="${c.bill_payment_id}">
-                <td><input type="checkbox" class="batch-check" checked aria-label="Print the check to ${escapeHtml(c.payee)}" onchange="BillsPage.renumberChecks()"></td>
+                <td><input type="checkbox" class="batch-check"${on(c) ? ' checked' : ''} aria-label="Print the check to ${escapeHtml(c.payee)}" onchange="BillsPage.renumberChecks()"></td>
                 <td><input class="batch-number" inputmode="numeric" style="width:90px;" aria-label="Check number for ${escapeHtml(c.payee)}"></td>
                 <td>${escapeHtml(c.payee)}</td>
                 <td>${formatDate(c.date)}</td>
@@ -239,7 +245,7 @@ const BillsPage = {
             </tr>`).join('');
         const body = list.checks.length
             ? `<div class="table-container"><table>
-                    <thead><tr><th scope="col" style="width:30px;"></th><th scope="col">Check #</th><th scope="col">Pay to</th>
+                    <thead><tr><th scope="col" style="width:30px;"><input type="checkbox" id="batch-select-all"${list.checks.every(on) ? ' checked' : ''} aria-label="Select all" title="Select all" onchange="BillsPage.toggleAllChecks()"></th><th scope="col">Check #</th><th scope="col">Pay to</th>
                     <th scope="col">Date</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th></tr></thead>
                     <tbody>${rows}</tbody></table></div>`
             : '<p style="color:var(--text-muted);">No checks are waiting to be printed on this account. Pay Bills by check with Check # left blank to queue them here.</p>';
@@ -257,31 +263,43 @@ const BillsPage = {
             </div>`;
     },
 
-    // Opens the list for a bank account (the first when none is named).
-    async showPrintChecks(accountId = null) {
+    // Opens the list for a bank account (the first when none is named),
+    // with the payments in `tickIds` ticked (Pay Bills passes the ones it
+    // just wrote) and the rest left for the person to tick.
+    async showPrintChecks(accountId = null, tickIds = null) {
         try {
             const accounts = await API.get('/accounts?bank=1&active_only=true');
             const banks = accounts.filter(a => a.bank_kind === 'bank');
             const id = accountId || (banks[0] && banks[0].id);
             if (!id) { toast('There is no bank account to print checks on', 'error'); return; }
             const list = await API.get(`/checks/unprinted?bank_account_id=${id}`);
-            openModal('Print Checks', BillsPage._printChecksHtml(banks, id, list));
+            const ticked = new Set((tickIds || []).map(x => parseInt(x)));
+            openModal('Print Checks', BillsPage._printChecksHtml(banks, id, list, ticked));
             BillsPage.renumberChecks();
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The Select all box ticks or clears every row; the numbers follow.
+    toggleAllChecks() {
+        const all = document.getElementById('batch-select-all');
+        document.querySelectorAll('.batch-check').forEach(cb => { cb.checked = !!all && all.checked; });
+        BillsPage.renumberChecks();
     },
 
     // Fills the numbers of the checked rows from the starting number.
     renumberChecks() {
         const rows = [...document.querySelectorAll('.batch-check-row')];
-        const numbers = BillsPage._batchNumbers(
-            document.getElementById('batch-start').value,
-            rows.map(r => r.querySelector('.batch-check').checked));
+        const checked = rows.map(r => r.querySelector('.batch-check').checked);
+        const numbers = BillsPage._batchNumbers(document.getElementById('batch-start').value, checked);
         rows.forEach((r, i) => { r.querySelector('.batch-number').value = numbers[i]; });
+        const all = document.getElementById('batch-select-all');
+        if (all) all.checked = rows.length > 0 && checked.every(Boolean);
     },
 
     // Prints the checked rows as one PDF, in the order listed, each with the
     // number in its box (adjust any before printing); the server numbers
-    // them, so they leave the list.
+    // them, so they leave the list. A number the account already has (#481)
+    // asks the same keep-or-edit question a single check does.
     async printSelectedChecks() {
         const checks = [...document.querySelectorAll('.batch-check-row')]
             .filter(r => r.querySelector('.batch-check').checked)
@@ -291,14 +309,27 @@ const BillsPage = {
         const button = document.getElementById('batch-print');
         if (button) button.disabled = true;
         const accountId = parseInt(document.getElementById('batch-account').value);
-        try {
-            const res = await fetch('/api/checks/print-batch', {
+        const send = async (q) => {
+            const res = await fetch('/api/checks/print-batch' + (q ? '?allow_duplicate_check_number=true' : ''), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Slowbooks-Desktop': '1' },
                 body: JSON.stringify({ bank_account_id: accountId, checks }),
             });
-            if (!res.ok) throw new Error(await API.responseError(res, 'Could not print the checks'));
-            const blob = await res.blob();
+            if (!res.ok) {
+                let body = null;
+                try { body = await res.json(); } catch (e) { body = null; }
+                const detail = body && typeof body === 'object' ? body.detail : undefined;
+                const blank = detail === undefined || detail === null || detail === '';
+                const err = new Error(blank ? `Could not print the checks (HTTP ${res.status})` : API.errorMessage(detail, 'Could not print the checks'));
+                err.status = res.status;
+                err.detail = detail;
+                throw err;
+            }
+            return res.blob();
+        };
+        try {
+            const blob = await CheckNumberWarn.send(send);
+            if (!blob) { if (button) button.disabled = false; return; }
             const desktop = window.SlowbooksDesktop;
             if (!(desktop && await desktop.saveFile(blob, 'Checks.pdf'))) {
                 const url = URL.createObjectURL(blob);
@@ -934,6 +965,7 @@ const BillsPage = {
         if (!(await TxnWarn.ok(form))) return;
 
         const paid = [];
+        const written = [];  // the ids of the payments made, for Print Checks
         // One key per form and vendor: a second Pay while one is in flight is
         // ignored, and a Pay sent again after a lost response answers with
         // the payment already recorded instead of a second one (#292)
@@ -962,13 +994,15 @@ const BillsPage = {
                     form.check_number);
                 if (!done) return;
                 paid.push(v.name);
+                written.push(done.id);
             }
             BillsPage._payKey = null;
             toastPosted(byVendor.size > 1 ? `Bills paid: ${byVendor.size} payments, one per vendor` : 'Bills paid');
             closeModal();
             await App.navigate('#/bills');
-            // checks written with no number wait to be printed together
-            if (form.method.value === 'check' && !checkNumber) BillsPage.showPrintChecks(fromId);
+            // checks written with no number wait to be printed together: the
+            // list opens with the ones just written ticked, any older ones not
+            if (form.method.value === 'check' && !checkNumber) BillsPage.showPrintChecks(fromId, written);
         } catch (err) {
             // Each vendor's payment is its own record: say which went through.
             if (paid.length) {

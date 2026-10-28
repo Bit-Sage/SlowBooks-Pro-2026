@@ -182,15 +182,22 @@ def unprinted_payments(db: Session, account_id: int) -> list[BillPayment]:
     """The checks Pay Bills wrote on `account_id` that have no check number
     yet (#603): a live payment by check that nobody has numbered. Numbering
     a payment is what prints it, so this is the "to be printed" list; a
-    payment typed in with its number was written by hand and is not on it."""
-    rows = (
+    payment typed in with its number was written by hand and is not on it.
+    A payment dated on or before the closing date is left off: numbering it
+    would change a closed period, and a company that paid by check for
+    years without typing numbers is not offered all of them to renumber."""
+    from app.services.closing_date import get_closing_date
+
+    q = (
         db.query(BillPayment)
         .filter(BillPayment.is_voided.is_(False))
         .filter(func.coalesce(func.trim(BillPayment.check_number), "") == "")
         .filter(or_(BillPayment.method.is_(None), BillPayment.method == "check"))
-        .order_by(BillPayment.date, BillPayment.id)
-        .all()
     )
+    closing = get_closing_date(db)
+    if closing is not None:
+        q = q.filter(BillPayment.date > closing)
+    rows = q.order_by(BillPayment.date, BillPayment.id).all()
     return [bp for bp in rows if _paying_account_id(db, bp) == account_id]
 
 
