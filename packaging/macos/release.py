@@ -549,13 +549,35 @@ def _verify_dmg_contents_stapled(
             raise RuntimeError(
                 f"{bundle_name} is not inside {dmg.name}; see {evidence}"
             )
-        result = _record_run(
-            evidence, "xcrun", "stapler", "validate", "-v", str(inner), check=False
-        )
-        if result.returncode:
-            raise RuntimeError(
-                f"the app inside {dmg.name} is not stapled; see {evidence}"
+        # `stapler validate` reads the ticket in the bundle and checks it
+        # with Apple's ticket-delivery service, so it fails when that call
+        # fails: on 2026-10-28 four sign jobs in a row died here or at the
+        # staple above with a CloudKit lookup error from the runner, every
+        # staple having exited 0 (#634). The staple's own retry covers the
+        # earlier stapling; this last look gets the same bounded retries.
+        for attempt in range(1, STAPLE_ATTEMPTS + 1):
+            result = _record_run(
+                evidence, "xcrun", "stapler", "validate", "-v", str(inner), check=False
             )
+            if not result.returncode:
+                break
+            said = f"{result.stdout or ''}{result.stderr or ''}".strip()
+            if attempt == STAPLE_ATTEMPTS:
+                raise RuntimeError(
+                    f"the app inside {dmg.name} is not stapled, after "
+                    f"{STAPLE_ATTEMPTS} looks; the last: validate failed (exit "
+                    f"{result.returncode}): {said[-400:]}; see {evidence}"
+                )
+            delay = STAPLE_BACKOFF_SECONDS[
+                min(attempt, len(STAPLE_BACKOFF_SECONDS)) - 1
+            ]
+            print(
+                f"! the app inside {dmg.name}: validate failed (exit "
+                f"{result.returncode}) (look {attempt} of {STAPLE_ATTEMPTS}); "
+                f"retrying in {delay}s",
+                flush=True,
+            )
+            _sleep(delay)
     finally:
         _record_run(evidence, "hdiutil", "detach", str(mount), "-quiet", check=False)
 

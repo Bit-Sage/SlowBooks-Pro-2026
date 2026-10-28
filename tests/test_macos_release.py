@@ -264,6 +264,53 @@ def test_dmg_contents_check_uses_the_staged_bundle_name(monkeypatch, tmp_path):
     assert calls[-1][:2] == ("hdiutil", "detach")
 
 
+def test_dmg_contents_check_retries_validate_like_the_staple(monkeypatch, tmp_path):
+    """#634: on 2026-10-28 `stapler validate` on the app inside the shipped
+    DMG failed with Apple's CloudKit lookup error on four sign jobs whose
+    every `stapler staple` had exited 0; one look, no retry, failed the
+    release. It now gets the staple's bounded retries, and still fails,
+    with the stapler's words, when the ticket really is not there."""
+    validates = [68, 68, 0]
+    calls = []
+    slept = []
+
+    def fake_record_run(report_path, *args, check=True):
+        calls.append(args)
+        if args[:2] == ("hdiutil", "attach"):
+            (Path(args[4]) / "SlowBooks Pro.app").mkdir(parents=True)
+        rc = validates.pop(0) if args[1:3] == ("stapler", "validate") else 0
+        return subprocess.CompletedProcess(
+            args, rc, stdout="", stderr="CloudKit query failed\n" if rc else ""
+        )
+
+    monkeypatch.setattr(release, "_record_run", fake_record_run)
+    monkeypatch.setattr(release, "_sleep", slept.append)
+    dmg = tmp_path / "SlowBooksPro.dmg"
+    dmg.write_bytes(b"dmg")
+    release._verify_dmg_contents_stapled(
+        dmg, tmp_path / "ev.txt", tmp_path, "SlowBooks Pro.app"
+    )
+    assert sum(c[1:3] == ("stapler", "validate") for c in calls) == 3
+    assert slept == [20, 40]
+    assert calls[-1][:2] == ("hdiutil", "detach")
+
+    # a ticket that is really missing still fails, naming the looks
+    validates[:] = [65] * release.STAPLE_ATTEMPTS
+    calls.clear()
+    slept.clear()
+    again = tmp_path / "again"
+    again.mkdir()
+    with pytest.raises(
+        RuntimeError,
+        match="is not stapled, after 6 looks; the last: validate failed \\(exit 65\\)",
+    ):
+        release._verify_dmg_contents_stapled(
+            dmg, tmp_path / "ev.txt", again, "SlowBooks Pro.app"
+        )
+    assert len(slept) == release.STAPLE_ATTEMPTS - 1
+    assert calls[-1][:2] == ("hdiutil", "detach")
+
+
 def test_dmg_contents_check_fails_when_bundle_is_missing(monkeypatch, tmp_path):
     calls = []
 
