@@ -288,10 +288,58 @@ def render_acknowledgment(db, company: dict, customer, gift: dict) -> tuple[str,
 # ── year-end giving statement ────────────────────────────────────────────
 
 
+def gifts_from_bank_entries(db, customer_id: int, start, end) -> list[dict]:
+    """Gifts booked straight to the bank (#606): the income lines of a
+    register or bank-feed deposit that name this donor, so one deposit of
+    two gifts counts once for each. A void entry drops out."""
+    from app.models.accounts import Account, AccountType
+    from app.models.transactions import Transaction, TransactionLine
+    from app.services.entry_text import BANK_ENTRY_HEADER
+    from app.services.voids import voided_transaction_ids
+
+    rows = (
+        db.query(TransactionLine, Transaction)
+        .join(Transaction, Transaction.id == TransactionLine.transaction_id)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .filter(
+            TransactionLine.customer_id == customer_id,
+            Transaction.source_type == "bank_entry",
+            Transaction.date >= start,
+            Transaction.date <= end,
+            Account.account_type == AccountType.INCOME,
+        )
+        .order_by(Transaction.date, TransactionLine.id)
+        .all()
+    )
+    void = voided_transaction_ids(db, {txn.id for _, txn in rows})
+    gifts = []
+    for line, txn in rows:
+        amount = _q(Decimal(str(line.credit or 0)) - Decimal(str(line.debit or 0)))
+        if txn.id in void or amount <= 0:
+            continue
+        memo = line.description or txn.description or ""
+        gifts.append(
+            {
+                "kind": "bank-entry",
+                "id": line.id,
+                "number": txn.reference or "",
+                "date": txn.date,
+                "amount": amount,
+                "description": "" if memo == BANK_ENTRY_HEADER else memo,
+                "fair_value_amount": None,
+                "fair_value_description": None,
+                "in_kind_lines": [],
+                "customer_id": customer_id,
+            }
+        )
+    return gifts
+
+
 def collect_gifts(db, customer_id: int, year: int) -> dict:
     """Everything a donor gave in a calendar year: cash (donation receipts
     plus payments that are gifts — a receipt's own payment is never
-    counted twice) with the deductible portion per gift, and non-cash
+    counted twice) and income lines of bank deposits that name the donor
+    (#606), with the deductible portion per gift, and non-cash
     gifts listed without a value."""
     from datetime import date as _date
 
@@ -331,6 +379,7 @@ def collect_gifts(db, customer_id: int, year: int) -> dict:
         if amount > 0:
             g = gift_from_payment(db, pmt)
             cash.append(g)
+    cash.extend(gifts_from_bank_entries(db, customer_id, start, end))
     cash.sort(key=lambda g: (g["date"], g["kind"], g["id"]))
     for g in cash:
         fv = _q(Decimal(str(g["fair_value_amount"] or 0)))

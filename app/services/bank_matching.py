@@ -237,6 +237,7 @@ def add(
     job_id: int | None = None,
     vendor_id: int | None = None,
     splits: list | None = None,
+    customer_id: int | None = None,
 ) -> BankTransaction:
     """Post the statement line as a register entry and link it. The entry
     names the vendor asked for, or the one whose name is the payee (#491);
@@ -284,6 +285,7 @@ def add(
         job_id=job_id,
         source_id=bt.id,
         splits=splits,
+        customer_id=None if splits else customer_id,
     )
     if vendor is not None and txn.source_type == "bank_entry":
         # a transfer between two bank or card accounts has no vendor

@@ -116,6 +116,9 @@ class TransactionLine(Base):
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # The name on a register line (#606): the donor or customer a line of a
+    # bank entry came from. A label, not money.
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     cost_type = Column(String(20), nullable=True)  # for roll-ups when no code
     # Nonprofit function (program | management | fundraising); defaulted
     # from the class at posting time, NULL = not yet allocated
