@@ -1245,6 +1245,13 @@ const ReportsPage = {
         row.style.display = select.value === "custom" ? "flex" : "none";
     },
 
+    // A wide report's sticky scrollbar (stickyScrollbars, utils.js) is
+    // sized to the table; the window's size changes it, so it is redone.
+    _resizeSticky() {
+        const content = document.getElementById('report-content');
+        if (content) stickyScrollbars(content);
+    },
+
     async openPeriodModal(title, initialPeriod, loadContent, label = "Dates", useAsOfOnly = false, opts = {}) {
         // opts.reportType (string) — when set, adds an "Add to Saved Reports" button
         // that captures the current period/range as parameters.
@@ -1378,6 +1385,7 @@ const ReportsPage = {
                     currentParams = { period: select.value, as_of_date: asOfDate };
                     if (view) ReportsPage.setAddress(view, { ...params(), ...currentParams });
                     content.innerHTML = await loadContent(select.value, { as_of_date: asOfDate }, params());
+                    stickyScrollbars(content);
                 } else {
                     const range = ReportsPage.getDateRange(select.value, startInput.value, endInput.value);
                     // the boxes show the dates the report runs on: a date the
@@ -1388,6 +1396,7 @@ const ReportsPage = {
                     currentParams = { period: select.value, start_date: range.start, end_date: range.end };
                     if (view) ReportsPage.setAddress(view, { ...params(), ...currentParams });
                     content.innerHTML = await loadContent(select.value, range, params());
+                    stickyScrollbars(content);
                 }
                 const restored = ReportsPage._refocusRow(content);
                 if (opts.spotlight !== false && !again) ReportsPage._spotlight(content, params(), first && !restored);
@@ -4441,3 +4450,6 @@ ReportsPage.functionalExpenses = async function (prefill) {
     window.addEventListener('focus', back);
     document.addEventListener('visibilitychange', () => (document.hidden ? left() : back()));
 })();
+
+// The window's size changes what fits: a wide report's sticky scrollbar is redone
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', () => ReportsPage._resizeSticky());
