@@ -656,8 +656,10 @@ billings) is the difference. The **estimated total cost is actual cost plus the
 cost-to-complete forecast** (below), so a job past its budget with work still to
 do reads under 100%; with no forecast entered the default is budget − actual per
 cell, floored at zero, and a job with no budget and no forecast has nothing to
-measure against, so its cost to date is taken as the estimate (100% complete:
-the contract is earned and a loss is the true loss, with no extra provision). Every figure reads **as of the date**: cost to date and
+measure against, so it earns nothing: it is listed with a warning ("no budget or
+forecast; not included"), left out of the totals and the adjusting entry, until
+its cost to date reaches the contract (then it reads 100% complete, and the loss
+is the true loss, with no extra provision). Every figure reads **as of the date**: cost to date and
 posted revenue to that day, billing and retainage from the applications approved
 by then, and the revised contract with the change orders approved by then (so the
 schedule reproduces the books on an earlier close). Billed to date is the sum of
@@ -709,8 +711,10 @@ not a draft, dated by `as_of`) per job: committed (pre-tax value), billed to dat
 (bills dated by then; a retainage-release bill pays money already billed and is
 not counted), retainage held (held less released) and remaining (committed less
 billed, open commitments only), with totals per job and grand. Committed leaves
-out lines added by a sub change order approved after the date, and a commitment
-closed after the date (it closes when fully billed) is open on it. PDF and CSV.
+out lines added by a sub change order approved after the date. A closed
+commitment counts closed on every date, unless a bill against it is dated after
+the date: then it was still open on it, and remaining is committed less billed by
+then. PDF and CSV.
 
 **Cost to complete** (`cost-to-complete`). Per job, per cost code (division ›
 section), with budget revised, committed (remaining), actual, cost to complete

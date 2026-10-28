@@ -3782,6 +3782,8 @@ ReportsPage.wipSchedule = async function (prefill) {
                 <tbody>${entryBody}</tbody>
                 <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td></td><td>Total</td><td class="amount">${m(entry.total_debits)}</td><td class="amount">${m(entry.total_credits)}</td></tr></tfoot>
             </table></div>` : '<div style="font-size:11px; color:var(--gray-500); margin-top:12px;">No WIP adjustment to book as of this date.</div>';
+        // Warnings (jobs left out, forecast dating) sit under the table.
+        const warningsHtml = (data.warnings || []).map(w => `<p class="report-warning" style="margin:8px 0 0; font-size:12px; color:var(--gray-600);">${escapeHtml(w)}</p>`).join('');
         return `${ReportsPage._exportButtons('wip-schedule', `as_of=${params.as_of_date}`)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Estimated cost is actual plus the cost-to-complete forecast. A projected loss is booked in full. Billings over earned are a liability; under earned are an asset. Basis shows whether billing is from approved pay applications or posted revenue. This report posts nothing.
@@ -3800,7 +3802,7 @@ ReportsPage.wipSchedule = async function (prefill) {
                     <td class="amount">${m(t.over_billing)}</td><td class="amount">${m(t.under_billing)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.cost_to_complete)}</td>
                     <td class="amount">${m(t.projected_loss)}</td><td class="amount">${m(t.loss_provision)}</td>
                 </tr></tfoot>
-            </table></div>${entryHtml}`;
+            </table></div>${warningsHtml}${entryHtml}`;
     }, "As Of", true, { view: 'wip-schedule', prefill, spotlight: false });
 };
 
@@ -3979,7 +3981,7 @@ ReportsPage.commitmentStatus = async function (prefill) {
         }).join('');
         const t = data.totals;
         return `${ReportsPage._exportButtons('commitment-status', `as_of=${params.as_of_date}`)}
-            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Committed is the pre-tax value; retainage held is held less released; remaining counts open commitments only.</div>
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Committed is the pre-tax value; retainage held is held less released; remaining counts open commitments only; a closed commitment shows nothing remaining unless a bill is dated after this date.</div>
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Commitment</th><th scope="col">Vendor</th><th scope="col">Type</th><th scope="col">Status</th>
                 <th scope="col" class="amount">Committed</th><th scope="col" class="amount">Billed to date</th><th scope="col" class="amount">Retainage held</th><th scope="col" class="amount">Remaining</th></tr></thead>

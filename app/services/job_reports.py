@@ -153,6 +153,34 @@ def _blank_wip_row(job: Job) -> dict:
     return row
 
 
+def _unmeasured_wip_row(
+    job: Job, original, approved_cos, revised, cost_to_date, billed, retainage_out
+) -> dict:
+    """A job with a contract but no budget or forecast (and cost short of the
+    contract): nothing to earn against, so it is listed with its contract, cost
+    and billing, no earned or over/under figures, and left out of the totals
+    and the adjusting entry."""
+    row = _blank_wip_row(job)
+    row.update(
+        has_contract=True,
+        excluded=True,
+        warning=f"{job.name}: no budget or forecast; not included.",
+        contract_original=float(original),
+        approved_change_orders=float(approved_cos),
+        revised_contract=float(revised),
+        cost_to_date=float(cost_to_date),
+        billed_to_date=float(billed),
+        retainage_outstanding=float(retainage_out),
+        earned_revenue=0.0,
+        over_billing=0.0,
+        under_billing=0.0,
+        cost_to_complete=0.0,
+        projected_loss=0.0,
+        loss_provision=0.0,
+    )
+    return row
+
+
 def _contract_changes_after(db: Session, job: Job, as_of: date) -> Decimal:
     """Σ sell of this job's approved, contract-funded owner change orders whose
     approve landed after `as_of` — what to back out of the current contract to
@@ -194,9 +222,9 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     totals = job_cost_tree(db, job.id, end_date=as_of)["totals"]
     cost_to_date = _q(totals["actual"])
     # Estimated total cost = actual + the cost-to-complete forecast. A job with
-    # no budget and no forecast has nothing to measure against, so the cost to
-    # date is the estimate (100% complete): the contract is earned and any loss
-    # is the true loss, recognised once.
+    # no budget and no forecast has nothing to measure against: it counts as
+    # 100% complete only once its cost has reached the contract (a loss,
+    # recognised once); before that it is listed and left out of the figures.
     forecast = ctc_forecast(db, job, as_of)
     cost_to_complete = _q(forecast["totals"]["cost_to_complete"])
     if forecast["has_basis"]:
@@ -225,6 +253,11 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
     approved_cos = _q(revised - original)
     billed = _q(summary["billed_to_date"])
     retainage_out = _q(summary["retainage"]["outstanding"])
+
+    if not forecast["has_basis"] and cost_to_date < revised:
+        return _unmeasured_wip_row(
+            job, original, approved_cos, revised, cost_to_date, billed, retainage_out
+        )
 
     if est_total_cost > _ZERO:
         pct = cost_to_date / est_total_cost
@@ -320,10 +353,13 @@ def wip_schedule(
     as_of = as_of or date.today()
     jobs = select_jobs(db, job_id, customer_id, status, include_closed)
     rows = [wip_row(db, job, as_of) for job in jobs]
-    warnings = _forecast_dating_warnings(db, jobs, rows, as_of)
+    warnings = [r["warning"] for r in rows if r.get("excluded")]
+    warnings += _forecast_dating_warnings(db, jobs, rows, as_of)
 
     totals = {key: _ZERO for key in _WIP_SUMMED}
     for r in rows:
+        if r.get("excluded"):
+            continue
         for key in _WIP_SUMMED:
             if r[key] is not None:
                 totals[key] += Decimal(str(r[key]))
@@ -385,7 +421,7 @@ def wip_adjusting_entry(rows: list[dict], as_of: date) -> dict:
     jobs = []
     t_under = t_over = t_prov = _ZERO
     for r in rows:
-        if not r["has_contract"]:
+        if not r["has_contract"] or r.get("excluded"):
             continue
         under = Decimal(str(r["under_billing"]))
         over = Decimal(str(r["over_billing"]))
@@ -1298,7 +1334,9 @@ COMMITMENT_COLUMNS = [
 _COMMITMENT_SUMMED = ("committed", "billed", "retainage_held", "remaining")
 
 
-def _commitment_row(po, bills: list, as_of: date, co_by_id: dict) -> dict:
+def _commitment_row(
+    po, bills: list, as_of: date, co_by_id: dict, billed_later: bool = False
+) -> dict:
     """One commitment as of a date. Committed is the pre-tax value; billed is
     the work billed on it by then (a retainage-release bill pays money already
     billed, so it is not counted); retainage held is held less released on those
@@ -1321,10 +1359,10 @@ def _commitment_row(po, bills: list, as_of: date, co_by_id: dict) -> dict:
         if co is not None and co.approved_at and co.approved_at.date() > as_of:
             later += Decimal(str(ln.amount or 0))
     committed = _q(Decimal(str(po.subtotal or 0)) - later)
-    # Closing is judged as of the date too: a commitment closes when fully
-    # billed, so one closed later was still open (and billed less) on the date.
+    # A closed commitment counts closed on every date, unless a bill against it
+    # is dated after `as_of`: then it was still taking bills, so still open.
     is_open = po.status in (POStatus.SENT, POStatus.PARTIAL, POStatus.RECEIVED) or (
-        po.status == POStatus.CLOSED and billed < committed
+        po.status == POStatus.CLOSED and billed_later
     )
     remaining = _q(committed - billed) if is_open else _ZERO
     return {
@@ -1387,7 +1425,19 @@ def commitment_status(
                 )
                 .all()
             )
-            row = _commitment_row(po, bills, as_of, co_by_id)
+            billed_later = (
+                db.query(Bill.id)
+                .filter(
+                    Bill.po_id == po.id,
+                    Bill.status != BillStatus.VOID,
+                    Bill.date > as_of,
+                    # a retainage release pays money already billed
+                    sqlfunc.coalesce(Bill.retainage_released, 0) == 0,
+                )
+                .first()
+                is not None
+            )
+            row = _commitment_row(po, bills, as_of, co_by_id, billed_later)
             rows.append(row)
             for k in _COMMITMENT_SUMMED:
                 totals[k] += Decimal(str(row[k]))

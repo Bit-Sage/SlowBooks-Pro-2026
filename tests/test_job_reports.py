@@ -828,12 +828,12 @@ def test_wip_zero_budget_row(db_session, seed_accounts):
     _post_cost(db_session, job.id, _cogs(db_session), "5000", date(2026, 3, 1))
     db_session.commit()
     r = job_reports.wip_schedule(db_session, as_of=date(2026, 6, 1))["rows"][0]
-    # no basis: the cost to date is the estimate, so the job reads 100%
-    assert r["estimated_total_cost"] == 5000.0
-    assert r["percent_complete"] == 100.0
-    assert r["earned_revenue"] == 20000.0
+    # no basis and cost short of the contract: listed, nothing earned
+    assert r["excluded"] is True
+    assert r["percent_complete"] is None
+    assert r["earned_revenue"] == 0.0
+    assert r["cost_to_date"] == 5000.0
     assert r["cost_to_complete"] == 0.0  # floored, no budget to finish against
-    assert r["projected_gross_profit"] == 15000.0  # 20,000 − 5,000 cost
 
 
 def _division(db, code, name):
@@ -1478,6 +1478,43 @@ def test_wip_no_basis_loss_is_recognised_once(db_session, seed_accounts):
     assert data["adjusting_entry"]["totals"]["under_billing"] == 100000.0
 
 
+def test_wip_no_basis_below_contract_is_not_earned(db_session, seed_accounts):
+    """Contract 1,000,000, cost 10,000, no budget or forecast, nothing billed:
+    no revenue is booked; the job is listed with a warning, out of the totals
+    and the adjusting entry."""
+    customer = _customer(db_session)
+    _contract_job(db_session, customer, "No budget yet", 1000000, None, 10000)
+    _contract_job(db_session, customer, "Budgeted", 100000, 50000, 25000)
+    data = _wip(db_session)
+    r = next(x for x in data["rows"] if x["job_name"] == "No budget yet")
+    assert r["earned_revenue"] == 0.0 and r["under_billing"] == 0.0
+    assert r["percent_complete"] is None
+    assert any(
+        "No budget yet" in w and "no budget or forecast; not included" in w
+        for w in data["warnings"]
+    )
+    assert [j["job_name"] for j in data["adjusting_entry"]["jobs"]] == ["Budgeted"]
+    # totals carry the budgeted job only
+    assert data["totals"]["revised_contract"] == 100000.0
+    assert data["totals"]["earned_revenue"] == 50000.0
+    b = next(x for x in data["rows"] if x["job_name"] == "Budgeted")
+    assert b["percent_complete"] == 50.0 and "excluded" not in b
+
+
+def test_wip_warnings_print_in_screen_pdf_and_csv(client, db_session, seed_accounts):
+    from app.routes.reports import construction
+
+    customer = _customer(db_session)
+    _contract_job(db_session, customer, "No budget yet", 1000000, None, 10000)
+    note = "no budget or forecast; not included"
+    assert note in construction._wip_sections(_wip(db_session))[0]["note"]
+    csv = client.get("/api/reports/wip-schedule/csv?as_of=2026-06-01").text
+    assert note in csv
+    js = (ROOT / "app/static/js/reports.js").read_text(encoding="utf-8")
+    start = js.index("ReportsPage.wipSchedule = ")
+    assert "data.warnings" in js[start : js.index("ReportsPage.costToComplete", start)]
+
+
 def test_wip_warns_when_forecast_entered_after_as_of(db_session, seed_accounts):
     customer = _customer(db_session)
     job = _contract_job(db_session, customer, "Late fc", 100000, 90000, 60000)
@@ -1538,7 +1575,7 @@ def test_commitment_status_ignores_sub_co_approved_after_as_of(
     assert row["committed"] == 10000.0 and row["remaining"] == 10000.0
 
 
-def test_commitment_closed_after_as_of_shows_remaining_then(db_session, seed_accounts):
+def test_commitment_closed_by_final_bill_is_open_before_it(db_session, seed_accounts):
     customer = _customer(db_session)
     job = Job(customer_id=customer.id, name="Closed later", status="in_progress")
     db_session.add(job)
@@ -1555,3 +1592,23 @@ def test_commitment_closed_after_as_of_shows_remaining_then(db_session, seed_acc
     assert row["billed"] == 2000.0 and row["remaining"] == 3000.0
     end = job_reports.commitment_status(db_session, as_of=date(2026, 8, 1))
     assert end["jobs"][0]["rows"][0]["remaining"] == 0.0
+
+
+def test_commitment_closed_by_hand_shows_nothing_remaining(db_session, seed_accounts):
+    """10,000 subcontract, 4,000 billed, closed by hand: no remaining today or
+    on an earlier date with no later bills."""
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Hand close", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="Walked Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-HC", 10000, status=POStatus.CLOSED)
+    _po_bill(db_session, po, "H-1", 4000, when=date(2026, 3, 1))
+    db_session.commit()
+    for as_of in (date.today(), date(2026, 6, 1)):
+        row = job_reports.commitment_status(db_session, as_of=as_of)["jobs"][0]["rows"][
+            0
+        ]
+        assert row["billed"] == 4000.0 and row["remaining"] == 0.0

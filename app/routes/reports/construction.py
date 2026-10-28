@@ -110,6 +110,11 @@ def wip_schedule_route(
     return wip_schedule(db, as_of, job_id, customer_id, status, include_closed)
 
 
+def _warnings_note(data: dict):
+    """The report's warnings as one note line under the table (None if none)."""
+    return " ".join(data.get("warnings") or []) or None
+
+
 def _wip_sections(data: dict) -> list[dict]:
     cols = data["columns"]
     tc = _text_columns(cols)
@@ -133,6 +138,7 @@ def _wip_sections(data: dict) -> list[dict]:
             "columns": [c["label"] for c in cols],
             "text_columns": tc,
             "rows": rows,
+            "note": _warnings_note(data),
         }
     ]
 
@@ -246,6 +252,8 @@ def _grid_csv(data: dict, company: str, report: str, period: str, extra=None) ->
         else:
             row.append("")
     w.writerow(row)
+    for text in data.get("warnings") or []:
+        w.writerow([text])
     if extra is not None:
         extra(data, w)
     return out.getvalue()

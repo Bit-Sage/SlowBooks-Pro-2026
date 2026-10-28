@@ -574,9 +574,12 @@ full when projected cost passes the contract: the provision is loss × (1 −
 percent complete), added to the entry. A **commitment status** report
 (`commitment-status`, PDF and CSV) lists each PO and subcontract with committed,
 billed, retainage held and remaining, totals per job, read as of the date
-(sub change orders approved later and closings after it are left out). A job
-with no budget and no forecast takes its cost to date as the estimate (100%
-complete), so a loss is recognised once, not twice.
+(sub change orders approved later are left out; a closed commitment is open on
+a date only if a bill against it is dated after that date). A job with no budget
+and no forecast earns nothing: it is listed with a warning and left out of the
+totals and the adjusting entry until its cost reaches the contract, when it
+reads 100% complete and the loss is recognised once, not twice. The WIP
+warnings print under the report on screen, in the PDF and in the CSV.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
