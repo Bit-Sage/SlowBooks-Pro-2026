@@ -85,11 +85,27 @@ def test_header_injection_is_dropped_not_sent():
 
 
 def test_a_quoted_display_name_with_a_comma_is_one_address():
-    """Pasted from Outlook: "Smith, Bob" <bob@x.com> must not split at its comma."""
-    assert clean_addresses('"Smith, Bob" <bob@x.com>, carol@x.com') == [
-        "bob@x.com",
-        "carol@x.com",
-    ]
+    """Pasted from Outlook: "Smith, Bob" <bob@x.com> must not split at its
+    comma, wherever it sits in the list (sb-qa skeptic, round 2: the first
+    pattern only honoured a quote at the start of an entry)."""
+    cases = {
+        '"Smith, Bob" <bob@x.com>, carol@x.com': ["bob@x.com", "carol@x.com"],
+        '"Smith, Bob" <bob@x.com>, "Jones, Ann" <ann@x.com>': [
+            "bob@x.com",
+            "ann@x.com",
+        ],
+        'carol@x.com, "Smith, Bob" <bob@x.com>': ["carol@x.com", "bob@x.com"],
+        ' "Smith, Bob" <bob@x.com>': ["bob@x.com"],
+        '"Books, Inc" <books@b.com>; "Audit, LLP" <audit@b.com>': [
+            "books@b.com",
+            "audit@b.com",
+        ],
+        'Bob "The, Builder" <bob@x.com>': ["bob@x.com"],
+        '"Smith; Bob" <bob@x.com>': ["bob@x.com"],
+    }
+    for typed, want in cases.items():
+        assert clean_addresses(typed) == want, typed
+        assert bad_addresses(typed) == [], typed
 
 
 def test_a_non_ascii_or_malformed_address_is_rejected_not_encoded():
