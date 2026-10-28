@@ -15,6 +15,13 @@ from app.models.invoices import Invoice, InvoiceStatus
 from app.models.contacts import Vendor
 from app.routes.reports._router import router
 from app.routes.invoices.helpers import _due_date_from_terms
+from app.services import cash_basis
+
+# accrual, cash, or the company default (#483), as the statements take it
+_BASIS_QUERY = Query(
+    default=None,
+    description="accrual or cash; omitted, the company's default report basis",
+)
 
 
 class SalesTaxPaymentRequest(StrictModel):
@@ -32,6 +39,7 @@ class SalesTaxPaymentRequest(StrictModel):
 def sales_tax_report(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
+    basis: str = _BASIS_QUERY,
     db: Session = Depends(get_db),
 ):
     """Sales Tax report: the tax charged on sales less the tax given back on
@@ -46,6 +54,9 @@ def sales_tax_report(
         start_date = date(date.today().year, 1, 1)
     if not end_date:
         end_date = date.today()
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
+    if basis == "cash":
+        return _sales_tax_cash(db, start_date, end_date)
 
     # Eager loads avoid an N+1 on .customer / .lines in the loops below.
     from sqlalchemy.orm import joinedload, selectinload
@@ -123,10 +134,97 @@ def sales_tax_report(
         "tax_credited": float(tax_credited),
         "total_tax": float(total_tax),
         "ledger": _sales_tax_ledger(db, start_date, end_date, total_tax),
+        "basis": "accrual",
+        "basis_note": None,
     }
 
 
-def _sales_tax_ledger(db: Session, start_date, end_date, total_tax: Decimal):
+def _sales_tax_cash(db: Session, start_date, end_date):
+    """The report on the cash basis (#483): the tax collected on money
+    received in the dates, each payment's allocation to an invoice taking
+    that invoice's sales, taxable amount and tax in the proportion paid (the
+    proportion the payment's own 2200 cash lines were written in). Credit
+    memos are accrual documents and never counted: no cash came for them."""
+    from sqlalchemy.orm import joinedload, selectinload
+
+    from app.models.payments import Payment, PaymentAllocation
+    from app.services.currency import to_home
+
+    payments = (
+        db.query(Payment)
+        .options(
+            selectinload(Payment.allocations)
+            .joinedload(PaymentAllocation.invoice)
+            .options(joinedload(Invoice.customer), selectinload(Invoice.lines))
+        )
+        .filter(Payment.date >= start_date, Payment.date <= end_date)
+        .filter(Payment.is_voided.isnot(True))
+        .all()
+    )
+    rows = []
+    for pay in payments:
+        for alloc in pay.allocations:
+            inv = alloc.invoice
+            if inv is None or inv.status == InvoiceStatus.VOID:
+                continue
+            fx = Decimal(str(inv.exchange_rate or 1))
+            total = to_home(inv.total or 0, fx)
+            applied = to_home(alloc.amount, fx)
+            if total == 0 or applied == 0:
+                continue
+            ratio = applied / total
+            tax_full = to_home(inv.tax_amount or 0, fx)
+            taxable_full = (
+                to_home(taxable_subtotal(inv.lines), fx) if tax_full > 0 else _q(0)
+            )
+            rows.append(
+                (
+                    pay,
+                    inv,
+                    _q(to_home(inv.subtotal or 0, fx) * ratio),
+                    _q(taxable_full * ratio),
+                    _q(tax_full * ratio),
+                )
+            )
+    rows.sort(key=lambda r: (r[0].date, r[0].id, str(r[1].invoice_number)))
+
+    items = [
+        {
+            "type": "invoice",
+            "date": pay.date.isoformat(),
+            "number": inv.invoice_number,
+            "invoice_number": inv.invoice_number,
+            "memo_number": None,
+            "customer_name": inv.customer.name if inv.customer else "",
+            "subtotal": float(subtotal),
+            "taxable": float(taxable),
+            "tax_rate": float(inv.tax_rate or 0) if taxable else None,
+            "tax_amount": float(tax),
+        }
+        for pay, inv, subtotal, taxable, tax in rows
+    ]
+    total_sales = sum((r[2] for r in rows), Decimal(0))
+    total_taxable = sum((r[3] for r in rows), Decimal(0))
+    total_tax = sum((r[4] for r in rows), Decimal(0))
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "items": items,
+        "total_sales": float(total_sales),
+        "total_taxable": float(total_taxable),
+        "total_non_taxable": float(total_sales - total_taxable),
+        "tax_on_sales": float(total_tax),
+        "tax_credited": 0.0,
+        "total_tax": float(total_tax),
+        "ledger": _sales_tax_ledger(db, start_date, end_date, total_tax, "cash"),
+        "basis": "cash",
+        "basis_note": cash_basis.receivable_note(db, end_date, "cash"),
+    }
+
+
+def _sales_tax_ledger(
+    db: Session, start_date, end_date, total_tax: Decimal, basis: str = "accrual"
+):
     """What Sales Tax Payable (2200) says for the same period: the tax posted
     to it (sales and credit memos, and anything else that touched it), the
     payments made, the balance owed at the end date, and how far the posted
@@ -150,6 +248,7 @@ def _sales_tax_ledger(db: Session, start_date, end_date, total_tax: Decimal):
             )
             .join(Transaction, TransactionLine.transaction_id == Transaction.id)
             .filter(TransactionLine.account_id == tax_id, *conds)
+            .execution_options(**cash_basis.reading(basis))
             .one()
         )
         return _q(Decimal(str(cr)) - Decimal(str(dr)))

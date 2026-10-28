@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Sales Tax report on the cash basis; retainage on bills; payroll stays on
+both** (#483, step 4). Reports > Sales Tax takes a Basis (Company default /
+Accrual / Cash), like the Profit & Loss does. On the cash basis it lists the
+tax collected on the money received in the dates, each payment taking its
+invoice's sales, taxable amount and tax in the proportion paid, and checks
+that against Sales Tax Payable on the cash basis; credit memos are not
+counted (no cash came for them). The accrual report is unchanged, and
+paying the tax is the same either way. A bill that holds retainage is
+expensed on the cash basis only as it is paid: paying the net recognizes
+that much of each expense line, and the held part is recognized when it is
+released (so the Balance Sheet carries no Retainage Payable on the cash
+basis until then). Pay runs read the same on both bases: payroll
+liabilities stay on the cash Balance Sheet, as other current liabilities do.
+
 **Cash basis: editing a paid invoice or bill, and a basis for journal
 entries** (#483). Changing the lines of an invoice or bill that has been paid
 now moves what its payments counted on the cash basis to match: if half of an

@@ -1919,8 +1919,9 @@ const ReportsPage = {
     },
 
     async salesTax(prefill) {
-        await ReportsPage.openPeriodModal("Sales Tax Report", ReportsPage.defaultPeriod(), async (_period, range) => {
-            const data = await API.get(`/reports/sales-tax?start_date=${range.start}&end_date=${range.end}`);
+        const basisOpts = ReportsPage._basisOpts(prefill);
+        await ReportsPage.openPeriodModal("Sales Tax Report", ReportsPage.defaultPeriod(), async (_period, range, params) => {
+            const data = await API.get(`/reports/sales-tax?start_date=${range.start}&end_date=${range.end}${ReportsPage._basisQs(params)}`);
             // Credit memos come back as negative rows; a document with
             // nothing taxable shows no rate rather than "8.25%, $0.00".
             const rows = data.items.map(i =>
@@ -1947,7 +1948,7 @@ const ReportsPage = {
                             Sales tax paid to suppliers on bills entered before SlowBooks Pro 2.18 was posted to ${escapeHtml(ledger.account_name)}, lowering that balance by <strong>${formatCurrency(ledger.purchase_tax)}</strong> this period; since 2.18 that tax is part of what the purchase cost. To correct it, post one journal entry: debit the expense or cost-of-goods account those purchases used, and credit ${accountLabel(ledger, ledger.account_name, ' ')} <strong>${formatCurrency(ledger.purchase_tax_to_date)}</strong> (the total to ${formatDate(data.end_date)}).</div>` : ''}
                     </div>` : '';
             return `
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Date</th><th scope="col">${T('Invoice')} / Credit Memo</th><th scope="col">${T('Customer')}</th><th scope="col" class="amount">Sales</th><th scope="col" class="amount">Taxable</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Tax</th></tr></thead>
                     <tbody>${rows || '<tr><td colspan="7" style="text-align:center; color:var(--gray-400);">No taxable sales</td></tr>'}</tbody>
@@ -1962,7 +1963,7 @@ const ReportsPage = {
                     <div style="font-size:14px; font-weight:700; color:var(--qb-navy);">Tax Collected: ${formatCurrency(data.total_tax)}</div>
                     ${reconcile}
                 </div>`;
-        }, "Dates", false, { reportType: 'sales_tax', view: 'sales-tax', prefill });
+        }, "Dates", false, { reportType: 'sales_tax', view: 'sales-tax', prefill, ...basisOpts });
     },
 
     // The General Ledger's filters (#236): one account, one class, or both,

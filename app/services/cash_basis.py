@@ -183,12 +183,17 @@ def _q(value) -> Decimal:
 
 
 def document_lines(
-    db: Session, source_types, source_id: int, control_account_id: int
+    db: Session,
+    source_types,
+    source_id: int,
+    control_account_id: int,
+    skip_account_ids=(),
 ) -> list[dict]:
     """The lines a document recognizes, netted by account and dimensions:
     every line of its entries except the control account's (A/R or A/P),
     each as {account_id, amount, class_id, job_id, cost_code_id, cost_type,
-    function}, `amount` signed credit-positive. Read on every basis: the
+    function}, `amount` signed credit-positive. `skip_account_ids` leaves
+    out more accounts (a bill's Retainage Payable). Read on every basis: the
     entries are accrual ones, and a repair may run before they are tagged."""
     rows = (
         db.query(TransactionLine)
@@ -196,7 +201,7 @@ def document_lines(
         .filter(
             Transaction.source_type.in_(tuple(source_types)),
             Transaction.source_id == source_id,
-            TransactionLine.account_id != control_account_id,
+            TransactionLine.account_id.notin_((control_account_id, *skip_account_ids)),
         )
         .order_by(TransactionLine.id)
         .execution_options(**reading(READ_ALL))
@@ -288,13 +293,15 @@ def _recognition(
     memo: str,
     fallback_account_id,
     link_key: str,
+    skip_account_ids=(),
 ) -> list[dict]:
     """The cash lines recognizing `applied_home` of one document: its
     recognition lines prorated, each on the same side as on the document
-    and tied to it through `link_key`. A document with no recognition lines
-    of its own (an import that posted none) is recognized to the unapplied
-    account instead."""
-    lines = document_lines(db, source_types, document_id, control_id)
+    and tied to it through `link_key`. `skip_account_ids` leaves accounts
+    out of the recognition (a bill's Retainage Payable). A document with no
+    recognition lines of its own (an import that posted none) is recognized
+    to the unapplied account instead."""
+    lines = document_lines(db, source_types, document_id, control_id, skip_account_ids)
     total = sum((ln["amount"] for ln in lines), Decimal("0"))
     shares = prorate(lines, applied_home, total) if total else []
     if not shares:
@@ -344,8 +351,11 @@ def bill_payment_cash_lines(
     lines prorated (debits), the remainder to Unapplied Cash Bill Payment
     Expense, and one Cr A/P for the whole."""
     out: list[dict] = []
+    held = _retainage_ids(db)
     for bill, applied_home in applied:
-        # a bill's lines are debits: recognize -applied of credit
+        # a bill's lines are debits: recognize -applied of credit. Retainage
+        # Payable is left out, so the net paid is spread over the expense
+        # lines and the held part is not yet an expense (released later).
         out.extend(
             _recognition(
                 db,
@@ -356,6 +366,7 @@ def bill_payment_cash_lines(
                 memo,
                 unapplied_expense_id,
                 BILL_LINK,
+                held,
             )
         )
     unapplied_home = _q(unapplied_home or 0)
@@ -367,6 +378,45 @@ def bill_payment_cash_lines(
             )
         )
     return _balanced_on(out, ap_id, memo)
+
+
+def _retainage_ids(db: Session) -> tuple:
+    """Retainage Payable (2050), when the chart has it: a bill holding
+    retainage credits it, and it is not an expense until released."""
+    from app.services import control_accounts
+
+    found = control_accounts.find(db, "2050")
+    return (found,) if found is not None else ()
+
+
+def retainage_release_cash_lines(
+    db: Session, bill, released_home, memo: str
+) -> list[dict]:
+    """The cash lines of releasing `released_home` of a bill's held retainage
+    (#483): the bill's expense, cost and inventory lines prorated for the
+    released amount (debits) and one Cr Retainage Payable (cash), so the
+    expense lands when the held part is paid. They go in the release's own
+    entry, beside its Dr 2050 / Cr bank (both), which then net to zero on
+    2050 in the cash view. A release that is not tied to a bill (a plain
+    check or journal entry against 2050) has nothing to recognize."""
+    from app.services.accounting import ensure_construction_accounts, get_ap_account_id
+
+    released_home = _q(released_home)
+    if released_home <= 0:
+        return []
+    held = _retainage_ids(db)
+    lines = _recognition(
+        db,
+        BILL_SOURCE_TYPES,
+        bill.id,
+        get_ap_account_id(db),
+        -released_home,
+        memo,
+        unapplied_expense_id,
+        BILL_LINK,
+        held,
+    )
+    return _balanced_on(lines, ensure_construction_accounts(db)["2050"].id, memo)
 
 
 def _balanced_on(lines: list[dict], control_id: int, memo: str) -> list[dict]:
@@ -542,6 +592,8 @@ def _recompute(
             txn.description or "Payment",
             fallback_account_id,
             link_key,
+            # a bill's Retainage Payable stays out of the recognition (step 4)
+            _retainage_ids(db) if link_key == BILL_LINK else (),
         )
         if old:
             audited_bulk_delete(
@@ -964,6 +1016,7 @@ __all__ = [
     "reading",
     "recompute_bill_cash_lines",
     "recompute_invoice_cash_lines",
+    "retainage_release_cash_lines",
     "resolve_basis",
     "unapplied_expense_id",
     "unapplied_income_id",

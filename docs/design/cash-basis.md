@@ -1,8 +1,10 @@
 # Reports on a cash basis — design (#483)
 
-Status: DESIGN + steps 1, 2a and 2b built (#483, 2026-10-26 / 28): the
+Status: DESIGN + steps 1, 2a, 2b and 4 built (#483, 2026-10-26 / 28): the
 reports take a basis, edits of a paid document rewrite its payments' cash
-lines, and the journal form chooses a basis. The
+lines, the journal form chooses a basis, the Sales Tax Liability report
+reads on a basis, retainage on bills is handled, and payroll stays on both
+(see "Step 4" below). The
 architecture — a basis on every ledger line, written when the document
 posts, never recomputed when a report is read — was decided by Keith on
 2026-10-26. Steps 1 and 2a (below) are built; "Decisions" at the end records
@@ -266,18 +268,20 @@ Online ledger import posted, adopted by the edit).
 
 **Sales tax payable.** Prorated with the invoice's lines, so on the cash
 basis 2200 carries the tax *collected* and not yet remitted, and the
-sales-tax payment (Dr 2200 / Cr bank, `both`) takes it down. The Sales
-Tax Liability report stays accrual in step 1.
+sales-tax payment (Dr 2200 / Cr bank, `both`) takes it down. Step 4 puts the
+Sales Tax Liability report on a basis (below).
 
 **Payroll.** A pay run posts wages and employer taxes as expense against
 net pay (bank) and the withholdings and employer taxes (payroll
-liabilities), all `both` in step 1. Under a strict cash basis the
-liability half is an expense when the tax deposit is made, not when the
-run posts; QuickBooks treats payroll liabilities the same way it treats
-other current liabilities on a cash-basis report (they stay). Step 3
-tags a pay run's liability-side expense lines `accrual` and writes cash
-lines on the liability payment; the invariant above already names
-payroll liabilities among the non-cash movements.
+liabilities), all `both`. Decided in step 4: payroll stays `both` under
+either basis. QuickBooks' cash-basis reports do the same (payroll
+liabilities stay, like other current liabilities), and the invariant above
+already names payroll liabilities among the non-cash movements. The earlier
+plan, tagging the liability-side expense `accrual` and writing cash lines on
+the liability payment, has nothing to hang on: payroll liabilities are paid
+with ordinary checks or journal entries (`_paid_liability_cautions` only
+warns), there is no liability-payment document. An accountant who wants
+the tax expense on the deposit date adjusts it by journal entry.
 
 **Journal entries that hit A/R or A/P directly.** `both`, as every
 journal entry: a hand-posted A/R line counts on both bases and is not
@@ -293,14 +297,36 @@ whose A/R or A/P is not zero at its end date carries a short note
 (`basis_note` on the data; under the period line on screen, under the
 table on the PDF).
 
-**Retainage and progress billing.** #552 (retainage) and #555 (pay
-applications) are not on `main`. When they land, an invoice's A/R debit
-splits between 1100 and 1150 Retainage Receivable and a payment can
-release held retainage long after the work was billed; the recognition
-pair must then prorate across the retainage held and the retainage
-released, and a bill's over 2050 Retainage Payable. Left for the
-follow-up, with the rule already in place: a release is a payment, and a
-payment writes the cash lines for what it collected.
+**Retainage and progress billing.** A release is a payment, and a payment
+writes the cash lines for what it paid or collected.
+
+*Bills (step 4).* A bill holding retainage posts Dr expense lines / Cr A/P
+(total less retainage) / Cr 2050 Retainage Payable. Its cash lines leave 2050
+out: a payment applied to the bill spreads the amount over the bill's
+expense, cost and inventory lines (`applied / sum of those lines`), so the
+cash lines balance on A/P as before and, once the net is paid, each line is
+recognized in the proportion `net / total`; the held part is not yet an
+expense and 2050 reads zero on the cash Balance Sheet (the accrual view shows
+it as a liability). When the held amount is released,
+`retainage_release_cash_lines` gives the cash lines for the release's own
+entry: Dr the bill's expense shares for the released amount / Cr 2050 (cash),
+beside the release's Dr 2050 / Cr bank (`both`), which then nets 2050 to zero
+in the cash view. The app has no release path on `main` yet (#555 / #576: the
+buyout flow only holds retainage; a plain check or journal entry against 2050
+cannot be linked to a bill), so nothing calls that function in the product
+today; the release test writes the entry the way a release route will. A
+release route must call it, and a void of the release reverses the cash
+lines with the rest (the void copies every line with its basis, as a bill
+payment's does). The backfill handles retainage bills with no change: it
+writes the cash lines of each bill payment by the rule above, idempotently.
+
+*Invoices (follows #576).* Pay applications and invoice retainage are not on
+`main`. When they land, the invoice's A/R debit splits between 1100 and 1150
+Retainage Receivable, and the same rule applies mirrored: a customer payment
+prorates the income lines over the invoice total less the retainage held
+(1150 left out, so the cash lines still balance on A/R), and a release
+writes Dr 1150 (cash) / Cr the income shares for the released amount on the
+release's entry.
 
 **Inventory and cost of goods.** The stock movement an invoice posts (Dr
 cost of goods / Cr inventory, under the invoice's own source) is among
@@ -386,8 +412,12 @@ below).
 **Step 2b.** Edits of a paid document recompute its payments' cash lines;
 the journal form's basis choice.
 
-**Step 3.** Payroll liabilities and the Sales Tax Liability report on the
-cash basis; the retainage follow-up (#552, #555).
+**Step 3.** Edits of a paid document recompute its payments' cash lines;
+the journal form's basis choice (see the step 3 PR).
+
+**Step 4.** The Sales Tax Liability report on a basis; retainage on bills
+(release cash lines); the payroll decision; invoice-side retainage waits for
+#576.
 
 ## Decisions (2026-10-26, this branch)
 
@@ -431,6 +461,19 @@ cash basis; the retainage follow-up (#552, #555).
     gifts as posted. The other job reports (a job's own page, Job Budget vs
     Actual) stay accrual. `job_profitability` takes `basis` for the report;
     its other callers pass none.
+13. **Payroll stays `both` on both bases** (step 4), the QuickBooks rule:
+    no liability-payment document exists to carry cash lines, and the
+    invariant already counts payroll liabilities as non-cash movements.
+14. **Retainage on a bill is left out of the cash recognition** (step 4): the
+    net paid is spread over the expense lines, so the cash lines still
+    balance on A/P, and the release recognizes the held remainder (above).
+    The expense recognized equals the money paid at every step.
+15. **The Sales Tax Liability report's cash reading lists the payments**, not
+    the invoices: each allocation in the dates takes the invoice's sales,
+    taxable amount and tax by `applied / invoice total` (home currency).
+    The ledger block (tax posted, paid, balance) reads 2200 on the basis, so
+    the two are checked against each other; a cent can differ from the
+    ledger (each payment's own lines are rounded to the largest share).
 
 ## Known limits of step 1
 
@@ -451,6 +494,17 @@ cash basis; the retainage follow-up (#552, #555).
   Payment Income back to A/R. An edit adopts the posting: the invoice then
   posts as accrual and every payment on it is given its recognition lines
   (step 2b), so its income lands on the payment dates.
+
+- **Sales Tax report, cash basis:** credit memos are not counted, and an
+  invoice the QuickBooks Online ledger import posted shows its tax on its
+  own date in the ledger block but not in the list (the difference line
+  names it). The report has no PDF or CSV, so there is no period line to
+  mark; the screen says "cash basis".
+- **A release of bill retainage with no link to the bill** (a plain check
+  or journal entry against 2050) leaves a debit on 2050 and no expense on
+  the cash basis until a release route exists; the cash Balance Sheet then
+  shows 2050 as an asset-like debit. Record the release through the bill's
+  release flow (#555 / #576) once it lands.
 
 ## Open items (not settled; conservative choice taken)
 
