@@ -75,3 +75,47 @@ def test_the_pdf_and_csv_carry_the_same_figures(client, books):
     bank = next(row for row in body if row[0] == "1000")
     assert Decimal(bank[3]) == Decimal("1254.50")
     assert total[3] == total[4] == "1600.00"
+
+
+def test_an_end_date_alone_foots(client, books):
+    # the start defaulted to today's fiscal year, so an end date in the year
+    # before put the whole of 2025 into the prior-periods row (debits 500
+    # against credits 400); the start now follows the end date's year and
+    # the prior figures stop at the end date
+    tb = client.get("/api/reports/trial-balance?end_date=2025-12-16").json()
+    assert tb["start_date"] == "2025-01-01"
+    rows = _by_number(tb)
+    assert rows["1000"]["total_debit"] == 500.00
+    assert rows["4000"]["total_credit"] == 500.00
+    assert "6000" not in rows  # the 12-20 expense is after the end date
+    assert all(i["account_id"] for i in tb["items"])
+    assert tb["total_debit"] == tb["total_credit"] == 500.00
+    assert tb["difference"] == 0
+
+
+def test_a_start_after_the_end_is_refused(client, books):
+    r = client.get(
+        "/api/reports/trial-balance?start_date=2026-01-01&end_date=2025-12-16"
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == "The start date is after the end date."
+    for path in ("trial-balance/pdf", "trial-balance/csv"):
+        r = client.get(f"/api/reports/{path}?start_date=2026-01-01&end_date=2025-12-16")
+        assert r.status_code == 400, path
+
+
+def test_the_default_start_is_the_end_dates_fiscal_year(client, books):
+    r = client.put("/api/settings", json={"fiscal_year_start_month": "7"})
+    assert r.status_code == 200, r.text
+    tb = client.get("/api/reports/trial-balance?end_date=2026-03-31").json()
+    assert tb["start_date"] == "2025-07-01"
+    rows = _by_number(tb)
+    # both 2025 entries fall inside FY2026, so no prior-periods row
+    assert rows["4000"]["total_credit"] == 1700.00  # 500 + 1200
+    assert rows["6000"]["total_debit"] == 445.50  # 100 + 345.50
+    assert all(i["account_id"] for i in tb["items"])
+    assert tb["total_debit"] == tb["total_credit"]
+    # the fiscal year before: the 2025 entries alone, nothing earlier
+    tb = client.get("/api/reports/trial-balance?end_date=2025-06-30").json()
+    assert tb["start_date"] == "2024-07-01"
+    assert tb["items"] == [] and tb["total_debit"] == tb["total_credit"] == 0
