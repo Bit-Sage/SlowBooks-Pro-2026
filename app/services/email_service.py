@@ -56,10 +56,10 @@ LOG_ADDRESSES_MAX = 500
 
 # One entry of a typed list: a quoted display name may hold a comma, so the
 # split respects quotes. ("Smith, Bob" <bob@x.com>, carol@x.com)
-_ENTRY = re.compile(r'"[^"]*"[^,]*|[^,]+')
+_ENTRY = re.compile(r'(?:"[^"]*"|[^,])+')
 
 
-def _parse_addresses(value) -> tuple:
+def parse_addresses(value) -> tuple:
     """(kept, rejected): ``value`` is a comma- or semicolon-separated string,
     or a list, of addresses, each possibly with a display name. Kept entries
     are bare addr-specs, deduplicated without regard to case, in order;
@@ -91,14 +91,14 @@ def _parse_addresses(value) -> tuple:
 
 
 def clean_addresses(value) -> list:
-    """The usable addresses in ``value`` (see _parse_addresses), in order,
+    """The usable addresses in ``value`` (see parse_addresses), in order,
     duplicates and anything that is not an address dropped."""
-    return _parse_addresses(value)[0]
+    return parse_addresses(value)[0]
 
 
 def bad_addresses(value) -> list:
     """The pieces of ``value`` that cannot be sent to, for an error message."""
-    return _parse_addresses(value)[1]
+    return parse_addresses(value)[1]
 
 
 def _clip(text, limit: int = LOG_ADDRESSES_MAX):

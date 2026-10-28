@@ -280,10 +280,10 @@ def clean_setting_value(key: str, value) -> str:
     if key in _ADDRESS_LIST_SETTINGS:
         # stored as the clean comma-separated list, so what the send uses is
         # what the page shows; an entry that is not an address is refused
-        from app.services.email_service import LOG_ADDRESSES_MAX, _parse_addresses
+        from app.services.email_service import LOG_ADDRESSES_MAX, parse_addresses
 
         label = _ADDRESS_LIST_SETTINGS[key]
-        kept, rejected = _parse_addresses(text)
+        kept, rejected = parse_addresses(text)
         if rejected:
             raise SettingValueError(
                 f"{label}: not an email address: " + ", ".join(rejected[:5]) + "."

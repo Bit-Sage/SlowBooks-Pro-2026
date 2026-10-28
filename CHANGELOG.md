@@ -12,8 +12,12 @@ The Email Invoice dialog now has CC and BCC boxes, comma-separated. Settings →
 Email (SMTP) gains *Always CC* and *Always BCC*: addresses copied on every email
 the program sends, so statements, collection letters and acknowledgments carry
 them too, with no dialog. Bcc is never written into the message, only the
-envelope. Recent sends shows the copies under the recipient. API: `POST
-/api/invoices/{id}/email` accepts `cc` and `bcc`.
+envelope. Addresses are read the way a mail program reads them (a pasted
+`"Smith, Bob" <bob@x.com>` is one address; display names are dropped), an
+entry that is not an address refuses the send or the save and says which, and
+an address already on the mail is copied once. Recent sends shows the copies
+under the recipient. API: `POST /api/invoices/{id}/email` accepts `cc` and
+`bcc`.
 
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
