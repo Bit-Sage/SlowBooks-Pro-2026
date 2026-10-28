@@ -25,7 +25,7 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.items import (
@@ -40,6 +40,10 @@ from app.services.accounting import _q, create_journal_entry, quantize_to
 logger = logging.getLogger(__name__)
 
 COST_Q = Decimal("0.0001")
+# The memo of a reversal piece that matched no sale posting (a legacy or
+# hand-made ledger): it names nothing, and must not count as pre-release
+# unattributed quantity on a later reversal either.
+_BEYOND_POSTINGS_MEMO = "Sale reversal (beyond postings)"
 
 
 def get_inventory_asset_account_id(db: Session, item: Item) -> Optional[int]:
@@ -557,14 +561,16 @@ def reverse_sale(
                         (f"{original_source_type}_void", f"{original_source_type}_edit")
                     ),
                     InventoryMovement.reverses_movement_id.is_(None),
+                    or_(
+                        InventoryMovement.memo.is_(None),
+                        InventoryMovement.memo != _BEYOND_POSTINGS_MEMO,
+                    ),
                 ).scalar()
                 or 0
             )
         )
-        for mv in originals:
-            if remaining <= 0:
-                break
-            taken = Decimal(
+        linked_taken = {
+            mv.id: Decimal(
                 str(
                     void_q.filter(
                         InventoryMovement.reverses_movement_id == mv.id
@@ -572,10 +578,25 @@ def reverse_sale(
                     or 0
                 )
             )
-            available = abs(Decimal(str(mv.quantity))) - taken
-            legacy = min(available, unattributed)
-            unattributed -= legacy
-            available -= legacy
+            for mv in originals
+        }
+        # A reversal from before the link existed predates every posting made
+        # after it, so it can only have consumed the postings of its day:
+        # allocate it oldest-first (sb-qa). Postings were all on 5000 back
+        # then, so for an install with no newer posting nothing changes.
+        legacy_taken = {}
+        for mv in reversed(originals):
+            room = abs(Decimal(str(mv.quantity))) - linked_taken[mv.id]
+            legacy_taken[mv.id] = max(min(room, unattributed), Decimal("0"))
+            unattributed -= legacy_taken[mv.id]
+        for mv in originals:
+            if remaining <= 0:
+                break
+            available = (
+                abs(Decimal(str(mv.quantity)))
+                - linked_taken[mv.id]
+                - legacy_taken[mv.id]
+            )
             if available <= 0:
                 continue
             take = min(available, remaining)
@@ -607,7 +628,15 @@ def reverse_sale(
             by_accounts[key] = by_accounts.get(key, Decimal("0")) + _q(q * c)
         lines = []
         for (asset_id, cogs_id), piece_amount in by_accounts.items():
-            if piece_amount <= 0 or not (asset_id and cogs_id):
+            if piece_amount <= 0:
+                continue
+            if not (asset_id and cogs_id):
+                logger.warning(
+                    "reverse_sale: no inventory or COGS account for a %s piece of "
+                    "item %s; its stock is reversed but no entry is posted for it",
+                    piece_amount,
+                    item.id,
+                )
                 continue
             lines.append(
                 {
@@ -649,7 +678,7 @@ def reverse_sale(
             source_type=source_type,
             source_id=source_id,
             transaction_id=txn_id,
-            memo="Sale reversal",
+            memo="Sale reversal" if mv is not None else _BEYOND_POSTINGS_MEMO,
             reverses_movement_id=mv.id if mv is not None else None,
         )
     return last

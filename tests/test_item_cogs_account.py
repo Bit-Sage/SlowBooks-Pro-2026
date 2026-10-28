@@ -420,3 +420,39 @@ def test_a_reversal_over_mixed_costs_keeps_sales_by_item_tied_to_the_pl(
         "/api/reports/profit-loss?start_date=2026-01-01&end_date=2026-12-31"
     ).json()
     assert Decimal(str(sbi["total_cogs"])) == Decimal(str(pl["total_cogs"]))
+
+
+def test_a_pre_release_reversal_is_charged_to_the_oldest_posting(
+    client, db_session, seed_accounts, seed_customer
+):
+    """An upgraded install: a reversal from before the link existed (null
+    link) can only have consumed the postings of its day, so it comes off
+    the oldest posting, never one made after the upgrade (sb-qa, round 4)."""
+    b = _sub_cogs(db_session, seed_accounts, number="5120", name="B")
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)  # posts to 5000, as pre-2.30
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=30, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
+    _set_qty(client, inv["id"], item.id, 2)
+    # make that reversal look pre-release: no link
+    for v in db_session.query(InventoryMovement).filter_by(
+        item_id=item.id, movement_type=MovementType.VOID
+    ):
+        v.reverses_movement_id = None
+    db_session.commit()
+    _repoint(db_session, item.id, b.id)
+    _set_qty(client, inv["id"], item.id, 5)
+    db_session.expire_all()
+    assert _balances(db_session, seed_accounts["5000"], b) == {
+        "5000": Decimal("20.00"),
+        "5120": Decimal("30.00"),
+    }
+
+    assert client.post(f"/api/invoices/{inv['id']}/void").status_code == 200
+    db_session.expire_all()
+    assert _balances(db_session, seed_accounts["5000"], b) == {
+        "5000": Decimal("0.00"),
+        "5120": Decimal("0.00"),
+    }
