@@ -1304,10 +1304,16 @@ def trial_balance(
     still foots. `basis` (#483): accrual or cash, else the company's default."""
     basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     exclude_adjusting = _flag(exclude_adjusting)
-    if not start_date:
-        start_date = fiscal_year_start(db, date.today())
     if not end_date:
         end_date = date.today()
+    if not start_date:
+        # the fiscal year the end date falls in, not today's: an end date
+        # alone asks for that year's trial balance
+        start_date = fiscal_year_start(db, end_date)
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="The start date is after the end date."
+        )
 
     q = (
         db.query(
@@ -1373,7 +1379,8 @@ def trial_balance(
 
     # net income of the periods before the start date, which the balance-sheet
     # accounts carry but the income and expense rows leave out (the Balance
-    # Sheet's "Net Income" line, split at the start date)
+    # Sheet's "Net Income" line, split at the start date); bounded by the end
+    # date like every other figure, since the balance-sheet rows stop there
     prior = (
         db.query(
             sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0)
@@ -1384,6 +1391,7 @@ def trial_balance(
         .filter(
             Account.account_type.notin_(_BALANCE_SHEET_TYPES),
             Transaction.date < start_date,
+            Transaction.date <= end_date,
         )
     )
     if exclude_adjusting:
