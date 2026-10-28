@@ -1246,7 +1246,8 @@ const ReportsPage = {
     },
 
     // A wide report's sticky scrollbar (stickyScrollbars, utils.js) is
-    // sized to the table; the window's size changes it, so it is redone.
+    // sized to the table; the window's size changes it, so it is redone
+    // (wired when the app starts, App.init, like _gridFit).
     _resizeSticky() {
         const content = document.getElementById('report-content');
         if (content) stickyScrollbars(content);
@@ -3841,7 +3842,7 @@ ReportsPage.wipSchedule = async function (prefill) {
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Estimated cost is actual plus the cost-to-complete forecast. A projected loss is booked in full. Billings over earned are a liability; under earned are an asset. Basis shows whether billing is from approved pay applications or posted revenue. This report posts nothing.
             </div>
-            <div class="table-container"><table>
+            <div class="table-container table-container--sticky"><table>
                 <thead><tr><th scope="col">${T('Customer')}</th><th scope="col">${T('Job')}</th>
                 <th scope="col" class="amount">Revised</th><th scope="col" class="amount">Est. cost</th><th scope="col" class="amount">Margin</th><th scope="col" class="amount">Cost to date</th>
                 <th scope="col" class="amount">% complete</th><th scope="col" class="amount">Earned</th><th scope="col" class="amount">Billed</th><th scope="col">Basis</th>
@@ -4450,6 +4451,3 @@ ReportsPage.functionalExpenses = async function (prefill) {
     window.addEventListener('focus', back);
     document.addEventListener('visibilitychange', () => (document.hidden ? left() : back()));
 })();
-
-// The window's size changes what fits: a wide report's sticky scrollbar is redone
-if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', () => ReportsPage._resizeSticky());

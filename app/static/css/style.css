@@ -859,8 +859,9 @@ body {
     padding-bottom: 8px;
 }
 
-/* The sticky scrollbar stickyScrollbars() (utils.js) puts under a table
-   wider than its box: it stays at the bottom of the scrolling dialog while
+/* The sticky scrollbar stickyScrollbars() (utils.js) puts under a
+   .table-container--sticky wider than its box (the WIP Schedule): it stays
+   at the bottom of the scrolling dialog while
    the table is in view and scrolls the table; the table's own bar is hidden
    so there is one bar, not two. Tall enough for a classic 17px bar; an
    overlay bar (macOS) draws inside it. */

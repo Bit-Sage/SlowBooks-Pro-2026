@@ -2474,6 +2474,7 @@ const App = {
         if (typeof MutationObserver === 'function') new MutationObserver(mark).observe(document.body, { childList: true, subtree: true });
         window.addEventListener('resize', mark);
         window.addEventListener('resize', () => ReportsPage._gridFit());
+        window.addEventListener('resize', () => ReportsPage._resizeSticky());
 
         // Load saved theme
         App.loadTheme();

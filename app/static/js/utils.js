@@ -2085,14 +2085,16 @@ function nameFields(root = document) {
 // A wide table's horizontal scrollbar sits at the table's foot, out of
 // sight while its top is read (the WIP Schedule's sixteen columns; the
 // owner at the Mac, 2.30.0 gate: "sticky is the way"). This puts a second
-// bar under each table in `root` that is wider than its box, stuck to the
-// bottom of the scrolling dialog while the table is in view, driving the
-// same scroll; the table's own bar is hidden so there is one. A table that
-// fits gets nothing, and a second call (a redraw, a resize) starts over.
+// bar under each `.table-container--sticky` in `root` that is wider than
+// its box, stuck to the bottom of the scrolling dialog while the table is
+// in view, driving the same scroll; the table's own bar is hidden so there
+// is one. Opt-in by class: a box that scrolls both ways (the P&L by Class
+// grid) keeps its own bars. A table that fits gets nothing, and a second
+// call (a redraw, a resize) starts over.
 function stickyScrollbars(root) {
     if (!root || !root.querySelectorAll) return 0;
     let made = 0;
-    root.querySelectorAll('.table-container').forEach(box => {
+    root.querySelectorAll('.table-container--sticky').forEach(box => {
         const old = box.nextElementSibling;
         if (old && old.classList && old.classList.contains('table-scroll-sticky')) old.remove();
         box.classList.remove('has-sticky-scroll');
@@ -2100,6 +2102,9 @@ function stickyScrollbars(root) {
         const bar = document.createElement('div');
         bar.className = 'table-scroll-sticky';
         bar.setAttribute('aria-hidden', 'true');
+        // a scrollable box is a Tab stop in Chromium; this one is the
+        // mouse's, the keyboard scrolls the table itself
+        bar.tabIndex = -1;
         const spacer = document.createElement('div');
         spacer.className = 'table-scroll-sticky-spacer';
         spacer.style.width = box.scrollWidth + 'px';
