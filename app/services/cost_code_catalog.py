@@ -1,7 +1,7 @@
 # Seed data for #550. The two-level division/section numbering. The division titles ship here;
 # reserved division numbers (15-20, 24, 29, 30, 36-39, 47, 49) have no title
 # and are not created (a company can add them). The full numbered section
-# catalogue is too large to ship, so only a modest set of common sections
+# catalogue isn't ours to publish, so only a modest set of common sections
 # ships — companies import their own full list through
 # POST /api/cost-codes/import.
 
