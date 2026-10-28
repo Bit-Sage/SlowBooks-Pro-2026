@@ -103,8 +103,14 @@ def send_email(
     # Sanitize email headers to prevent injection
     to_email = to_email.replace("\r", "").replace("\n", "").strip()
     subject = subject.replace("\r", "").replace("\n", " ").strip()
-    cc_list = clean_addresses(cc) + clean_addresses(smtp.get("smtp_always_cc", ""))
-    bcc_list = clean_addresses(bcc) + clean_addresses(smtp.get("smtp_always_bcc", ""))
+    # clean_addresses() de-duplicates, so the always-copies are merged through
+    # it: an address both typed and in Settings is copied once (sb-qa, #611).
+    cc_list = clean_addresses(
+        clean_addresses(cc) + clean_addresses(smtp.get("smtp_always_cc", ""))
+    )
+    bcc_list = clean_addresses(
+        clean_addresses(bcc) + clean_addresses(smtp.get("smtp_always_bcc", ""))
+    )
     # An address already receiving the mail is not copied on it again.
     cc_list = _without(cc_list, [to_email])
     bcc_list = _without(bcc_list, [to_email] + cc_list)

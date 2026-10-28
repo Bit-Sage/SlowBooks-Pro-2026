@@ -153,6 +153,24 @@ def test_per_send_copies_come_before_the_always_copies(db_session, smtp):
     ]
 
 
+def test_an_always_copy_that_is_also_typed_is_copied_once(db_session, smtp):
+    """Found by the sb-qa browser flow: Always CC office@ plus office@ typed in
+    the dialog put office@ in the envelope twice."""
+    _set(db_session, "smtp_always_cc", "office@example.com")
+    _set(db_session, "smtp_always_bcc", "Books@example.com")
+    assert _send(
+        db_session, cc="office@example.com, boss@example.com", bcc="books@example.com"
+    )
+    envelope, msg = smtp[0]
+    assert envelope == [
+        "customer@example.com",
+        "office@example.com",
+        "boss@example.com",
+        "books@example.com",
+    ]
+    assert msg["Cc"] == "office@example.com, boss@example.com"
+
+
 def test_an_address_already_on_the_mail_is_not_copied_again(db_session, smtp):
     _set(db_session, "smtp_always_bcc", "Customer@example.com")
     assert _send(
