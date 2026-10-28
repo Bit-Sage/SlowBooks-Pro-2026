@@ -12,7 +12,13 @@ from email import message_from_string
 import pytest
 
 from app.models.email_log import EmailLog
-from app.services.email_service import clean_addresses, send_email
+from app.routes.invoices import documents
+from app.services.email_service import (
+    MAX_ADDRESS_LENGTH,
+    MAX_ADDRESSES,
+    clean_addresses,
+    send_email,
+)
 from app.services.settings_service import set_setting
 
 
@@ -78,6 +84,30 @@ def test_addresses_split_on_commas_and_semicolons_and_drop_blanks():
 
 def test_header_injection_characters_are_stripped():
     assert clean_addresses("a@x.com\r\nBcc: evil@x.com") == ["a@x.comBcc: evil@x.com"]
+
+
+def test_a_field_takes_at_most_fifty_addresses_each_no_longer_than_an_address():
+    fifty = ", ".join(f"u{i}@x.com" for i in range(MAX_ADDRESSES))
+    assert len(clean_addresses(fifty)) == MAX_ADDRESSES
+    with pytest.raises(ValueError, match="Too many Cc addresses"):
+        clean_addresses(fifty + ", one-more@x.com", "Cc")
+    # duplicates and blanks do not count toward the fifty
+    assert len(clean_addresses(fifty + ", " + fifty + ",,")) == MAX_ADDRESSES
+    longest = "a" * (MAX_ADDRESS_LENGTH - len("@x.com")) + "@x.com"
+    assert clean_addresses(longest) == [longest]
+    with pytest.raises(ValueError, match="Bcc address is too long"):
+        clean_addresses("b" + longest, "Bcc")
+
+
+def test_an_always_copy_setting_over_the_cap_fails_the_send_and_says_why(
+    db_session, smtp
+):
+    _set(db_session, "smtp_always_bcc", "x" * 300 + "@x.com")
+    assert not _send(db_session)
+    assert smtp == []
+    row = db_session.query(EmailLog).order_by(EmailLog.id.desc()).first()
+    assert row.status == "failed"
+    assert "Bcc address is too long" in row.error_message
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +211,11 @@ def test_the_invoice_email_route_passes_cc_and_bcc_through(
 
     # The route imports send_email inside the handler, so patch the service.
     monkeypatch.setattr("app.services.email_service.send_email", fake_send)
+    # The PDF is an attachment the fake never reads; stubbing the renderer
+    # keeps the test off WeasyPrint, which the Windows job has not got.
+    monkeypatch.setattr(
+        documents, "generate_invoice_pdf", lambda *a, **k: b"%PDF-1.4 test"
+    )
     cust = client.post(
         "/api/customers", json={"name": "Probe Co", "email": "a@b.com"}
     ).json()
@@ -202,6 +237,25 @@ def test_the_invoice_email_route_passes_cc_and_bcc_through(
     assert r.status_code == 200, r.text
     assert captured["to_email"] == "a@b.com"
     assert captured["cc"] == "x@b.com" and captured["bcc"] == "y@b.com"
+
+    # over the cap: refused in a sentence, nothing rendered or sent
+    captured.clear()
+    r = client.post(
+        f"/api/invoices/{inv['id']}/email",
+        json={
+            "recipient": "a@b.com",
+            "cc": ", ".join(f"u{i}@b.com" for i in range(MAX_ADDRESSES + 1)),
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "Too many Cc addresses: at most 50 on one email."
+    assert captured == {}
+    r = client.post(
+        f"/api/invoices/{inv['id']}/email",
+        json={"recipient": "a@b.com", "bcc": "b" * 300 + "@b.com"},
+    )
+    assert r.status_code == 400, r.text
+    assert "Bcc address is too long" in r.json()["detail"]
 
 
 def test_always_copy_settings_round_trip_and_log_rows_carry_copies(client, db_session):

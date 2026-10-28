@@ -134,6 +134,15 @@ def email_invoice(
                 "customer or type one here."
             ),
         )
+    # Too many copies, or one that is not an address, is a 400 with the
+    # reason before anything is rendered or sent.
+    try:
+        from app.services.email_service import clean_addresses
+
+        clean_addresses(data.cc, "Cc")
+        clean_addresses(data.bcc, "Bcc")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     company = get_settings(db)
     try:
         from app.services.email_service import send_email, render_invoice_email_parts
