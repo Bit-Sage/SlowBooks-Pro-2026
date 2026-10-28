@@ -1480,8 +1480,9 @@ def test_wip_no_basis_loss_is_recognised_once(db_session, seed_accounts):
 
 def test_wip_no_basis_below_contract_is_not_earned(db_session, seed_accounts):
     """Contract 1,000,000, cost 10,000, no budget or forecast, nothing billed:
-    no revenue is booked; the job is listed with a warning, out of the totals
-    and the adjusting entry."""
+    no revenue is booked; the job is listed with a warning and out of the
+    adjusting entry. Its contract, cost and billing still count in the totals,
+    so those columns foot (#577); earned, over/under and the estimates do not."""
     customer = _customer(db_session)
     _contract_job(db_session, customer, "No budget yet", 1000000, None, 10000)
     _contract_job(db_session, customer, "Budgeted", 100000, 50000, 25000)
@@ -1490,15 +1491,34 @@ def test_wip_no_basis_below_contract_is_not_earned(db_session, seed_accounts):
     assert r["earned_revenue"] == 0.0 and r["under_billing"] == 0.0
     assert r["percent_complete"] is None
     assert any(
-        "No budget yet" in w and "no budget or forecast; not included" in w
+        "No budget yet" in w and "no budget or forecast; nothing earned" in w
         for w in data["warnings"]
     )
     assert [j["job_name"] for j in data["adjusting_entry"]["jobs"]] == ["Budgeted"]
-    # totals carry the budgeted job only
-    assert data["totals"]["revised_contract"] == 100000.0
-    assert data["totals"]["earned_revenue"] == 50000.0
+    t = data["totals"]
+    # contract, cost and billing foot across both rows
+    assert t["contract_original"] == 1100000.0
+    assert t["revised_contract"] == 1100000.0
+    assert t["cost_to_date"] == 35000.0
+    assert t["billed_to_date"] == 0.0
+    assert t["retainage_outstanding"] == 0.0
+    # the earned side and the estimates carry the budgeted job only
+    assert t["earned_revenue"] == 50000.0
+    assert t["under_billing"] == 50000.0
+    assert t["over_billing"] == 0.0
+    assert t["loss_provision"] == 0.0
+    assert t["estimated_total_cost"] == 50000.0
+    assert t["estimated_gross_profit"] == 50000.0
+    assert t["cost_to_complete"] == 25000.0
+    # margin reads against the contracts that have an estimate
+    assert t["margin_pct"] == 50.0
+    assert data["adjusting_entry"]["totals"]["under_billing"] == 50000.0
     b = next(x for x in data["rows"] if x["job_name"] == "Budgeted")
     assert b["percent_complete"] == 50.0 and "excluded" not in b
+    # every summed column's Total equals the sum of what the rows print
+    for key in job_reports._WIP_SUMMED:
+        printed = sum(x[key] for x in data["rows"] if x[key] is not None)
+        assert t[key] == printed, key
 
 
 def test_wip_warnings_print_in_screen_pdf_and_csv(client, db_session, seed_accounts):
@@ -1506,7 +1526,7 @@ def test_wip_warnings_print_in_screen_pdf_and_csv(client, db_session, seed_accou
 
     customer = _customer(db_session)
     _contract_job(db_session, customer, "No budget yet", 1000000, None, 10000)
-    note = "no budget or forecast; not included"
+    note = "no budget or forecast; nothing earned"
     assert note in construction._wip_sections(_wip(db_session))[0]["note"]
     csv = client.get("/api/reports/wip-schedule/csv?as_of=2026-06-01").text
     assert note in csv
