@@ -210,7 +210,10 @@ jobs:
           # 182 with the register date's browser test
           # (test_browser_register_date.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "182"
+          # 183 with the Trial Balance PDF test (#614,
+          # test_trial_balance_balances::test_the_pdf_and_csv_carry_the_same_figures,
+          # WeasyPrint's native stack is not on the runner).
+          MAX_SKIPS: "183"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
