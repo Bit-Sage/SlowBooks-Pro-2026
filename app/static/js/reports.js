@@ -1840,12 +1840,6 @@ const ReportsPage = {
                 </div>`;
         return { params, toolbar };
     },
-    // the Basis select and the adjusting box (the Trial Balance's toolbar)
-    _basisAdjOpts(prefill) {
-        const basis = ReportsPage._basisOpts(prefill);
-        const adj = ReportsPage._adjOpts(prefill);
-        return { params: { ...basis.params, ...adj.params }, toolbar: basis.toolbar + adj.toolbar };
-    },
     // the two statements' toolbar: the sort choice and the adjusting box
     _statementOpts(prefill) {
         const sort = ReportsPage._sortOpts(prefill);
@@ -2479,6 +2473,11 @@ const ReportsPage = {
     },
 
     async trialBalance(prefill) {
+        // the adjusting box, with the Basis select ahead of it
+        const tbOpts = { ...ReportsPage._adjOpts(prefill) };
+        const tbBasis = ReportsPage._basisOpts(prefill);
+        tbOpts.params = { ...tbBasis.params, ...tbOpts.params };
+        tbOpts.toolbar = tbBasis.toolbar + tbOpts.toolbar;
         await ReportsPage.openPeriodModal("Trial Balance", ReportsPage.defaultPeriod(), async (_period, range, live) => {
             ReportsPage._viewReturn['trial-balance'] = ReportsPage._basisKeep(live);
             const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}`);
@@ -2512,7 +2511,7 @@ const ReportsPage = {
                     <thead><tr>${numbers ? '<th scope="col">Number</th>' : ''}<th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>`;
-        }, "Dates", false, { view: 'trial-balance', prefill, ...ReportsPage._basisAdjOpts(prefill) });
+        }, "Dates", false, { view: 'trial-balance', prefill, ...tbOpts });
     },
 
     // The accountant's adjusting entries for a period (#341): each with its
