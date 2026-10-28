@@ -5,6 +5,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.bills import Bill, BillPayment, BillStatus
 from app.models.contacts import Vendor
 from app.schemas.contacts import VendorCreate, VendorUpdate, VendorResponse
 from app.routes._helpers import get_or_404, reject_null_updates
@@ -175,6 +176,56 @@ def vendor_bank_entries(
     them through the payment history now (#569); kept for API readers."""
     get_or_404(db, Vendor, vendor_id)
     return list(reversed(bank_entries_for(db, vendor_id, start_date, end_date)))
+
+
+@router.get("/{vendor_id}/summary")
+def vendor_summary(vendor_id: int, db: Session = Depends(get_db)):
+    """What Enter Bill shows beside the form once a vendor is picked (#601):
+    what is owed (the same figure as the vendor page and A/P aging), the last
+    five bills and payments, and the vendor's notes."""
+    vendor = get_or_404(db, Vendor, vendor_id)
+    bills = (
+        db.query(Bill)
+        .filter(Bill.vendor_id == vendor_id, Bill.status != BillStatus.VOID)
+        .order_by(Bill.date.desc(), Bill.id.desc())
+        .limit(5)
+        .all()
+    )
+    payments = (
+        db.query(BillPayment)
+        .filter(BillPayment.vendor_id == vendor_id, BillPayment.is_voided.is_(False))
+        .order_by(BillPayment.date.desc(), BillPayment.id.desc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "vendor_id": vendor.id,
+        "name": vendor.name,
+        "balance": str(vendor_balances(db, [vendor_id]).get(vendor_id, ZERO)),
+        "notes": vendor.notes,
+        "is_1099_vendor": bool(vendor.is_1099_vendor),
+        "bills": [
+            {
+                "id": b.id,
+                "date": b.date.isoformat(),
+                "bill_number": b.bill_number,
+                "total": str(b.total or ZERO),
+                "balance_due": str(b.balance_due or ZERO),
+                "status": b.status.value if b.status else None,
+            }
+            for b in bills
+        ],
+        "payments": [
+            {
+                "id": p.id,
+                "date": p.date.isoformat(),
+                "amount": str(p.amount),
+                "method": p.method,
+                "check_number": p.check_number,
+            }
+            for p in payments
+        ],
+    }
 
 
 @router.get("/{vendor_id}/payment-history")

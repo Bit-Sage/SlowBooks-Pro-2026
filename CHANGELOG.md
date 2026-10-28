@@ -7,6 +7,14 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Enter Bill shows the vendor beside the form** (#601, from Discussion #593).
+Pick a vendor on Enter Bill (or open a bill to edit it) and a panel beside the
+form shows what you owe them, their last five bills and payments, and their
+notes, with a link to the vendor's page that opens in a new tab so the bill you
+are typing stays put. The owed figure is the vendor page's and the A/P aging's.
+It fills in while you work, never holds the form up, clears when the vendor is
+cleared, and sits below the form on a narrow window.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

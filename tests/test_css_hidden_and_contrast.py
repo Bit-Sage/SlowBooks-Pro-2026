@@ -273,8 +273,8 @@ def test_the_bill_forms_line_table_scrolls_sideways_with_room_for_every_box():
     # (NEW-105): the bill form opens wide, as the estimate's and the job
     # cost entry's do, so the table fits whole where the window has room
     assert (
-        "Save Bill'}</button>\n                </div>\n            </form>`, { wide: true });"
-        in js
+        "Save Bill'}</button>\n                </div>\n            </form></div>" in js
+        and "{ wide: true });" in js
     )
     # and under a scrolling table there is a classic bar's room, so
     # "+ Add Line" clears a bar an engine draws below the box (WebKit, NEW-104)
