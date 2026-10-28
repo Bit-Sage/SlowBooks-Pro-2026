@@ -1384,12 +1384,17 @@ def _commitment_row(
         po.status == POStatus.CLOSED and billed_later
     )
     remaining = _q(committed - billed) if is_open else _ZERO
+    status = po.status.value if hasattr(po.status, "value") else po.status
+    # A commitment the later bill closed was still open on this date: its
+    # status then is what the bills by then had made it (2.30.0 gate).
+    if po.status == POStatus.CLOSED and billed_later:
+        status = (POStatus.PARTIAL if billed > _ZERO else POStatus.SENT).value
     return {
         "id": po.id,
         "number": po.po_number,
         "vendor_name": po.vendor.name if po.vendor else "",
         "type": po.commitment_type,
-        "status": po.status.value if hasattr(po.status, "value") else po.status,
+        "status": status,
         "committed": float(committed),
         "billed": float(_q(billed)),
         "retainage_held": float(_q(held - released)),

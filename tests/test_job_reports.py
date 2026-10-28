@@ -1610,8 +1610,16 @@ def test_commitment_closed_by_final_bill_is_open_before_it(db_session, seed_acco
     mid = job_reports.commitment_status(db_session, as_of=date(2026, 6, 1))
     row = mid["jobs"][0]["rows"][0]
     assert row["billed"] == 2000.0 and row["remaining"] == 3000.0
+    # and its status on that date is the open one its bills had made it,
+    # not today's "closed" (2.30.0 gate, macbase1)
+    assert row["status"] == "partial"
+    before = job_reports.commitment_status(db_session, as_of=date(2026, 2, 1))
+    first = before["jobs"][0]["rows"][0]
+    assert first["billed"] == 0.0 and first["remaining"] == 5000.0
+    assert first["status"] == "sent"
     end = job_reports.commitment_status(db_session, as_of=date(2026, 8, 1))
     assert end["jobs"][0]["rows"][0]["remaining"] == 0.0
+    assert end["jobs"][0]["rows"][0]["status"] == "closed"
 
 
 def test_commitment_closed_by_hand_shows_nothing_remaining(db_session, seed_accounts):

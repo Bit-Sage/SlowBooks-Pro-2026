@@ -420,7 +420,7 @@ def _refuse_sum_change(db: Session, job: Job, new_amount) -> None:
         status_code=409,
         detail={
             "code": "contract_sum_locked",
-            "message": "The contract sum is locked once billing starts or a change order exists; change it with a change order",
+            "message": "The contract sum is locked once billing starts or a change order is approved; change it with a change order",
         },
     )
 
@@ -439,7 +439,7 @@ def _refuse_contingency_change(db: Session, job: Job, new_amount) -> None:
         status_code=409,
         detail={
             "code": "contingency_locked",
-            "message": "The contingency is locked once billing starts or a change order exists; change it with a change order",
+            "message": "The contingency is locked once billing starts or a change order is approved; change it with a change order",
         },
     )
 
