@@ -685,6 +685,19 @@ totals and the adjusting entry until its cost reaches the contract, when it
 reads 100% complete and the loss is recognised once, not twice. The WIP
 warnings print under the report on screen, in the PDF and in the CSV.
 
+### v2.29.2 — A register line opens over the register
+
+**A register line opens over the register.** Clicking a line in a bank or
+card register used to go to the posting's own address, which drew that
+document's whole list first: for a journal entry, every journal entry in the
+company, which took minutes on a file with years of imported history. Closing
+it then left you on Journal Entries instead of the register. The line's
+posting now opens over the register, with nothing else loaded, and Close
+comes back to the register where you were; voiding or saving it there brings
+you back to the register too. Opening a document by its address
+(a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
+in a new tab.
+
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
 **Profit & Loss Detail** (#477). A new report on the Report Center with every
