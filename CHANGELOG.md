@@ -7,6 +7,17 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Trial Balance: balance-sheet accounts at their balance as of the end date**
+(#597). For a date range the Trial Balance showed only that range's activity
+on every account, bank and card accounts included, so it never matched a
+QuickBooks Trial Balance side by side. Asset, liability and equity accounts
+now show their balance as of the end date, on the debit or credit side; income,
+cost and expense accounts still show their activity from the start date. The
+earlier periods' net income, which the balance-sheet rows carry and the
+income and expense rows leave out, prints as one "Net Income (prior periods)"
+row so the debit and credit totals still agree. The screen, the PDF and the CSV
+(the accountant's package included) all read the same way.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 
 from fastapi import Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sqlfunc
+from sqlalchemy import func as sqlfunc, or_
 
 from app.database import get_db
 from app.models.accounts import Account, AccountType, DetailType
@@ -1259,6 +1259,10 @@ def _account_set(
 # ============================================================================
 
 
+# read as of the end date on the Trial Balance; the other types, for the period
+_BALANCE_SHEET_TYPES = (AccountType.ASSET, AccountType.LIABILITY, AccountType.EQUITY)
+
+
 @router.get("/trial-balance")
 def trial_balance(
     start_date: date = Query(default=None),
@@ -1266,7 +1270,12 @@ def trial_balance(
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
 ):
-    """Trial Balance: sum all debits/credits per account for a date range."""
+    """Trial Balance as QuickBooks reads it: asset, liability and equity
+    accounts at their balance as of the end date (one debit or credit
+    figure), income, cost and expense accounts at their activity from the
+    start date. The two readings differ by the net income of the periods
+    before the start, so that sits in one derived equity row and the report
+    still foots."""
     exclude_adjusting = _flag(exclude_adjusting)
     if not start_date:
         start_date = fiscal_year_start(db, date.today())
@@ -1284,7 +1293,15 @@ def trial_balance(
         )
         .join(TransactionLine, TransactionLine.account_id == Account.id)
         .join(Transaction, TransactionLine.transaction_id == Transaction.id)
-        .filter(Transaction.date >= start_date, Transaction.date <= end_date)
+        .filter(
+            Transaction.date <= end_date,
+            # a balance-sheet account counts from the beginning, the rest
+            # from the start date
+            or_(
+                Account.account_type.in_(_BALANCE_SHEET_TYPES),
+                Transaction.date >= start_date,
+            ),
+        )
     )
     if exclude_adjusting:
         q = q.filter(Transaction.is_adjusting == False)  # noqa: E712
@@ -1297,6 +1314,11 @@ def trial_balance(
     total_credit = Decimal(0)
     chart = _chart_index(db)
     for acct_id, acct_num, acct_name, acct_type, debit, credit in results:
+        if acct_type in _BALANCE_SHEET_TYPES:
+            # the balance as of the end date, on its normal side
+            debit, credit = max(debit - credit, Decimal(0)), max(
+                credit - debit, Decimal(0)
+            )
         total_debit += debit
         total_credit += credit
         path, label = _account_words(chart, acct_id)
@@ -1317,6 +1339,43 @@ def trial_balance(
     # parent (ORDER BY account_number put the unnumbered first: W-7); each
     # row named by its path and number, as the statements' are (W-12)
     items.sort(key=_account_order(db, chart=chart))
+
+    # net income of the periods before the start date, which the balance-sheet
+    # accounts carry but the income and expense rows leave out (the Balance
+    # Sheet's "Net Income" line, split at the start date)
+    prior = (
+        db.query(
+            sqlfunc.coalesce(sqlfunc.sum(TransactionLine.debit), 0)
+            - sqlfunc.coalesce(sqlfunc.sum(TransactionLine.credit), 0)
+        )
+        .join(Account, TransactionLine.account_id == Account.id)
+        .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+        .filter(
+            Account.account_type.notin_(_BALANCE_SHEET_TYPES),
+            Transaction.date < start_date,
+        )
+    )
+    if exclude_adjusting:
+        prior = prior.filter(Transaction.is_adjusting == False)  # noqa: E712
+    prior_net = Decimal(prior.scalar() or 0)
+    if prior_net != 0:
+        words = f"{terms_from_db(db)('Net Income')} (prior periods)"
+        debit, credit = max(prior_net, Decimal(0)), max(-prior_net, Decimal(0))
+        total_debit += debit
+        total_credit += credit
+        items.append(
+            {
+                "account_id": None,
+                "account_number": "",
+                "account_name": words,
+                "account_path": words,
+                "account_label": words,
+                "account_type": AccountType.EQUITY.value,
+                "total_debit": float(debit),
+                "total_credit": float(credit),
+                "net_balance": float(debit - credit),
+            }
+        )
 
     return {
         "start_date": start_date.isoformat(),

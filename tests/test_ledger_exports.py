@@ -68,13 +68,15 @@ def test_trial_balance_csv_matches_the_screen_to_the_cent(client, books):
             Decimal("0.01")
         )
     assert total[1] == "Total" and total[3] == total[4]  # debit equals credit
-    assert Decimal(total[3]) == Decimal("1545.50")
+    # bank 1,354.50 + expense 345.50 (the prior-period income is a credit row, #597)
+    assert Decimal(total[3]) == Decimal("1700.00")
 
 
 def test_general_ledger_carries_every_line_and_ties_to_the_trial_balance(client, books):
     gl = client.get(f"/api/reports/general-ledger?{PERIOD}").json()
     tb = client.get(f"/api/reports/trial-balance?{PERIOD}").json()
     tb_net = {i["account_number"]: Decimal(str(i["net_balance"])) for i in tb["items"]}
+    tb_type = {i["account_number"]: i["account_type"] for i in tb["items"]}
     cash = next(a for a in gl["accounts"] if a["account_number"] == "1000")
     # balance brought forward from 2025, running balance after each line
     assert Decimal(str(cash["opening_balance"])) == Decimal("500.00")
@@ -102,7 +104,10 @@ def test_general_ledger_carries_every_line_and_ties_to_the_trial_balance(client,
     assert all(r[-1] == "Uncategorized" for r in lines)  # nothing here has a class
     for r in (r for r in rows[1:] if r[kind] == "total"):
         num, dr, cr = r[3], Decimal(r[5]), Decimal(r[6])
-        assert dr - cr == tb_net[num], num  # the period net equals the TB's Net
+        # an income or expense row's Net is the period's net; a balance-sheet
+        # row's is the balance as of the end date (#597), checked below
+        if tb_type[num] not in ("asset", "liability", "equity"):
+            assert dr - cr == tb_net[num], num
     opening = {r[3]: Decimal(r[7]) for r in rows[1:] if r[kind] == "opening"}
     closing = {r[3]: Decimal(r[7]) for r in rows[1:] if r[kind] == "total"}
     sign = {
@@ -110,7 +115,10 @@ def test_general_ledger_carries_every_line_and_ties_to_the_trial_balance(client,
         for a in gl["accounts"]
     }
     for num in closing:
-        assert closing[num] == opening[num] + sign[num] * tb_net[num], num
+        if tb_type[num] in ("asset", "liability", "equity"):
+            assert closing[num] == sign[num] * tb_net[num], num
+        else:
+            assert closing[num] == opening[num] + sign[num] * tb_net[num], num
     assert closing["4000"] == Decimal("1700.00")  # positive: income earned, not -1,700
 
 
