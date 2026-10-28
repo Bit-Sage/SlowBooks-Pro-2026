@@ -7,6 +7,13 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Voiding a pay application is all or nothing** (#576). The application's
+deposit payment, its invoice and the application itself are now voided in one
+transaction. Before, the deposit was voided and saved first, so when the
+invoice's void was refused (a payment still applied, the closing date) the
+deposit stayed voided under an application and invoice that still stood. A
+refusal now leaves all three as they were.
+
 **Sales Tax report on the cash basis; retainage on bills; payroll stays on
 both** (#483, step 4). Reports > Sales Tax takes a Basis (Company default /
 Accrual / Cash), like the Profit & Loss does. On the cash basis it lists the

@@ -751,20 +751,29 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
             },
         )
     invoice = db.get(Invoice, app.invoice_id) if app.invoice_id else None
-    if invoice is not None:
-        _refuse_if_truly_paid(db, app, invoice)
-        dep = _deposit_payment(db, app, invoice)
-        if dep is not None:
-            from app.routes.payments import void_payment_unchecked
+    # The deposit payment, the invoice and the application are voided in one
+    # transaction: a refusal anywhere (a payment still applied, the closing
+    # date) rolls the lot back, so the deposit is never left voided under an
+    # application and invoice that still stand (#576).
+    try:
+        if invoice is not None:
+            _refuse_if_truly_paid(db, app, invoice)
+            dep = _deposit_payment(db, app, invoice)
+            if dep is not None:
+                from app.routes.payments import void_payment_unchecked
 
-            void_payment_unchecked(dep.id, db)  # commits; restores the balance
-            db.refresh(invoice)
-        from app.routes.invoices.lifecycle import void_invoice_unchecked
+                # restores the balance; the invoice void needs it clear
+                void_payment_unchecked(dep.id, db, commit=False)
+                db.refresh(invoice)
+            from app.routes.invoices.lifecycle import void_invoice_unchecked
 
-        void_invoice_unchecked(invoice.id, db)  # commits; reverses 1150 too
-    app.status = "void"
-    app.voided_at = datetime.now(timezone.utc)
-    db.commit()
+            void_invoice_unchecked(invoice.id, db, commit=False)  # reverses 1150
+        app.status = "void"
+        app.voided_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(app)
     return _out(db, app)
 

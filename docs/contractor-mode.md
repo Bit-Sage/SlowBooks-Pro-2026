@@ -594,9 +594,12 @@ the bank / CR **Customer Deposits** (2210) and shows as received, applied and
 unapplied. A pay application's **deposit applied** draws the unapplied balance
 down — on approve a payment whose deposit-to account is 2210 is created and
 applied to the invoice (DR 2210 / CR A/R), so the owner's prepayment settles
-the current due. Voiding the application restores the deposit; a deposit that
-has been applied cannot be voided until the application is, and the deposit
-payment cannot be voided from Payments while the application stands (409).
+the current due. Voiding the application restores the deposit — the deposit
+payment, the invoice and the application are voided together, so a refusal
+(a payment still on the invoice, the closing date) leaves all three standing.
+A deposit that has been applied cannot be voided until the application is, and
+the deposit payment cannot be voided from Payments while the application
+stands (409).
 
 **The sub side.** A commitment bills a period at a time exactly as buyout
 described (the **Sub pay app** button opens the partial-convert dialog with

@@ -57,9 +57,10 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
     return void_invoice_unchecked(invoice_id, db)
 
 
-def void_invoice_unchecked(invoice_id: int, db: Session):
+def void_invoice_unchecked(invoice_id: int, db: Session, commit: bool = True):
     """The void itself, without the pay-application guard (the application's
-    own void calls this)."""
+    own void calls this). With `commit=False` the work is flushed and left
+    for the caller to commit, so it can be undone with the caller's."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -196,7 +197,10 @@ def void_invoice_unchecked(invoice_id: int, db: Session):
 
     invoice.status = InvoiceStatus.VOID
     invoice.balance_due = Decimal("0")
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:

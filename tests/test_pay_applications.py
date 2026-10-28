@@ -380,6 +380,57 @@ def test_void_restores_deposit(client, db_session, seed_accounts, seed_customer)
     assert listing["unapplied"] == 10000.0  # deposit back to unapplied
 
 
+def test_void_refused_leaves_the_deposit_applied(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    """The deposit payment, the invoice and the application void together:
+    when the invoice's void is refused, the deposit is not left voided under
+    an application that still stands (#576)."""
+    from app.models.payments import Payment
+    from app.routes import pay_applications as pa_routes
+
+    job, sov = _two_line_job(client, seed_customer.id)
+    bank = _acct(db_session, "1000")
+    _deposit(client, job["id"], 10000, bank.id)
+    app = _new_app(client, job["id"])
+    _edit(
+        client,
+        app["id"],
+        lines=[{"sov_line_id": sov[0]["id"], "this_period": 30000, "stored": 0}],
+        deposit_applied=10000,
+    )
+    approved = _approve(client, app["id"]).json()
+    inv_id = approved["invoice_id"]
+    # a real receipt on the invoice, with the application's own up-front
+    # guard out of the way so the invoice void itself is what refuses
+    pay = client.post(
+        "/api/payments",
+        json={
+            "customer_id": seed_customer.id,
+            "date": "2026-06-05",
+            "amount": 1000,
+            "method": "Check",
+            "allocations": [{"invoice_id": inv_id, "amount": 1000}],
+        },
+    )
+    assert pay.status_code == 201, pay.text
+    monkeypatch.setattr(pa_routes, "_refuse_if_truly_paid", lambda db, a, i: None)
+    r = client.post(f"/api/pay-applications/{app['id']}/void")
+    assert r.status_code == 400, r.text
+    assert "payments applied" in r.json()["detail"]
+    db_session.expire_all()
+    dep_id = db_session.get(PayApplication, app["id"]).deposit_payment_id
+    assert dep_id is not None
+    assert db_session.get(Payment, dep_id).is_voided is False
+    inv = db_session.query(Invoice).filter_by(id=inv_id).first()
+    assert inv.status.value != "void"
+    assert inv.amount_paid == Decimal("11000.00")
+    assert client.get(f"/api/pay-applications/{app['id']}").json()["status"] == (
+        "approved"
+    )
+    assert client.get(f"/api/jobs/{job['id']}/deposits").json()["unapplied"] == 0.0
+
+
 def test_void_history_recomputed(client, db_session, seed_accounts, seed_customer):
     job, sov = _two_line_job(client, seed_customer.id)
     a1 = _new_app(client, job["id"])
