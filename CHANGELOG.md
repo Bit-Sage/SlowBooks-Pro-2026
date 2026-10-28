@@ -72,6 +72,13 @@ commitment's rate on the old lines still follows the rate to the new lines.
 now make the desktop app's window and its document windows larger or smaller,
 as they do in a browser; they did nothing before. (#597)
 
+**Void can record a refunded processing fee.** Voiding an online payment
+leaves the fee its provider kept booked as an expense, and the Void button
+gave no way to say the provider had given the fee back. The Void confirm on
+an online payment with a booked fee now has a "The provider refunded its
+processing fee" checkbox, unticked by default; tick it and the fee is
+reversed with the payment. Other payments' Void confirm is unchanged.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

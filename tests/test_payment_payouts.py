@@ -534,6 +534,32 @@ def test_void_with_fee_refunded_reverses_the_fee_too(
     assert _net(db_session, fee_account_id(db_session, "stripe")) == Decimal("0")
 
 
+def test_payment_read_says_whether_a_provider_fee_is_booked(
+    client, db_session, seed_accounts, invoice
+):
+    # The Void confirm offers "the provider refunded its fee" only then (#597)
+    _enable(db_session, "stripe")
+    with_fee = _pay(db_session, invoice, "cs_597a", "50.00", fee="1.75")
+    no_fee = _pay(db_session, invoice, "cs_597b", "20.00")
+    assert client.get(f"/api/payments/{with_fee.id}").json()["has_provider_fee"] is True
+    assert client.get(f"/api/payments/{no_fee.id}").json()["has_provider_fee"] is False
+    client.post(f"/api/payments/{with_fee.id}/void")
+    assert (
+        client.get(f"/api/payments/{with_fee.id}").json()["has_provider_fee"] is False
+    )
+
+
+def test_void_button_sends_fee_refunded_only_when_ticked():
+    from pathlib import Path
+
+    js = (
+        Path(__file__).resolve().parent.parent / "app/static/js/payments.js"
+    ).read_text(encoding="utf-8")
+    assert "The provider refunded its processing fee" in js
+    assert "?fee_refunded=true" in js
+    assert "PaymentsPage.void(${p.id}, ${p.has_provider_fee" in js
+
+
 def test_refund_after_payout_comes_out_of_clearing(
     client, db_session, seed_accounts, invoice
 ):

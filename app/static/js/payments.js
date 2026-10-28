@@ -89,17 +89,39 @@ const PaymentsPage = {
             <div class="form-actions">
                 ${ack && ack.eligible ? `<button class="btn btn-secondary" onclick="window.open('/api/donors/gifts/payment/${p.id}/acknowledgment/pdf','_blank')">Acknowledgment (PDF)</button>
                 <button class="btn btn-secondary" onclick="Donors.emailAcknowledgment('payment', ${p.id})">Email Acknowledgment</button>` : ''}
-                ${!p.is_voided ? `<button data-destructive class="btn btn-danger" onclick="PaymentsPage.void(${p.id})">Void Payment</button>` : ''}
+                ${!p.is_voided ? `<button data-destructive class="btn btn-danger" onclick="PaymentsPage.void(${p.id}, ${p.has_provider_fee ? 'true' : 'false'})">Void Payment</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
         // the document's own address, so Back returns to the list and the Open group lists it (NEW-164)
         if (App.documentAddress) App.documentAddress(`#/payments/${Number(id)}`);
     },
 
-    async void(id) {
+    // An online payment with a booked processing fee asks one more thing:
+    // whether the provider gave the fee back (#597). Other payments keep
+    // the plain confirm.
+    async void(id, hasFee = false) {
+        if (hasFee) {
+            openModal('Void Payment', `
+                <p>Void this payment? ${T('Invoice')} balances will be restored.</p>
+                <label style="display:flex;gap:8px;align-items:center;margin:12px 0;">
+                    <input type="checkbox" id="void-fee-refunded"> The provider refunded its processing fee
+                </label>
+                <div class="form-actions">
+                    <button data-destructive class="btn btn-danger" onclick="PaymentsPage.doVoid(${Number(id)})">Void Payment</button>
+                    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                </div>`);
+            return;
+        }
         if (!confirm(`Void this payment? ${T('Invoice')} balances will be restored.`)) return;
+        await PaymentsPage.doVoid(id, false);
+    },
+
+    async doVoid(id, ask = true) {
+        const box = ask ? document.getElementById('void-fee-refunded') : null;
+        const query = box && box.checked ? '?fee_refunded=true' : '';
         try {
-            const r = await API.post(`/payments/${id}/void`);
+            const r = await API.post(`/payments/${id}/void${query}`);
+            if (ask) closeModal();
             toast('Payment voided');
             // e.g. already paid out by its online provider (#584)
             if (r && r.warning) toast(r.warning, 'error');

@@ -92,6 +92,12 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
         from app.services.undeposited_funds import deposit_holding
 
         resp.deposited_in = deposit_holding(db, payment)
+        provider = payment.method if payment.method in PROVIDER_NAMES else None
+        if provider:
+            resp.has_provider_fee = any(
+                is_fee_line(ln.description, provider)
+                for ln in all_lines(db, payment.transaction_id)
+            )
     return resp
 
 
