@@ -64,6 +64,12 @@ ACCRUAL_SOURCE_TYPES = frozenset(
 INVOICE_SOURCE_TYPES = ("invoice", "invoice_edit", "late_fee")
 BILL_SOURCE_TYPES = ("bill", "bill_edit")
 
+# The columns that tie a cash recognition line to the invoice or bill it
+# recognizes, so an edit of that document can rewrite them.
+INVOICE_LINK = "recognizes_invoice_id"
+BILL_LINK = "recognizes_bill_id"
+LINK_KEYS = (INVOICE_LINK, BILL_LINK)
+
 # The company default, and what the report parameter may say.
 REPORT_BASES = (READ_ACCRUAL, READ_CASH)
 SETTING_KEY = "report_basis"
@@ -259,6 +265,8 @@ def _cash_line(line: dict, memo: str) -> dict:
         "cost_type": line.get("cost_type"),
         "function": line.get("function"),
         "basis": BASIS_CASH,
+        # the document this line recognizes (#483), when it names one
+        **{k: line[k] for k in LINK_KEYS if line.get(k) is not None},
     }
 
 
@@ -279,11 +287,13 @@ def _recognition(
     applied_home: Decimal,
     memo: str,
     fallback_account_id,
+    link_key: str,
 ) -> list[dict]:
     """The cash lines recognizing `applied_home` of one document: its
-    recognition lines prorated, each on the same side as on the document.
-    A document with no recognition lines of its own (an import that posted
-    none) is recognized to the unapplied account instead."""
+    recognition lines prorated, each on the same side as on the document
+    and tied to it through `link_key`. A document with no recognition lines
+    of its own (an import that posted none) is recognized to the unapplied
+    account instead."""
     lines = document_lines(db, source_types, document_id, control_id)
     total = sum((ln["amount"] for ln in lines), Decimal("0"))
     shares = prorate(lines, applied_home, total) if total else []
@@ -291,7 +301,7 @@ def _recognition(
         if applied_home == 0:
             return []
         shares = [{"account_id": fallback_account_id(db), "amount": applied_home}]
-    return [_cash_line(s, memo) for s in shares]
+    return [_cash_line({**s, link_key: document_id}, memo) for s in shares]
 
 
 def customer_payment_cash_lines(
@@ -314,6 +324,7 @@ def customer_payment_cash_lines(
                 _q(applied_home),
                 memo,
                 unapplied_income_id,
+                INVOICE_LINK,
             )
         )
     unapplied_home = _q(unapplied_home or 0)
@@ -344,6 +355,7 @@ def bill_payment_cash_lines(
                 -_q(applied_home),
                 memo,
                 unapplied_expense_id,
+                BILL_LINK,
             )
         )
     unapplied_home = _q(unapplied_home or 0)
@@ -409,6 +421,7 @@ def apply_reclass_lines(
         _q(applied_home),
         memo,
         unapplied_income_id,
+        INVOICE_LINK,
     )
     if not lines:
         return []
@@ -418,6 +431,216 @@ def apply_reclass_lines(
     return lines + [
         _cash_line({"account_id": unapplied_income_id(db), "amount": -net}, memo)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Editing a paid document: its payments' cash lines are recomputed
+# ---------------------------------------------------------------------------
+
+
+def _cash_lines_of(db: Session, transaction_id: int) -> list[TransactionLine]:
+    return (
+        db.query(TransactionLine)
+        .filter(
+            TransactionLine.transaction_id == transaction_id,
+            TransactionLine.basis == BASIS_CASH,
+        )
+        .order_by(TransactionLine.id)
+        .execution_options(**reading(READ_ALL))
+        .all()
+    )
+
+
+def _lines_to_rewrite(
+    mine: list, theirs: list, only_document: bool, control_id: int
+) -> list | None:
+    """The cash lines of one payment's entry that recognize the document.
+    Lines written since the link existed name it. A line written before it
+    names nothing; those are the document's only when the payment paid this
+    document alone with nothing left over, and then every cash line but the
+    control account's is. Anything else is ambiguous and is left alone,
+    reported as None."""
+    if mine:
+        return mine
+    unlinked = [
+        ln
+        for ln in theirs
+        if ln.recognizes_invoice_id is None and ln.recognizes_bill_id is None
+    ]
+    if not unlinked:
+        return []
+    if only_document:
+        return [ln for ln in unlinked if ln.account_id != control_id]
+    return None
+
+
+def _recompute(
+    db: Session,
+    document,
+    *,
+    link_key: str,
+    source_types,
+    control_id: int,
+    fallback_account_id,
+    allocations,
+    fully_applied,
+    adopted: bool,
+) -> int:
+    """Rewrite, in each non-void payment of `document`, the cash lines that
+    recognize it from the document's lines as they now stand, prorated by
+    the same applied amount and kept on the payment's date. A payment on or
+    before the closing date keeps what it has; so does one whose older cash
+    lines cannot be told from another document's. Returns the payments
+    rewritten."""
+    from app.services.audit import audited_bulk_delete
+    from app.services.closing_date import get_closing_date
+    from app.services.currency import to_home
+
+    db.flush()  # lines added a moment ago (an adoption) are looked for below
+    closing = get_closing_date(db)
+    rate = document.exchange_rate or Decimal("1")
+    rewritten = 0
+    for payment, alloc in allocations(document):
+        if payment is None or payment.is_voided or payment.transaction_id is None:
+            continue
+        txn = db.get(Transaction, payment.transaction_id)
+        if txn is None:
+            continue
+        if closing is not None and txn.date <= closing:
+            log.info(
+                "Cash-basis lines of payment %s kept as they are: it is on or "
+                "before the closing date",
+                payment.id,
+            )
+            continue
+        theirs = _cash_lines_of(db, txn.id)
+        mine = [
+            ln
+            for ln in theirs
+            if getattr(ln, link_key) == document.id and ln.account_id != control_id
+        ]
+        if adopted:
+            # the document had no lines of its own before this edit
+            old = mine
+        else:
+            old = _lines_to_rewrite(
+                mine, theirs, fully_applied(payment, alloc), control_id
+            )
+            if old is None:
+                log.warning(
+                    "Cash-basis lines of payment %s not recomputed: it paid more "
+                    "than one document before lines named theirs",
+                    payment.id,
+                )
+                continue
+        new = _recognition(
+            db,
+            source_types,
+            document.id,
+            control_id,
+            (1 if link_key == INVOICE_LINK else -1) * _q(to_home(alloc.amount, rate)),
+            txn.description or "Payment",
+            fallback_account_id,
+            link_key,
+        )
+        if old:
+            audited_bulk_delete(
+                db,
+                db.query(TransactionLine)
+                .filter(TransactionLine.id.in_([ln.id for ln in old]))
+                .execution_options(**reading(READ_ALL)),
+            )
+        _insert_cash_lines(db, txn, new)
+        db.flush()
+        # keep the entry's cash lines balanced: the control line carries
+        # whatever the recognition lines no longer (or newly) offset
+        net = sum(
+            (
+                Decimal(str(ln.credit)) - Decimal(str(ln.debit))
+                for ln in _cash_lines_of(db, txn.id)
+            ),
+            Decimal("0"),
+        )
+        if net != 0:
+            _insert_cash_lines(
+                db,
+                txn,
+                [
+                    {
+                        "account_id": control_id,
+                        "debit": net if net > 0 else Decimal("0"),
+                        "credit": -net if net < 0 else Decimal("0"),
+                        "description": txn.description or "Payment",
+                    }
+                ],
+            )
+        rewritten += 1
+    db.flush()
+    return rewritten
+
+
+def recompute_invoice_cash_lines(
+    db: Session, invoice: Invoice, *, adopted: bool = False
+) -> int:
+    """After an invoice's journal is reposted (an edit, #483): rewrite the
+    cash recognition lines of each payment on it. `adopted` is for an invoice
+    the QuickBooks Online ledger import had posted: its payments had no
+    lines for it, so this writes them."""
+    from app.services.accounting import get_ar_account_id
+
+    if _ledger_posted(db, invoice):
+        return 0
+
+    def allocations(inv):
+        return [(a.payment, a) for a in list(inv.payment_allocations)]
+
+    def fully_applied(payment, alloc):
+        n = (
+            db.query(PaymentAllocation)
+            .filter(PaymentAllocation.payment_id == payment.id)
+            .count()
+        )
+        return n == 1 and Decimal(str(payment.amount)) == Decimal(str(alloc.amount))
+
+    return _recompute(
+        db,
+        invoice,
+        link_key=INVOICE_LINK,
+        source_types=INVOICE_SOURCE_TYPES,
+        control_id=get_ar_account_id(db),
+        fallback_account_id=unapplied_income_id,
+        allocations=allocations,
+        fully_applied=fully_applied,
+        adopted=adopted,
+    )
+
+
+def recompute_bill_cash_lines(db: Session, bill: Bill) -> int:
+    """The same for a bill's payments after its journal is reposted."""
+    from app.services.accounting import get_ap_account_id
+
+    def allocations(b):
+        return [(a.bill_payment, a) for a in list(b.payment_allocations)]
+
+    def fully_applied(payment, alloc):
+        n = (
+            db.query(BillPaymentAllocation)
+            .filter(BillPaymentAllocation.bill_payment_id == payment.id)
+            .count()
+        )
+        return n == 1 and Decimal(str(payment.amount)) == Decimal(str(alloc.amount))
+
+    return _recompute(
+        db,
+        bill,
+        link_key=BILL_LINK,
+        source_types=BILL_SOURCE_TYPES,
+        control_id=get_ap_account_id(db),
+        fallback_account_id=unapplied_expense_id,
+        allocations=allocations,
+        fully_applied=fully_applied,
+        adopted=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +679,6 @@ def append_cash_lines(db: Session, txn: Transaction, lines: list[dict]) -> int:
     — the entry is dated and closing-date checked already, and the stored
     balance never takes a cash line — but the lines must balance among
     themselves, as create_journal_entry would insist."""
-    from app.services.classes_service import default_function_of
     from app.services.safe_errors import DataProblem
 
     out = sum(
@@ -467,6 +689,14 @@ def append_cash_lines(db: Session, txn: Transaction, lines: list[dict]) -> int:
         raise DataProblem(
             f"The cash-basis lines of this entry are out of balance by ${abs(out):,.2f}"
         )
+    return _insert_cash_lines(db, txn, lines)
+
+
+def _insert_cash_lines(db: Session, txn: Transaction, lines: list[dict]) -> int:
+    """Insert cash lines into an entry; the caller keeps the entry's cash
+    lines balanced."""
+    from app.services.classes_service import default_function_of
+
     fn_cache: dict = {}
     for line in lines:
         debit = _q(line.get("debit", 0))
@@ -492,6 +722,8 @@ def append_cash_lines(db: Session, txn: Transaction, lines: list[dict]) -> int:
                 cost_code_id=line.get("cost_code_id"),
                 cost_type=line.get("cost_type"),
                 basis=BASIS_CASH,
+                recognizes_invoice_id=line.get(INVOICE_LINK),
+                recognizes_bill_id=line.get(BILL_LINK),
             )
         )
     return len(lines)
@@ -730,6 +962,8 @@ __all__ = [
     "default_basis_for",
     "pending_backfill",
     "reading",
+    "recompute_bill_cash_lines",
+    "recompute_invoice_cash_lines",
     "resolve_basis",
     "unapplied_expense_id",
     "unapplied_income_id",

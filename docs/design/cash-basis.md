@@ -1,6 +1,8 @@
 # Reports on a cash basis — design (#483)
 
-Status: DESIGN + steps 1 and 2a built (#483, 2026-10-26 / 28). The
+Status: DESIGN + steps 1, 2a and 2b built (#483, 2026-10-26 / 28): the
+reports take a basis, edits of a paid document rewrite its payments' cash
+lines, and the journal form chooses a basis. The
 architecture — a basis on every ledger line, written when the document
 posts, never recomputed when a report is read — was decided by Keith on
 2026-10-26. Steps 1 and 2a (below) are built; "Decisions" at the end records
@@ -244,13 +246,23 @@ has no apply-later route yet, so it stays there until step 2.
 payment's entry, so voiding the payment reverses them (the void reads
 every line, `all_lines`, and `reversing_lines` carries each line's
 basis), and the invoice or bill can then be voided as an accrual entry.
-A paid or partly paid invoice or bill whose lines are edited keeps the
-cash lines its earlier payments wrote: cash was recognized on the lines
-as they stood when it arrived, A/R and A/P still net to zero in the cash
-view, and the accrual entry is reposted as today. To move recognized
-income to another account, void the payment, edit, receive it again.
-(The step-2 cleanup: recompute a payment's cash lines when its document
-is edited, unless the payment's period is closed.)
+A paid or partly paid invoice or bill whose lines are edited has its
+payments' cash lines rewritten (step 2b): each cash line names the invoice
+or bill it recognizes (`recognizes_invoice_id` / `recognizes_bill_id` on
+`transaction_lines`), so after the entry is reposted every non-void
+payment's lines for that document are removed from the payment's entry and
+written again from the document's new lines, prorated by the same applied
+amount (from the allocation rows), on the payment's date. The unapplied
+remainder's lines (4950 / 6990) are not touched, and the control A/R or A/P
+cash line stays (it is rebalanced if the amounts differ). A payment on or
+before the closing date keeps the lines it has, and the server log says so;
+to change those, void the payment, edit, receive it again. Lines written
+before the link existed name nothing: an edit rewrites them only when the
+payment paid that one document in full (every cash line but the control's is
+then the document's); a payment on several documents with unnamed lines is
+left alone and logged, since its lines cannot be told apart. A payment that
+has no cash lines for the document yet gets them (an invoice the QuickBooks
+Online ledger import posted, adopted by the edit).
 
 **Sales tax payable.** Prorated with the invoice's lines, so on the cash
 basis 2200 carries the tax *collected* and not yet remitted, and the
@@ -273,8 +285,10 @@ relieved by a payment's cash pair (a payment cannot be applied to a
 journal entry). QuickBooks' rule — such a line follows the document it
 is "linked" to — needs a customer on the line, which the journal form
 does not have. Opening A/R and A/P balances entered as journal entries
-sit on the cash Balance Sheet until step 2 gives the journal form a
-basis choice. So nobody reads that history as cash, a cash-basis report
+sit on the cash Balance Sheet unless the entry says **Accrual only** (step
+2b: the journal form's Basis choice and `basis` on `POST/PUT /api/journal`,
+`both` | `accrual` | `cash`, applied to every line of the entry, shown on the
+entry, kept by an edit that leaves it out and by the void). So nobody reads that history as cash, a cash-basis report
 whose A/R or A/P is not zero at its end date carries a short note
 (`basis_note` on the data; under the period line on screen, under the
 table on the PDF).
@@ -397,7 +411,10 @@ cash basis; the retainage follow-up (#552, #555).
    income is unchanged either way, and the void then has one entry to
    reverse. (The text above first had it dated the later of payment and
    invoice, today when closed; dropped for that reason.)
-7. **Edits of a paid document leave earlier cash lines alone** (v1).
+7. **Edits of a paid document rewrite its payments' cash lines** (step 2b;
+   v1 left them alone): the recognition follows the document as it now
+   stands, still prorated per payment by the amount applied, except for
+   payments on or before the closing date.
 8. **Independent proration per payment**; a cent may stay on a line.
 9. **Payroll and journal entries are `both`** in step 1.
 10. **Review calls (Trent, #572):** 4950 / 6990 show up on any
@@ -417,30 +434,31 @@ cash basis; the retainage follow-up (#552, #555).
 
 ## Known limits of step 1
 
-- **Proration drifts when a document's lines change between partial
-  payments.** Each payment prorates over the document's recognition lines
-  as they stand that day. A late fee or an edit between two partial
-  payments shifts the split between accounts for the later one; the
-  totals stay exact (each payment recognizes exactly what it applied).
-  The link from a cash line to its document (open items) is what would
-  true this up.
+- **Proration drifts when a late fee is added between partial payments.**
+  Each payment prorates over the document's recognition lines as they
+  stand that day; an edit now rewrites every payment's lines, but a late
+  fee posted on the invoice is not an edit and shifts the split for the
+  later payment only. The totals stay exact. The link from a cash line to
+  its document could now true this up.
 - **A payment that produces no cash lines, such as a $0 payment, is
   looked at again on every boot.** The backfill finds payments by "has no
   cash line", and nothing marks one that legitimately has none.
 - **An invoice the QuickBooks Online ledger import posted counts once, on
-  the posting's date.** Its `qbo_ledger` lines are `both`, so its income
-  is already in the cash view; a payment on it writes no recognition
-  lines (its `both` bank/A-R pair already takes A/R to zero), and
-  applying an unapplied remainder to it only moves Unapplied Cash Payment
-  Income back to A/R. Its income lands on the invoice date, not the
-  payment date, until the posting is adopted by an edit.
+  the posting's date, until it is edited.** Its `qbo_ledger` lines are
+  `both`, so its income is already in the cash view; a payment on it writes
+  no recognition lines (its `both` bank/A-R pair already takes A/R to
+  zero), and applying an unapplied remainder to it only moves Unapplied Cash
+  Payment Income back to A/R. An edit adopts the posting: the invoice then
+  posts as accrual and every payment on it is given its recognition lines
+  (step 2b), so its income lands on the payment dates.
 
 ## Open items (not settled; conservative choice taken)
 
-- **A link from a cash line to its document** (`recognizes_invoice_id` /
-  `recognizes_bill_id`) would let the final payment true up rounding,
-  let an edit find the lines to recompute, and give the cash-basis P&L
-  Detail a Name column. Not added: step 1 needs none of it.
+- **A link from a cash line to its document** is built (step 2b:
+  `recognizes_invoice_id` / `recognizes_bill_id`, nullable, no foreign key,
+  written by every new cash line; older lines stay NULL). Still open: using
+  it to true up the final payment's rounding and to give the cash-basis P&L
+  Detail a Name column.
 - **The accountant's Trial Balance** (settled in step 2a): the package's
   Trial Balance and General Ledger follow the company basis with the
   statements; the agings stay as posted.

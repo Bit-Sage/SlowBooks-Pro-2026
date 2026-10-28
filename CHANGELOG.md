@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Cash basis: editing a paid invoice or bill, and a basis for journal
+entries** (#483). Changing the lines of an invoice or bill that has been paid
+now moves what its payments counted on the cash basis to match: if half of an
+invoice was paid and you move its amount from one income account to another,
+the cash Profit & Loss moves the paid half too, on the day of each payment.
+(A payment on or before the closing date keeps what it has; void and re-enter
+the payment to change that.) An invoice brought in from QuickBooks Online and
+then edited now shows its income on its payments' dates on the cash basis
+instead of dropping out of it. The journal entry form has a new Basis choice,
+Both (as before), Accrual only or Cash only: enter an opening Accounts
+Receivable or Accounts Payable balance as Accrual only and it stays on the
+accrual reports without sitting on the cash Balance Sheet. Editing or voiding
+the entry keeps its basis.
+
 **Reports on a cash basis, step 2** (#483, @ContractorKeith). The Trial Balance,
 General Ledger, Profit & Loss Detail, an account's drill-down (and a P&L
 total's), P&L by Class, by Job and by month, Job Profitability and the

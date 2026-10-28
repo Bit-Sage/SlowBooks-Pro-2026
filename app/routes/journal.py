@@ -12,7 +12,7 @@ from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.transactions import Transaction
+from app.models.transactions import BASIS_BOTH, Transaction
 from app.models.accounts import Account
 from app.models.qbo_mapping import QBOMapping
 from app.models.users import ROLE_ACCOUNTANT
@@ -22,7 +22,12 @@ from app.schemas.journal import (
     JournalEntryResponse,
     JournalEntryUpdate,
 )
-from app.services.accounting import _q, create_journal_entry, reversing_lines
+from app.services.accounting import (
+    _q,
+    all_lines,
+    create_journal_entry,
+    reversing_lines,
+)
 from app.services.audit import log_event
 from app.services.bank_posting import (
     assert_not_reconciled,
@@ -137,6 +142,13 @@ def _line_dict(line, acct) -> dict:
     }
 
 
+def _basis_of(lines) -> str:
+    """The basis an entry's lines share (#483); both when they differ or
+    there are none (a document's mixed entry is not edited here)."""
+    bases = {ln.basis for ln in lines}
+    return bases.pop() if len(bases) == 1 else BASIS_BOTH
+
+
 def _line_dims_offered(db: Session) -> dict:
     """Which line dimensions the journal form has a picker for, as
     journal.js decides it: a line class where the company is nonprofit or
@@ -156,7 +168,9 @@ def _line_dims_offered(db: Session) -> dict:
     return {"class_id": classes, "cost_code_id": codes is not None}
 
 
-def _journal_lines(db: Session, data, edit: bool = False) -> list[dict]:
+def _journal_lines(
+    db: Session, data, edit: bool = False, basis: str = BASIS_BOTH
+) -> list[dict]:
     """The posted lines from the form's fields, the same for a new entry
     and an edit: a zero line dropped, an account checked to exist, each
     line's own description, job, class, cost code, billable flag and
@@ -184,6 +198,8 @@ def _journal_lines(db: Session, data, edit: bool = False) -> list[dict]:
             "debit": Decimal(str(line.debit)),
             "credit": Decimal(str(line.credit)),
             "description": line.description or "",
+            # the entry's basis applies to every line (#483)
+            "basis": basis,
         }
         # class, job, cost code and the billable flag are carried only when
         # the request names them (the `function` trick): on an edit, a field
@@ -272,8 +288,9 @@ def list_journal_entries(
     }
     results = []
     for txn in entries:
+        txn_lines = all_lines(db, txn.id)
         lines_data = []
-        for line in txn.lines:
+        for line in txn_lines:
             lines_data.append(_line_dict(line, accounts.get(line.account_id)))
         results.append(
             JournalEntryResponse(
@@ -284,9 +301,10 @@ def list_journal_entries(
                 source_type=txn.source_type or "",
                 is_adjusting=bool(txn.is_adjusting),
                 posted_by=txn.posted_by or "",
+                basis=_basis_of(txn_lines),
                 lines=lines_data,
-                total_debit=float(sum(line.debit for line in txn.lines)),
-                total_credit=float(sum(line.credit for line in txn.lines)),
+                total_debit=float(sum(line.debit for line in txn_lines)),
+                total_credit=float(sum(line.credit for line in txn_lines)),
                 voided=txn.id in voided,
                 voidable=_voidable(txn, txn.id in voided),
             )
@@ -304,8 +322,9 @@ def get_journal_entry(
     from app.services.qbo_documents import reversed_already
 
     accounts = {a.id: a for a in db.query(Account).all()}
+    txn_lines = all_lines(db, txn.id)
     lines_data = []
-    for line in txn.lines:
+    for line in txn_lines:
         lines_data.append(_line_dict(line, accounts.get(line.account_id)))
     voided = reversed_already(db, txn)
     recon = reconciled_on(db, txn)
@@ -316,7 +335,7 @@ def get_journal_entry(
     register = next(
         (
             accounts[line.account_id]
-            for line in txn.lines
+            for line in txn_lines
             if txn.source_type == "bank_entry"
             and accounts.get(line.account_id) is not None
             and accounts[line.account_id].bank_kind
@@ -333,9 +352,10 @@ def get_journal_entry(
         source_type=txn.source_type or "",
         is_adjusting=bool(txn.is_adjusting),
         posted_by=txn.posted_by or "",
+        basis=_basis_of(txn_lines),
         lines=lines_data,
-        total_debit=float(sum(line.debit for line in txn.lines)),
-        total_credit=float(sum(line.credit for line in txn.lines)),
+        total_debit=float(sum(line.debit for line in txn_lines)),
+        total_credit=float(sum(line.credit for line in txn_lines)),
         voided=voided,
         voidable=_voidable(txn, voided),
         editable=_je_editable(txn, voided, _role(request)),
@@ -363,7 +383,7 @@ def create_manual_journal_entry(
         if data.is_adjusting is not None
         else _role(request) == ROLE_ACCOUNTANT
     )
-    lines = _journal_lines(db, data)
+    lines = _journal_lines(db, data, basis=data.basis or BASIS_BOTH)
     if not lines:
         raise HTTPException(status_code=400, detail="No valid lines")
 
@@ -454,7 +474,10 @@ def update_journal_entry(
     # only POST /api/journal and the void on this router, so PUT is 403'd
     # before the route (#340). Its GET and the register say editable is
     # false for the accountant, so no Edit is offered in the first place.
-    lines = _journal_lines(db, data, edit=True)
+    old_lines = all_lines(db, txn.id)
+    lines = _journal_lines(
+        db, data, edit=True, basis=data.basis or _basis_of(old_lines)
+    )
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="At least 2 lines required")
     check_closing_date(db, txn.date)
@@ -463,7 +486,7 @@ def update_journal_entry(
     recon = reconciled_on(db, txn)
     moves = False
     if recon is not None:
-        recon_triples = _recon_triples(txn.lines)
+        recon_triples = _recon_triples(old_lines)
         new_triples = _triples(lines)
         # every reconciled line must still be there, on its own account for
         # its own amount, on the same day: a new amount or date — a sign
@@ -485,7 +508,7 @@ def update_journal_entry(
         rest = list(new_triples)
         for t in recon_triples:
             rest.remove(t)
-        old_rest = _triples([ln for ln in txn.lines if not ln.reconciliation_id])
+        old_rest = _triples([ln for ln in old_lines if not ln.reconciliation_id])
         moves = sorted(rest) != old_rest
         if moves and not data.confirm_reconciled:
             raise HTTPException(
@@ -622,7 +645,7 @@ def void_journal_entry(
     assert_not_reconciled(txn)
     check_closing_date(db, txn.date)
 
-    reverse_lines = reversing_lines(txn.lines)
+    reverse_lines = reversing_lines(all_lines(db, txn.id))
     if reverse_lines:
         try:
             void_txn = create_journal_entry(

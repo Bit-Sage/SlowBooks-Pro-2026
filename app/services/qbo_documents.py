@@ -413,6 +413,9 @@ def post_adopted_cash_lines(db: Session, invoice) -> None:
         payment = alloc.payment
         if payment and not payment.is_voided and payment.transaction_id is not None:
             cash_basis.add_payment_cash_lines(db, payment)
+    # a payment that already had cash lines for other documents has none for
+    # this one yet: its income was on the ledger posting (both), now accrual
+    cash_basis.recompute_invoice_cash_lines(db, invoice, adopted=True)
 
 
 def adopt_unposted_payments(db: Session, invoice) -> None:

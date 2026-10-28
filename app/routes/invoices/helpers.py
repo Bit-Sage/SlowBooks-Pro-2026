@@ -424,19 +424,31 @@ def _reverse_and_delete_journal(db: Session, transaction_id: int):
     Used by update_invoice and update_bill to prepare for a fresh journal
     rebuild.
     """
-    from app.models.transactions import TransactionLine
+    from app.models.transactions import (
+        BASIS_CASH,
+        LEDGER_BASIS_OPTION,
+        READ_ALL,
+        TransactionLine,
+    )
     from app.services.accounting import apply_balance_deltas
     from app.services.audit import audited_bulk_delete
 
+    # Every basis is deleted (a cash-basis journal entry's lines are all
+    # cash lines); a cash line never moved a stored balance, so it is not
+    # reversed (#483).
+    everything = {LEDGER_BASIS_OPTION: READ_ALL}
     old_lines = (
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == transaction_id)
+        .execution_options(**everything)
         .all()
     )
     # Aggregate the reversal per account and apply atomically, the same way
     # the posting path does, so this can't lose a concurrent update.
     balance_deltas: dict = {}
     for ol in old_lines:
+        if ol.basis == BASIS_CASH:
+            continue
         account = db.query(Account).filter(Account.id == ol.account_id).first()
         if account:
             if account.account_type.value in ("asset", "expense", "cogs"):
@@ -449,7 +461,7 @@ def _reverse_and_delete_journal(db: Session, transaction_id: int):
     apply_balance_deltas(db, balance_deltas)
     audited_bulk_delete(
         db,
-        db.query(TransactionLine).filter(
-            TransactionLine.transaction_id == transaction_id
-        ),
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == transaction_id)
+        .execution_options(**everything),
     )
