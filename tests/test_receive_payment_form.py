@@ -133,7 +133,7 @@ def test_receive_payment_and_the_customer_page_offer_credits_to_apply():
     assert "/customers/${customerId}/credits" in load
     assert "showApplyCredit(" in js and "/payments/${creditId}/apply" in js
     assert "/credit-memos/${creditId}/apply" in js
-    view = js[js.index("async view(id)") : js.index("async void(id)")]
+    view = js[js.index("async view(id)") : js.index("async void(id")]
     assert "p.unapplied" in view and "showApplyCredit('payment'" in view
     customers = _read("customers.js")
     assert "/customers/${id}/credits" in customers
@@ -147,7 +147,7 @@ def test_a_received_payment_offers_no_check_and_names_invoices_by_number(
 ):
     js = _read("payments.js")
     assert "checks/print" not in js
-    view = js[js.index("async view(id)") : js.index("async void(id)")]
+    view = js[js.index("async view(id)") : js.index("async void(id")]
     assert "a.invoice_number" in view
 
     r = client.post(
