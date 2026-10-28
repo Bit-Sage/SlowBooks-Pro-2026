@@ -7,6 +7,10 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**The desktop window zooms.** Ctrl + and Ctrl - (Cmd + and Cmd - on a Mac)
+now make the desktop app's window and its document windows larger or smaller,
+as they do in a browser; they did nothing before. (#597)
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

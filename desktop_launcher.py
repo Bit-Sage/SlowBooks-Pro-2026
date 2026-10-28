@@ -1184,7 +1184,9 @@ class PickerApi:
         try:
             import webview
 
-            webview.create_window(title or "SlowBooks Pro 2026", html=html)
+            webview.create_window(
+                title or "SlowBooks Pro 2026", html=html, zoomable=True
+            )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
         return {"success": True}
@@ -1250,7 +1252,9 @@ class PickerApi:
                 url, api = _write_viewer(dest, title).as_uri(), DocumentViewerApi(dest)
             except OSError:
                 url, api = dest.as_uri(), None
-            webview.create_window(title or "SlowBooks Pro 2026", url, js_api=api)
+            webview.create_window(
+                title or "SlowBooks Pro 2026", url, js_api=api, zoomable=True
+            )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
         result = {"success": True, "path": str(dest)}
@@ -1823,6 +1827,7 @@ def run_window(port: int, log_fh=None) -> int:
         width=1280,
         height=860,
         min_size=(900, 600),
+        zoomable=True,
     )
     try:
         # Require the WebView2 (Chromium) renderer on Windows. Without this,
