@@ -708,16 +708,18 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         # nothing.
         retainage_held = _q(update_data.get("retainage_held", bill.retainage_held) or 0)
         # A bill converted from a commitment with a retainage rate follows its
-        # lines: held is the rate on the new subtotal unless the request
-        # names an amount.
+        # lines: held is the rate on the new subtotal, unless the request names
+        # an amount or the stored figure is not the rate on the old subtotal
+        # (an amount set by hand stays; #597). A hand-set figure that happens
+        # to equal the derived one is indistinguishable and follows the rate.
         if "retainage_held" not in update_data and bill.po_id:
             from app.models.purchase_orders import PurchaseOrder
 
             po = db.get(PurchaseOrder, bill.po_id)
             if po and po.retainage_pct:
-                retainage_held = _q(
-                    subtotal * Decimal(str(po.retainage_pct)) / Decimal("100")
-                )
+                rate = Decimal(str(po.retainage_pct)) / Decimal("100")
+                if retainage_held == _q((bill.subtotal or 0) * rate):
+                    retainage_held = _q(subtotal * rate)
         if retainage_held > subtotal:
             raise HTTPException(
                 status_code=422,

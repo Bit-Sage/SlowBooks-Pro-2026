@@ -1164,6 +1164,57 @@ def test_explicit_retainage_held_wins_on_a_line_edit(
     assert Decimal(str(bill.retainage_held)) == Decimal("150.00")
 
 
+def test_hand_set_retainage_survives_a_repost(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    r = client.put(f"/api/bills/{bill_id}", json={"retainage_held": 250})
+    assert r.status_code == 200, r.text
+
+    # A date change alone re-posts without sending retainage_held.
+    r = client.put(f"/api/bills/{bill_id}", json={"date": "2026-02-01"})
+    assert r.status_code == 200, r.text
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
+    assert Decimal(str(bill.balance_due)) == Decimal("3750.00")
+
+    # A line change keeps it too, and balance_due agrees.
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 3000))
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
+    assert Decimal(str(bill.balance_due)) == Decimal("2750.00")
+    assert _gl(db_session, _retainage_account(db_session).id) == Decimal("-250.00")
+
+
+def test_derived_retainage_keeps_following_the_rate_across_reposts(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    for rate, held in ((3000, "300.00"), (2000, "200.00")):
+        r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, rate))
+        assert r.status_code == 200, r.text
+        bill = db_session.get(Bill, bill_id)
+        db_session.refresh(bill)
+        assert Decimal(str(bill.retainage_held)) == Decimal(held)
+
+
+def test_hand_set_retainage_above_a_smaller_subtotal_is_refused(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    assert (
+        client.put(f"/api/bills/{bill_id}", json={"retainage_held": 250}).status_code
+        == 200
+    )
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 200))
+    assert r.status_code == 422, r.text
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
+
+
 def test_raising_a_closed_commitment_is_refused(
     client, db_session, seed_accounts, seed_customer
 ):
