@@ -73,7 +73,8 @@ vendors search and show a payment history (#569), the register keeps the last
 entry's date and links the payee to a vendor (#566, #590), one deposit can
 carry several donors (#606), email takes Cc and Bcc (#611), the company
 records its legal entity type with the equity accounts and returns to match
-(#488), and the desktop window zooms (#597).
+(#488), a bill's memo prints on the check and Pay Bills prints its checks
+in one go (#602, #603), and the desktop window zooms (#597).
 
 Patch releases and everything before 2.30 are in [CHANGELOG.md](CHANGELOG.md).
 

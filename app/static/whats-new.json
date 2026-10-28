@@ -6,7 +6,7 @@
       "Reports on a cash basis: the P&L, Balance Sheet, Trial Balance, General Ledger, P&L Detail and Sales Tax switch between the company default, accrual and cash, and editing a paid document keeps the cash view right.",
       "The Trial Balance shows bank, card, receivable and payable accounts at their balance as of the end date, the way QuickBooks does.",
       "Online payments: a clearing account per provider with the fee, payouts recorded and matched to the bank feed, and a void that can record a refunded fee.",
-      "Account numbers are optional on the chart; vendors search and show a payment history; the register keeps its date and links the payee to a vendor; one deposit can carry several donors; email takes Cc and Bcc; the company records its legal entity type.",
+      "Account numbers are optional on the chart; vendors search and show a payment history; the register keeps its date and links the payee to a vendor; one deposit can carry several donors; email takes Cc and Bcc; a bill's memo prints on its check and Pay Bills prints its checks in one go; the company records its legal entity type.",
       "The desktop window zooms with Ctrl + / − / 0, Contact support from inside the app, an inventory sale's cost posts to the item's own account, and the QuickBooks ledger import warns about a report over 12 months."
     ]
   },
