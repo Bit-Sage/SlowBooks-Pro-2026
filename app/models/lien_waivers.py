@@ -1,8 +1,8 @@
 # ============================================================================
 # Lien waivers (#555) — the waiver the contractor gives its owner with each
-# payment. One record per payment and type: conditional or unconditional,
+# payment. One record per payment, job and type: conditional or unconditional,
 # progress or final. No accounting; the record prints a waiver (PDF) with the
-# payment's amount and the through date.
+# part of the payment applied to the job and the through date.
 # ============================================================================
 
 from sqlalchemy import (
@@ -35,7 +35,10 @@ class LienWaiver(Base):
     __tablename__ = "lien_waivers"
     __table_args__ = (
         UniqueConstraint(
-            "payment_id", "waiver_type", name="uq_lien_waiver_payment_type"
+            "payment_id",
+            "job_id",
+            "waiver_type",
+            name="uq_lien_waiver_payment_job_type",
         ),
     )
 
@@ -51,7 +54,8 @@ class LienWaiver(Base):
         Integer, ForeignKey("pay_applications.id", ondelete="SET NULL"), nullable=True
     )
     waiver_type = Column(String(24), nullable=False)
-    # The payment's amount at the time the waiver was made.
+    # The part of the payment applied to the job's invoices when the waiver
+    # was made (the whole payment when it carries no job).
     amount = Column(Numeric(15, 2), nullable=False)
     # Work is waived through this date (a final waiver covers the whole job).
     through_date = Column(Date, nullable=True)

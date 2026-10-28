@@ -285,7 +285,8 @@ def list_pay_applications(job_id: int = Query(...), db: Session = Depends(get_db
 @router.get("/{app_id}/payments")
 def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
     """The payments received on this application's invoice, each with the lien
-    waivers already made for it — what the Waivers screen lists."""
+    waivers already made for it on this job — what the Waivers screen lists.
+    A payment split across two jobs' invoices has a waiver per job (#576)."""
     from app.models.lien_waivers import LienWaiver
     from app.models.payments import Payment, PaymentAllocation
 
@@ -305,7 +306,7 @@ def pay_application_payments(app_id: int, db: Session = Depends(get_db)):
     for pay in payments:
         waivers = (
             db.query(LienWaiver)
-            .filter(LienWaiver.payment_id == pay.id)
+            .filter(LienWaiver.payment_id == pay.id, LienWaiver.job_id == app.job_id)
             .order_by(LienWaiver.id)
             .all()
         )
@@ -751,20 +752,29 @@ def void_pay_application(app_id: int, db: Session = Depends(get_db)):
             },
         )
     invoice = db.get(Invoice, app.invoice_id) if app.invoice_id else None
-    if invoice is not None:
-        _refuse_if_truly_paid(db, app, invoice)
-        dep = _deposit_payment(db, app, invoice)
-        if dep is not None:
-            from app.routes.payments import void_payment_unchecked
+    # The deposit payment, the invoice and the application are voided in one
+    # transaction: a refusal anywhere (a payment still applied, the closing
+    # date) rolls the lot back, so the deposit is never left voided under an
+    # application and invoice that still stand (#576).
+    try:
+        if invoice is not None:
+            _refuse_if_truly_paid(db, app, invoice)
+            dep = _deposit_payment(db, app, invoice)
+            if dep is not None:
+                from app.routes.payments import void_payment_unchecked
 
-            void_payment_unchecked(dep.id, db)  # commits; restores the balance
-            db.refresh(invoice)
-        from app.routes.invoices.lifecycle import void_invoice_unchecked
+                # restores the balance; the invoice void needs it clear
+                void_payment_unchecked(dep.id, db, commit=False)
+                db.refresh(invoice)
+            from app.routes.invoices.lifecycle import void_invoice_unchecked
 
-        void_invoice_unchecked(invoice.id, db)  # commits; reverses 1150 too
-    app.status = "void"
-    app.voided_at = datetime.now(timezone.utc)
-    db.commit()
+            void_invoice_unchecked(invoice.id, db, commit=False)  # reverses 1150
+        app.status = "void"
+        app.voided_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(app)
     return _out(db, app)
 

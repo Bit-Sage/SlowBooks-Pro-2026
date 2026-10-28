@@ -1489,7 +1489,7 @@ const JobsPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
-    // Lien waivers (#555): one per payment and type, made here and printed.
+    // Lien waivers (#555): one per payment, job and type, made here and printed.
     paWaiversHtml(payments) {
         const m = JobsPage.money;
         const rows = (payments || []).map(p => {
@@ -1517,7 +1517,7 @@ const JobsPage = {
 
     async paMakeWaiver(paymentId, type) {
         try {
-            const w = await API.post('/lien-waivers', { payment_id: paymentId, waiver_type: type });
+            const w = await API.post('/lien-waivers', { payment_id: paymentId, job_id: JobsPage._job.id, waiver_type: type });
             toast('Lien waiver made');
             await JobsPage.paWaivers(JobsPage._paWaiverApp);
             window.open(`/api/lien-waivers/${w.id}/pdf`, '_blank');

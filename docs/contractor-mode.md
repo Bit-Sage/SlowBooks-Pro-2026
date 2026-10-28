@@ -582,8 +582,8 @@ is still refused. Retainage to date can't go below zero either: a release is
 refused (422) when it is more than the retainage held at the application's own
 percent on the work completed, so dropping the percent to 0 and releasing on
 the same application is refused (release at the held percent, or bill the
-release on its own application). A lien waiver's amount is the part of the
-payment applied to the job's invoices. At approval the application keeps the contract sums as they
+release on its own application). A lien waiver is for one payment and one
+job, and its amount is the part of the payment applied to that job's invoices. At approval the application keeps the contract sums as they
 stood (original, and to date with change orders), and its PDF prints those, not
 today's job. An invoice made from a payment application can't be edited on the
 Invoices screen except for its notes (409); change the application instead.
@@ -594,9 +594,12 @@ the bank / CR **Customer Deposits** (2210) and shows as received, applied and
 unapplied. A pay application's **deposit applied** draws the unapplied balance
 down — on approve a payment whose deposit-to account is 2210 is created and
 applied to the invoice (DR 2210 / CR A/R), so the owner's prepayment settles
-the current due. Voiding the application restores the deposit; a deposit that
-has been applied cannot be voided until the application is, and the deposit
-payment cannot be voided from Payments while the application stands (409).
+the current due. Voiding the application restores the deposit — the deposit
+payment, the invoice and the application are voided together, so a refusal
+(a payment still on the invoice, the closing date) leaves all three standing.
+A deposit that has been applied cannot be voided until the application is, and
+the deposit payment cannot be voided from Payments while the application
+stands (409).
 
 **The sub side.** A commitment bills a period at a time exactly as buyout
 described (the **Sub pay app** button opens the partial-convert dialog with
@@ -620,9 +623,13 @@ On the owner side, each payment received on a payment application's invoice can
 carry the full set of waivers the contractor gives the owner: **conditional
 progress**, **unconditional progress**, **conditional final** and
 **unconditional final** (Pay apps tab → Waivers, or `POST /api/lien-waivers`
-with `payment_id` and `waiver_type`). One of each type per payment; the waiver
-takes the payment's amount and a through date (the application's period, else
-the payment's date), and `GET /api/lien-waivers/{id}/pdf` prints it. A
+with `payment_id`, `waiver_type` and, when the payment pays more than one
+job's invoices, the `job_id` it is for — left out, a payment on one job needs
+no `job_id`, and one spanning two jobs is refused with 400 `job_required`
+naming them). One of each type per payment and job; the waiver takes the part
+of the payment applied to that job's invoices and a through date (the
+application's period, else the payment's date), and
+`GET /api/lien-waivers/{id}/pdf` prints it. A
 conditional waiver takes effect only once the payment is received; an
 unconditional one says it has been; a final one covers the whole job. Some
 states require their own waiver form, so check yours before relying on these.

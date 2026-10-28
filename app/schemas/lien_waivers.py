@@ -15,11 +15,14 @@ WaiverType = Literal[
 
 
 class LienWaiverCreate(StrictModel):
-    """A waiver for one payment. The job, application and amount come from the
-    payment; the through date defaults to the application's period (else the
-    payment's date)."""
+    """A waiver for one payment and job. The amount is the part of the payment
+    applied to that job's invoices; `job_id` may be left out when the payment
+    pays one job's invoices only, and must be given when it spans more than
+    one. The application comes from the job's invoice; the through date
+    defaults to the application's period (else the payment's date)."""
 
     payment_id: int
+    job_id: Optional[int] = None
     waiver_type: WaiverType
     through_date: Optional[dt_date] = None
     signed_by: Optional[str] = Field(None, max_length=100)

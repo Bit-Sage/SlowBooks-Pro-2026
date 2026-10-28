@@ -135,6 +135,18 @@ _WIP_SUMMED = (
     "loss_provision",
 )
 
+# What an unmeasured job (contract, no budget or forecast) still carries into
+# the totals: the facts printed in its row. It earns nothing, so the earned,
+# over/under and loss figures stay out, along with the estimates it lacks.
+_WIP_SUMMED_UNMEASURED = (
+    "contract_original",
+    "approved_change_orders",
+    "revised_contract",
+    "cost_to_date",
+    "billed_to_date",
+    "retainage_outstanding",
+)
+
 
 def _blank_wip_row(job: Job) -> dict:
     row = {
@@ -158,13 +170,14 @@ def _unmeasured_wip_row(
 ) -> dict:
     """A job with a contract but no budget or forecast (and cost short of the
     contract): nothing to earn against, so it is listed with its contract, cost
-    and billing, no earned or over/under figures, and left out of the totals
-    and the adjusting entry."""
+    and billing, no earned or over/under figures, and left out of the adjusting
+    entry. The totals carry its contract, cost and billing so those columns
+    foot; its earned, over/under and loss figures stay out."""
     row = _blank_wip_row(job)
     row.update(
         has_contract=True,
         excluded=True,
-        warning=f"{job.name}: no budget or forecast; not included.",
+        warning=f"{job.name}: no budget or forecast; nothing earned.",
         contract_original=float(original),
         approved_change_orders=float(approved_cos),
         revised_contract=float(revised),
@@ -357,16 +370,22 @@ def wip_schedule(
     warnings += _forecast_dating_warnings(db, jobs, rows, as_of)
 
     totals = {key: _ZERO for key in _WIP_SUMMED}
+    measured_revised = _ZERO  # the contracts behind the Est. GP total
     for r in rows:
-        if r.get("excluded"):
-            continue
-        for key in _WIP_SUMMED:
+        keys = _WIP_SUMMED_UNMEASURED if r.get("excluded") else _WIP_SUMMED
+        for key in keys:
             if r[key] is not None:
                 totals[key] += Decimal(str(r[key]))
-    revised = totals["revised_contract"]
+        if not r.get("excluded") and r["revised_contract"] is not None:
+            measured_revised += Decimal(str(r["revised_contract"]))
     out_totals = {key: float(_q(v)) for key, v in totals.items()}
+    # Margin on the Total row = Est. GP / the revised contracts that have an
+    # estimate; an unmeasured job's contract is in the Revised total but has
+    # no GP to put against it.
     out_totals["margin_pct"] = (
-        float(_q(totals["estimated_gross_profit"] / revised * 100)) if revised else None
+        float(_q(totals["estimated_gross_profit"] / measured_revised * 100))
+        if measured_revised
+        else None
     )
     return {
         "as_of": as_of.isoformat(),

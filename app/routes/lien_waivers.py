@@ -1,7 +1,7 @@
 # ============================================================================
 # Lien waivers (#555) — conditional / unconditional, progress / final, one per
-# payment and type. The record holds the payment's amount and the through
-# date; GET /{id}/pdf prints it.
+# payment, job and type. The record holds the part of the payment applied to
+# the job and the through date; GET /{id}/pdf prints it.
 # ============================================================================
 
 from decimal import Decimal
@@ -34,15 +34,59 @@ def _get(db: Session, waiver_id: int) -> LienWaiver:
 @router.get("", response_model=list[LienWaiverOut])
 def list_lien_waivers(
     payment_id: int | None = Query(None),
+    job_id: int | None = Query(None),
     pay_application_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     q = db.query(LienWaiver)
     if payment_id is not None:
         q = q.filter(LienWaiver.payment_id == payment_id)
+    if job_id is not None:
+        q = q.filter(LienWaiver.job_id == job_id)
     if pay_application_id is not None:
         q = q.filter(LienWaiver.pay_application_id == pay_application_id)
     return q.order_by(LienWaiver.id).all()
+
+
+def _waiver_job(db: Session, payment: Payment, job_id: int | None) -> int | None:
+    """The job a waiver on this payment is for. The payment's invoices name
+    the jobs it pays: one job (invoices with no job alongside it do not
+    count) is taken as read; more than one needs `job_id` to pick; a payment
+    on no job's invoices has no job. A `job_id` the payment does not pay is
+    refused."""
+    job_ids = {
+        row[0]
+        for row in db.query(Invoice.job_id)
+        .join(PaymentAllocation, PaymentAllocation.invoice_id == Invoice.id)
+        .filter(PaymentAllocation.payment_id == payment.id)
+        .distinct()
+    }
+    jobs = sorted(j for j in job_ids if j is not None)
+    if job_id is not None:
+        if job_id not in jobs:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "job_not_paid",
+                    "message": "This payment pays nothing on that job.",
+                    "job_ids": jobs,
+                },
+            )
+        return job_id
+    if len(jobs) <= 1:
+        return jobs[0] if jobs else None
+    names = {
+        j.id: j.name for j in db.query(Job).filter(Job.id.in_(jobs)).order_by(Job.id)
+    }
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "job_required",
+            "message": "This payment pays more than one job; say which job the "
+            "waiver is for: " + ", ".join(names.get(j, str(j)) for j in jobs) + ".",
+            "job_ids": jobs,
+        },
+    )
 
 
 @router.post("", response_model=LienWaiverOut, status_code=201)
@@ -54,24 +98,37 @@ def create_lien_waiver(data: LienWaiverCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=409, detail="A voided payment can't have a lien waiver."
         )
-    # The job and payment application come from the invoice the payment pays.
-    invoice = (
-        db.query(Invoice)
-        .join(PaymentAllocation, PaymentAllocation.invoice_id == Invoice.id)
-        .filter(PaymentAllocation.payment_id == payment.id)
-        .order_by(Invoice.id)
+    # A waiver is for one payment and one job (#576): a payment split across
+    # two jobs' invoices gets one per job, each for the part applied there.
+    job_id = _waiver_job(db, payment, data.job_id)
+    taken = (
+        db.query(LienWaiver.id)
+        .filter(
+            LienWaiver.payment_id == payment.id,
+            LienWaiver.job_id == job_id,
+            LienWaiver.waiver_type == data.waiver_type,
+        )
         .first()
     )
-    job_id = invoice.job_id if invoice else None
-    app = (
-        db.get(PayApplication, invoice.pay_application_id)
-        if (invoice and invoice.pay_application_id)
-        else None
+    if taken is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This payment already has that kind of lien waiver for the job.",
+        )
+    # The payment application comes from the job's invoice the payment pays;
+    # the amount is what the payment applied to that job's invoices (the whole
+    # payment when it carries no job).
+    on_job = (
+        db.query(Invoice)
+        .join(PaymentAllocation, PaymentAllocation.invoice_id == Invoice.id)
+        .filter(PaymentAllocation.payment_id == payment.id, Invoice.job_id == job_id)
+        .order_by(Invoice.id)
     )
-    # A payment split across several invoices waives only the part applied to
-    # this job's invoices (the whole payment when it carries no job).
-    amount = Decimal(str(payment.amount))
-    if job_id is not None:
+    invoice = on_job.filter(Invoice.pay_application_id.isnot(None)).first()
+    app = db.get(PayApplication, invoice.pay_application_id) if invoice else None
+    if job_id is None:
+        amount = Decimal(str(payment.amount))
+    else:
         amount = Decimal(
             str(
                 db.query(func.coalesce(func.sum(PaymentAllocation.amount), 0))
@@ -104,7 +161,7 @@ def create_lien_waiver(data: LienWaiverCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="This payment already has that kind of lien waiver.",
+            detail="This payment already has that kind of lien waiver for the job.",
         )
     db.refresh(waiver)
     return waiver

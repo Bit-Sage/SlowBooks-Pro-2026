@@ -540,9 +540,13 @@ def void_payment(
     return void_payment_unchecked(payment_id, db, fee_refunded)
 
 
-def void_payment_unchecked(payment_id: int, db: Session, fee_refunded: bool = False):
+def void_payment_unchecked(
+    payment_id: int, db: Session, fee_refunded: bool = False, commit: bool = True
+):
     """The void itself, without the payment-application guard (a payment
-    application voiding its own deposit payment calls this)."""
+    application voiding its own deposit payment calls this). With
+    `commit=False` the work is flushed and left for the caller to commit, so
+    it can be undone with the caller's."""
     # Row-lock the payment so two concurrent voids can't both pass the
     # is_voided guard and post duplicate reversing JEs.
     payment = (
@@ -658,7 +662,10 @@ def void_payment_unchecked(payment_id: int, db: Session, fee_refunded: bool = Fa
                 invoice.status = InvoiceStatus.SENT
 
     payment.is_voided = True
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     if receipt is not None:
         from app.routes.invoices.lifecycle import void_invoice
 
