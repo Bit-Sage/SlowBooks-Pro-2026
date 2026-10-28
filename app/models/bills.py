@@ -71,6 +71,12 @@ class Bill(Base):
     # Retainage released on this bill (#555): a release bill debits Retainage
     # Payable (2050) and credits A/P for this amount, payable through Pay Bills.
     retainage_released = Column(Numeric(15, 2), nullable=False, default=0)
+    # True once a request named retainage_held (a figure set by hand); a
+    # converted bill whose figure is still the commitment's rate on its
+    # subtotal stays False and follows the rate on every re-post.
+    retainage_manual = Column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     lien_waiver_status = Column(String(16), nullable=True)
 
     notes = Column(Text, nullable=True)

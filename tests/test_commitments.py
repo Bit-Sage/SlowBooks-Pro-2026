@@ -1215,6 +1215,166 @@ def test_hand_set_retainage_above_a_smaller_subtotal_is_refused(
     assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
 
 
+def test_derived_retainage_follows_a_changed_commitment_rate(
+    client, db_session, seed_accounts, seed_customer
+):
+    """The old check compared the stored figure with rate x old subtotal, so a
+    commitment whose rate changed 10% -> 5% left the bill's 400 looking
+    hand-set, and a line edit kept it instead of re-deriving 150."""
+    po, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    bill = db_session.get(Bill, bill_id)
+    assert bill.retainage_manual is False
+    r = client.put(f"/api/purchase-orders/{po['id']}", json={"retainage_pct": 5})
+    assert r.status_code == 200, r.text
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 3000))
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("150.00")
+    assert bill.retainage_manual is False
+    assert Decimal(str(bill.balance_due)) == Decimal("2850.00")
+    assert _gl(db_session, seed_accounts["2000"].id) == Decimal("-2850.00")
+    assert _gl(db_session, _retainage_account(db_session).id) == Decimal("-150.00")
+
+
+def test_hand_set_retainage_is_flagged_and_survives_a_line_edit(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    r = client.put(f"/api/bills/{bill_id}", json={"retainage_held": 250})
+    assert r.status_code == 200, r.text
+    assert r.json()["retainage_manual"] is True
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert bill.retainage_manual is True
+
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 3000))
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
+    assert bill.retainage_manual is True
+    assert Decimal(str(bill.balance_due)) == Decimal("2750.00")
+
+    # Sending the derived figure itself counts as set by hand too: it is
+    # then kept when the lines change.
+    r = client.put(f"/api/bills/{bill_id}", json={"retainage_held": 300})
+    assert r.status_code == 200, r.text
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 2000))
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("300.00")
+
+
+def test_hand_set_retainage_over_the_new_subtotal_is_422_and_a_new_amount_passes(
+    client, db_session, seed_accounts, seed_customer
+):
+    _, ids, bill_id, line = _converted_4000_at_10(client, seed_accounts)
+    assert (
+        client.put(f"/api/bills/{bill_id}", json={"retainage_held": 250}).status_code
+        == 200
+    )
+    r = client.put(f"/api/bills/{bill_id}", json=_edit_body(ids, line, 200))
+    assert r.status_code == 422, r.text
+    assert "cannot exceed the subtotal" in r.json()["detail"]
+    bill = db_session.get(Bill, bill_id)
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("250.00")
+    assert Decimal(str(bill.subtotal)) == Decimal("4000.00")
+
+    # The same edit with a new amount goes through.
+    r = client.put(
+        f"/api/bills/{bill_id}", json=_edit_body(ids, line, 200, retainage_held=20)
+    )
+    assert r.status_code == 200, r.text
+    db_session.refresh(bill)
+    assert Decimal(str(bill.retainage_held)) == Decimal("20.00")
+    assert Decimal(str(bill.subtotal)) == Decimal("200.00")
+
+
+def test_a_hand_entered_bill_with_retainage_is_flagged_and_keeps_it(
+    client, db_session, seed_accounts, seed_customer
+):
+    v = _vendor(client, default_expense_account_id=seed_accounts["5100"].id)
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": v["id"],
+            "bill_number": "HAND-RET",
+            "date": "2026-03-01",
+            "retainage_held": 100,
+            "lines": [
+                {
+                    "description": "Draw",
+                    "account_id": seed_accounts["5100"].id,
+                    "amount": 1000,
+                }
+            ],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["retainage_manual"] is True
+    bill_id = r.json()["id"]
+    r = client.put(
+        "/api/bills/%d" % bill_id,
+        json={
+            "lines": [
+                {
+                    "description": "Draw",
+                    "account_id": seed_accounts["5100"].id,
+                    "amount": 800,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert Decimal(r.json()["retainage_held"]) == Decimal("100.00")
+
+    # Entered without one, the flag is off (nothing to follow: no commitment).
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": v["id"],
+            "bill_number": "HAND-NORET",
+            "date": "2026-03-01",
+            "lines": [
+                {
+                    "description": "Draw",
+                    "account_id": seed_accounts["5100"].id,
+                    "amount": 1000,
+                }
+            ],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["retainage_manual"] is False
+
+
+def test_retainage_manual_migration_adds_the_column_and_walks_back(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, inspect
+
+    before, revision = "a4c6e8f0b2d4", "b5d7f9a1c3e5"
+    db = tmp_path / "manual.db"
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.attributes["database_url"] = "sqlite:///" + db.as_posix()
+    script = ScriptDirectory.from_config(cfg)
+    assert len(script.get_heads()) == 1
+    assert script.get_revision(revision).down_revision == before
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db}")
+    cols = {c["name"]: c for c in inspect(engine).get_columns("bills")}
+    assert "retainage_manual" in cols
+    assert cols["retainage_manual"]["nullable"] is False
+    engine.dispose()
+    command.downgrade(cfg, before)
+    engine = create_engine(f"sqlite:///{db}")
+    names = {c["name"] for c in inspect(engine).get_columns("bills")}
+    assert "retainage_manual" not in names and "retainage_held" in names
+    engine.dispose()
+
+
 def test_raising_a_closed_commitment_is_refused(
     client, db_session, seed_accounts, seed_customer
 ):
