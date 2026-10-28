@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.30.0 — Construction from estimate to pay application, and reports on a cash basis
 
 **A lien waiver per payment and job** (#576). A payment applied to two jobs'
 invoices used to get one waiver, for whichever invoice came first, and a
