@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Reports on a cash basis, step 2** (#483, @ContractorKeith). The Trial Balance,
+General Ledger, Profit & Loss Detail, an account's drill-down (and a P&L
+total's), P&L by Class, by Job and by month, Job Profitability and the
+nonprofit Statement of Activities, Statement of Financial Position and
+Statement of Functional Expenses now take the same Basis choice the Profit &
+Loss and Balance Sheet have (Company default / Accrual / Cash, beside the
+dates; `?basis=cash` on their API, PDF and CSV, which say "cash basis" when they
+are). On the cash basis a ledger line is the payment's: income on the day the
+money came in, in the paid proportion, and the balance brought forward is
+read the same way, so each account still foots. A drill-down opened from a
+cash-basis statement stays on the cash basis, so its lines add up to the
+figure clicked. Without a choice they follow Settings → Company → Report
+Basis, and on the accrual basis they print what they always did. The
+Accountant's Package now sends its General Ledger and Trial Balance on the
+company's basis too, and its README says so.
+
 **Trial Balance: balance-sheet accounts at their balance as of the end date**
 (#597). For a date range the Trial Balance showed only that range's activity
 on every account, bank and card accounts included, so it never matched a

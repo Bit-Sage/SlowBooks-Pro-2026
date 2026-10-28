@@ -955,12 +955,15 @@ def general_ledger(
         Optional[int],
         Query(description="Only this class's lines (#236); omit for all"),
     ] = None,
+    basis: str = _BASIS_QUERY,
 ):
     """General Ledger detail report. With `class_id`, only the lines of
     that class (the line's own, else its transaction's, else Uncategorized,
     as P&L by Class groups them), the balance brought forward included —
     computed under the same test, or the running balances would be wrong
-    (#236)."""
+    (#236). `basis` (#483) reads the ledger as accrual or cash, the balance
+    brought forward on the same one."""
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     if not start_date:
         start_date = fiscal_year_start(db, date.today())
     if not end_date:
@@ -983,7 +986,7 @@ def general_ledger(
     q = q.order_by(
         Account.account_number, Transaction.date, Transaction.id, TransactionLine.id
     )
-    results = q.all()
+    results = q.execution_options(**cash_basis.reading(basis)).all()
 
     # Balance brought forward per account: everything posted before the
     # period. Balances read in the account's natural sign, as the balance
@@ -1005,7 +1008,10 @@ def general_ledger(
         )
         if in_class is not None:
             before = before.filter(in_class)
-        for acct_id, dr, cr in before.group_by(TransactionLine.account_id).all():
+        before = before.group_by(TransactionLine.account_id).execution_options(
+            **cash_basis.reading(basis)
+        )
+        for acct_id, dr, cr in before.all():
             opening[acct_id] = Decimal(str(dr)) - Decimal(str(cr))
 
     def _sign(acct):
@@ -1076,6 +1082,8 @@ def general_ledger(
         "account_id": account_id or None,
         "class_id": cls.id if cls else None,
         "class_name": cls.name if cls else None,
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "accounts": accounts_list,
     }
 
@@ -1111,6 +1119,7 @@ def account_transactions(
         Query(description="A parent account and its sub-accounts (#479)"),
     ] = None,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     """Phase 11: drill-down support. Every journal entry line hitting a
     given account in the date range, with source document linkage so the
@@ -1124,9 +1133,11 @@ def account_transactions(
     `family` a parent account with its sub-accounts. Every line of the set,
     each with its account, signed toward the total, with a running total
     from zero that ends on the statement's figure (`period_net`), for the
-    same dates, class, job and adjusting-entries choice."""
+    same dates, class, job and adjusting-entries choice. `basis` (#483):
+    accrual or cash, else the company's default."""
     from app.services.bank_register import account_register
 
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     section = section if isinstance(section, str) else None
     family = family if isinstance(family, int) else None
     exclude_adjusting = _flag(exclude_adjusting)
@@ -1150,6 +1161,7 @@ def account_transactions(
             class_id,
             job_id,
             exclude_adjusting,
+            basis,
         )
     acct = db.query(Account).filter(Account.id == account_id).first()
     if not acct:
@@ -1169,8 +1181,10 @@ def account_transactions(
                 raise HTTPException(status_code=404, detail="Job not found")
             job_name = job.name
     out = account_register(
-        db, acct, start_date, end_date, class_id=class_id, job_id=job_id
+        db, acct, start_date, end_date, class_id=class_id, job_id=job_id, basis=basis
     )
+    out["basis"] = basis
+    out["basis_note"] = cash_basis.receivable_note(db, end_date, basis)
     out["start_date"] = start_date.isoformat()
     out["end_date"] = end_date.isoformat()
     out["class_id"] = cls.id if cls else None
@@ -1197,7 +1211,15 @@ def _job_words(db, job_id) -> Optional[str]:
 
 
 def _account_set(
-    db, start_date, end_date, section, family, class_id, job_id, exclude_adjusting
+    db,
+    start_date,
+    end_date,
+    section,
+    family,
+    class_id,
+    job_id,
+    exclude_adjusting,
+    basis="accrual",
 ) -> dict:
     """The drill-down for a P&L total or a sub-account family (#479)."""
     from app.services.pl_detail import SET_TOTALS, account_set_lines
@@ -1229,6 +1251,7 @@ def _account_set(
         job_id=job_id,
         exclude_adjusting=exclude_adjusting,
         words=t,
+        basis=basis,
     )
     out.update(
         {
@@ -1248,6 +1271,8 @@ def _account_set(
             "job_id": job_id,
             "job_name": job_name,
             "exclude_adjusting": bool(exclude_adjusting),
+            "basis": basis,
+            "basis_note": cash_basis.receivable_note(db, end_date, basis),
         }
     )
     return out
@@ -1457,6 +1482,7 @@ def _pl_pivot(
     show: str = "all",
     include_empty: bool = False,
     restrict: Optional[set] = None,
+    basis: str = "accrual",
 ) -> dict:
     """P&L accounts down the side, one column per value of a dimension
     (class, job) across, from the posted lines of the period.
@@ -1479,6 +1505,7 @@ def _pl_pivot(
     partial Net Income is never read as the P&L's.
 
     An account that nets to nothing in every column shown is left out.
+    `basis` (#483) reads the ledger as accrual or cash.
     """
     chart = _chart_index(db)
     rows = (
@@ -1508,6 +1535,7 @@ def _pl_pivot(
             Account.account_type,
             Account.detail_type,
         )
+        .execution_options(**cash_basis.reading(basis))
         .all()
     )
 
@@ -1625,6 +1653,8 @@ def _pl_pivot(
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "columns": columns,
         "accounts": accounts,
         "total_income": shown["income"],
@@ -1675,6 +1705,7 @@ def profit_loss_by_class(
     include_empty: Annotated[
         bool, Query(description="A column for every class, activity or not")
     ] = False,
+    basis: str = _BASIS_QUERY,
 ):
     """P&L split by the class dimension on each posted line.
 
@@ -1688,6 +1719,7 @@ def profit_loss_by_class(
     from app.models.classes import TxnClass
     from app.services.classes_service import class_attribution, uncategorized_class_id
 
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     start_date, end_date = _period(db, start_date, end_date)
     if show not in ("all", "active"):
         raise HTTPException(status_code=400, detail="show must be all or active")
@@ -1708,6 +1740,7 @@ def profit_loss_by_class(
         chosen=chosen,
         show=show,
         include_empty=include_empty,
+        basis=basis,
     )
     out["classes"] = [
         {
@@ -1758,6 +1791,7 @@ def profit_loss_by_job(
     include_empty: Annotated[
         bool, Query(description="A column for every job, activity or not")
     ] = False,
+    basis: str = _BASIS_QUERY,
 ):
     """P&L split by job (R13, #242): every P&L account down the side, a
     column per job and a "No job" column first, as P&L by Class lays it
@@ -1771,6 +1805,7 @@ def profit_loss_by_job(
     from app.models.jobs import Job
     from app.services.jobs_service import NO_JOB_LABEL, job_attribution
 
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     start_date, end_date = _period(db, start_date, end_date)
     if show not in ("all", "active"):
         raise HTTPException(status_code=400, detail="show must be all or active")
@@ -1809,6 +1844,7 @@ def profit_loss_by_job(
         show=show,
         include_empty=include_empty,
         restrict=restrict,
+        basis=basis,
     )
     out["jobs"] = [
         {
@@ -1842,7 +1878,9 @@ def profit_loss_by_job(
     return out
 
 
-def _by_job_data(db, start_date, end_date, job_ids, customer_id, show, include_empty):
+def _by_job_data(
+    db, start_date, end_date, job_ids, customer_id, show, include_empty, basis=None
+):
     data = profit_loss_by_job(
         start_date,
         end_date,
@@ -1851,6 +1889,7 @@ def _by_job_data(db, start_date, end_date, job_ids, customer_id, show, include_e
         customer_id=customer_id,
         show=show,
         include_empty=include_empty,
+        basis=basis,
     )
     t = terms_from_db(db)
     title = f"{t('P&L')} by {t('Job')}"
@@ -1869,9 +1908,10 @@ def profit_loss_by_job_pdf(
     customer_id: Optional[int] = None,
     show: str = "all",
     include_empty: bool = False,
+    basis: str = _BASIS_QUERY,
 ):
     data, title, columns, t = _by_job_data(
-        db, start_date, end_date, job_ids, customer_id, show, include_empty
+        db, start_date, end_date, job_ids, customer_id, show, include_empty, basis
     )
     return _pdf_response(
         _grid_sections(data, title, columns, t),
@@ -1892,11 +1932,12 @@ def profit_loss_by_job_csv_route(
     show: str = "all",
     include_empty: bool = False,
     layout: str = Query(default="wide"),
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import profit_loss_by_class_csv
 
     data, title, columns, t = _by_job_data(
-        db, start_date, end_date, job_ids, customer_id, show, include_empty
+        db, start_date, end_date, job_ids, customer_id, show, include_empty, basis
     )
     return _csv_download(
         profit_loss_by_class_csv(data, columns, _company_name(db), t, layout=layout),
@@ -1911,24 +1952,30 @@ def job_profitability_report(
     end_date: date = Query(default=None),
     customer_id: int = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     """Income, costs and margin per job from posted lines.
 
     A line's job is its own job_id, else its transaction's; untagged
     activity is the "No job" row, so the totals equal the plain Profit &
     Loss for the same period (the same reconciliation promise as P&L by
-    Class).
+    Class). `basis` (#483): accrual or cash, else the company's default.
     """
     from app.services.jobs_service import job_profitability
 
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     if not start_date:
         start_date = fiscal_year_start(db, date.today())
     if not end_date:
         end_date = date.today()
-    rows = job_profitability(db, start_date, end_date, customer_id=customer_id)
+    rows = job_profitability(
+        db, start_date, end_date, customer_id=customer_id, basis=basis
+    )
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "jobs": rows,
         "total_income": sum(r["income"] for r in rows),
         "total_costs": sum(r["total_costs"] for r in rows),
@@ -2194,6 +2241,8 @@ def _grid_sections(data: dict, title: str, columns: list, t=None) -> list[dict]:
             )
         )
         period = f"{data['start_date']} — {data['end_date']}"
+        if data.get("basis") == "cash":
+            period += " (cash basis)"
         if len(pages) > 1:
             period += (
                 f" · columns {idx[0] + 1}–{idx[-1] + 1} of {len(columns)}"
@@ -2405,9 +2454,11 @@ def _gl_section(data: dict) -> dict:
         title = f"General Ledger — {data['class_name']}"
     return {
         "title": title,
-        "period": f"{data['start_date']} — {data['end_date']}",
+        "period": f"{data['start_date']} — {data['end_date']}"
+        + (" (cash basis)" if data.get("basis") == "cash" else ""),
         "columns": ["Date", "Reference", "Description", "Debit", "Credit", "Balance"],
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -2499,6 +2550,7 @@ def profit_loss_by_class_pdf(
     class_ids: Optional[list[str]] = Query(default=None),
     show: str = "all",
     include_empty: bool = False,
+    basis: str = _BASIS_QUERY,
 ):
     """The by-class grid, landscape; past eight classes it goes over
     several pages, each with the Account and Total columns (#232). The
@@ -2510,6 +2562,7 @@ def profit_loss_by_class_pdf(
         class_ids=class_ids,
         show=show,
         include_empty=include_empty,
+        basis=basis,
     )
     t = terms_from_db(db)
     columns = [dict(c, name=c["class_name"]) for c in data["classes"]]
@@ -2534,6 +2587,7 @@ def profit_loss_by_class_csv_route(
     class_ids: Optional[list[str]] = Query(default=None),
     show: str = "all",
     include_empty: bool = False,
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import profit_loss_by_class_csv
 
@@ -2544,6 +2598,7 @@ def profit_loss_by_class_csv_route(
         class_ids=class_ids,
         show=show,
         include_empty=include_empty,
+        basis=basis,
     )
     t = terms_from_db(db)
     columns = [dict(c, name=c["class_name"]) for c in data["classes"]]
@@ -2594,8 +2649,11 @@ def general_ledger_pdf(
     account_id: int = Query(default=None),
     class_id: int = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
-    data = general_ledger(start_date, end_date, account_id, db, class_id=class_id)
+    data = general_ledger(
+        start_date, end_date, account_id, db, class_id=class_id, basis=basis
+    )
     return _pdf_response(
         [_gl_section(data)],
         db,
@@ -2611,10 +2669,13 @@ def general_ledger_csv_route(
     account_id: int = Query(default=None),
     class_id: int = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import general_ledger_csv
 
-    data = general_ledger(start_date, end_date, account_id, db, class_id=class_id)
+    data = general_ledger(
+        start_date, end_date, account_id, db, class_id=class_id, basis=basis
+    )
     return _csv_download(
         general_ledger_csv(data, _company_name(db), terms_from_db(db)),
         f"general-ledger_{data['start_date']}_{data['end_date']}.csv",
@@ -2682,11 +2743,14 @@ def _account_transactions_section(data: dict, t, numbered: bool = True) -> dict:
         period += f" · {t('Class')}: {data['class_name']} only"
     if data.get("job_name"):
         period += f" · {t('Job')}: {data['job_name']}"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     return {
         "title": f"Account detail — {head}",
         "period": period,
         "columns": ["Date", "Payee", "Description", "Debit", "Credit", "Running"],
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -2720,12 +2784,15 @@ def _account_set_section(data: dict, t) -> dict:
         period += f" · {t('Job')}: {data['job_name']}"
     if data.get("exclude_adjusting"):
         period += " · adjusting entries left out"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     return {
         "title": f"Account detail — {data['set']['label']}",
         "period": period,
         "columns": ["Date", "Account", "Name", "Memo", "Amount", "Running"],
         "text_columns": 4,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -2750,6 +2817,7 @@ def _drill_data(
     section,
     family,
     exclude_adjusting,
+    basis=None,
 ):
     return account_transactions(
         account_id,
@@ -2761,6 +2829,7 @@ def _drill_data(
         section=section,
         family=family,
         exclude_adjusting=exclude_adjusting,
+        basis=basis,
     )
 
 
@@ -2776,6 +2845,7 @@ def account_transactions_csv_route(
     section: Optional[str] = Query(default=None),
     family: Optional[int] = Query(default=None),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     """The drill-down as a CSV, the figures on the screen (#333); a P&L
     total's or a family's too, with each line's account (#479)."""
@@ -2791,6 +2861,7 @@ def account_transactions_csv_route(
         section,
         family,
         exclude_adjusting,
+        basis,
     )
     t = terms_from_db(db)
     return _csv_download(
@@ -2811,6 +2882,7 @@ def account_transactions_pdf_route(
     section: Optional[str] = Query(default=None),
     family: Optional[int] = Query(default=None),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     """The drill-down as a PDF (#333); a P&L total's or a family's too
     (#479)."""
@@ -2824,6 +2896,7 @@ def account_transactions_pdf_route(
         section,
         family,
         exclude_adjusting,
+        basis,
     )
     t = terms_from_db(db)
     numbered = use_account_numbers(db)
@@ -2941,7 +3014,10 @@ def financial_statements_pdf(
         from app.routes.reports.nonprofit import nonprofit_statement_sections
 
         sections = nonprofit_statement_sections(
-            db, date.fromisoformat(pl["start_date"]), date.fromisoformat(pl["end_date"])
+            db,
+            date.fromisoformat(pl["start_date"]),
+            date.fromisoformat(pl["end_date"]),
+            pl["basis"],
         ) + [_tb_section(tb)]
     else:
         sections = [_pl_section(pl, t), _bs_section(bs, t), _tb_section(tb)]

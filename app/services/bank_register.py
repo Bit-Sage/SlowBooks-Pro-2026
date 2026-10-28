@@ -364,6 +364,7 @@ def account_register(
     end: date | None = None,
     class_id: int | None = None,
     job_id: int | None = None,
+    basis: str = "accrual",
 ) -> dict:
     """Every ledger line on `account`, natural-balance running balance,
     period totals, and — when a start date is given — the balance carried
@@ -371,7 +372,11 @@ def account_register(
     lines of that class (the line's own, else its transaction's, else
     Uncategorized), the opening balance included (#213); with `job_id`,
     only that job's lines the same way (the line's own, else its
-    transaction's), 0 meaning the lines with no job (#242)."""
+    transaction's), 0 meaning the lines with no job (#242). `basis` reads the
+    ledger as accrual or cash (#483), the opening balance on the same one."""
+    from app.services import cash_basis
+
+    reading = cash_basis.reading(basis)
     debit_normal = is_debit_normal(account)
     in_class = line_scope(db, class_id, job_id)
 
@@ -388,7 +393,7 @@ def account_register(
         )
         if in_class is not None:
             before = before.filter(in_class)
-        dr, cr = before.one()
+        dr, cr = before.execution_options(**reading).one()
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         opening = (dr - cr) if debit_normal else (cr - dr)
 
@@ -403,7 +408,11 @@ def account_register(
         q = q.filter(Transaction.date >= start)
     if end:
         q = q.filter(Transaction.date <= end)
-    rows = q.order_by(Transaction.date, Transaction.id, TransactionLine.id).all()
+    rows = (
+        q.order_by(Transaction.date, Transaction.id, TransactionLine.id)
+        .execution_options(**reading)
+        .all()
+    )
 
     txns = {txn.id: txn for _, txn in rows}
     voided = voided_transaction_ids(db, txns.keys())

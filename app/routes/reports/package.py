@@ -143,8 +143,9 @@ def build_package(
     notes: list[str] = []
 
     # 1. the statements pack
-    # The statements follow the company's report basis (#483): a company that
-    # reports on a cash basis sends a cash P&L and Balance Sheet.
+    # The statements, General Ledger and Trial Balance follow the company's
+    # report basis (#483): a company that reports on a cash basis sends them
+    # on a cash basis.
     from app.services.cash_basis import company_basis
 
     basis = company_basis(db)
@@ -158,7 +159,7 @@ def build_package(
         if t.is_nonprofit:
             from app.routes.reports.nonprofit import nonprofit_statement_sections
 
-            sections = nonprofit_statement_sections(db, start_date, end_date) + [
+            sections = nonprofit_statement_sections(db, start_date, end_date, basis) + [
                 _tb_section(tb)
             ]
         else:
@@ -169,11 +170,7 @@ def build_package(
                 f"financial-statements_{s}_{e}.pdf",
                 pdf,
                 "the Financial Statements Pack: Profit & Loss, Balance Sheet and Trial Balance"
-                + (
-                    " (Profit & Loss and Balance Sheet on a cash basis)"
-                    if basis == "cash"
-                    else ""
-                ),
+                + (" (on a cash basis)" if basis == "cash" else ""),
             )
         )
     except Exception as exc:  # no PDF renderer on this install
@@ -183,7 +180,7 @@ def build_package(
         )
 
     # 2. the ledger
-    gl = general_ledger(start_date, end_date, None, db)
+    gl = general_ledger(start_date, end_date, None, db, basis=basis)
     files.append(
         (
             f"general-ledger_{s}_{e}.csv",
@@ -301,8 +298,8 @@ def build_package(
         "",
         f"Report basis: {basis}. "
         + (
-            "The Profit & Loss and Balance Sheet are on a cash basis; the General "
-            "Ledger, Trial Balance and agings are the books as posted (accrual)."
+            "The Profit & Loss, Balance Sheet, Trial Balance and General Ledger are "
+            "on a cash basis; the agings are the books as posted (accrual)."
             if basis == "cash"
             else "The statements are on the accrual basis."
         ),

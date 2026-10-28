@@ -11,11 +11,24 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routes.reports._router import router
-from app.routes.reports.financial import _money, _pdf_response
+from app.routes.reports.financial import _BASIS_QUERY, _money, _pdf_response
 from app.services.account_label import account_label
+from app.services import cash_basis
 from app.services import nonprofit_reports as svc
 from app.services.fiscal_year import fiscal_year_start
 from app.services.settings_service import use_account_numbers
+
+
+def _basis(db, requested) -> str:
+    """The basis the statement reads (#483): the parameter, else the
+    company's default."""
+    return cash_basis.resolve_basis(
+        db, requested if isinstance(requested, str) else None
+    )
+
+
+def _cash_words(data: dict) -> str:
+    return " (cash basis)" if data.get("basis") == "cash" else ""
 
 
 def _period(db, start_date, end_date):
@@ -39,9 +52,13 @@ def _csv_response(text: str, filename: str) -> Response:
 
 @router.get("/statement-of-financial-position")
 def statement_of_financial_position(
-    as_of_date: date = Query(default=None), db: Session = Depends(get_db)
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
-    return svc.statement_of_financial_position(db, as_of_date or date.today())
+    return svc.statement_of_financial_position(
+        db, as_of_date or date.today(), _basis(db, basis)
+    )
 
 
 def _sofp_section(data: dict) -> dict:
@@ -92,17 +109,22 @@ def _sofp_section(data: dict) -> dict:
     )
     return {
         "title": "Statement of Financial Position",
-        "period": f"As of {data['as_of_date']}",
+        "period": f"As of {data['as_of_date']}" + _cash_words(data),
         "columns": ["", "Amount"],
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
 @router.get("/statement-of-financial-position/pdf")
 def statement_of_financial_position_pdf(
-    as_of_date: date = Query(default=None), db: Session = Depends(get_db)
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
-    data = svc.statement_of_financial_position(db, as_of_date or date.today())
+    data = svc.statement_of_financial_position(
+        db, as_of_date or date.today(), _basis(db, basis)
+    )
     return _pdf_response(
         [_sofp_section(data)],
         db,
@@ -112,9 +134,13 @@ def statement_of_financial_position_pdf(
 
 @router.get("/statement-of-financial-position/csv")
 def statement_of_financial_position_csv(
-    as_of_date: date = Query(default=None), db: Session = Depends(get_db)
+    as_of_date: date = Query(default=None),
+    db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
-    data = svc.statement_of_financial_position(db, as_of_date or date.today())
+    data = svc.statement_of_financial_position(
+        db, as_of_date or date.today(), _basis(db, basis)
+    )
     return _csv_response(
         svc.financial_position_csv(data),
         f"statement-of-financial-position_{data['as_of_date']}.csv",
@@ -124,16 +150,18 @@ def statement_of_financial_position_csv(
 # ── Statement of Activities ──────────────────────────────────────────────
 
 
-def _soa(db, start_date, end_date, compare):
+def _soa(db, start_date, end_date, compare, basis=None):
+    basis = _basis(db, basis)
     if compare == "prior_year":
-        return svc.statement_of_activities_compared(db, start_date, end_date)
-    return svc.statement_of_activities(db, start_date, end_date)
+        return svc.statement_of_activities_compared(db, start_date, end_date, basis)
+    return svc.statement_of_activities(db, start_date, end_date, basis)
 
 
-def _sfe(db, start_date, end_date, compare):
+def _sfe(db, start_date, end_date, compare, basis=None):
+    basis = _basis(db, basis)
     if compare == "prior_year":
-        return svc.functional_expenses_compared(db, start_date, end_date)
-    return svc.functional_expenses(db, start_date, end_date)
+        return svc.functional_expenses_compared(db, start_date, end_date, basis)
+    return svc.functional_expenses(db, start_date, end_date, basis)
 
 
 @router.get("/statement-of-activities")
@@ -144,9 +172,10 @@ def statement_of_activities(
         default=None, description="prior_year adds last year's column"
     ),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    return _soa(db, start_date, end_date, compare)
+    return _soa(db, start_date, end_date, compare, basis)
 
 
 def _soa_section(data: dict) -> dict:
@@ -238,9 +267,10 @@ def _soa_section(data: dict) -> dict:
         columns += [f"Prior year ({data['prior']['start_date'][:4]})", "Change"]
     return {
         "title": "Statement of Activities",
-        "period": f"{data['start_date']} — {data['end_date']}",
+        "period": f"{data['start_date']} — {data['end_date']}" + _cash_words(data),
         "columns": columns,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -250,9 +280,10 @@ def statement_of_activities_pdf(
     end_date: date = Query(default=None),
     compare: str = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    data = _soa(db, start_date, end_date, compare)
+    data = _soa(db, start_date, end_date, compare, basis)
     return _pdf_response(
         [_soa_section(data)],
         db,
@@ -266,9 +297,10 @@ def statement_of_activities_csv(
     end_date: date = Query(default=None),
     compare: str = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    data = _soa(db, start_date, end_date, compare)
+    data = _soa(db, start_date, end_date, compare, basis)
     return _csv_response(
         svc.activities_csv(data),
         f"statement-of-activities_{start_date}_{end_date}.csv",
@@ -363,9 +395,10 @@ def functional_expenses(
         default=None, description="prior_year adds last year's column"
     ),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    return _sfe(db, start_date, end_date, compare)
+    return _sfe(db, start_date, end_date, compare, basis)
 
 
 def _sfe_section(data: dict, numbered: bool = True) -> dict:
@@ -422,9 +455,10 @@ def _sfe_section(data: dict, numbered: bool = True) -> dict:
         columns += [f"Prior year ({data['prior']['start_date'][:4]})", "Change"]
     return {
         "title": "Statement of Functional Expenses",
-        "period": f"{data['start_date']} — {data['end_date']}",
+        "period": f"{data['start_date']} — {data['end_date']}" + _cash_words(data),
         "columns": columns,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -434,9 +468,10 @@ def functional_expenses_pdf(
     end_date: date = Query(default=None),
     compare: str = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    data = _sfe(db, start_date, end_date, compare)
+    data = _sfe(db, start_date, end_date, compare, basis)
     return _pdf_response(
         [_sfe_section(data, use_account_numbers(db))],
         db,
@@ -450,19 +485,22 @@ def functional_expenses_csv(
     end_date: date = Query(default=None),
     compare: str = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     start_date, end_date = _period(db, start_date, end_date)
-    data = _sfe(db, start_date, end_date, compare)
+    data = _sfe(db, start_date, end_date, compare, basis)
     return _csv_response(
         svc.functional_expenses_csv(data),
         f"functional-expenses_{start_date}_{end_date}.csv",
     )
 
 
-def nonprofit_statement_sections(db: Session, start: date, end: date) -> list[dict]:
+def nonprofit_statement_sections(
+    db: Session, start: date, end: date, basis: str = "accrual"
+) -> list[dict]:
     """The statements pack in nonprofit words: Activities + Financial
     Position (used by the pack endpoint when company_type is nonprofit)."""
     return [
-        _soa_section(svc.statement_of_activities(db, start, end)),
-        _sofp_section(svc.statement_of_financial_position(db, end)),
+        _soa_section(svc.statement_of_activities(db, start, end, basis)),
+        _sofp_section(svc.statement_of_financial_position(db, end, basis)),
     ]

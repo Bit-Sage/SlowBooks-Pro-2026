@@ -1,11 +1,11 @@
 # Reports on a cash basis — design (#483)
 
-Status: DESIGN + step 1 built on this branch (#483, 2026-10-26). The
+Status: DESIGN + steps 1 and 2a built (#483, 2026-10-26 / 28). The
 architecture — a basis on every ledger line, written when the document
 posts, never recomputed when a report is read — was decided by Keith on
-2026-10-26. Step 1 (below) is built here; "Decisions" at the end records
-what the build settled that this text had not, and "Steps 2+" what is
-left. Issue #483, from Trent: every statement is accrual only, nothing in
+2026-10-26. Steps 1 and 2a (below) are built; "Decisions" at the end records
+what the builds settled that this text had not, and "Rollout in PRs" what
+is left. Issue #483, from Trent: every statement is accrual only, nothing in
 `app/` knows a basis, and the CPAs who file most small-business returns
 file them on the cash basis, so the bookkeeper switches the P&L at year
 end. QuickBooks has a company default and a per-report toggle.
@@ -317,9 +317,9 @@ branch, byte for byte. `_pl_section` / `_bs_section` and the two CSVs add
 "(cash basis)" to the period line only when the basis is cash. The
 accountant's package follows the company's report basis: its Profit &
 Loss and Balance Sheet (the statements pack) are cash when the default is
-cash, and its README and manifest say which. Its General Ledger, Trial
-Balance and agings are the books as posted until step 2, and the README
-says so.
+cash, and its README and manifest say which. Its General Ledger and Trial
+Balance follow the company basis from step 2a; the agings stay the books as
+posted, and the README says so.
 
 The screen: a Basis select (Company default / Accrual / Cash) in the two
 statements' toolbar, riding on the address, the saved report and the
@@ -353,14 +353,27 @@ payments (receive, batch, online, apply, void) and bill payments (pay,
 void); `report_basis`; `basis` on the P&L and Balance Sheet, their PDF
 and CSV, and the screen toggle; `tests/test_cash_basis.py`.
 
-**Step 2.** The Trial Balance, General Ledger, P&L Detail, account
-drill-down, the grids (by Class, by Job, by month) and the nonprofit
-statements take `basis`; edits of a paid document recompute its
-payments' cash lines; the journal form's basis choice.
+**Step 2a (built).** The Trial Balance, General Ledger, P&L Detail, account
+drill-down (an account's and a P&L total's), the grids (by Class, by Job, by
+month), Job Profitability and the nonprofit statements (Activities,
+Financial Position, Functional Expenses) take `basis`; the accountant's
+package's General Ledger and Trial Balance follow the company default.
+Each reads the ledger through the same execution option the P&L does, the
+balance brought forward on the same basis (so a General Ledger on the cash
+basis foots: opening plus activity equals closing, account by account), and
+carries `basis` and `basis_note` in its data, "(cash basis)" in its PDF and
+CSV period line, and the Basis select on its screen. A drill-down opened
+from a statement takes that statement's basis, so its lines add up to the
+figure that was clicked. On the cash basis a P&L Detail or drill-down line
+is the payment's recognition line: its type, number and name are the
+payment's; the invoice it recognizes is not on the line (the open item
+below).
+
+**Step 2b.** Edits of a paid document recompute its payments' cash lines;
+the journal form's basis choice.
 
 **Step 3.** Payroll liabilities and the Sales Tax Liability report on the
-cash basis; the retainage follow-up (#552, #555); the accountant's
-package's Trial Balance on the company default.
+cash basis; the retainage follow-up (#552, #555).
 
 ## Decisions (2026-10-26, this branch)
 
@@ -395,6 +408,13 @@ package's Trial Balance on the company default.
 11. **Screen toggle built** in step 1: the toolbar pattern (`_adjOpts`)
     made it a few lines.
 
+12. **Step 2a calls.** Fund Balances and the one-class P&L page keep
+    their step-1 behaviour (accrual; the class P&L page through the
+    P&L's own `class_id`); a nonprofit's Fund Balances tracks restricted
+    gifts as posted. The other job reports (a job's own page, Job Budget vs
+    Actual) stay accrual. `job_profitability` takes `basis` for the report;
+    its other callers pass none.
+
 ## Known limits of step 1
 
 - **Proration drifts when a document's lines change between partial
@@ -421,8 +441,9 @@ package's Trial Balance on the company default.
   `recognizes_bill_id`) would let the final payment true up rounding,
   let an edit find the lines to recompute, and give the cash-basis P&L
   Detail a Name column. Not added: step 1 needs none of it.
-- **The accountant's Trial Balance** stays as posted in the package even
-  when the statements are cash, until step 2 reads it on a basis.
+- **The accountant's Trial Balance** (settled in step 2a): the package's
+  Trial Balance and General Ledger follow the company basis with the
+  statements; the agings stay as posted.
 - **Opening balances through the wizard** post A/R and A/P as `both`; a
   company that starts on the cash basis with open invoices should enter
   them as invoices, which the wizard already suggests.
