@@ -450,8 +450,7 @@ it does:
   accounts are left as they are; move their balances by journal entry if you
   want the standard numbers.
 - Loads the standard cost-code division titles and a set of common sections
-  (the two-level division/section numbering used in commercial construction
-  specifications) if you have not built your own. QuickBooks' job "Items" do
+  (the two-level division/section numbering) if you have not built your own. QuickBooks' job "Items" do
   not come across as cost codes — rebuild the ones you use under the matching
   division on the Cost Codes page.
 - Shows a subcontractor as a **Sub**, and gives each vendor you mark a

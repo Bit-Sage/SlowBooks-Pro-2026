@@ -259,16 +259,15 @@ type (#431) keeps its contractor accounts, its Sub vendor type with the
 1099-NEC transition rule, its light vocabulary (Subcontractor → Sub) and its
 Report Center ordering (Job Profitability, Job Budget vs Actual, P&L by Job).
 What changes is the cost-code chart. Codes now use the two-level
-division/section numbering common in commercial construction specifications —
-a **division** ("03") and a **section** ("03 30 00", with an optional ".16"
+division/section numbering — a **division** ("03") and a **section** ("03 30 00", with an optional ".16"
 extension) — and a section sits under its division automatically. What you
 type is normalized on save and import (`033000`, `03-3000`, `03.30.00` all
 become `03 30 00`); a code that numbers its own way (`L-100`, `EQ`, a numeric
 `1000`/`2000` chart) is left exactly as typed and never rewritten on
 re-import. The switch (and the Cost Codes page's **Load standard divisions
 and common sections** button) seeds the standard division titles plus a
-modest set of common sections — the full numbered section catalog is a
-licensed product, so you import your own through **Import CSV** (a few hundred
+modest set of common sections — the full numbered section list is far too
+large to ship, so you import your own through **Import CSV** (a few hundred
 sections with just `code,name` land normalized and auto-parented in one
 call). The accounts, cost types and the standard catalog still seed only into
 a company that has no cost codes of its own yet, so a custom chart is left
@@ -5519,7 +5518,7 @@ edge-case costs onto them. Now:
 gained a **Cost Codes** chart — which part of a job a cost belongs to ("03
 Concrete", "26 Electrical"), each with a cost type (labor, material,
 subcontract, equipment, other) and an optional default account — with a
-one-click load of the CSI MasterFormat divisions. Bill lines, journal
+one-click load of the standard divisions. Bill lines, journal
 lines, purchase-order lines and expenses take a cost code, and bill lines
 and expenses can be marked **billable** to the job's customer (the
 unbilled-costs-to-invoice step arrives with progress billing). The job

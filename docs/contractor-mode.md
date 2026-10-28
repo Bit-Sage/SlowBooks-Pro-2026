@@ -56,12 +56,10 @@ Subcontractor Costs.
 
 ## The cost codes
 
-Codes use the **two-level division/section numbering** common in commercial
-construction specifications:
+Codes use the **two-level division/section numbering**:
 
 - a **division** — a two-digit number and title (`03` Concrete, `26`
-  Electrical), the standard division list every US contractor and estimating
-  package speaks (the reserved, un-titled division numbers are left out; add
+  Electrical); the reserved, un-titled division numbers are left out (add
   them yourself); and
 - a **section** — `DD SS SS` with an optional `.SS` extension (`03 30 00`
   Cast-in-Place Concrete, `07 42 13.16`), which sits under its division
@@ -76,7 +74,7 @@ chart) is left exactly as typed, with a null level, and re-importing it never
 rewrites it. Everything sorts by code — list, tree, pickers, import result.
 
 The seeded set is the division titles plus a **modest set of common
-sections**. The full numbered section catalog is a licensed product, so it is
+sections**. The full numbered section catalog is too large to ship, so it is
 not shipped; import your own full list through **Import CSV** on the Cost
 Codes page — a CSV of just `code,name` is enough (a few hundred sections land
 normalized and auto-parented in one call, each section's division created
@@ -407,7 +405,7 @@ appear. Every other report stays where it is.
   progress-billing screens; the accounts are there to post to by hand until
   those land.
 - **Customer:Job** still prints with a space; the no-space form is deferred.
-- **No full section catalog** (the numbered catalog is a licensed product);
+- **No full section catalog** (the numbered catalog is too large to ship);
   the division titles and a set of common sections ship, and you import the
   rest.
 - **The estimate references trade packages** (#551) and **the contract on the
