@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**An expense can be split across several accounts** (#599, from Discussion
+#592). A lump sum on a bank or card statement often covers several kinds of
+cost, and the Expense form could only record it against one account. The form
+now has a Lines grid like a bill's: each line takes an account, a memo, a job,
+a cost code and cost type, a class and function, and a billable mark of its
+own, and a running total shows the amount paid against what the lines add up
+to. It starts with one line, so a plain receipt is entered as before; Scan
+Receipt fills that first line. The lines must add up to the amount paid, and
+a line of 0.00 is refused. The ledger takes one debit per line and a single
+credit to the account it was paid from, so reports by account, job costing and
+the printed check's stub (which lists every line) see each share; voiding
+reverses all of them. Through the API, `POST /api/expenses` takes `lines`, and
+the older single `expense_account_id` still works as one line.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

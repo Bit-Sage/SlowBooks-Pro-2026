@@ -30,7 +30,7 @@ const ExpensesPage = {
                 html += `<tr data-status="${x.status}"${isVoid ? ' class="row--dim" style="text-decoration:line-through;"' : ''}>
                     <td>${formatDate(x.date)}</td>
                     <td>${escapeHtml(x.payee || '')}</td>
-                    <td>${escapeHtml(x.expense_account_name || '')}</td>
+                    <td>${ExpensesPage.accountsText(x)}</td>
                     <td>${escapeHtml(x.paid_from_account_name || '')}</td>
                     <td>${escapeHtml(x.reference || '')}</td>
                     <td style="text-decoration:none;">${statusBadge(x.status)}</td>
@@ -44,6 +44,12 @@ const ExpensesPage = {
             html += '</tbody></table></div>';
         }
         return html;
+    },
+
+    // The account column: the one account, or how many a split spreads over.
+    accountsText(x) {
+        const n = (x.lines || []).length;
+        return n > 1 ? `Split (${n} accounts)` : escapeHtml(x.expense_account_name || '');
     },
 
     // Accounts money can leave from: the chart's bank and credit-card
@@ -61,12 +67,10 @@ const ExpensesPage = {
         ExpensesPage._accounts = accounts;
         const classGroup = await classFormGroupHtml();
         const jobGroup = await jobFormGroupHtml(null);
+        try { ExpensesPage._jobs = await API.get('/jobs'); } catch (e) { ExpensesPage._jobs = []; }
         await CostCodes.load();
         await CostTypes.load();
-        const costCodeGroup = CostCodes.any() ? `<div class="form-group"><label>Cost Code</label><select name="cost_code_id">${CostCodes.optionsHtml(null)}</select></div>` : '';
-        // Blank cost type = use the cost code's own type; shown with the code.
-        const costTypeGroup = CostTypes.any() ? `<div class="form-group"><label>Cost Type</label><select name="cost_type">${CostTypes.optionsHtml(null)}</select></div>` : '';
-        const billableGroup = `<div class="form-group"><label>Billable</label><label style="font-weight:normal;"><input type="checkbox" name="is_billable"> Bill this cost to the job's customer</label></div>`;
+        await Nonprofit.loadFunds();
         // Expense and cost-of-goods accounts: materials are bought against
         // 5100 Materials Cost as often as against an expense (W-L18).
         const expenseAccts = PurchaseAccounts.filter(accounts);
@@ -76,30 +80,39 @@ const ExpensesPage = {
         const checking = paidFrom.find(a => /checking/i.test(a.name || '')) || paidFrom[0];
 
         openModal('Enter Expense', `
-            <form id="expense-form" onsubmit="ExpensesPage.save(event)">
+            <form id="expense-form" data-skip-to="#expense-lines" data-skip-text="Skip to the lines" onsubmit="ExpensesPage.save(event)">
                 ${ScanHelper.scanRowHtml()}
                 <div class="form-grid">
                     <div class="form-group"><label>Vendor *</label>
                         ${VendorQuickAdd.html(vendors, { id: 'expense-vendor', onchange: 'ExpensesPage.vendorSelected(this.value)' })}</div>
                     <div class="form-group"><label>Date *</label>
                         <input name="date" type="date" required value="${todayISO()}"></div>
-                    <div class="form-group"><label>Expense Account *</label>
-                        ${AccountQuickAdd.picker(`<select name="expense_account_id" id="expense-account" required><option value="">Select...</option>${PurchaseAccounts.options(expenseAccts)}</select>`, 'expense')}</div>
                     <div class="form-group"><label>Paid From *</label>
                         <select name="paid_from_account_id" required>${paidFrom.map(acctOpt).join('')}</select></div>
-                    <div class="form-group"><label>Amount *</label>
-                        <input name="amount" class="money" type="number" step="0.01" min="0.01" required></div>
+                    <div class="form-group"><label title="What left the account; the lines below add up to it">Amount Paid *</label>
+                        <input name="amount" class="money" type="number" step="0.01" min="0.01" required oninput="ExpensesPage.amountChanged()"></div>
                     <div class="form-group"><label>Reference</label>
                         <input name="reference" placeholder="Receipt / check #"></div>
-                    ${classGroup}${Nonprofit.functionFormGroupHtml()}${jobGroup}${costCodeGroup}${costTypeGroup}${billableGroup}
+                    ${classGroup}${jobGroup}
                     <div class="form-group full-width"><label>Memo</label>
                         <textarea name="memo"></textarea></div>
+                </div>
+                <h3 style="margin:12px 0 8px;font-size:14px;">Lines</h3>
+                <div class="table-container table-container--scroll"><table class="line-items-table expense-lines-table">
+                    <thead><tr><th scope="col" title="Where the line is recorded">Account *</th><th scope="col">Memo</th>${ExpensesPage.jobHeadHtml()}${CostCodes.headHtml()}${CostTypes.headHtml()}${Nonprofit.headHtml()}<th scope="col" title="Billable to the job's customer">Bill?</th><th scope="col" class="col-amount">Amount</th><th scope="col"></th></tr></thead>
+                    <tbody id="expense-lines">${ExpensesPage.lineHtml()}</tbody>
+                </table></div>
+                <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="ExpensesPage.addLine()">+ Add Line</button>
+                <div class="invoice-totals">
+                    <div class="total-row"><span class="label">Lines</span><span class="value" id="expense-lines-total">$0.00</span></div>
+                    <div class="total-row grand-total"><span class="label">Amount Paid</span><span class="value" id="expense-paid-total">$0.00</span></div>
+                    <div class="total-row"><span class="label">Left to assign</span><span class="value" id="expense-left">$0.00</span></div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="ScanHelper.discard(); closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Expense</button>
                 </div>
-            </form>`);
+            </form>`, { wide: true });
         const pf = document.querySelector('#expense-form [name="paid_from_account_id"]');
         if (pf && checking) pf.value = checking.id;
         ScanHelper.wire(ExpensesPage._applyScan, ExpensesPage._applyScanField, ExpensesPage._scanFieldTarget);
@@ -108,10 +121,79 @@ const ExpensesPage = {
     vendorSelected(vendorId) {
         if (!vendorId || vendorId === VendorQuickAdd.NEW) return;
         const vendor = ExpensesPage._vendors.find(v => v.id == vendorId);
-        const sel = document.querySelector('#expense-form [name="expense_account_id"]');
-        if (vendor && vendor.default_expense_account_id && sel && !sel.value) {
+        // the vendor's usual account goes on a line still waiting for one
+        const sel = Array.from(document.querySelectorAll('#expense-lines .line-account')).find(a => !a.value);
+        if (vendor && vendor.default_expense_account_id && sel) {
             sel.value = vendor.default_expense_account_id;
         }
+    },
+
+    jobHeadHtml() { return (ExpensesPage._jobs || []).length ? `<th scope="col">${T('Job')}</th>` : ''; },
+
+    // One line of the expense: where it is recorded, its words, its job,
+    // cost code, cost type, function and class, and its share.
+    lineHtml(line = null) {
+        const l = line || {};
+        const acctOpts = PurchaseAccounts.options(ExpensesPage._expenseAccounts, l.account_id);
+        const jobs = ExpensesPage._jobs || [];
+        const jobCell = jobs.length
+            ? `<td><select class="line-job"><option value="">Same as header</option>${jobs.map(j => `<option value="${j.id}"${l.job_id === j.id ? ' selected' : ''}>${escapeHtml(j.full_name || j.name)}</option>`).join('')}</select></td>`
+            : '';
+        return `<tr>
+                <td>${AccountQuickAdd.picker(`<select class="line-account" required><option value="">Choose...</option>${acctOpts}</select>`, 'expense')}</td>
+                <td><input class="line-desc" value="${escapeHtml(l.description || '')}"></td>
+                ${jobCell}${CostCodes.cellHtml('line-cost-code', l.cost_code_id)}${CostTypes.cellHtml('line-cost-type', l.cost_type)}${ExpensesPage.fundCellsHtml(l)}
+                <td style="text-align:center;"><input type="checkbox" class="line-billable" title="Billable"${l.is_billable ? ' checked' : ''}></td>
+                <td class="col-amount"><input class="line-amt money" type="number" step="0.01" min="0.01" value="${l.amount ? Number(l.amount).toFixed(2) : ''}" oninput="ExpensesPage.recalc()"></td>
+                <td><button type="button" class="btn btn-sm btn-secondary line-remove" aria-label="Remove line" title="Remove this line" onclick="ExpensesPage.removeLine(this)">&times;</button></td>
+            </tr>`;
+    },
+
+    // The class and function cells of a line (cellHtml's, without its
+    // allocation-rule Split button: an expense line has no split-by-rule).
+    fundCellsHtml(l) {
+        return Nonprofit.classCellHtml('line-function', l.class_id) + (Nonprofit.enabled()
+            ? `<td><select class="line-function">${Nonprofit.optionsHtml(l.function, '—')}</select></td>` : '');
+    },
+
+    rows() { return Array.from(document.querySelectorAll('#expense-lines tr')); },
+
+    addLine(line = null) {
+        $('#expense-lines').insertAdjacentHTML('beforeend', ExpensesPage.lineHtml(line));
+        ExpensesPage.recalc();
+    },
+
+    removeLine(btn) {
+        if (ExpensesPage.rows().length > 1) btn.closest('tr').remove();
+        ExpensesPage.recalc();
+    },
+
+    // With one line the form is today's: the line takes the amount paid.
+    // From the second line on, the shares are typed and must add up to it.
+    amountChanged() {
+        const rows = ExpensesPage.rows();
+        const form = $('#expense-form');
+        if (rows.length === 1 && form) {
+            rows[0].querySelector('.line-amt').value = form.amount.value;
+        }
+        ExpensesPage.recalc();
+    },
+
+    // Running total of the lines against the amount paid; returns the cents
+    // still to assign.
+    recalc() {
+        const form = $('#expense-form');
+        const rows = ExpensesPage.rows();
+        const paid = PurchaseLines.cents(parseFloat(form && form.amount.value) || 0);
+        const lines = PurchaseLines.cents(rows.reduce((sum, r) => sum + (parseFloat(r.querySelector('.line-amt').value) || 0), 0));
+        const left = PurchaseLines.cents(paid - lines);
+        $('#expense-lines-total').textContent = formatCurrency(lines);
+        $('#expense-paid-total').textContent = formatCurrency(paid);
+        const leftEl = $('#expense-left');
+        leftEl.textContent = formatCurrency(left);
+        leftEl.style.color = left === 0 ? '' : 'var(--text-danger)';
+        document.querySelectorAll('#expense-lines .line-remove').forEach(b => { b.disabled = rows.length < 2; });
+        return left;
     },
 
     // Where each canvas field lands — the canvas outlines these inputs in
@@ -147,6 +229,7 @@ const ExpensesPage = {
         } else if (fieldKey === 'total') {
             // The receipt total is what left the account — tax included.
             form.querySelector('[name="amount"]').value = parseFloat(value).toFixed(2);
+            ExpensesPage.amountChanged();
         } else if (fieldKey === 'reference') {
             const ref = form.querySelector('[name="reference"]');
             if (ref) ref.value = value;
@@ -178,7 +261,10 @@ const ExpensesPage = {
         }
 
         const total = parseFloat(result.total || '0');
-        if (total > 0) form.querySelector('[name="amount"]').value = total.toFixed(2);
+        if (total > 0) {
+            form.querySelector('[name="amount"]').value = total.toFixed(2);
+            ExpensesPage.amountChanged();  // the scan fills the first line
+        }
         if (result.tax_detected && result.tax) ExpensesPage._noteLine(form, 'Tax', result.tax);
     },
 
@@ -186,25 +272,56 @@ const ExpensesPage = {
         e.preventDefault();
         const form = e.target;
         const paidFrom = parseInt(form.paid_from_account_id.value);
+        // a lone line takes the amount paid, as an amount typed a moment ago
+        // has had no change event yet
+        if (ExpensesPage.rows().length === 1) ExpensesPage.amountChanged();
+        const lines = [];
+        let missing = null;
+        ExpensesPage.rows().forEach((row, i) => {
+            const acct = row.querySelector('.line-account');
+            if (!missing && !acct.value) missing = { n: i + 1, sel: acct };
+            const job = row.querySelector('.line-job');
+            lines.push({
+                account_id: acct.value ? parseInt(acct.value) : null,
+                amount: parseFloat(row.querySelector('.line-amt').value) || 0,
+                description: row.querySelector('.line-desc').value || null,
+                job_id: job && job.value ? parseInt(job.value) : null,
+                cost_code_id: CostCodes.fromRow(row, 'line-cost-code'),
+                cost_type: CostTypes.fromRow(row, 'line-cost-type'),
+                class_id: Nonprofit.fundFromRow(row, 'line-function'),
+                ...Nonprofit.linePayload(row, 'line-function'),
+                is_billable: !!row.querySelector('.line-billable')?.checked,
+            });
+        });
+        if (missing) {
+            toast(`Choose an account for line ${missing.n}: where should it be recorded?`, 'error');
+            missing.sel.focus();
+            return;
+        }
+        if (lines.some(l => !(l.amount > 0))) {
+            toast('Every line needs an amount above 0.00; remove a line that is not used.', 'error');
+            return;
+        }
+        const left = ExpensesPage.recalc();
+        if (left !== 0) {
+            toast(`The lines must add up to the amount paid: ${formatCurrency(Math.abs(left))} ${left > 0 ? 'left to assign' : 'over'}.`, 'error');
+            return;
+        }
         if (!(await Overdraft.confirm(paidFrom, parseFloat(form.amount.value) || 0))) return;
         if (!(await TxnWarn.ok(form))) return;
-        if (!(await ClassWarn.ok(form))) return;
+        if (!(await ClassWarn.ok(form, { rows: '#expense-lines tr', cls: 'line-function' }))) return;
         try {
             const vendorId = await VendorQuickAdd.ensure('expense-vendor');
             const body = {
                 date: form.date.value,
                 vendor_id: vendorId,
-                expense_account_id: parseInt(form.expense_account_id.value),
                 paid_from_account_id: paidFrom,
                 amount: parseFloat(form.amount.value),
+                lines,
                 reference: form.reference.value || null,
                 memo: form.memo.value || null,
                 class_id: classIdFromForm(form),
-                ...Nonprofit.formPayload(form),
                 job_id: jobIdFromForm(form),
-                cost_code_id: form.cost_code_id ? (form.cost_code_id.value ? parseInt(form.cost_code_id.value) : null) : null,
-                cost_type: form.cost_type && form.cost_type.value ? form.cost_type.value : null,
-                is_billable: !!(form.is_billable && form.is_billable.checked),
             };
             // a check number the bank account already has (#481)
             const result = await CheckNumberWarn.send(
@@ -236,7 +353,9 @@ const ExpensesPage = {
             <div style="font-size:13px; line-height:1.7;">
                 <strong>Date:</strong> ${formatDate(x.date)}<br>
                 <strong>Payee:</strong> ${escapeHtml(x.payee || '')}<br>
-                <strong>Expense Account:</strong> ${escapeHtml(x.expense_account_name || '')}<br>
+                ${(x.lines || []).length > 1
+                    ? `<table class="line-items-table" style="margin:4px 0;"><thead><tr><th scope="col">Account</th><th scope="col">Memo</th><th scope="col" class="amount">Amount</th></tr></thead><tbody>${x.lines.map(l => `<tr><td>${escapeHtml(l.account_name || '')}</td><td>${escapeHtml(l.description || '')}</td><td class="amount">${formatCurrency(l.amount)}</td></tr>`).join('')}</tbody></table>`
+                    : `<strong>Expense Account:</strong> ${escapeHtml(x.expense_account_name || '')}<br>`}
                 <strong>Paid From:</strong> ${escapeHtml(x.paid_from_account_name || '')}<br>
                 <strong>Amount:</strong> ${formatCurrency(x.amount)}<br>
                 ${x.reference ? `<strong>Reference:</strong> ${escapeHtml(x.reference)}<br>` : ''}
@@ -332,6 +451,6 @@ if (typeof AccountQuickAdd !== 'undefined') {
         types: AccountQuickAdd.PURCHASE_TYPES,
         compact: true,
         chart: () => (ExpensesPage._expenseAccounts = ExpensesPage._expenseAccounts || []),
-        added: () => AccountQuickAdd.refillPurchase($$('#expense-form [name="expense_account_id"]'), ExpensesPage._expenseAccounts),
+        added: () => AccountQuickAdd.refillPurchase($$('#expense-lines select.line-account'), ExpensesPage._expenseAccounts),
     });
 }

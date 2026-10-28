@@ -323,3 +323,42 @@ def test_the_register_row_and_the_expense_view_offer_print_check():
     assert any("ExpensesPage.void(62)" in b for b in got["expense_check"])
     assert not any("checks/print" in b for b in got["expense_card"])
     assert not any("checks/print" in b for b in got["expense_void"])
+
+
+def test_a_split_expense_check_lists_each_line_on_the_stub(
+    client, db_session, seed_accounts
+):
+    # an expense across several accounts (#599) prints like a split register check
+    from decimal import Decimal
+
+    from app.routes.checks import register_check_data
+
+    r = client.post(
+        "/api/expenses",
+        json={
+            "date": "2026-09-02",
+            "paid_from_account_id": seed_accounts["1000"].id,
+            "reference": "1090",
+            "lines": [
+                {
+                    "account_id": seed_accounts["6500"].id,
+                    "amount": "275.00",
+                    "description": "rent",
+                },
+                {
+                    "account_id": seed_accounts["6400"].id,
+                    "amount": "25.00",
+                    "description": "keys",
+                },
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    x = r.json()
+    assert x["printable"] is True
+    data = register_check_data(db_session, x["id"])
+    by_memo = {d["description"]: Decimal(str(d["amount"])) for d in data["details"]}
+    assert sorted(by_memo.values()) == [Decimal("25.00"), Decimal("275.00")]
+    assert sum(by_memo.values()) == Decimal("300.00")
+    text = _pdf_text(client.get(f"/api/checks/print?transaction_id={x['id']}"))
+    assert "Rent or Lease" in text and "Office Supplies" in text

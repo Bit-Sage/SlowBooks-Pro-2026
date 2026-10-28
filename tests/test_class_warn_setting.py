@@ -30,7 +30,7 @@ FORMS = {
     "bills.js": "ClassWarn.ok(form, { rows: '#bill-lines tr', cls: 'line-function' })",
     "journal.js": "ClassWarn.ok(form, { rows: '#je-lines tr', cls: 'je-function' })",
     "invoices.js": "ClassWarn.ok(form, { rows: '#inv-lines tr', cls: 'line-class' })",
-    "expenses.js": "ClassWarn.ok(form)",
+    "expenses.js": "ClassWarn.ok(form, { rows: '#expense-lines tr', cls: 'line-function' })",
     "cc_charges.js": "ClassWarn.ok(form)",
     "sales_receipts.js": "ClassWarn.ok(form)",
     "credit_memos.js": "ClassWarn.ok(form)",
