@@ -124,7 +124,7 @@ def test_the_sales_tax_screen_offers_the_basis():
 
     js = (
         Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "reports.js"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     body = js[js.index("async salesTax(prefill)") :]
     body = body[: body.index("view: 'sales-tax'")]
     assert "_basisOpts(prefill)" in body and "_basisQs(params)" in body

@@ -3026,11 +3026,13 @@ def financial_statements_pdf(
     start_date: date = Query(default=None),
     end_date: date = Query(default=None),
     db: Session = Depends(get_db),
+    basis: str = _BASIS_QUERY,
 ):
     """The statements pack: P&L, Balance Sheet, and Trial Balance in one
-    audit-ready document (each statement on its own page)."""
-    pl = profit_loss(start_date, end_date, db)
-    bs = balance_sheet(date.fromisoformat(pl["end_date"]), db)
+    audit-ready document (each statement on its own page). It takes the
+    same `basis` the screens do, so a P&L switched to cash saves a cash pack."""
+    pl = profit_loss(start_date, end_date, db, basis=basis)
+    bs = balance_sheet(date.fromisoformat(pl["end_date"]), db, basis=basis)
     tb = trial_balance(
         date.fromisoformat(pl["start_date"]),
         date.fromisoformat(pl["end_date"]),
