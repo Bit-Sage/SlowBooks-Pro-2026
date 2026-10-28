@@ -144,6 +144,11 @@ class TransactionLine(Base):
     basis = Column(
         String(10), nullable=False, default=BASIS_BOTH, server_default=BASIS_BOTH
     )
+    # On a cash recognition line: the invoice or bill it recognizes, so an
+    # edit of that document can find and rewrite it (#483). Plain integers,
+    # no foreign key: a line is history and must outlive its document.
+    recognizes_invoice_id = Column(Integer, nullable=True, index=True)
+    recognizes_bill_id = Column(Integer, nullable=True, index=True)
 
     transaction = relationship(
         "Transaction", back_populates="lines", foreign_keys=[transaction_id]

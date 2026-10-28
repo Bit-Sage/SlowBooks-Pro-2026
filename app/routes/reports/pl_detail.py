@@ -20,6 +20,7 @@ from app.database import get_db
 from app.routes.reports._router import router
 from app.routes.reports.financial import (
     _EXCLUDE_ADJUSTING,
+    _BASIS_QUERY,
     _SORT_QUERY,
     _account_order,
     _chart_index,
@@ -33,6 +34,7 @@ from app.routes.reports.financial import (
     _pl_section_of,
     pl_totals,
 )
+from app.services import cash_basis
 from app.services.fiscal_year import fiscal_year_start
 from app.services.pl_detail import PL_SECTIONS, pl_detail_lines
 from app.services.statement_layout import account_chart, family_rows
@@ -70,12 +72,14 @@ def profit_loss_detail(
     ] = None,
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     """Every posted line under each P&L account for the period (#477), in
     the P&L's sections and order. `sections` has each section's accounts
     with their lines; `tree` the same as printed rows, sub-accounts beneath
     their parents (statement_layout.family_rows); the totals are the
-    P&L's own keys."""
+    P&L's own keys. `basis` (#483): accrual or cash, else the company's."""
+    basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     exclude_adjusting = _flag(exclude_adjusting)
     sort = sort if isinstance(sort, str) else "number"
     class_id = class_id if isinstance(class_id, int) else None
@@ -99,6 +103,7 @@ def profit_loss_detail(
         exclude_adjusting=exclude_adjusting,
         chart=chart,
         words=t,
+        basis=basis,
     )
     order = _account_order(db, sort, chart)
     sections = {key: [] for key in PL_SECTIONS}
@@ -126,6 +131,8 @@ def profit_loss_detail(
         "job_name": job_name,
         "sort": sort,
         "exclude_adjusting": bool(exclude_adjusting),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end_date, basis),
         "sections": sections,
         "tree": tree,
         "line_count": sum(len(b["entries"]) for b in blocks.values()),
@@ -274,6 +281,8 @@ def _detail_section(data: dict, t) -> dict:
         }
     )
     period = f"{data['start_date']} — {data['end_date']}"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     scope = detail_scope(data, t)
     return {
         "title": detail_title(data, t),
@@ -291,6 +300,7 @@ def _detail_section(data: dict, t) -> dict:
         # Type to Split are words, read from the left (report_pdf.html)
         "text_columns": 6,
         "rows": rows,
+        "note": data.get("basis_note"),
     }
 
 
@@ -303,6 +313,7 @@ def profit_loss_detail_pdf(
     job_id: Optional[int] = Query(default=None),
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     data = profit_loss_detail(
         start_date,
@@ -312,6 +323,7 @@ def profit_loss_detail_pdf(
         job_id=job_id,
         sort=sort,
         exclude_adjusting=exclude_adjusting,
+        basis=basis,
     )
     t = terms_from_db(db)
     return _pdf_response(
@@ -332,6 +344,7 @@ def profit_loss_detail_csv_route(
     job_id: Optional[int] = Query(default=None),
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
+    basis: str = _BASIS_QUERY,
 ):
     from app.services.ledger_exports import profit_loss_detail_csv
 
@@ -343,6 +356,7 @@ def profit_loss_detail_csv_route(
         job_id=job_id,
         sort=sort,
         exclude_adjusting=exclude_adjusting,
+        basis=basis,
     )
     t = terms_from_db(db)
     return _csv_download(

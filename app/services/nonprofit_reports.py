@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts import Account, AccountType
 from app.models.classes import FUNCTIONS, TxnClass
 from app.models.transactions import Transaction, TransactionLine
+from app.services import cash_basis
 from app.services.accounting import (
     _q,
     get_net_assets_with_restriction_id,
@@ -80,7 +81,11 @@ def _f(v) -> float:
 
 
 def _account_totals(
-    db: Session, acct_type: AccountType, start: Optional[date], end: Optional[date]
+    db: Session,
+    acct_type: AccountType,
+    start: Optional[date],
+    end: Optional[date],
+    basis: str = "accrual",
 ) -> list[dict]:
     """Per-account natural-balance totals (mirror of the balance sheet's
     helper, kept here so the statements never depend on a route module)."""
@@ -103,9 +108,13 @@ def _account_totals(
     if end is not None:
         q = q.filter(Transaction.date <= end)
     rows = []
-    for acct_id, name, number, detail, dr, cr in q.group_by(
-        Account.id, Account.name, Account.account_number, Account.detail_type
-    ).all():
+    for acct_id, name, number, detail, dr, cr in (
+        q.group_by(
+            Account.id, Account.name, Account.account_number, Account.detail_type
+        )
+        .execution_options(**cash_basis.reading(basis))
+        .all()
+    ):
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         amount = (dr - cr) if acct_type in _DEBIT_NORMAL else (cr - dr)
         rows.append(
@@ -127,6 +136,7 @@ def _class_totals(
     start: Optional[date],
     end: Optional[date],
     account_id: Optional[int] = None,
+    basis: str = "accrual",
 ) -> list[tuple]:
     """(class_id, account_id, account_name, account_number, account_type,
     debit, credit) grouped by the fund a line belongs to."""
@@ -154,20 +164,27 @@ def _class_totals(
         q = q.filter(Transaction.date >= start)
     if end is not None:
         q = q.filter(Transaction.date <= end)
-    return q.group_by(
-        cls, Account.id, Account.name, Account.account_number, Account.account_type
-    ).all()
+    return (
+        q.group_by(
+            cls, Account.id, Account.name, Account.account_number, Account.account_type
+        )
+        .execution_options(**cash_basis.reading(basis))
+        .all()
+    )
 
 
 def _income_by_restriction(
-    db: Session, start: Optional[date], end: Optional[date]
+    db: Session,
+    start: Optional[date],
+    end: Optional[date],
+    basis: str = "accrual",
 ) -> tuple[Decimal, Decimal, dict]:
     """(without, with, per-account {id: {name, number, without, with}})."""
     restricted = restricted_class_ids(db)
     per: dict[int, dict] = {}
     tot_without = tot_with = ZERO
     for cls_id, acct_id, name, number, _t, dr, cr in _class_totals(
-        db, (AccountType.INCOME,), start, end
+        db, (AccountType.INCOME,), start, end, basis=basis
     ):
         amt = Decimal(str(cr)) - Decimal(str(dr))
         row = per.setdefault(
@@ -189,7 +206,12 @@ def _income_by_restriction(
     return tot_without, tot_with, per
 
 
-def _net_releases(db: Session, start: Optional[date], end: Optional[date]) -> Decimal:
+def _net_releases(
+    db: Session,
+    start: Optional[date],
+    end: Optional[date],
+    basis: str = "accrual",
+) -> Decimal:
     """Net debits on Net Assets With Donor Restrictions in the period —
     releases, less any voided ones."""
     with_id = get_net_assets_with_restriction_id(db)
@@ -207,39 +229,43 @@ def _net_releases(db: Session, start: Optional[date], end: Optional[date]) -> De
         q = q.filter(Transaction.date >= start)
     if end is not None:
         q = q.filter(Transaction.date <= end)
-    return _dec(q.scalar())
+    return _dec(q.execution_options(**cash_basis.reading(basis)).scalar())
 
 
 # ── Statement of Financial Position ──────────────────────────────────────
 
 
-def statement_of_financial_position(db: Session, as_of: date) -> dict:
+def statement_of_financial_position(
+    db: Session, as_of: date, basis: str = "accrual"
+) -> dict:
     with_id = get_net_assets_with_restriction_id(db)
     without_id = get_net_assets_without_restriction_id(db)
     # a default-typed sub-account prints in its parent's group, as on the
     # Balance Sheet (2.28.0): display only
     placed = bs_print_details(db)
-    assets = mark_bs_lines(_account_totals(db, AccountType.ASSET, None, as_of), placed)
-    liabilities = mark_bs_lines(
-        _account_totals(db, AccountType.LIABILITY, None, as_of), placed
+    assets = mark_bs_lines(
+        _account_totals(db, AccountType.ASSET, None, as_of, basis), placed
     )
-    equity = _account_totals(db, AccountType.EQUITY, None, as_of)
+    liabilities = mark_bs_lines(
+        _account_totals(db, AccountType.LIABILITY, None, as_of, basis), placed
+    )
+    equity = _account_totals(db, AccountType.EQUITY, None, as_of, basis)
 
     real = {r["account_id"]: Decimal(str(r["amount"])) for r in equity}
     other_equity = [r for r in equity if r["account_id"] not in (with_id, without_id)]
     other_total = sum((Decimal(str(r["amount"])) for r in other_equity), ZERO)
 
-    income_without, income_with, _ = _income_by_restriction(db, None, as_of)
+    income_without, income_with, _ = _income_by_restriction(db, None, as_of, basis)
     expenses = sum(
         (
             Decimal(str(r["amount"]))
-            for r in _account_totals(db, AccountType.EXPENSE, None, as_of)
+            for r in _account_totals(db, AccountType.EXPENSE, None, as_of, basis)
         ),
         ZERO,
     ) + sum(
         (
             Decimal(str(r["amount"]))
-            for r in _account_totals(db, AccountType.COGS, None, as_of)
+            for r in _account_totals(db, AccountType.COGS, None, as_of, basis)
         ),
         ZERO,
     )
@@ -275,6 +301,8 @@ def statement_of_financial_position(db: Session, as_of: date) -> dict:
     net_without = other_total + without_composed
     return {
         "as_of_date": as_of.isoformat(),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, as_of, basis),
         "assets": assets,
         "liabilities": liabilities,
         # Current / Fixed / Other Assets, Current / Long Term Liabilities
@@ -303,8 +331,10 @@ def statement_of_financial_position(db: Session, as_of: date) -> dict:
 # ── Statement of Activities ──────────────────────────────────────────────
 
 
-def statement_of_activities(db: Session, start: date, end: date) -> dict:
-    inc_without, inc_with, per = _income_by_restriction(db, start, end)
+def statement_of_activities(
+    db: Session, start: date, end: date, basis: str = "accrual"
+) -> dict:
+    inc_without, inc_with, per = _income_by_restriction(db, start, end, basis)
     revenue = [
         {
             "account_id": r["account_id"],
@@ -318,10 +348,10 @@ def statement_of_activities(db: Session, start: date, end: date) -> dict:
             per.values(), key=lambda r: (r["account_number"] or "", r["account_name"])
         )
     ]
-    releases = _net_releases(db, start, end)
-    expense_rows = _account_totals(db, AccountType.COGS, start, end) + _account_totals(
-        db, AccountType.EXPENSE, start, end
-    )
+    releases = _net_releases(db, start, end, basis)
+    expense_rows = _account_totals(
+        db, AccountType.COGS, start, end, basis
+    ) + _account_totals(db, AccountType.EXPENSE, start, end, basis)
     expenses = [
         {
             "account_id": r["account_id"],
@@ -341,6 +371,8 @@ def statement_of_activities(db: Session, start: date, end: date) -> dict:
         {
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
+            "basis": basis,
+            "basis_note": cash_basis.receivable_note(db, end, basis),
             "revenue": revenue,
             "releases": {"without": _f(releases), "with": _f(-releases), "total": 0.0},
             "expenses": expenses,
@@ -535,7 +567,9 @@ def fund_balances(db: Session, start: date, end: date) -> dict:
 # ── Statement of Functional Expenses ─────────────────────────────────────
 
 
-def functional_expenses(db: Session, start: date, end: date) -> dict:
+def functional_expenses(
+    db: Session, start: date, end: date, basis: str = "accrual"
+) -> dict:
     uncat = uncategorized_class_id(db)
     cls = class_attribution(uncat)
     fn = sqlfunc.coalesce(TransactionLine.function, TxnClass.default_function).label(
@@ -562,6 +596,7 @@ def functional_expenses(db: Session, start: date, end: date) -> dict:
             Transaction.date <= end,
         )
         .group_by(Account.id, Account.name, Account.account_number, fn, "cls")
+        .execution_options(**cash_basis.reading(basis))
     )
     names = {c.id: c.name for c in db.query(TxnClass.id, TxnClass.name).all()}
     rows: dict[int, dict] = {}
@@ -596,6 +631,8 @@ def functional_expenses(db: Session, start: date, end: date) -> dict:
     return {
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
+        "basis": basis,
+        "basis_note": cash_basis.receivable_note(db, end, basis),
         "rows": out_rows,
         "totals": totals,
         "programs": [
@@ -641,7 +678,10 @@ def financial_position_csv(data: dict) -> str:
     rows.append(
         ["Liabilities + Net Assets", f"{data['total_liabilities_and_net_assets']:.2f}"]
     )
-    return _csv(["", f"As of {data['as_of_date']}"], rows)
+    as_of = f"As of {data['as_of_date']}"
+    if data.get("basis") == "cash":
+        as_of += " (cash basis)"
+    return _csv(["", as_of], rows)
 
 
 def _cell(v) -> Decimal:
@@ -717,7 +757,12 @@ def activities_csv(data: dict) -> str:
         ]
         + ext(t["change_total"], pt.get("change_total"))
     )
-    header = ["", "Without Donor Restrictions", "With Donor Restrictions", "Total"]
+    header = [
+        "(cash basis)" if data.get("basis") == "cash" else "",
+        "Without Donor Restrictions",
+        "With Donor Restrictions",
+        "Total",
+    ]
     if cmp:
         header += [f"Prior year ({data['prior']['start_date'][:4]})", "Change"]
     return _csv(header, rows)
@@ -782,7 +827,7 @@ def functional_expenses_csv(data: dict) -> str:
     )
     rows.append(["Total"] + [f"{data['totals'][k]:.2f}" for k in keys] + total_ext)
     header = [
-        "Expense",
+        "Expense (cash basis)" if data.get("basis") == "cash" else "Expense",
         "Total (A)",
         "Program services (B)",
         "Management and general (C)",
@@ -834,11 +879,13 @@ def _merge_prior(
     return out
 
 
-def statement_of_activities_compared(db: Session, start: date, end: date) -> dict:
+def statement_of_activities_compared(
+    db: Session, start: date, end: date, basis: str = "accrual"
+) -> dict:
     """The statement with a prior-year column: same dates one year earlier."""
-    cur = statement_of_activities(db, start, end)
+    cur = statement_of_activities(db, start, end, basis)
     p_start, p_end = _shift_year(start), _shift_year(end)
-    prior = statement_of_activities(db, p_start, p_end)
+    prior = statement_of_activities(db, p_start, p_end, basis)
     cur["revenue"] = _merge_prior(
         cur["revenue"], prior["revenue"], "account_id", "total"
     )
@@ -855,10 +902,12 @@ def statement_of_activities_compared(db: Session, start: date, end: date) -> dic
     return _activities_layout(db, cur)
 
 
-def functional_expenses_compared(db: Session, start: date, end: date) -> dict:
-    cur = functional_expenses(db, start, end)
+def functional_expenses_compared(
+    db: Session, start: date, end: date, basis: str = "accrual"
+) -> dict:
+    cur = functional_expenses(db, start, end, basis)
     p_start, p_end = _shift_year(start), _shift_year(end)
-    prior = functional_expenses(db, p_start, p_end)
+    prior = functional_expenses(db, p_start, p_end, basis)
     cur["rows"] = _merge_prior(cur["rows"], prior["rows"], "account_id", "total")
     cur["prior"] = {
         "start_date": p_start.isoformat(),

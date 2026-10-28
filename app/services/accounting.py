@@ -409,6 +409,7 @@ def create_journal_entry(
     if existing_transaction is not None and (
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == existing_transaction.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .first()
         is not None
     ):
@@ -467,6 +468,8 @@ def create_journal_entry(
             or _cost_type_of(db, line_data.get("cost_code_id")),
             is_billable=bool(line_data.get("is_billable", False)),
             basis=line_data["basis"],
+            recognizes_invoice_id=line_data.get("recognizes_invoice_id"),
+            recognizes_bill_id=line_data.get("recognizes_bill_id"),
         )
         db.add(txn_line)
 

@@ -7,6 +7,61 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Sales Tax report on the cash basis; retainage on bills; payroll stays on
+both** (#483, step 4). Reports > Sales Tax takes a Basis (Company default /
+Accrual / Cash), like the Profit & Loss does. On the cash basis it lists the
+tax collected on the money received in the dates, each payment taking its
+invoice's sales, taxable amount and tax in the proportion paid, and checks
+that against Sales Tax Payable on the cash basis; credit memos are not
+counted (no cash came for them). The accrual report is unchanged, and
+paying the tax is the same either way. A bill that holds retainage is
+expensed on the cash basis only as it is paid: paying the net recognizes
+that much of each expense line, and the held part is recognized when it is
+released (so the Balance Sheet carries no Retainage Payable on the cash
+basis until then). Pay runs read the same on both bases: payroll
+liabilities stay on the cash Balance Sheet, as other current liabilities do.
+
+**Cash basis: editing a paid invoice or bill, and a basis for journal
+entries** (#483). Changing the lines of an invoice or bill that has been paid
+now moves what its payments counted on the cash basis to match: if half of an
+invoice was paid and you move its amount from one income account to another,
+the cash Profit & Loss moves the paid half too, on the day of each payment.
+(A payment on or before the closing date keeps what it has; void and re-enter
+the payment to change that.) An invoice brought in from QuickBooks Online and
+then edited now shows its income on its payments' dates on the cash basis
+instead of dropping out of it. The journal entry form has a new Basis choice,
+Both (as before), Accrual only or Cash only: enter an opening Accounts
+Receivable or Accounts Payable balance as Accrual only and it stays on the
+accrual reports without sitting on the cash Balance Sheet. Editing or voiding
+the entry keeps its basis.
+
+**Reports on a cash basis, step 2** (#483, @ContractorKeith). The Trial Balance,
+General Ledger, Profit & Loss Detail, an account's drill-down (and a P&L
+total's), P&L by Class, by Job and by month, Job Profitability and the
+nonprofit Statement of Activities, Statement of Financial Position and
+Statement of Functional Expenses now take the same Basis choice the Profit &
+Loss and Balance Sheet have (Company default / Accrual / Cash, beside the
+dates; `?basis=cash` on their API, PDF and CSV, which say "cash basis" when they
+are). On the cash basis a ledger line is the payment's: income on the day the
+money came in, in the paid proportion, and the balance brought forward is
+read the same way, so each account still foots. A drill-down opened from a
+cash-basis statement stays on the cash basis, so its lines add up to the
+figure clicked. Without a choice they follow Settings → Company → Report
+Basis, and on the accrual basis they print what they always did. The
+Accountant's Package now sends its General Ledger and Trial Balance on the
+company's basis too, and its README says so.
+
+**Trial Balance: balance-sheet accounts at their balance as of the end date**
+(#597). For a date range the Trial Balance showed only that range's activity
+on every account, bank and card accounts included, so it never matched a
+QuickBooks Trial Balance side by side. Asset, liability and equity accounts
+now show their balance as of the end date, on the debit or credit side; income,
+cost and expense accounts still show their activity from the start date. The
+earlier periods' net income, which the balance-sheet rows carry and the
+income and expense rows leave out, prints as one "Net Income (prior periods)"
+row so the debit and credit totals still agree. The screen, the PDF and the CSV
+(the accountant's package included) all read the same way.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

@@ -216,7 +216,10 @@ jobs:
           # 185 with the job-report PDF tests (#577,
           # test_job_reports::test_report_routes_pdf and
           # ::test_existing_reports_export_pdf, WeasyPrint again).
-          MAX_SKIPS: "185"
+          # 186 with the Trial Balance PDF test (#614,
+          # test_trial_balance_balances::test_the_pdf_and_csv_carry_the_same_figures,
+          # WeasyPrint again).
+          MAX_SKIPS: "186"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

@@ -324,6 +324,13 @@ Editing the lines of a converted bill re-computes the retainage at the commitmen
 Releasing retainage (a debit back to 2050) is progress billing's job (#555);
 for now the figure is the retainage held to date.
 
+**Retainage on the cash basis.** A bill's held retainage is not an expense on
+a cash-basis report until it is paid: paying the net spreads that amount over
+the bill's expense lines, the held part waits on 2050 (which reads zero on the
+cash Balance Sheet while it waits), and a release of that retainage recognizes
+the rest of the expense on the day it is paid. Accrual reports are unchanged:
+the whole bill on its date, the held part on Retainage Payable.
+
 **What committed and billed mean now.** *Committed* cost is the **remaining**
 open commitment — the scheduled value of every issued, not-yet-closed
 commitment, less what has been billed — so it keeps meaning "ordered but not

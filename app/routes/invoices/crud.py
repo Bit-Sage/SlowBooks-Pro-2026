@@ -545,6 +545,13 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                 txn_date=invoice.date,
             )
 
+        # The payments on this invoice recognized its income as it stood when
+        # they arrived; rewrite that from the lines as they now stand (#483).
+        if not adopting and invoice.transaction_id is not None:
+            from app.services import cash_basis
+
+            cash_basis.recompute_invoice_cash_lines(db, invoice)
+
     if adopting:
         txn = _post_invoice_journal(
             db,

@@ -856,6 +856,12 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         db.flush()
         db.refresh(bill)
 
+        # Its payments recognized the expense as the lines stood; rewrite that
+        # from the lines as they now stand (#483).
+        from app.services import cash_basis
+
+        cash_basis.recompute_bill_cash_lines(db, bill)
+
         touched_pos = set()
         for link, billed in retally.items():
             poline = db.get(PurchaseOrderLine, link)

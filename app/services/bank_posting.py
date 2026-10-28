@@ -17,9 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
 from app.models.banking import BankTransaction, Reconciliation
-from app.models.transactions import Transaction
+from app.models.transactions import LEDGER_BASIS_OPTION, READ_ALL, Transaction
 from app.services.accounting import (
     _q,
+    all_lines,
     create_journal_entry,
     get_opening_balance_equity_id,
     reversing_lines,
@@ -408,7 +409,7 @@ def replace_bank_entry(
     description, lines = bank_entry_lines(
         account, amount, category, payee, memo, splits
     )
-    old_lines = list(txn.lines)
+    old_lines = all_lines(db, txn.id)
     pairs = _pair_lines(old_lines, lines)
     for n, o in zip(lines, pairs):
         for key, header_old, header_new in (
@@ -420,8 +421,11 @@ def replace_bank_entry(
             own = getattr(o, key) if o is not None else None
             n[key] = own if own is not None and own != header_old else header_new
 
-    if all(_same_money(o, n) for o, n in zip(pairs, lines)) and len(lines) == len(
-        old_lines
+    if (
+        all(_same_money(o, n) for o, n in zip(pairs, lines))
+        and len(lines) == len(old_lines)
+        # a new basis (#483) rewrites the lines, so it is not "nothing moves"
+        and all(o.basis == n.get("basis", o.basis) for o, n in zip(pairs, lines))
     ):
         # nothing moves: update the header and the lines where they are
         check_closing_date(db, txn_date)
@@ -489,6 +493,7 @@ def replace_bank_entry(
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == txn.id)
         .order_by(TransactionLine.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .all()
     )
     for i, same in keep.items():
@@ -545,7 +550,7 @@ def replace_journal_lines(
     from app.routes.invoices.helpers import _reverse_and_delete_journal
     from app.services.classes_service import default_function_of
 
-    old_lines = list(txn.lines)
+    old_lines = all_lines(db, txn.id)
     pairs = _pair_lines(old_lines, lines)
     # A dimension the caller left off a line keeps what the paired old line
     # had (its counterpart by account, else by order): a class or job of its
@@ -567,8 +572,11 @@ def replace_journal_lines(
         if "function" not in n and o is not None:
             n["function"] = o.function
 
-    if all(_same_money(o, n) for o, n in zip(pairs, lines)) and len(lines) == len(
-        old_lines
+    if (
+        all(_same_money(o, n) for o, n in zip(pairs, lines))
+        and len(lines) == len(old_lines)
+        # a new basis (#483) rewrites the lines, so it is not "nothing moves"
+        and all(o.basis == n.get("basis", o.basis) for o, n in zip(pairs, lines))
     ):
         # nothing moves: update the header and the lines where they are, so
         # a save that changes nothing writes nothing and the reconciled
@@ -645,6 +653,7 @@ def replace_journal_lines(
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == txn.id)
         .order_by(TransactionLine.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .all()
     )
     for i, same in keep.items():
