@@ -599,13 +599,13 @@ def void_journal_entry(
 
             kind, document = found
             if kind == "payment":
-                void_payment(document.id, db)
+                void_payment(document.id, db=db)
             else:
                 if kind == "sales_receipt":
                     # Its payment's void voids the receipt too.
                     for alloc in list(document.payment_allocations):
                         if alloc.payment is not None and not alloc.payment.is_voided:
-                            void_payment(alloc.payment_id, db)
+                            void_payment(alloc.payment_id, db=db)
                     db.refresh(document)
                 if document.status != InvoiceStatus.VOID:
                     void_invoice(document.id, db)
