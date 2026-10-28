@@ -1298,6 +1298,17 @@ const BankingPage = {
             }
             sel.value = want;
         }
+        // a gift on a named donor's line gets the thank-you letter (#606)
+        if (Terms.isNonprofit() && entry.gift_letters && entry.gift_letters.length) {
+            const box = document.createElement('div');
+            box.className = 'form-group full-width';
+            box.id = 'entry-gift-letters';
+            box.innerHTML = entry.gift_letters.map(g =>
+                `<button type="button" class="btn btn-sm btn-secondary" onclick="window.open('/api/donors/gifts/bank-entry/${g.line_id}/acknowledgment/pdf','_blank')">Acknowledgment (PDF): ${escapeHtml(g.customer_name || '')} ${formatCurrency(g.amount)}</button> `
+                + `<button type="button" class="btn btn-sm btn-secondary" onclick="Donors.emailAcknowledgment('bank-entry', ${g.line_id})">Email</button>`).join('<br>');
+            const grid = form.querySelector('.form-grid');
+            if (grid) grid.appendChild(box);
+        }
         const submit = form.querySelector('button[type="submit"]');
         if (submit) submit.textContent = 'Save';
         if (entry.splits && entry.splits.length) {

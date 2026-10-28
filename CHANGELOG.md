@@ -17,7 +17,8 @@ year-end giving statement and gift count include their own line; voiding the
 deposit takes them all back out. The register shows the donor's name on a
 one-donor deposit and "Split (2 names)" on several. An entry you booked
 earlier can have a donor added from its Edit form, a reconciled one included,
-since a name changes no amount. Check images on a deposit are not part of
+since a name changes no amount, and each donor line can print or email the
+same thank-you letter a donation gets. Check images on a deposit are not part of
 this.
 
 **A register line opens over the register.** Clicking a line in a bank or

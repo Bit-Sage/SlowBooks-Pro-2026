@@ -1,7 +1,8 @@
 """Donor documents — acknowledgment letters (and, later, year-end giving
 statements). A gift is a donation receipt (kind=invoice), a payment that
 is not a receipt's own payment (kind=payment: a pledge payment or an
-unapplied gift), or property (kind=in-kind)."""
+unapplied gift), property (kind=in-kind), or an income line of a bank
+deposit that names the donor (kind=bank-entry)."""
 
 import logging
 from datetime import date
@@ -34,7 +35,7 @@ from app.services.request_utils import content_disposition
 router = APIRouter(prefix="/api/donors", tags=["donors"])
 logger = logging.getLogger(__name__)
 
-GIFT_KINDS = ("invoice", "payment", "in-kind")
+GIFT_KINDS = ("invoice", "payment", "in-kind", "bank-entry")
 
 
 class AcknowledgmentEmail(StrictModel):

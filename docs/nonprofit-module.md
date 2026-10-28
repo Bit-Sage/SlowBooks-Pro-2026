@@ -123,6 +123,10 @@ choose the donor on its line, then **Save**. This works on a reconciled
 deposit too: the donor is a label, so the amounts, the date and the
 reconciliation do not change.
 
+Each donor line gets the same thank-you letter a donation does: open the
+deposit in the register to edit it and use **Acknowledgment (PDF)** or
+**Email** beside the donor's name.
+
 Check images on a deposit are not stored yet.
 
 A payment recorded with nothing to apply to is a donor credit on the

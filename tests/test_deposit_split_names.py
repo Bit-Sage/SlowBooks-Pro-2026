@@ -393,3 +393,70 @@ def test_the_entry_dialog_gives_each_split_line_a_name_and_a_class():
         "BankingPage._setName(row.querySelector('.split-name'), sp.customer_id" in fill
     )
     assert "BankingPage._setSplitClass(row, sp.class_id)" in fill
+
+
+def _gift_line_ids(db, txn_id, seed_accounts):
+    return [ln.id for ln in _income_lines(db, txn_id, seed_accounts)]
+
+
+def test_a_split_deposit_line_gets_an_acknowledgment_letter(
+    client, db_session, seed_accounts
+):
+    ann, ben = _customer(client, "Ann Lee"), _customer(client, "Ben Ortiz")
+    posted = _post(client, _two_gifts(seed_accounts, ann, ben, check_number="D-9"))
+    line_ids = _gift_line_ids(db_session, posted["id"], seed_accounts)
+    base = "/api/donors/gifts/bank-entry"
+    r = client.get(f"{base}/{line_ids[0]}/acknowledgment/preview")
+    assert r.json() == {"eligible": True, "amount": 750.0, "reason": None}
+    pdf = client.get(f"{base}/{line_ids[1]}/acknowledgment/pdf")
+    assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-"
+    # the register entry offers one letter per donor line
+    got = client.get(f"/api/banking/entries/{posted['id']}").json()
+    assert [g["line_id"] for g in got["gift_letters"]] == line_ids
+    # gifts from collect_gifts carry the id the letter route needs
+    [gift] = collect_gifts(db_session, ann, 2026)["cash"]
+    assert (gift["kind"], gift["id"], gift["number"]) == (
+        "bank-entry",
+        line_ids[0],
+        "D-9",
+    )
+    assert client.get(f"{base}/999999/acknowledgment/preview").status_code == 404
+
+    client.post(f"/api/banking/entries/{posted['id']}/void")
+    r = client.get(f"{base}/{line_ids[0]}/acknowledgment/preview").json()
+    assert r["eligible"] is False and "void" in r["reason"]
+    assert client.get(f"{base}/{line_ids[0]}/acknowledgment/pdf").status_code == 400
+
+
+def test_an_expense_or_unnamed_line_gets_no_letter(client, db_session, seed_accounts):
+    ann = _customer(client, "Ann Lee")
+    bank = seed_accounts["1000"].id
+    spend = _post(
+        client,
+        {
+            "account_id": bank,
+            "date": "2026-03-05",
+            "amount": "-40.00",
+            "category_account_id": seed_accounts["6000"].id,
+            "customer_id": ann,
+        },
+    )
+    unnamed = _post(
+        client,
+        {
+            "account_id": bank,
+            "date": "2026-03-05",
+            "amount": "40.00",
+            "category_account_id": seed_accounts["4000"].id,
+        },
+    )
+    for txn_id, acct in ((spend["id"], "6000"), (unnamed["id"], "4000")):
+        line = (
+            db_session.query(TransactionLine)
+            .filter_by(transaction_id=txn_id, account_id=seed_accounts[acct].id)
+            .one()
+        )
+        r = client.get(f"/api/donors/gifts/bank-entry/{line.id}/acknowledgment/preview")
+        assert r.status_code == 200 and r.json()["eligible"] is False
+        r = client.get(f"/api/donors/gifts/bank-entry/{line.id}/acknowledgment/pdf")
+        assert r.status_code == 400

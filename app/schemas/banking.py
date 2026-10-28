@@ -169,6 +169,9 @@ class BankEntryDetail(BankEntryResponse):
     class_name: Optional[str] = None
     job_id: Optional[int] = None
     splits: Optional[list[BankSplitOut]] = None
+    # the lines that are gifts from a named donor (#606), each of which can
+    # get an acknowledgment letter: [{line_id, customer_name, amount}]
+    gift_letters: list[dict] = []
     reconciled_on: Optional[dt_date] = None
     reconciled_note: Optional[str] = None
     uncleared: list[dict] = []

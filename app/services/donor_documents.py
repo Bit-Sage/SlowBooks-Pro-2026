@@ -235,6 +235,13 @@ def load_gift(db, kind: str, gift_id: int) -> dict:
         if ik is None:
             raise LookupError("In-kind gift not found")
         return gift_from_in_kind(ik)
+    if kind == "bank-entry":
+        from app.models.transactions import TransactionLine
+
+        line = db.get(TransactionLine, gift_id)
+        if line is None:
+            raise LookupError("Deposit line not found")
+        return gift_from_bank_line(db, line)
     raise LookupError("Unknown gift kind")
 
 
@@ -288,14 +295,46 @@ def render_acknowledgment(db, company: dict, customer, gift: dict) -> tuple[str,
 # ── year-end giving statement ────────────────────────────────────────────
 
 
+def gift_from_bank_line(db, line, txn=None) -> dict:
+    """A gift booked on a deposit line (#606): an income credit on a
+    register or bank-feed entry that names the donor."""
+    from app.models.accounts import Account, AccountType
+    from app.models.transactions import Transaction
+    from app.services.entry_text import BANK_ENTRY_HEADER
+    from app.services.voids import voided_transaction_ids
+
+    txn = txn or db.get(Transaction, line.transaction_id)
+    account = db.get(Account, line.account_id)
+    if txn.source_type != "bank_entry" or account.account_type != AccountType.INCOME:
+        raise NotAGift("This line is not a gift booked on a deposit")
+    if not line.customer_id:
+        raise NotAGift("This deposit line names no donor")
+    if txn.id in voided_transaction_ids(db, [txn.id]):
+        raise NotAGift("This deposit is void")
+    amount = _q(Decimal(str(line.credit or 0)) - Decimal(str(line.debit or 0)))
+    if amount <= 0:
+        raise NotAGift("This line is not a gift booked on a deposit")
+    memo = line.description or txn.description or ""
+    return {
+        "kind": "bank-entry",
+        "id": line.id,
+        "number": txn.reference or None,
+        "date": txn.date,
+        "amount": amount,
+        "description": "" if memo == BANK_ENTRY_HEADER else memo,
+        "fair_value_amount": None,
+        "fair_value_description": None,
+        "in_kind_lines": [],
+        "customer_id": line.customer_id,
+    }
+
+
 def gifts_from_bank_entries(db, customer_id: int, start, end) -> list[dict]:
     """Gifts booked straight to the bank (#606): the income lines of a
     register or bank-feed deposit that name this donor, so one deposit of
     two gifts counts once for each. A void entry drops out."""
     from app.models.accounts import Account, AccountType
     from app.models.transactions import Transaction, TransactionLine
-    from app.services.entry_text import BANK_ENTRY_HEADER
-    from app.services.voids import voided_transaction_ids
 
     rows = (
         db.query(TransactionLine, Transaction)
@@ -311,27 +350,12 @@ def gifts_from_bank_entries(db, customer_id: int, start, end) -> list[dict]:
         .order_by(Transaction.date, TransactionLine.id)
         .all()
     )
-    void = voided_transaction_ids(db, {txn.id for _, txn in rows})
     gifts = []
     for line, txn in rows:
-        amount = _q(Decimal(str(line.credit or 0)) - Decimal(str(line.debit or 0)))
-        if txn.id in void or amount <= 0:
+        try:
+            gifts.append(gift_from_bank_line(db, line, txn))
+        except NotAGift:
             continue
-        memo = line.description or txn.description or ""
-        gifts.append(
-            {
-                "kind": "bank-entry",
-                "id": line.id,
-                "number": txn.reference or "",
-                "date": txn.date,
-                "amount": amount,
-                "description": "" if memo == BANK_ENTRY_HEADER else memo,
-                "fair_value_amount": None,
-                "fair_value_description": None,
-                "in_kind_lines": [],
-                "customer_id": customer_id,
-            }
-        )
     return gifts
 
 

@@ -859,6 +859,29 @@ def _reconciled_sentence(recon) -> str:
     )
 
 
+def _gift_letters(db: Session, txn, status: str) -> list[dict]:
+    """The entry's income lines that name a donor, for the acknowledgment
+    letter buttons (#606); none on a void entry."""
+    from app.services.donor_documents import NotAGift, gift_from_bank_line
+
+    out = []
+    for ln in txn.lines:
+        if status == "void" or not ln.customer_id:
+            continue
+        try:
+            gift = gift_from_bank_line(db, ln, txn)
+        except NotAGift:
+            continue
+        out.append(
+            {
+                "line_id": ln.id,
+                "customer_name": _customer_name(db, ln.customer_id),
+                "amount": str(gift["amount"]),
+            }
+        )
+    return out
+
+
 def _entry_detail(
     txn, account_id: int, db: Session, status: str = "recorded", uncleared=None
 ) -> dict:
@@ -909,6 +932,7 @@ def _entry_detail(
         if len(others) > 1
         else None
     )
+    out["gift_letters"] = _gift_letters(db, txn, status)
     recon = reconciled_on(db, txn)
     out["reconciled_on"] = recon.statement_date if recon else None
     out["reconciled_note"] = _reconciled_sentence(recon) if recon else None
