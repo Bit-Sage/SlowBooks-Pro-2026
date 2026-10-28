@@ -332,3 +332,91 @@ def test_a_void_restores_the_inventory_account_the_sale_credited(
     after = _balances(db_session, seed_accounts["1300"], other)
     assert after["1300"] == before["1300"] + Decimal("40.00")
     assert after["1310"] == Decimal("0.00")
+
+
+def test_an_edit_down_before_a_later_edit_up_does_not_confuse_the_void(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Sale 4 on A; down to 2 (2 off A); repoint to B; up to 5 (3 on B);
+    void: 3 off B and 2 off A, both back to zero (sb-qa skeptic, round 3)."""
+    a = _sub_cogs(db_session, seed_accounts, number="5110", name="A")
+    b = _sub_cogs(db_session, seed_accounts, number="5120", name="B")
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, a.id)
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=30, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
+    _set_qty(client, inv["id"], item.id, 2)
+    _repoint(db_session, item.id, b.id)
+    _set_qty(client, inv["id"], item.id, 5)
+    db_session.expire_all()
+    assert _balances(db_session, a, b) == {
+        "5110": Decimal("20.00"),
+        "5120": Decimal("30.00"),
+    }
+
+    assert client.post(f"/api/invoices/{inv['id']}/void").status_code == 200
+    db_session.expire_all()
+    assert _balances(db_session, a, b) == {
+        "5110": Decimal("0.00"),
+        "5120": Decimal("0.00"),
+    }
+    voids = (
+        db_session.query(InventoryMovement)
+        .filter_by(
+            item_id=item.id, movement_type=MovementType.VOID, source_type="invoice_void"
+        )
+        .all()
+    )
+    assert sorted(Decimal(str(v.quantity)) for v in voids) == [
+        Decimal("2"),
+        Decimal("3"),
+    ]
+    assert all(v.reverses_movement_id for v in voids)
+
+
+def test_a_reversal_over_mixed_costs_keeps_sales_by_item_tied_to_the_pl(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Two postings at different costs reversed together: one movement per
+    posting at its own cost, so the movement ledger and the entry agree to
+    the cent and Sales by Item still ties to the P&L."""
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=200, unit_cost="10.00", bill_number="B-1"
+    )
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=2, unit_rate="25.00"
+    )
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=1, unit_cost="30.50", bill_number="B-2"
+    )
+    _set_qty(client, inv["id"], item.id, 117)
+    _set_qty(client, inv["id"], item.id, 1)
+    db_session.expire_all()
+    movements = db_session.query(InventoryMovement).filter_by(item_id=item.id).all()
+    ledger = sum(
+        (
+            Decimal(str(m.quantity)) * Decimal(str(m.unit_cost))
+            for m in movements
+            if m.movement_type in (MovementType.SALE, MovementType.VOID)
+        ),
+        Decimal("0"),
+    )
+    cogs_lines = (
+        db_session.query(TransactionLine)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .filter(Account.account_type == AccountType.COGS)
+        .all()
+    )
+    posted = sum((l.debit - l.credit for l in cogs_lines), Decimal("0"))
+    assert posted == -ledger.quantize(Decimal("0.01"))
+    sbi = client.get(
+        "/api/reports/sales-by-item?start_date=2026-01-01&end_date=2026-12-31"
+    ).json()
+    pl = client.get(
+        "/api/reports/profit-loss?start_date=2026-01-01&end_date=2026-12-31"
+    ).json()
+    assert Decimal(str(sbi["total_cogs"])) == Decimal(str(pl["total_cogs"]))

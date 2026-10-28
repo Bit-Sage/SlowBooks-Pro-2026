@@ -21,6 +21,7 @@
 #       Sale (via invoice):   DR COGS              CR Inventory Asset
 # ============================================================================
 
+import logging
 from decimal import Decimal
 from typing import Optional
 
@@ -35,6 +36,8 @@ from app.models.items import (
 )
 from app.models.accounts import Account, AccountType
 from app.services.accounting import _q, create_journal_entry, quantize_to
+
+logger = logging.getLogger(__name__)
 
 COST_Q = Decimal("0.0001")
 
@@ -118,6 +121,7 @@ def _append_movement(
     source_id: Optional[int] = None,
     transaction_id: Optional[int] = None,
     memo: Optional[str] = None,
+    reverses_movement_id: Optional[int] = None,
 ) -> InventoryMovement:
     """Write one movement row and update the denormalized Item cache.
 
@@ -156,6 +160,7 @@ def _append_movement(
         source_id=source_id,
         transaction_id=transaction_id,
         memo=memo,
+        reverses_movement_id=reverses_movement_id,
     )
     db.add(mv)
     db.flush()
@@ -513,15 +518,19 @@ def reverse_sale(
         return None
 
     # The reversal comes off where the sale went on. An invoice can hold more
-    # than one SALE movement for the item (each quantity-up edit adds one) and,
-    # since #622, they can sit on different accounts with different costs, so
-    # walk them newest first (the order earlier reversals consumed them in),
-    # skip what those reversals already took, and reverse each piece at its own
-    # cost against its own COGS and inventory accounts (sb-qa). With no
-    # original to match, legacy behaviour: current avg_cost, the chart's
-    # accounts.
-    pieces = []  # (quantity, unit_cost, cogs_account_id, asset_account_id)
+    # than one SALE movement for the item (each quantity-up edit adds one)
+    # and, since #622, they can sit on different accounts at different costs.
+    # Each posting's remainder is what earlier reversals that name it left;
+    # reversals from before this release name nothing, so their total is
+    # taken off the newest postings first (the order they were made in).
+    # Walk the postings newest first, one reversal movement per piece, at the
+    # piece's own cost, against the piece's own accounts (sb-qa). With no
+    # original to match: current avg_cost and the chart's accounts, as before.
+    pieces = (
+        []
+    )  # (quantity, unit_cost, cogs_account_id, asset_account_id, sale movement)
     remaining = quantity
+    originals = []
     if original_source_type and original_source_id:
         originals = (
             db.query(InventoryMovement)
@@ -534,71 +543,91 @@ def reverse_sale(
             .order_by(InventoryMovement.id.desc())
             .all()
         )
-        already = (
-            db.query(func.coalesce(func.sum(InventoryMovement.quantity), 0))
-            .filter(
-                InventoryMovement.item_id == item.id,
-                InventoryMovement.source_id == original_source_id,
-                InventoryMovement.movement_type == MovementType.VOID,
-                InventoryMovement.source_type.in_(
-                    (f"{original_source_type}_void", f"{original_source_type}_edit")
-                ),
-            )
-            .scalar()
+        void_q = db.query(
+            func.coalesce(func.sum(InventoryMovement.quantity), 0)
+        ).filter(
+            InventoryMovement.item_id == item.id,
+            InventoryMovement.movement_type == MovementType.VOID,
         )
-        skip = Decimal(str(already or 0))
+        unattributed = Decimal(
+            str(
+                void_q.filter(
+                    InventoryMovement.source_id == original_source_id,
+                    InventoryMovement.source_type.in_(
+                        (f"{original_source_type}_void", f"{original_source_type}_edit")
+                    ),
+                    InventoryMovement.reverses_movement_id.is_(None),
+                ).scalar()
+                or 0
+            )
+        )
         for mv in originals:
             if remaining <= 0:
                 break
-            available = abs(Decimal(str(mv.quantity)))
-            taken_before = min(available, skip)
-            skip -= taken_before
-            available -= taken_before
+            taken = Decimal(
+                str(
+                    void_q.filter(
+                        InventoryMovement.reverses_movement_id == mv.id
+                    ).scalar()
+                    or 0
+                )
+            )
+            available = abs(Decimal(str(mv.quantity))) - taken
+            legacy = min(available, unattributed)
+            unattributed -= legacy
+            available -= legacy
             if available <= 0:
                 continue
             take = min(available, remaining)
             cogs_id, asset_id = _sale_entry_accounts(db, mv)
-            pieces.append((take, Decimal(str(mv.unit_cost or 0)), cogs_id, asset_id))
+            pieces.append(
+                (take, Decimal(str(mv.unit_cost or 0)), cogs_id, asset_id, mv)
+            )
             remaining -= take
     if remaining > 0:
-        pieces.append((remaining, Decimal(str(item.avg_cost or 0)), None, None))
-
-    amount = sum((_q(q * c) for q, c, _, _ in pieces), Decimal("0"))
-    unit_cost = quantize_to(amount / quantity, COST_Q) if quantity else Decimal("0")
+        if originals:
+            logger.warning(
+                "reverse_sale: %s of %s for item %s exceeds its sale postings; "
+                "the remainder is reversed at avg_cost",
+                remaining,
+                original_source_type,
+                item.id,
+            )
+        pieces.append((remaining, Decimal(str(item.avg_cost or 0)), None, None, None))
 
     txn_id = None
-    if amount > 0 and post_journal:
+    if post_journal:
         fallback_asset = get_inventory_asset_account_id(db, item)
         # a sale that posted no entry could only have gone to the chart's
         # account, never the item's, so the fallback is item-less
         fallback_cogs = get_cogs_account_id(db)
         by_accounts = {}
-        for q, c, cogs_id, asset_id in pieces:
+        for q, c, cogs_id, asset_id, _mv in pieces:
             key = (asset_id or fallback_asset, cogs_id or fallback_cogs)
             by_accounts[key] = by_accounts.get(key, Decimal("0")) + _q(q * c)
-        if all(a and c for a, c in by_accounts):
+        lines = []
+        for (asset_id, cogs_id), piece_amount in by_accounts.items():
+            if piece_amount <= 0 or not (asset_id and cogs_id):
+                continue
+            lines.append(
+                {
+                    "account_id": asset_id,
+                    "debit": piece_amount,
+                    "credit": Decimal("0"),
+                    "description": f"Inventory reversal: {item.name}",
+                }
+            )
+            lines.append(
+                {
+                    "account_id": cogs_id,
+                    "debit": Decimal("0"),
+                    "credit": piece_amount,
+                    "description": f"COGS reversal: {item.name}",
+                }
+            )
+        if lines:
             from datetime import date as _date
 
-            lines = []
-            for (asset_id, cogs_id), piece_amount in by_accounts.items():
-                if piece_amount <= 0:
-                    continue
-                lines.append(
-                    {
-                        "account_id": asset_id,
-                        "debit": piece_amount,
-                        "credit": Decimal("0"),
-                        "description": f"Inventory reversal: {item.name}",
-                    }
-                )
-                lines.append(
-                    {
-                        "account_id": cogs_id,
-                        "debit": Decimal("0"),
-                        "credit": piece_amount,
-                        "description": f"COGS reversal: {item.name}",
-                    }
-                )
             txn = create_journal_entry(
                 db,
                 txn_date or _date.today(),
@@ -609,17 +638,21 @@ def reverse_sale(
             )
             txn_id = txn.id
 
-    return _append_movement(
-        db,
-        item,
-        MovementType.VOID,
-        quantity=quantity,
-        unit_cost=unit_cost,
-        source_type=source_type,
-        source_id=source_id,
-        transaction_id=txn_id,
-        memo="Sale reversal",
-    )
+    last = None
+    for q, c, _cogs, _asset, mv in pieces:
+        last = _append_movement(
+            db,
+            item,
+            MovementType.VOID,
+            quantity=q,
+            unit_cost=c,
+            source_type=source_type,
+            source_id=source_id,
+            transaction_id=txn_id,
+            memo="Sale reversal",
+            reverses_movement_id=mv.id if mv is not None else None,
+        )
+    return last
 
 
 def current_valuation(db: Session) -> dict:
