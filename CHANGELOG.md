@@ -7,6 +7,41 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.30.0 — Construction from estimate to pay application, and reports on a cash basis
 
+**Stripe payments record again.** On the current Stripe library a paid
+checkout's webhook was answered with an error and the payment was never
+recorded, and Check payment status failed the same way; the library's
+objects are no longer dictionaries, and the provider read them as one. Both
+work again, and with the clearing account on the processing fee is booked
+from the payment as #583 intends.
+
+**Sales Tax on the cash basis ties to Sales Tax Payable on a pay
+application's invoice.** Such an invoice holds retainage back, so its amount
+due is less than its total; the report prorated each payment's tax on the
+total while the payment's own cash lines prorated on the amount due, and the
+two disagreed. The report now prorates the way the cash lines do, to the
+cent.
+
+**The desktop window's zoom level comes back after a relaunch, and Ctrl +
+wheel zooms on a Mac.** On Windows the level was kept but not applied again
+at the next start; on a Mac only the keys zoomed. Ctrl + wheel (Cmd on a
+Mac) now steps the same remembered level on both.
+
+**Contact support's Send opens the mail program on a Mac.** The desktop
+window on macOS dropped the mailto link; it now hands it to the launcher,
+which opens the default mail program with the message written.
+
+**A wide report's scrollbar stays in view.** A report wider than its window
+(the WIP Schedule) scrolled sideways only from a bar at the table's foot; a
+bar at the bottom of the window now scrolls it while the table is in view.
+
+**Smaller:** the note that lists an entity type's equity accounts names them
+the way the company does (no numbers when account numbers are off); the
+Commitment Status report as of a date shows a commitment's status on that
+date, not today's "closed" on a row that was still open then; the refusal to
+edit a locked contract sum says an *approved* change order locks it; at 1280
+wide the top bar keeps the company name beside Contact support (the clock
+and the brand's year give way below 1366).
+
 **A lien waiver per payment and job** (#576). A payment applied to two jobs'
 invoices used to get one waiver, for whichever invoice came first, and a
 payment whose first invoice carried no job waived the whole payment. A waiver
