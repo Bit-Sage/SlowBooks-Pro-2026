@@ -126,6 +126,12 @@ def _check_contract_type(v):
     return v
 
 
+def _bounded_markup(v):
+    if v is not None and not (-100 < v <= 1000):
+        raise ValueError("co_markup_pct must be above -100 and at most 1000")
+    return v
+
+
 class ContractTerms(StrictModel):
     """The PUT body for a job's contract terms. Every field is optional —
     a field left out is unchanged; a field sent as null clears it."""
@@ -137,9 +143,11 @@ class ContractTerms(StrictModel):
     cap_amount: Optional[Money] = None
     contingency_amount: Optional[Money] = None
     retainage_pct: Optional[Decimal] = None
+    co_markup_pct: Optional[Decimal] = None
     contract_date: Optional[dt_date] = None
 
     _type = field_validator("contract_type")(_check_contract_type)
+    _comarkup = field_validator("co_markup_pct")(_bounded_markup)
 
     @field_validator("fee_pct")
     @classmethod
@@ -157,6 +165,9 @@ class ContractTerms(StrictModel):
 
 
 class SovLineIn(StrictModel):
+    # The existing line this row is (so a billed line round-trips by id, #555);
+    # absent on a freshly added row.
+    id: Optional[int] = None
     item_no: Optional[str] = Field(default=None, max_length=10)
     description: Optional[str] = Field(default=None, max_length=200)
     trade_package_id: Optional[int] = None
@@ -214,12 +225,19 @@ class ContractSummary(BaseModel):
     contingency_used: float = 0.0
     contingency_remaining: Optional[float] = None
     retainage_pct: Optional[float] = None
+    co_markup_pct: Optional[float] = None
     contract_date: Optional[dt_date] = None
     contract_estimate_id: Optional[int] = None
     sov_total: float = 0.0
     sov_balance: float = 0.0
     billed_to_date: float = 0.0
     billed_pct: Optional[float] = None
+    # Change orders (#554): allowance draw-down per line and the CO roll-up.
+    allowances: List[dict] = []
+    change_orders: dict = {}
+    # Progress billing (#555): owner deposits and owner-side retainage.
+    deposits: dict = {}
+    retainage: dict = {}
 
 
 class ContractResponse(BaseModel):

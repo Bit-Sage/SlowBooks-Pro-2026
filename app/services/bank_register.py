@@ -123,6 +123,10 @@ _LINKS = {
     # document it voided (its source_id is that document's).
     "job_cost": "/#/job-costs/{id}",
     "job_cost_void": "/#/job-costs/{id}",
+    # An owner deposit (#555) has no document page of its own (it lives in
+    # the job's Pay apps tab), so it and its void open as the journal entry.
+    "job_deposit": "/#/journal/{txn}",
+    "job_deposit_void": "/#/journal/{txn}",
     "payroll": "/#/payroll/{id}",
     "payroll_void": "/#/payroll/{id}",
     "credit_memo": "/#/credit-memos/{id}",

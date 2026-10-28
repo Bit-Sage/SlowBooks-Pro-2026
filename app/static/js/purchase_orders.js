@@ -31,7 +31,8 @@ const PurchaseOrdersPage = {
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.view(${po.id})">View</button>
                         <button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.showForm(${po.id})">Edit</button>
-                        ${po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : ''}
+                        ${con && po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.subPayApp(${po.id})">Sub pay app</button>` : (po.status !== 'closed' ? `<button class="btn btn-sm btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : '')}
+                        ${con && (po.retainage_pct || Number(po.retainage_released)) ? `<button class="btn btn-sm btn-secondary" onclick="PurchaseOrdersPage.releaseRetainage(${po.id})">Release retainage</button>` : ''}
                     </td>
                 </tr>`,
         });
@@ -80,7 +81,8 @@ const PurchaseOrdersPage = {
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="window.open('/api/purchase-orders/${po.id}/pdf','_blank')">Save PDF</button>
                 <button class="btn btn-secondary" onclick="window.open('/api/purchase-orders/${po.id}/print-preview','_blank')">Print</button>
-                ${po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : ''}
+                ${con && po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.subPayApp(${po.id})">Sub pay app</button>` : (po.status !== 'closed' ? `<button class="btn btn-primary" onclick="PurchaseOrdersPage.convertToBill(${po.id})">To Bill</button>` : '')}
+                ${con && (po.retainage_pct || Number(po.retainage_released)) ? `<button class="btn btn-secondary" onclick="PurchaseOrdersPage.releaseRetainage(${po.id})">Release retainage</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
     },
@@ -303,6 +305,36 @@ const PurchaseOrdersPage = {
         } catch (err) { toast(err.message, 'error'); }
     },
 
+    // Sub pay app (#555): the commitment's schedule — previous / this period /
+    // remaining / retainage — billed a period at a time through the existing
+    // convert. Reads the pay-app schedule, then opens the To Bill dialog
+    // (which carries the amount-this-period column and the retainage note).
+    async subPayApp(id) {
+        try {
+            await API.get(`/purchase-orders/${id}/pay-app`);  // the schedule read
+        } catch (err) { toast(err.message, 'error'); return; }
+        return PurchaseOrdersPage.convertToBill(id);
+    },
+
+    // Release retainage (#555): a prompt for the amount (default the whole
+    // outstanding) → a bill DR Retainage Payable / CR A/P, payable in Pay Bills.
+    async releaseRetainage(id) {
+        let sched;
+        try { sched = await API.get(`/purchase-orders/${id}/pay-app`); }
+        catch (err) { toast(err.message, 'error'); return; }
+        const outstanding = sched.retainage_outstanding || 0;
+        if (outstanding <= 0) { toast('No retainage outstanding to release.'); return; }
+        const raw = prompt(`Retainage outstanding is ${formatCurrency(outstanding)}. Amount to release:`, outstanding.toFixed(2));
+        if (raw === null) return;
+        const amount = parseFloat(raw);
+        if (isNaN(amount) || amount <= 0) { toast('Enter an amount to release.', 'error'); return; }
+        try {
+            const r = await API.post(`/purchase-orders/${id}/release-retainage`, { amount });
+            toast(r.message);
+            if (location.hash === '#/bills') App.navigate('#/bills'); else location.hash = '#/bills';
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
     // To Bill asks where each line goes before anything posts: an item's
     // expense account or the vendor's default fills the choice in, and a
     // line neither names waits for one — it used to land on account 6000,
@@ -337,11 +369,16 @@ const PurchaseOrdersPage = {
                 cell = AccountQuickAdd.picker(`<select class="po-conv-account" data-line="${l.id}" aria-label="Account for line ${n + 1}">
                         <option value="">Choose an account...</option>${PurchaseAccounts.options(posting, pick)}</select>`, 'po-convert');
             }
-            const amtCol = partial
-                ? `<td class="amount"><input type="number" step="0.01" min="0" class="po-conv-amount" data-line="${l.id}" value="${remaining.toFixed(2)}" style="width:90px" aria-label="Amount this period for line ${n + 1}"></td>`
+            // The sub pay-app schedule (#555): previous (billed) / this period /
+            // remaining / the retainage this period holds back.
+            const retThis = remaining * (Number(po.retainage_pct) || 0) / 100;
+            const amtCols = partial
+                ? `<td class="amount">${formatCurrency(remaining)}</td>`
+                + `<td class="amount"><input type="number" step="0.01" min="0" class="po-conv-amount" data-line="${l.id}" value="${remaining.toFixed(2)}" style="width:90px" aria-label="Amount this period for line ${n + 1}"></td>`
+                + `<td class="amount">${formatCurrency(retThis)}</td>`
                 : '';
             return `<tr><td>${escapeHtml(l.description || (item ? item.name : ''))}</td>
-                <td class="amount">${formatCurrency(l.amount)}</td>${partial ? `<td class="amount">${formatCurrency(l.billed_amount)}</td>` : ''}${amtCol}<td>${cell}</td></tr>`;
+                <td class="amount">${formatCurrency(l.amount)}</td>${partial ? `<td class="amount">${formatCurrency(l.billed_amount)}</td>` : ''}${amtCols}<td>${cell}</td></tr>`;
         }).join('');
         const taxNote = Number(po.tax_amount)
             ? `<p class="form-hint">The ${formatCurrency(po.tax_amount)} of tax on this order is part of what these goods cost: it is added to each line's account, not to Sales Tax Payable.</p>`
@@ -354,7 +391,7 @@ const PurchaseOrdersPage = {
             <div class="form-group" style="max-width:200px;"><label for="po-conv-date">Bill date</label>
                 <input type="date" id="po-conv-date" value="${todayISO()}"></div>
             <div class="table-container"><table>
-                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Billed</th><th scope="col" class="amount">This period</th>' : ''}<th scope="col">Account</th></tr></thead>
+                <thead><tr><th scope="col">Line</th><th scope="col" class="amount">Scheduled</th>${partial ? '<th scope="col" class="amount">Previous</th><th scope="col" class="amount">Remaining</th><th scope="col" class="amount">This period</th><th scope="col" class="amount">Retainage</th>' : ''}<th scope="col">Account</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             ${taxNote}

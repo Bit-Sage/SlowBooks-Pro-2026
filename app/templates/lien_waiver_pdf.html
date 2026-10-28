@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>{{ title }}</title>
+<style>
+    @page { size: letter; margin: 0.8in 0.9in; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11pt; color: #1a1a2e; line-height: 1.5; }
+    .company-logo { display: block; max-height: 60px; max-width: 200px; margin-bottom: 6px; }
+    .company-name { font-size: 14pt; font-weight: 700; color: #003366; }
+    .company-info { font-size: 9pt; color: #4a4a6a; margin-bottom: 18px; }
+    h1 { font-size: 17pt; color: #003366; margin: 10px 0 4px 0; }
+    .status { font-size: 10pt; color: #666; margin-bottom: 18px; }
+    table.facts { width: 100%; margin-bottom: 18px; border-collapse: collapse; }
+    table.facts td { padding: 4px 8px; font-size: 10pt; vertical-align: top; border-bottom: 1px solid #e0e0e0; }
+    table.facts td.label { font-weight: 700; color: #4a4a6a; width: 160px; }
+    p { margin: 0 0 12px 0; }
+    .sign { margin-top: 48px; }
+    .sign .line { border-top: 1px solid #1a1a2e; width: 320px; padding-top: 4px; font-size: 10pt; }
+    .note { font-size: 8.5pt; color: #777; margin-top: 30px; }
+</style>
+</head>
+<body>
+    {% if company_logo_data_uri %}<img class="company-logo" src="{{ company_logo_data_uri }}" alt="">{% endif %}
+    <div class="company-name">{{ company.company_name }}</div>
+    <div class="company-info">
+        {% if company.company_address1 %}{{ company.company_address1 }}<br>{% endif %}
+        {% set company_city = city_line(company.company_city, company.company_state, company.company_zip) %}
+        {% if company_city %}{{ company_city }}{% endif %}
+    </div>
+
+    <h1>{{ title }}</h1>
+    <div class="status">{{ 'Effective only when the payment below is received.' if conditional else 'The payment below has been received.' }}</div>
+
+    <table class="facts">
+        <tr><td class="label">Claimant</td><td>{{ company.company_name }}</td></tr>
+        <tr><td class="label">Owner</td><td>{{ owner }}</td></tr>
+        <tr><td class="label">Project</td><td>{{ project }}</td></tr>
+        <tr><td class="label">Payment</td><td>{{ waiver.amount | currency }}{% if payment and payment.date %}, dated {{ payment.date | fdate }}{% endif %}</td></tr>
+        {% if not final %}<tr><td class="label">Work through</td><td>{{ waiver.through_date | fdate }}</td></tr>{% endif %}
+    </table>
+
+    {% if conditional %}
+    <p>Upon receipt by the claimant of a payment of {{ waiver.amount | currency }} from {{ owner }}, this document becomes effective and the claimant waives and releases its lien and claim rights, including any right against a bond, for labor, services, equipment or materials furnished to {{ project }}
+    {%- if final %} for the whole of the project.{% else %} through {{ waiver.through_date | fdate }}.{% endif %}</p>
+    <p>This waiver is not effective until the payment is actually received.{% if not final %} It does not cover retainage that has not been paid, or extra work not yet billed.{% endif %}</p>
+    {% else %}
+    <p>The claimant has been paid and has received a payment of {{ waiver.amount | currency }} from {{ owner }}, and unconditionally waives and releases its lien and claim rights, including any right against a bond, for labor, services, equipment or materials furnished to {{ project }}
+    {%- if final %} for the whole of the project.{% else %} through {{ waiver.through_date | fdate }}.{% endif %}</p>
+    <p>This waiver is effective on signing.{% if not final %} It does not cover retainage that has not been paid, or extra work not yet billed.{% endif %}</p>
+    {% endif %}
+
+    {% if waiver.notes %}<p>{{ waiver.notes }}</p>{% endif %}
+
+    <div class="sign">
+        <div class="line">{{ waiver.signed_by or '' }}<br>Signed for {{ company.company_name }}</div>
+        <div class="line" style="margin-top:28px; width:200px;">Date</div>
+    </div>
+    <div class="note">Some states require their own form of lien waiver. Check yours before relying on this one.</div>
+</body>
+</html>

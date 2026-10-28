@@ -180,6 +180,12 @@ class InvoiceResponse(BaseModel):
     total: Decimal
     amount_paid: Decimal
     balance_due: Decimal
+    # Construction progress billing (#555): retainage held this period (to
+    # Retainage Receivable, 1150), retainage billed back (released), and the
+    # owner pay application this invoice came from. Zero/null otherwise.
+    retainage_held: Decimal = Decimal("0")
+    retainage_released: Decimal = Decimal("0")
+    pay_application_id: Optional[int] = None
     notes: Optional[str]
     class_id: Optional[int] = None
     job_id: Optional[int] = None

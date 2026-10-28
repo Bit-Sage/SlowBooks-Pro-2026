@@ -210,7 +210,13 @@ jobs:
           # 182 with the register date's browser test
           # (test_browser_register_date.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "182"
+          # 183 with the lien waiver PDF route test (#576,
+          # test_pay_applications::test_lien_waiver_pdf_route, WeasyPrint's
+          # native stack is not on the runner).
+          # 185 with the job-report PDF tests (#577,
+          # test_job_reports::test_report_routes_pdf and
+          # ::test_existing_reports_export_pdf, WeasyPrint again).
+          MAX_SKIPS: "185"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

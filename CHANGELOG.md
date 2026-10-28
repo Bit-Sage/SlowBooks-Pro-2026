@@ -341,7 +341,7 @@ company's estimate form and PDF are exactly as they were. See
 
 **The contract on the job** (#552, @ContractorKeith). Review fixes: the
 contract sum and contingency edit freely until the job has billing on the
-schedule of values or a change order, then lock (409 `contract_sum_locked` /
+schedule of values or an approved owner change order, then lock (409 `contract_sum_locked` /
 `contingency_locked`; a change order moves them from there), so a sum typed
 before the bid is just corrected; the original follows the sum until then;
 building from an estimate stamps the original even when the job form set the
@@ -411,6 +411,175 @@ Nonprofit company sees none of it. One behaviour change for everyone: a $0
 (description-only) PO line is no longer copied onto the bill a PO becomes —
 the converted bill carries only the lines with money on them. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Change orders** (#554, @ContractorKeith). A change order is how a locked
+construction budget, its contract and its commitments move, with an audit
+trail. It comes in three kinds: a **potential change order** prices a change
+the owner hasn't approved yet (and **promotes** to an owner change order,
+copying its lines, when they say yes); an **owner change order** revises the
+contract; a **sub change order** appends scope to a commitment. Material and
+labor are priced separately, each line carrying its own markup — the line's,
+else the change order's, else the job's new **Markup on change orders**
+contract term (kept between -100% and 1000%) — and allowance- and
+contingency-funded work carries **none by default**, with an **Apply markup**
+flag on the change order to turn it on (the record, form and PDF show whether
+markup was applied). An owner change order's **funding** decides the
+effect on approve: *contract* adds its sell total to the contract amount,
+appends a read-only `change_order` line to the schedule of values and writes
+locked `source=change` budget rows with the sell as revenue (the job-cost
+tree's Changes column); *contingency* draws the owner's contingency down (409
+`contingency_exceeded`), and *allowance* spends an allowance line at its sell price, markup included, as contingency does (409
+`allowance_exceeded`), both writing the cost with no revenue (the contract
+already carries that money). A sub change order appends cost-only lines to an
+open commitment (a sub change order linked to an owner change order approves only while the cost of the approved ones under it, this one included, stays within the owner change order's cost: 409 `owner_co_budget_exceeded`; the lines a change order added keep their job, cost code, type, quantity and rate on a plain purchase-order edit) on the same job (409 when it is on another job or not open),
+and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
+changing a contract term afterward never moves an approved CO. Every effect
+reverses on **void** — except a commitment line already billed against, which
+refuses the void (409 `co_billed`). **Numbers run per job**: the job number,
+then `CO-001`, `PCO-001`, `SCO-001` (a job with no number uses `J<id>`; older
+company-wide numbers keep theirs). A **PCO can be revised** (`POST
+/api/change-orders/{id}/revise`): the new revision (`…-R2`) supersedes the
+prior one, which stays as history, the list shows the latest, and only the
+latest promotes. **Several PCOs roll up into one owner CO** (`POST
+/{id}/promote` with `pco_ids`): the owner CO carries all their lines and each
+PCO links to it. The commitment and budget can no longer drift apart: a sub CO
+made from an owner CO approves only once that owner CO is approved, an owner CO
+with an approved sub CO under it cannot be rejected or voided (void the sub CO
+first), the allowance line must be an allowance on the same job, and a plain
+purchase-order edit cannot drop or reprice the lines a sub CO added (409
+`commitment_co_line`). A sub CO on a fully billed commitment is still refused
+(409 `commitment_not_open`). The budget key widens to include
+`source` so a change row sits beside an estimate-locked one. A **Change
+orders** tab (construction only, after Buyout) holds the log, the line form
+with live cost and sell per cost type, and Submit / Approve / Reject / Void /
+Promote / Make sub order / PDF; the Contract tab's Changes tile goes live, its
+terms gain **Markup on change orders**, and the schedule of values shows
+change-order lines read-only with each allowance's used and remaining. An
+owner CO / PCO prints as a document showing the price per line and cost type
+(`GET /api/change-orders/{id}/pdf`; cost and markup stay in the app). Progress
+billing against the
+revised schedule (#555) and the change-order log report (#556) build on this;
+a Business or Nonprofit company sees none of it. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Progress billing and retainage** (#555, @ContractorKeith). A construction job
+now bills its owner from the schedule of values with a **pay application**:
+each SOV line carries previous, this period, materials presently stored,
+completed-to-date, percent complete, balance to finish and retainage, and the
+application totals the way the owner's payment application reads — completed and stored
+to date, retainage to date, total earned less retainage, less previous
+payment applications, the current payment due, and the balance to finish. A new
+application pre-fills every SOV line (change-order, allowance and contingency
+lines bill like work); only one may be open per job (409). **Approve** creates
+the invoice for the job's customer — one line per SOV line billed this period
+(this period plus the change in stored materials, so stored is billed when
+stored and reversed when it is installed) — and posts a retainage journal: DR
+A/R net of retainage, DR **Retainage Receivable** (1150) for retainage held
+this period, CR 1150 for any retainage released, CR income per line, CR sales
+tax (charged on the billed work at the application's tax rate, defaulted from
+the job's accepted estimate). A dropped retainage percent makes the retainage
+this period negative and the 1150 leg a credit, and the entry still balances.
+The invoice carries `retainage_held`, `retainage_released` and its
+`pay_application_id`, and its balance due is the net of retainage. **Owner
+deposits** (`POST /api/jobs/{id}/deposits`) hold money on **Customer Deposits**
+(2210); a pay application's *deposit applied* draws one down as a payment to
+2210 on approve. **Void** reverses the invoice (and 1150), restores an applied
+deposit, and leaves later applications' figures correct (they read history
+live). On the **sub** side, a commitment's schedule drives a **Sub pay app**
+(the existing partial convert) and **Release retainage** writes a bill DR
+**Retainage Payable** (2050) / CR A/P, payable through Pay Bills; 422 over what
+is held, and voiding it restores the figure. Lien waivers ride on both sides:
+an application warns about sub bills still missing a waiver for the period. The
+first pay application locks the contract sum and contingency (409
+`contract_sum_locked` / `contingency_locked` until it is voided). The
+schedule can no longer be rebuilt once billed (409 `sov_has_billings`), a line
+cannot shrink below what it has billed (422), and an owner change order whose
+SOV line has been billed cannot be voided (409 `co_billed`). A **Pay apps** tab
+(construction only, after Change orders) holds the application grid, the totals
+block, the deposits block and Save / Submit / Approve / Void / PDF
+(`GET /api/pay-applications/{id}/pdf` prints the pay application and its
+line detail); the invoice view and PDF show the retainage lines. The
+WIP schedule, cost-to-complete, the change-order log, the buyout report and job
+cost by vendor (#556) build on this; a Business or Nonprofit company sees none
+of it. Retainage to date is net of releases, so the application, its invoice and
+account 1150 agree after a release, and it cannot go below zero (422): dropping
+the retainage percent and releasing on the same application is refused when the
+release is more than what is held. An invoice made from a pay application only
+takes note edits (409 otherwise) and is voided with the application, not from
+the invoice screen (409 `invoice_belongs_to_pay_application`); only the latest
+approved application can be voided (409 `later_application`). Sales tax is on
+by default with a per-application *Charge tax* switch, taxes at the estimate's
+rate to six decimals (8.875% stays 8.875%), shows on the application so its
+current due matches the invoice, and is saved on edit. Stored materials move
+into the work on a later application, and an application that only moves stored
+material is approved with no invoice. The PDF is titled "Application for
+Payment" with a "Line detail" sheet and prints the contract sums as of approval.
+Each payment can carry conditional or unconditional, progress or final lien
+waivers for the part applied to the job (`POST /api/lien-waivers`, PDF per
+waiver). A deposit payment applied to an application can't be voided from
+Payments (409), and a negative this-period or stored that would take completed
+to date below zero is refused (422). See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Construction job reports** (#556, @ContractorKeith). Five reports lead the
+Report Center in a Construction group — the three that always existed (Job
+Profitability, Job Budget vs Actual, P&L by Job) and then these five, which show
+in construction mode only. Each is a plain grid with a JSON route, a PDF and a
+CSV like P&L by Job, and takes an `as_of` date (or `start_date`/`end_date` where
+a period applies) with optional `job_id`, `customer_id`, `status` and
+`include_closed`; closed and not-awarded jobs are left out by default. The **WIP
+Schedule** (`/reports/wip-schedule`) lists each job with a contract — contract
+sum, approved changes, revised contract, estimated cost and gross profit, cost to
+date, percent complete, earned revenue, billed to date, over and under billing,
+retainage outstanding, cost to complete and projected gross profit — on the
+**cost-to-cost** method: percent complete is cost ÷ estimated cost (capped at
+100%), earned is the revised contract times that percent, over billing (billed −
+earned) is a liability and under billing (earned − billed) an asset. Every figure
+reads **as of the date** — cost and posted revenue to that day, billing and
+retainage from the applications approved by then, the revised contract with the
+change orders approved by then. Billing reads
+from the approved pay applications' completed-to-date when the job has one by the
+date, else the posted revenue carrying the job (`billed_basis` says which). The
+report **posts nothing** (see the WIP additions below for the adjusting entry
+it computes). **Cost to Complete**
+(`/reports/cost-to-complete`) is per job and cost code (division › section) —
+budget, committed, actual, cost to complete (remaining budget plus open
+commitments), projected final, variance and percent — a tree in JSON, flattened
+with the code path in PDF/CSV, the totals footing the clamped rows. **Change
+Order Log** (`/reports/change-order-log`) lists every change order per job with
+the running approved total (as of the date) and the contract it builds, the
+pending total and counts by status. **Buyout Report** (`/reports/buyout`) foots
+the per-job buyout across jobs (bid vs bought, variance, committed-remaining,
+billed, Unassigned kept), as of the date. **Job Cost by Vendor**
+(`/reports/job-cost-by-vendor`) groups posted job cost by the transaction's
+vendor (a No vendor bucket for journals and job cost entries) with bills, paid to
+date, retainage held outstanding and open A/P; cost is period-filtered, the bill
+figures job-to-date and prorated by the job's share of each bill's line amounts
+(a split bill splits). Job Profitability and Job Budget vs Actual gained the PDF
+and CSV routes they lacked (honouring `customer_id` / `include_inactive`). A
+Business or Nonprofit company sees none of these reports. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Job reports, WIP additions** (#556). The WIP schedule now shows
+the **adjusting entry with amounts**, per job and net: under-billings (asset),
+over-billings (liability), the revenue offset and any loss provision, balanced,
+in the JSON, a second PDF grid, a CSV block and on screen (computed, never
+posted). A **cost-to-complete forecast** per job, section and cost type
+(`job_cost_to_complete`, migration `b4d6f8a0c2e3`; `GET`/`PUT
+/api/jobs/{id}/cost-to-complete-forecast`; report `cost-to-complete-forecast`
+with PDF and CSV) defaults to budget − actual floored at zero, and the WIP
+schedule's estimated cost is now actual + cost to complete, so a job past budget
+with work left reads under 100% instead of 100%. A **projected loss** is booked in
+full when projected cost passes the contract: the provision is loss × (1 −
+percent complete), added to the entry. A **commitment status** report
+(`commitment-status`, PDF and CSV) lists each PO and subcontract with committed,
+billed, retainage held and remaining, totals per job, read as of the date
+(sub change orders approved later are left out; a closed commitment is open on
+a date only if a bill against it is dated after that date). A job with no budget
+and no forecast earns nothing: it is listed with a warning and left out of the
+totals and the adjusting entry until its cost reaches the contract, when it
+reads 100% complete and the loss is recognised once, not twice. The WIP
+warnings print under the report on screen, in the PDF and in the CSV.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 

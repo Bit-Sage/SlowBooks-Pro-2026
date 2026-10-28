@@ -299,6 +299,94 @@ def generate_estimate_pdf(estimate, company_settings: dict) -> bytes:
     return render_pdf(html_str)
 
 
+def render_change_order_html(co, totals: dict, company_settings: dict) -> str:
+    """The owner change order / PCO document (#554): title, description, the
+    price (sell) per line and per cost type, and the total. Cost and markup
+    stay in the app — not on the owner's document. Reuses the estimate PDF's
+    face."""
+    return _render("change_order_pdf.html", company_settings, co=co, totals=totals)
+
+
+def generate_change_order_pdf(co, totals: dict, company_settings: dict) -> bytes:
+    return render_pdf(render_change_order_html(co, totals, company_settings))
+
+
+def render_pay_application_html(app, pa, job, company_settings: dict) -> str:
+    """The owner payment application (#555): the header summary (contract
+    sum, net change by change orders, completed to date, retainage, total
+    earned less retainage, previous applications, current payment due,
+    deposit applied, balance to finish) and the line detail (the line
+    table). `pa` is the PayApplicationOut; `job` carries the owner."""
+
+    def f(v):
+        return float(v) if v is not None else 0.0
+
+    # Contract sums as of the application: the figures snapshotted when it was
+    # approved, so a reprint doesn't pick up change orders approved later. A
+    # draft (no snapshot yet) reads the job as it stands.
+    if app.contract_sum_to_date is not None:
+        original = f(app.contract_sum_original)
+        current = f(app.contract_sum_to_date)
+    else:
+        original = f(job.original_contract_amount if job else 0)
+        current = f(job.contract_amount if job else 0)
+    header = {
+        "owner": (job.customer.name if job and job.customer else ""),
+        "job_name": (job.full_name if job else ""),
+        "net_change": current - original,
+        "contract_sum_original": original,
+        "contract_sum_to_date": current,
+    }
+    return _render(
+        "pay_application_pdf.html",
+        company_settings,
+        app=app,
+        pa=pa,
+        job=job,
+        header=header,
+        totals=pa.totals,
+    )
+
+
+def generate_pay_application_pdf(app, pa, job, company_settings: dict) -> bytes:
+    return render_pdf(render_pay_application_html(app, pa, job, company_settings))
+
+
+# The lien waiver wording by type. {amount}, {through} and {owner} are filled
+# from the payment; progress waivers cover work through a date, final waivers
+# the whole job. Conditional waivers take effect only once the payment is
+# received; unconditional ones say it has been.
+LIEN_WAIVER_TITLES = {
+    "conditional_progress": "Conditional Waiver and Release on Progress Payment",
+    "unconditional_progress": "Unconditional Waiver and Release on Progress Payment",
+    "conditional_final": "Conditional Waiver and Release on Final Payment",
+    "unconditional_final": "Unconditional Waiver and Release on Final Payment",
+}
+
+
+def render_lien_waiver_html(waiver, payment, job, company_settings: dict) -> str:
+    """One lien waiver (#555) for a payment: the type picks the title and the
+    wording (conditional / unconditional, progress / final). `job` carries
+    the owner and project."""
+    wtype = waiver.waiver_type
+    return _render(
+        "lien_waiver_pdf.html",
+        company_settings,
+        waiver=waiver,
+        payment=payment,
+        job=job,
+        title=LIEN_WAIVER_TITLES.get(wtype, "Waiver and Release"),
+        conditional=wtype.startswith("conditional"),
+        final=wtype.endswith("final"),
+        owner=(job.customer.name if job and job.customer else ""),
+        project=(job.full_name if job else ""),
+    )
+
+
+def generate_lien_waiver_pdf(waiver, payment, job, company_settings: dict) -> bytes:
+    return render_pdf(render_lien_waiver_html(waiver, payment, job, company_settings))
+
+
 def generate_statement_pdf(
     customer, activity: dict, company_settings: dict, as_of_date=None
 ) -> bytes:

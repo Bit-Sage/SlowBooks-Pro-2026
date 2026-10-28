@@ -41,8 +41,9 @@ const JobsPage = {
     tabLabels() {
         if (!Terms.isConstruction()) return JobsPage.TAB_LABELS;
         const { overview, costs, budget, ...rest } = JobsPage.TAB_LABELS;
-        // Contract (the owner's side), then Buyout (the sub/supplier side, #553).
-        return { overview, costs, budget, contract: 'Contract', buyout: 'Buyout', ...rest };
+        // Contract (the owner's side), Buyout (the sub/supplier side, #553),
+        // then Change orders (#554).
+        return { overview, costs, budget, contract: 'Contract', buyout: 'Buyout', changeorders: 'Change orders', payapps: 'Pay apps', ...rest };
     },
 
     // =====================================================================
@@ -285,6 +286,8 @@ const JobsPage = {
                 case 'budget': return await JobsPage.budgetHtml();
                 case 'contract': return await JobsPage.contractHtml();
                 case 'buyout': return await JobsPage.buyoutHtml();
+                case 'changeorders': return await JobsPage.changeOrdersHtml();
+                case 'payapps': return await JobsPage.payAppsHtml();
                 case 'transactions': return await JobsPage.transactionsHtml();
                 case 'time': return await JobsPage.timeHtml();
                 default: return await JobsPage.overviewHtml();
@@ -627,6 +630,8 @@ const JobsPage = {
                     <input id="c-cont" name="contingency_amount" type="number" step="0.01" min="0" value="${v(c.contingency_amount)}"></div>
                 <div class="form-group"><label for="c-ret">Retainage %</label>
                     <input id="c-ret" name="retainage_pct" type="number" step="0.01" min="0" max="100" value="${v(c.retainage_pct)}"></div>
+                <div class="form-group"><label for="c-comarkup">Markup on change orders (%)</label>
+                    <input id="c-comarkup" name="co_markup_pct" type="number" step="0.0001" min="-99.9999" max="1000" value="${v(c.co_markup_pct)}" placeholder="default markup on owner COs"></div>
                 ${src}
             </div>
             <div class="form-actions"><button type="submit" class="btn btn-primary">Save contract terms</button></div>
@@ -641,7 +646,7 @@ const JobsPage = {
             <div style="font-size:16px;font-weight:700">${value}</div></div>`;
         return `<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 18px 0">
             ${tile('Contract sum', m(c.contract_amount))}
-            ${tile('Changes', m(c.changes), 'Revised − original (change orders, #554)')}
+            ${tile('Changes', m(c.changes), 'Revised − original (approved owner change orders)')}
             ${tile('Fee', m(c.fee))}
             ${tile('Cost to date', m(c.cost_to_date))}
             ${tile('Cap remaining', c.cap_remaining === null || c.cap_remaining === undefined ? '—' : m(c.cap_remaining))}
@@ -656,7 +661,9 @@ const JobsPage = {
     sovGridHtml(sov, contract, packages, codes, hasAccepted) {
         sov = sov || [];
         contract = contract || {};
-        const rows = sov.map((line, i) => JobsPage.sovRowHtml(line, i, packages, codes)).join('');
+        const usage = {};
+        for (const a of (contract.allowances || [])) usage[a.sov_line_id] = a;
+        const rows = sov.map((line, i) => JobsPage.sovRowHtml(line, i, packages, codes, usage[line.id])).join('');
         const total = sov.reduce((s, l) => s + (parseFloat(l.scheduled_value) || 0), 0);
         const balance = (contract.contract_amount || 0) - total;
         const balColor = Math.abs(balance) > 0.005 ? 'var(--text-danger)' : 'var(--text-success)';
@@ -684,17 +691,32 @@ const JobsPage = {
             </div>`;
     },
 
-    sovRowHtml(line, i, packages, codes) {
+    sovRowHtml(line, i, packages, codes, usage) {
         line = line || {};
+        // A change_order-kind line is owned by its change order (#554): it
+        // shows read-only, with no inputs and no remove, so its value can
+        // only move through the CO.
+        if (line.kind === 'change_order') {
+            return `<tr class="sov-row sov-co-row" data-co="1">
+                <td>${escapeHtml(line.item_no || '')}</td>
+                <td>${escapeHtml(line.description || '')}</td>
+                <td colspan="2" style="color:var(--text-muted)">Change order</td>
+                <td>Change order</td>
+                <td class="amount sov-covalue" data-value="${line.scheduled_value ?? 0}">${formatCurrency(parseFloat(line.scheduled_value) || 0)}</td>
+                <td style="color:var(--text-muted);font-size:11px">read-only</td></tr>`;
+        }
         const pkgOpts = ['<option value="">—</option>'].concat((packages || []).map(p =>
             `<option value="${p.id}" ${String(line.trade_package_id) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
         const codeOpts = ['<option value="">—</option>'].concat((codes || []).map(c =>
             `<option value="${c.id}" ${String(line.cost_code_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.code)}</option>`)).join('');
-        const kindOpts = Object.entries(JobsPage.SOV_KINDS).map(([k, v]) =>
+        const kindOpts = Object.entries(JobsPage.SOV_KINDS).filter(([k]) => k !== 'change_order').map(([k, v]) =>
             `<option value="${k}" ${(line.kind || 'work') === k ? 'selected' : ''}>${v}</option>`).join('');
-        return `<tr class="sov-row">
+        // An allowance line shows its change-order draw-down (used / remaining).
+        const allowanceNote = (line.kind === 'allowance' && usage)
+            ? `<div style="font-size:11px;color:var(--text-muted)">Used ${formatCurrency(usage.used)} · ${formatCurrency(usage.remaining)} left</div>` : '';
+        return `<tr class="sov-row" data-id="${line.id || ''}">
             <td><input class="sov-item" data-write maxlength="10" value="${escapeHtml(line.item_no || '')}" style="width:46px"></td>
-            <td><input class="sov-desc" data-write maxlength="200" value="${escapeHtml(line.description || '')}" style="width:100%"></td>
+            <td><input class="sov-desc" data-write maxlength="200" value="${escapeHtml(line.description || '')}" style="width:100%">${allowanceNote}</td>
             <td><select class="sov-pkg" data-write>${pkgOpts}</select></td>
             <td><select class="sov-code" data-write>${codeOpts}</select></td>
             <td><select class="sov-kind" data-write>${kindOpts}</select></td>
@@ -707,7 +729,9 @@ const JobsPage = {
     },
 
     _readSov() {
-        return $$('#sov-body .sov-row').map(tr => ({
+        // Skip change_order rows — their value is owned by the CO, not the grid.
+        return $$('#sov-body .sov-row').filter(tr => !tr.dataset.co).map(tr => ({
+            id: tr.dataset.id ? parseInt(tr.dataset.id) : null,
             item_no: tr.querySelector('.sov-item').value.trim() || null,
             description: tr.querySelector('.sov-desc').value.trim() || null,
             trade_package_id: tr.querySelector('.sov-pkg').value ? parseInt(tr.querySelector('.sov-pkg').value) : null,
@@ -719,7 +743,9 @@ const JobsPage = {
 
     retotalSov() {
         const lines = JobsPage._readSov();
-        const total = lines.reduce((s, l) => s + (l.scheduled_value || 0), 0);
+        let total = lines.reduce((s, l) => s + (l.scheduled_value || 0), 0);
+        // the read-only change_order rows still count toward the contract sum
+        $$('#sov-body .sov-covalue').forEach(td => { total += parseFloat(td.dataset.value) || 0; });
         const contract = (JobsPage._contract && JobsPage._contract.contract) || {};
         // the live contract-sum input wins over the saved figure, so the
         // balance tracks an unsaved edit to the sum
@@ -768,6 +794,7 @@ const JobsPage = {
             cap_amount: num('cap_amount'),
             contingency_amount: num('contingency_amount'),
             retainage_pct: num('retainage_pct'),
+            co_markup_pct: num('co_markup_pct'),
         };
         try {
             await API.put(`/jobs/${JobsPage._job.id}/contract`, data);
@@ -873,6 +900,705 @@ const JobsPage = {
                 <td class="amount">${m(t.billed_to_date)}</td>
             </tr></tfoot>
         </table></div>`;
+    },
+
+    // ---- Change orders (construction mode only, #554) --------------------------
+    // How a locked budget, its contract and its commitments move. Three kinds
+    // (potential / owner / sub); material and labor priced separately with
+    // markup, none when an allowance pays. Every effect lands on approve and
+    // reverses on void.
+    CO_KINDS: { pco: 'Potential', owner: 'Owner', sub: 'Sub' },
+    CO_FUNDING: { contract: 'Contract', allowance: 'Allowance', contingency: 'Contingency' },
+    CO_STATUS_LABELS: { draft: 'Draft', pending: 'Pending', approved: 'Approved', rejected: 'Rejected', void: 'Void', promoted: 'Promoted', superseded: 'Superseded' },
+
+    async changeOrdersHtml() {
+        const job = JobsPage._job;
+        await Promise.all([CostTypes.load(), TradePackages.load()]);
+        const [list, contract, codes] = await Promise.all([
+            API.get(`/change-orders?job_id=${job.id}`),
+            API.get(`/jobs/${job.id}/contract`),
+            API.get('/cost-codes').catch(() => []),
+        ]);
+        JobsPage._coList = list;
+        JobsPage._coContract = contract.contract;
+        JobsPage._coAllowances = (contract.sov || []).filter(l => l.kind === 'allowance');
+        JobsPage._coCodes = codes;
+        // Commitments to attach a sub CO to come from the buyout table.
+        const buyout = await API.get(`/jobs/${job.id}/buyout`).catch(() => ({ rows: [] }));
+        JobsPage._coCommitments = (buyout.rows || []).flatMap(r => r.commitments || []);
+        return JobsPage.coLogHtml(list) + `<div id="co-form-area" style="margin-top:16px"></div>`;
+    },
+
+    coLogHtml(list) {
+        list = list || [];
+        const m = JobsPage.money;
+        const body = list.map(co => `<tr>
+            <td>${co.kind === 'pco' && (co.status === 'draft' || co.status === 'pending') ? `<input type="checkbox" class="co-pick" value="${co.id}" aria-label="Select ${escapeHtml(co.number)} to roll up"> ` : ''}${escapeHtml(co.number)}${co.revision > 1 ? ` <span style="color:var(--text-muted)">rev ${co.revision}</span>` : ''}</td>
+            <td>${escapeHtml(JobsPage.CO_KINDS[co.kind] || co.kind)}</td>
+            <td><span class="badge">${escapeHtml(JobsPage.CO_STATUS_LABELS[co.status] || co.status)}</span></td>
+            <td>${escapeHtml(co.title || '')}</td>
+            <td>${escapeHtml(JobsPage.CO_FUNDING[co.funding] || co.funding)}${co.funding !== 'contract' && co.apply_markup ? ' <span style="color:var(--text-muted)">+ markup</span>' : ''}</td>
+            <td class="amount">${m(co.cost_total)}</td>
+            <td class="amount">${m(co.markup_total)}</td>
+            <td class="amount">${m(co.sell_total)}</td>
+            <td>${escapeHtml(co.date || '')}</td>
+            <td style="white-space:nowrap">${JobsPage.coRowActions(co)}</td>
+        </tr>`).join('');
+        return `<div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
+                <button class="btn btn-primary" onclick="JobsPage.coNew()">+ New change order</button>
+                <button class="btn btn-secondary" onclick="JobsPage.coPromoteSelected()" title="Tick two or more potential change orders to roll them into one owner change order">Promote selected PCOs</button>
+            </div>
+            <div class="table-container"><table class="data-table" id="co-log" style="font-size:12px">
+                <thead><tr>
+                    <th scope="col">Number</th><th scope="col">Kind</th><th scope="col">Status</th>
+                    <th scope="col">Title</th><th scope="col">Funding</th>
+                    <th scope="col" class="amount">Cost</th><th scope="col" class="amount">Markup</th>
+                    <th scope="col" class="amount">Total</th><th scope="col">Date</th><th scope="col"></th>
+                </tr></thead>
+                <tbody>${body || '<tr><td colspan="10" style="color:var(--text-muted)">No change orders yet.</td></tr>'}</tbody>
+            </table></div>`;
+    },
+
+    coRowActions(co) {
+        const id = co.id;
+        const draftOrPending = co.status === 'draft' || co.status === 'pending';
+        const parts = [`<button class="btn btn-sm btn-secondary" onclick="JobsPage.coEdit(${id})">${draftOrPending ? 'Edit' : 'View'}</button>`];
+        if (co.status === 'draft') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coSubmit(${id})">Submit</button>`);
+        if (co.status === 'pending' && co.kind !== 'pco') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coApprove(${id})">Approve</button>`);
+        if (draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coReject(${id})">Reject</button>`);
+        if (co.kind === 'pco' && draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coPromote(${id})">Promote</button>`);
+        if (co.kind === 'pco' && draftOrPending) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coRevise(${id})">Revise</button>`);
+        if (co.status === 'approved') parts.push(`<button data-destructive class="btn btn-sm btn-danger" onclick="JobsPage.coVoid(${id})">Void</button>`);
+        if (co.kind === 'owner' && co.status === 'approved') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coMakeSub(${id})">Make sub order</button>`);
+        if (co.kind !== 'sub') parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/change-orders/${id}/pdf','_blank')">PDF</button>`);
+        return parts.join(' ');
+    },
+
+    coNew() { JobsPage._coEditing = null; JobsPage.coShowForm(null); },
+    async coEdit(id) {
+        const co = await API.get(`/change-orders/${id}`);
+        JobsPage._coEditing = co;
+        JobsPage.coShowForm(co);
+    },
+
+    coShowForm(co) {
+        const area = $('#co-form-area');
+        if (area) { area.innerHTML = JobsPage.coFormHtml(co); JobsPage.coRecalc(); }
+    },
+
+    coFormHtml(co) {
+        co = co || { kind: 'owner', funding: 'contract', lines: [] };
+        const ro = co.id && !(co.status === 'draft' || co.status === 'pending');
+        const d = ro ? 'disabled' : '';
+        const kindOpts = Object.entries(JobsPage.CO_KINDS).map(([k, v]) => `<option value="${k}" ${co.kind === k ? 'selected' : ''}>${v}</option>`).join('');
+        const fundOpts = Object.entries(JobsPage.CO_FUNDING).map(([k, v]) => `<option value="${k}" ${co.funding === k ? 'selected' : ''}>${v}</option>`).join('');
+        const allowOpts = ['<option value="">— allowance line —</option>'].concat((JobsPage._coAllowances || []).map(a =>
+            `<option value="${a.id}" ${String(co.allowance_sov_line_id) === String(a.id) ? 'selected' : ''}>${escapeHtml(a.item_no || '')} ${escapeHtml(a.description || '')}</option>`)).join('');
+        const commitOpts = ['<option value="">— commitment —</option>'].concat((JobsPage._coCommitments || []).map(c =>
+            `<option value="${c.id}" ${String(co.commitment_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.number)} · ${escapeHtml(c.vendor_name || '')}</option>`)).join('');
+        const lineRows = (co.lines || []).map((l, i) => JobsPage.coLineRowHtml(l, i)).join('');
+        return `<form id="co-form" data-write onsubmit="JobsPage.coSave(event, ${co.id || 'null'})">
+            <h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:4px 0 6px 0">${co.id ? `Change order ${escapeHtml(co.number || '')}` : 'New change order'}</h4>
+            <div class="form-grid">
+                <div class="form-group"><label>Title</label><input id="co-title" ${d} maxlength="200" value="${escapeHtml(co.title || '')}"></div>
+                <div class="form-group"><label>Kind</label><select id="co-kind" ${d || (co.id ? 'disabled' : '')}>${kindOpts}</select></div>
+                <div class="form-group"><label>Funding</label><select id="co-funding" ${d} onchange="JobsPage.coFundingChanged()">${fundOpts}</select></div>
+                <div class="form-group"><label>Allowance line</label><select id="co-allowance" ${d}>${allowOpts}</select></div>
+                <div class="form-group"><label>Commitment (sub)</label><select id="co-commitment" ${d}>${commitOpts}</select></div>
+                <div class="form-group"><label>Apply markup</label><label style="font-weight:400"><input id="co-apply-markup" ${d} ${co.funding === 'contract' ? 'disabled' : ''} type="checkbox" ${(co.apply_markup ?? (co.funding === 'contract')) ? 'checked' : ''} onchange="JobsPage.coRecalc()"> ${co.funding === 'contract' ? 'Markup applied' : 'Add markup to this allowance/contingency work'}</label></div>
+                <div class="form-group"><label>Markup %</label><input id="co-markup" ${d} type="number" step="0.0001" min="-99.9999" max="1000" value="${co.markup_pct ?? ''}" placeholder="default from contract" oninput="JobsPage.coRecalc()"></div>
+                <div class="form-group"><label>Date</label><input id="co-date" ${d} type="date" value="${co.date || ''}"></div>
+                <div class="form-group full-width"><label>Description</label><textarea id="co-desc" ${d} rows="2">${escapeHtml(co.description || '')}</textarea></div>
+            </div>
+            <div class="table-container"><table class="data-table" id="co-lines" style="font-size:12px">
+                <thead><tr>
+                    <th scope="col">Description</th><th scope="col">Cost type</th><th scope="col">Section</th><th scope="col">Package</th>
+                    <th scope="col" class="amount">Qty</th><th scope="col">Unit</th><th scope="col" class="amount">Unit cost</th>
+                    <th scope="col" class="amount">Markup %</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Sell</th><th scope="col"></th>
+                </tr></thead>
+                <tbody id="co-line-body">${lineRows}</tbody>
+                <tfoot id="co-line-foot"></tfoot>
+            </table></div>
+            ${ro ? '' : `<div class="form-actions" data-write style="justify-content:flex-start;gap:8px">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="JobsPage.coAddLine()">+ Add line</button>
+                <button type="submit" class="btn btn-primary">${co.id ? 'Save change order' : 'Create change order'}</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.setTab('changeorders')">Cancel</button>
+            </div>`}
+        </form>`;
+    },
+
+    coLineRowHtml(line, i) {
+        line = line || {};
+        const codes = JobsPage._coCodes || [];
+        const packages = TradePackages._list || [];
+        const types = CostTypes._list || [];
+        const typeOpts = types.map(t => `<option value="${escapeHtml(t.code)}" ${line.cost_type === t.code ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+        const codeOpts = ['<option value="">—</option>'].concat(codes.map(c => `<option value="${c.id}" ${String(line.cost_code_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.code)}</option>`)).join('');
+        const pkgOpts = ['<option value="">—</option>'].concat(packages.map(p => `<option value="${p.id}" ${String(line.trade_package_id) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
+        return `<tr class="co-line">
+            <td><input class="co-l-desc" data-write maxlength="200" value="${escapeHtml(line.description || '')}" style="width:100%"></td>
+            <td><select class="co-l-type" data-write>${typeOpts}</select></td>
+            <td><select class="co-l-code" data-write>${codeOpts}</select></td>
+            <td><select class="co-l-pkg" data-write>${pkgOpts}</select></td>
+            <td><input class="co-l-qty" data-write type="number" step="0.0001" value="${line.quantity ?? 1}" style="width:64px;text-align:right" oninput="JobsPage.coRecalc()"></td>
+            <td><input class="co-l-unit" data-write maxlength="20" value="${escapeHtml(line.unit || '')}" style="width:52px"></td>
+            <td><input class="co-l-cost" data-write type="number" step="0.0001" value="${line.unit_cost ?? 0}" style="width:84px;text-align:right" oninput="JobsPage.coRecalc()"></td>
+            <td><input class="co-l-markup" data-write type="number" step="0.0001" min="-99.9999" max="1000" value="${line.markup_pct ?? ''}" style="width:64px;text-align:right" placeholder="dflt" oninput="JobsPage.coRecalc()"></td>
+            <td class="amount co-l-amt">0.00</td>
+            <td class="amount co-l-sell">0.00</td>
+            <td><button type="button" class="btn btn-sm btn-secondary" data-write onclick="JobsPage.coRemoveLine(this)">✕</button></td>
+        </tr>`;
+    },
+
+    // Pure line math (#554): cost = qty × unit cost; effective markup is the
+    // line's, else the CO's, else the job's; zero for allowance-/contingency-
+    // funded work unless markup is applied; a sub CO carries none.
+    coLineMath(qty, unitCost, lineMarkup, coMarkup, jobMarkup, funding, kind, applyMarkup) {
+        const cost = Math.round((Number(qty || 0) * Number(unitCost || 0)) * 100) / 100;
+        let markup = 0;
+        if ((funding === 'contract' || applyMarkup) && kind !== 'sub') {
+            const pick = [lineMarkup, coMarkup, jobMarkup].find(v => v !== null && v !== undefined && v !== '');
+            markup = Number(pick || 0);
+        }
+        const sell = Math.round(cost * (1 + markup / 100) * 100) / 100;
+        return { cost, sell };
+    },
+
+    // Changing what pays for the change resets markup to that funding's
+    // default: on for contract, off for allowance and contingency.
+    coFundingChanged() {
+        const box = $('#co-apply-markup');
+        const contract = $('#co-funding').value === 'contract';
+        if (box) { box.checked = contract; box.disabled = contract; }  // contract work is always marked up
+        JobsPage.coRecalc();
+    },
+
+    coAddLine() {
+        const body = $('#co-line-body');
+        if (!body) return;
+        body.insertAdjacentHTML('beforeend', JobsPage.coLineRowHtml({}, body.children.length));
+        JobsPage.coRecalc();
+    },
+    coRemoveLine(btn) { const tr = btn.closest('tr'); if (tr) tr.remove(); JobsPage.coRecalc(); },
+
+    coRecalc() {
+        const funding = $('#co-funding') ? $('#co-funding').value : 'contract';
+        const kind = $('#co-kind') ? $('#co-kind').value : 'owner';
+        const coMarkup = $('#co-markup') ? $('#co-markup').value : '';
+        const applyMarkup = $('#co-apply-markup') ? $('#co-apply-markup').checked : true;
+        const jobMarkup = (JobsPage._coContract && JobsPage._coContract.co_markup_pct) || null;
+        const byType = {};
+        let cost = 0, sell = 0;
+        $$('#co-line-body .co-line').forEach(tr => {
+            const q = tr.querySelector('.co-l-qty').value;
+            const uc = tr.querySelector('.co-l-cost').value;
+            const lm = tr.querySelector('.co-l-markup').value;
+            const t = tr.querySelector('.co-l-type').value;
+            const r = JobsPage.coLineMath(q, uc, lm, coMarkup, jobMarkup, funding, kind, applyMarkup);
+            tr.querySelector('.co-l-amt').textContent = formatCurrency(r.cost);
+            tr.querySelector('.co-l-sell').textContent = formatCurrency(r.sell);
+            cost += r.cost; sell += r.sell;
+            byType[t] = byType[t] || { cost: 0, sell: 0 };
+            byType[t].cost += r.cost; byType[t].sell += r.sell;
+        });
+        const foot = $('#co-line-foot');
+        if (foot) {
+            const typeRows = Object.entries(byType).map(([t, v]) =>
+                `<tr><td colspan="8" style="text-align:right;color:var(--text-muted)">${t.charAt(0).toUpperCase() + t.slice(1)}</td><td class="amount">${formatCurrency(v.cost)}</td><td class="amount">${formatCurrency(v.sell)}</td><td></td></tr>`).join('');
+            foot.innerHTML = typeRows +
+                `<tr style="font-weight:700"><td colspan="8" style="text-align:right">Total</td><td class="amount">${formatCurrency(cost)}</td><td class="amount">${formatCurrency(sell)}</td><td></td></tr>`;
+        }
+    },
+
+    coReadLines() {
+        return $$('#co-line-body .co-line').map(tr => ({
+            description: tr.querySelector('.co-l-desc').value.trim() || null,
+            cost_type: tr.querySelector('.co-l-type').value,
+            cost_code_id: tr.querySelector('.co-l-code').value ? parseInt(tr.querySelector('.co-l-code').value) : null,
+            trade_package_id: tr.querySelector('.co-l-pkg').value ? parseInt(tr.querySelector('.co-l-pkg').value) : null,
+            quantity: parseFloat(tr.querySelector('.co-l-qty').value) || 0,
+            unit: tr.querySelector('.co-l-unit').value.trim() || null,
+            unit_cost: parseFloat(tr.querySelector('.co-l-cost').value) || 0,
+            markup_pct: tr.querySelector('.co-l-markup').value !== '' ? parseFloat(tr.querySelector('.co-l-markup').value) : null,
+        }));
+    },
+
+    coReadForm() {
+        const num = id => { const el = $(id); const v = el && el.value !== '' ? parseFloat(el.value) : null; return (v === null || isNaN(v)) ? null : v; };
+        return {
+            job_id: JobsPage._job.id,
+            kind: $('#co-kind').value,
+            title: $('#co-title').value.trim() || null,
+            funding: $('#co-funding').value,
+            allowance_sov_line_id: $('#co-allowance').value ? parseInt($('#co-allowance').value) : null,
+            commitment_id: $('#co-commitment').value ? parseInt($('#co-commitment').value) : null,
+            markup_pct: num('#co-markup'),
+            apply_markup: $('#co-apply-markup').checked,
+            date: $('#co-date').value || null,
+            description: $('#co-desc').value.trim() || null,
+            lines: JobsPage.coReadLines(),
+        };
+    },
+
+    async coSave(e, id) {
+        if (e) e.preventDefault();
+        const data = JobsPage.coReadForm();
+        try {
+            if (id) { const { kind, job_id, ...body } = data; await API.put(`/change-orders/${id}`, body); }
+            else { await API.post('/change-orders', data); }
+            toast('Change order saved');
+            await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    CO_VERB_PAST: { submit: 'submitted', approve: 'approved', reject: 'rejected', void: 'voided', promote: 'promoted', revise: 'revised' },
+
+    async _coAction(id, verb, confirmMsg) {
+        if (confirmMsg && !confirm(confirmMsg)) return;
+        try {
+            await API.post(`/change-orders/${id}/${verb}`, {});
+            toast(`Change order ${JobsPage.CO_VERB_PAST[verb] || verb}`);
+            await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+    coRevise(id) { JobsPage._coAction(id, 'revise', 'Start a new revision of this potential change order? The current one is kept as history.'); },
+    // Roll the ticked PCOs into one owner change order.
+    async coPromoteSelected() {
+        const ids = $$('.co-pick:checked').map(el => parseInt(el.value));
+        if (ids.length < 2) { toast('Tick two or more potential change orders to roll up', 'error'); return; }
+        if (!confirm(`Roll ${ids.length} potential change orders into one owner change order?`)) return;
+        try {
+            await API.post(`/change-orders/${ids[0]}/promote`, { pco_ids: ids.slice(1) });
+            toast('Change order promoted');
+            await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+    coSubmit(id) { JobsPage._coAction(id, 'submit'); },
+    coApprove(id) { JobsPage._coAction(id, 'approve', 'Approve this change order? It updates the contract, budget and commitment.'); },
+    coReject(id) { JobsPage._coAction(id, 'reject', 'Reject this change order?'); },
+    coVoid(id) { JobsPage._coAction(id, 'void', 'Void this change order? Every effect is reversed.'); },
+    coPromote(id) { JobsPage._coAction(id, 'promote', 'Promote this potential change order to an owner change order?'); },
+
+    // Make sub order: pick a commitment (number · vendor) and the owner-CO
+    // lines to carry, rather than typing an id.
+    async coMakeSub(id) {
+        const co = await API.get(`/change-orders/${id}`);
+        const commits = JobsPage._coCommitments || [];
+        if (!commits.length) { toast('No commitments on this job to attach to', 'error'); return; }
+        const commitOpts = commits.map(c => `<option value="${c.id}">${escapeHtml(c.number)} · ${escapeHtml(c.vendor_name || '')}</option>`).join('');
+        const lineRows = (co.lines || []).map(l =>
+            `<label style="display:block;font-size:12px"><input type="checkbox" class="co-sub-line" value="${l.id}" ${l.cost_type === 'subcontract' ? 'checked' : ''}> ${escapeHtml(l.description || '')} (${escapeHtml(l.cost_type)}) — ${formatCurrency(parseFloat(l.amount) || 0)}</label>`).join('');
+        const html = `<form id="co-sub-form" onsubmit="JobsPage.coSubmitSubOrder(event, ${id})">
+            <div class="form-group"><label>Commitment</label><select id="co-sub-commitment" required>${commitOpts}</select></div>
+            <div class="form-group"><label>Lines to carry (unchecked = subcontract lines only)</label>${lineRows || '<div style="color:var(--text-muted)">No lines.</div>'}</div>
+            <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create sub order</button></div>
+        </form>`;
+        openModal('Make sub order', html);
+    },
+
+    async coSubmitSubOrder(e, id) {
+        if (e) e.preventDefault();
+        const commitment_id = parseInt($('#co-sub-commitment').value);
+        const line_ids = $$('.co-sub-line').filter(c => c.checked).map(c => parseInt(c.value));
+        const body = { commitment_id };
+        if (line_ids.length) body.line_ids = line_ids;
+        try {
+            await API.post(`/change-orders/${id}/sub-order`, body);
+            toast('Sub change order created');
+            closeModal();
+            await JobsPage.setTab('changeorders');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Pay apps (construction mode only, #555) -------------------------------
+    // Owner progress billing from the schedule of values: previous / this
+    // period / stored / retainage, with a release and a deposit applied.
+    // Approving an application creates the invoice; voiding reverses it.
+    PA_STATUS_LABELS: { draft: 'Draft', submitted: 'Submitted', approved: 'Approved', void: 'Void' },
+    WAIVER_TYPES: {
+        conditional_progress: 'Conditional progress',
+        unconditional_progress: 'Unconditional progress',
+        conditional_final: 'Conditional final',
+        unconditional_final: 'Unconditional final',
+    },
+    LIEN_WAIVERS: { not_required: 'Not required', pending: 'Pending', conditional: 'Conditional', unconditional: 'Unconditional' },
+
+    async payAppsHtml() {
+        const job = JobsPage._job;
+        const [list, deposits] = await Promise.all([
+            API.get(`/pay-applications?job_id=${job.id}`),
+            API.get(`/jobs/${job.id}/deposits`).catch(() => ({ deposits: [], received: 0, applied: 0, unapplied: 0 })),
+        ]);
+        JobsPage._paList = list;
+        JobsPage._paDeposits = deposits;
+        return JobsPage.paLogHtml(list)
+            + `<div id="pa-form-area" style="margin-top:16px"></div>`
+            + JobsPage.depositsBlockHtml(deposits);
+    },
+
+    paLogHtml(list) {
+        list = list || [];
+        const m = JobsPage.money;
+        const body = list.map(a => {
+            const t = a.totals || {};
+            const inv = a.invoice_id
+                ? `<a href="#/invoices/${a.invoice_id}">${escapeHtml(a.invoice_number || '#' + a.invoice_id)}</a>` : '';
+            return `<tr>
+                <td>${escapeHtml(a.number)}${a.job_number ? `<br><span style="font-size:11px;color:var(--text-muted)">${escapeHtml(a.job_number)}</span>` : ''}</td>
+                <td>${escapeHtml(a.period_to || '')}</td>
+                <td><span class="badge">${escapeHtml(JobsPage.PA_STATUS_LABELS[a.status] || a.status)}</span></td>
+                <td class="amount">${m(t.this_period_total)}</td>
+                <td class="amount">${m(t.retainage_this_period)}</td>
+                <td class="amount">${m(t.current_due)}</td>
+                <td class="amount">${m(t.net_due)}</td>
+                <td>${inv}</td>
+                <td style="white-space:nowrap">${JobsPage.paRowActions(a)}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
+                <button class="btn btn-primary" onclick="JobsPage.paNew()">+ New pay application</button>
+            </div>
+            <div class="table-container"><table class="data-table" id="pa-log" style="font-size:12px">
+                <thead><tr>
+                    <th scope="col">No</th><th scope="col">Period</th><th scope="col">Status</th>
+                    <th scope="col" class="amount">This period</th><th scope="col" class="amount">Retainage</th>
+                    <th scope="col" class="amount">Current due</th><th scope="col" class="amount">Net due</th>
+                    <th scope="col">${T('Invoice')}</th><th scope="col"></th>
+                </tr></thead>
+                <tbody>${body || '<tr><td colspan="9" style="color:var(--text-muted)">No pay applications yet.</td></tr>'}</tbody>
+            </table></div>`;
+    },
+
+    paRowActions(a) {
+        const id = a.id;
+        const open = a.status === 'draft' || a.status === 'submitted';
+        const parts = [`<button class="btn btn-sm btn-secondary" onclick="JobsPage.paEdit(${id})">${open ? 'Edit' : 'View'}</button>`];
+        if (a.status === 'draft') parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paSubmit(${id})">Submit</button>`);
+        if (open) parts.push(`<button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paApprove(${id})">Approve</button>`);
+        if (a.status === 'approved') parts.push(`<button class="btn btn-sm btn-danger" data-destructive onclick="JobsPage.paVoid(${id})">Void</button>`);
+        parts.push(`<button class="btn btn-sm btn-secondary" onclick="window.open('/api/pay-applications/${id}/pdf','_blank')">PDF</button>`);
+        if (a.status === 'approved' && a.invoice_id) parts.push(`<button class="btn btn-sm btn-secondary" onclick="JobsPage.paWaivers(${id})">Waivers</button>`);
+        return parts.join(' ');
+    },
+
+    async paNew() {
+        try {
+            const a = await API.post('/pay-applications', { job_id: JobsPage._job.id, date: todayISO() });
+            await JobsPage.setTab('payapps');
+            JobsPage.paEdit(a.id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paEdit(id) {
+        const a = await API.get(`/pay-applications/${id}`);
+        JobsPage._paEditing = a;
+        const area = $('#pa-form-area');
+        if (area) { area.innerHTML = JobsPage.paFormHtml(a); JobsPage.paRecalc(); }
+    },
+
+    // Pure line math (#555): completed = previous + this period + stored;
+    // retainage = completed × pct/100; balance = scheduled − completed.
+    paLineMath(scheduled, previous, thisPeriod, stored, pct) {
+        const s = Number(scheduled || 0), p = Number(previous || 0);
+        const tp = Number(thisPeriod || 0), st = Number(stored || 0);
+        const completed = Math.round((p + tp + st) * 100) / 100;
+        const retainage = Math.round(completed * Number(pct || 0) / 100 * 100) / 100;
+        return {
+            completed,
+            pct_complete: s ? Math.round(completed / s * 1000) / 10 : 0,
+            balance: Math.round((s - completed) * 100) / 100,
+            retainage,
+        };
+    },
+
+    paFormHtml(a) {
+        const ro = !(a.status === 'draft' || a.status === 'submitted');
+        const d = ro ? 'disabled' : '';
+        return `<form id="pa-form" data-write onsubmit="JobsPage.paSave(event, ${a.id})">
+            <h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:4px 0 6px 0">Pay application ${escapeHtml(a.number)}</h4>
+            ${JobsPage.paGridHtml(a.lines, a.totals, { pct: a.retainage_pct, disabled: ro })}
+            <div class="form-grid" style="margin-top:10px">
+                <div class="form-group"><label>Period to</label><input id="pa-period" ${d} type="date" value="${a.period_to || ''}"></div>
+                <div class="form-group"><label>Retainage %</label><input id="pa-pct" ${d} type="number" step="0.01" min="0" max="100" value="${a.retainage_pct ?? ''}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Sales tax</label>
+                    <label style="font-weight:normal"><input id="pa-tax-on" ${d} type="checkbox" ${a.charge_tax !== false ? 'checked' : ''} ${a.tax_exempt ? 'disabled' : ''} onchange="JobsPage.paRecalc()"> Charge tax${a.tax_exempt ? ' (owner is tax-exempt)' : ''}</label></div>
+                <div class="form-group"><label>Tax rate %</label><input id="pa-tax-rate" ${d} type="number" step="0.0001" min="0" value="${Math.round(Number(a.tax_rate || 0) * 1000000) / 10000}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Release retainage</label><input id="pa-release" ${d} type="number" step="0.01" min="0" value="${a.release_retainage ?? 0}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Deposit applied <span style="color:var(--text-muted)">(${formatCurrency(a.unapplied_deposits)} unapplied)</span></label>
+                    <input id="pa-deposit" ${d} type="number" step="0.01" min="0" value="${a.deposit_applied ?? 0}" oninput="JobsPage.paRecalc()"></div>
+                <div class="form-group"><label>Lien waiver</label><select id="pa-lien" ${d}>
+                    <option value="">—</option>
+                    ${Object.entries(JobsPage.LIEN_WAIVERS).map(([k, v]) => `<option value="${k}" ${a.lien_waiver_status === k ? 'selected' : ''}>${v}</option>`).join('')}
+                </select></div>
+            </div>
+            ${JobsPage.paWaiverWarning(a.sub_waivers)}
+            ${ro ? '' : `<div class="form-actions" data-write style="justify-content:flex-start;gap:8px">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.paSubmit(${a.id})">Submit</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.paApprove(${a.id})">Approve</button>
+                <button type="button" class="btn btn-secondary" onclick="JobsPage.setTab('payapps')">Cancel</button>
+            </div>`}
+        </form>`;
+    },
+
+    // The grid: one row per SOV line, the totals block mirroring the pay
+    // application header. Pure, so a node probe can drive it.
+    paGridHtml(lines, totals, opts) {
+        lines = lines || [];
+        totals = totals || {};
+        opts = opts || {};
+        const d = opts.disabled ? 'disabled' : '';
+        const pct = opts.pct || 0;
+        const rows = lines.map(l => {
+            const r = JobsPage.paLineMath(l.scheduled_value, l.previous, l.this_period, l.stored, pct);
+            return `<tr class="pa-line" data-sov="${l.sov_line_id}" data-scheduled="${l.scheduled_value}" data-previous="${l.previous}">
+                <td>${escapeHtml(l.item_no || '')}</td>
+                <td>${escapeHtml(l.description || '')}</td>
+                <td class="amount">${formatCurrency(l.scheduled_value)}</td>
+                <td class="amount">${formatCurrency(l.previous)}</td>
+                <td><input class="pa-tp" ${d} type="number" step="0.01" min="0" value="${l.this_period ?? 0}" style="width:96px;text-align:right" oninput="JobsPage.paRecalc()"></td>
+                <td><input class="pa-st" ${d} type="number" step="0.01" min="0" value="${l.stored ?? 0}" style="width:90px;text-align:right" oninput="JobsPage.paRecalc()"></td>
+                <td class="amount pa-completed">${formatCurrency(r.completed)}</td>
+                <td class="amount pa-pct">${r.pct_complete}%</td>
+                <td class="amount pa-balance">${formatCurrency(r.balance)}</td>
+                <td class="amount pa-retainage">${formatCurrency(r.retainage)}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="table-container"><table class="data-table" id="pa-grid" style="font-size:12px">
+            <thead><tr>
+                <th scope="col">Item</th><th scope="col">Description</th>
+                <th scope="col" class="amount">Scheduled</th><th scope="col" class="amount">Previous</th>
+                <th scope="col" class="amount">This period</th><th scope="col" class="amount">Stored</th>
+                <th scope="col" class="amount">Completed</th><th scope="col" class="amount">%</th>
+                <th scope="col" class="amount">Balance</th><th scope="col" class="amount">Retainage</th>
+            </tr></thead>
+            <tbody id="pa-body">${rows}</tbody>
+        </table></div>
+        <div id="pa-totals" style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 0">
+            ${JobsPage.paTotalsHtml(totals)}
+        </div>`;
+    },
+
+    paTotalsHtml(t) {
+        t = t || {};
+        const m = JobsPage.money;
+        const tile = (label, v) => `<div style="min-width:130px"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">${label}</div><div style="font-size:15px;font-weight:700">${m(v)}</div></div>`;
+        return tile('Completed to date', t.completed_to_date)
+            + tile('Retainage to date', t.retainage_to_date)
+            + tile('Total earned less retainage', t.total_earned_less_retainage)
+            + tile('Less previous payment applications', t.previous_applications)
+            + (Number(t.tax_amount) ? tile('Sales tax', t.tax_amount) : '')
+            + tile('Current payment due', t.current_due)
+            + tile('Net due', t.net_due);
+    },
+
+    paWaiverWarning(sw) {
+        if (!sw || !sw.missing) return '';
+        const names = (sw.bills || []).map(b => `${escapeHtml(b.bill_number)} (${escapeHtml(b.vendor_name || '')})`).join(', ');
+        return `<div class="form-hint" style="color:var(--text-warning,#8a6d3b)">${sw.missing} sub bill(s) without a lien waiver for this period: ${names}. Collect them before submitting.</div>`;
+    },
+
+    paRecalc() {
+        const pct = Number(($('#pa-pct') ? $('#pa-pct').value : 0) || 0);
+        let completed = 0, retainage = 0;
+        $$('#pa-body .pa-line').forEach(tr => {
+            const scheduled = tr.dataset.scheduled, previous = tr.dataset.previous;
+            const tp = tr.querySelector('.pa-tp').value, st = tr.querySelector('.pa-st').value;
+            const r = JobsPage.paLineMath(scheduled, previous, tp, st, pct);
+            tr.querySelector('.pa-completed').textContent = formatCurrency(r.completed);
+            tr.querySelector('.pa-pct').textContent = r.pct_complete + '%';
+            tr.querySelector('.pa-balance').textContent = formatCurrency(r.balance);
+            tr.querySelector('.pa-retainage').textContent = formatCurrency(r.retainage);
+            completed += r.completed; retainage += r.retainage;
+        });
+        const prevRet = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_retainage) || 0;
+        const prevCert = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_applications) || 0;
+        const release = Number(($('#pa-release') ? $('#pa-release').value : 0) || 0);
+        const deposit = Number(($('#pa-deposit') ? $('#pa-deposit').value : 0) || 0);
+        // Retainage to date is net of every release, this one included.
+        const prevReleased = (JobsPage._paEditing && JobsPage._paEditing.totals && JobsPage._paEditing.totals.previous_released) || 0;
+        retainage = Math.round((retainage - prevReleased - release) * 100) / 100;
+        const earnedLess = completed - retainage;
+        // Tax on what this application bills (completed less the prior
+        // application's completed), when tax is on and the owner is taxable.
+        const prior = (JobsPage._paEditing && JobsPage._paEditing.totals) || {};
+        const priorBilled = (prior.completed_to_date || 0) - (prior.billed_this_period || 0);
+        const taxOn = $('#pa-tax-on') ? $('#pa-tax-on').checked : false;
+        const taxRate = Number(($('#pa-tax-rate') ? $('#pa-tax-rate').value : 0) || 0) / 100;
+        const exempt = !!(JobsPage._paEditing && JobsPage._paEditing.tax_exempt);
+        const tax = (taxOn && !exempt) ? Math.round((completed - priorBilled) * taxRate * 100) / 100 : 0;
+        const currentDue = Math.round((earnedLess - prevCert + tax) * 100) / 100;
+        const totals = {
+            tax_amount: tax,
+            completed_to_date: completed,
+            retainage_to_date: retainage,
+            total_earned_less_retainage: earnedLess,
+            previous_applications: prevCert,
+            current_due: currentDue,
+            net_due: Math.round((currentDue - deposit) * 100) / 100,
+        };
+        const el = $('#pa-totals');
+        if (el) el.innerHTML = JobsPage.paTotalsHtml(totals);
+    },
+
+    paReadForm() {
+        const num = sel => { const el = $(sel); const v = el && el.value !== '' ? parseFloat(el.value) : null; return (v === null || isNaN(v)) ? null : v; };
+        return {
+            period_to: ($('#pa-period') && $('#pa-period').value) || null,
+            retainage_pct: num('#pa-pct'),
+            release_retainage: num('#pa-release') || 0,
+            deposit_applied: num('#pa-deposit') || 0,
+            charge_tax: $('#pa-tax-on') ? $('#pa-tax-on').checked : true,
+            tax_rate: (num('#pa-tax-rate') || 0) / 100,
+            lien_waiver_status: ($('#pa-lien') && $('#pa-lien').value) || null,
+            lines: $$('#pa-body .pa-line').map(tr => ({
+                sov_line_id: parseInt(tr.dataset.sov),
+                this_period: parseFloat(tr.querySelector('.pa-tp').value) || 0,
+                stored: parseFloat(tr.querySelector('.pa-st').value) || 0,
+            })),
+        };
+    },
+
+    async paSave(e, id) {
+        if (e) e.preventDefault();
+        try {
+            await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            toast('Pay application saved');
+            await JobsPage.setTab('payapps');
+            JobsPage.paEdit(id);
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paSubmit(id) {
+        try {
+            if ($('#pa-form')) await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            await API.post(`/pay-applications/${id}/submit`, {});
+            toast('Pay application submitted');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paApprove(id) {
+        if (!confirm('Approve this pay application? Creates the invoice for the job\'s customer.')) return;
+        try {
+            if ($('#pa-form')) await API.put(`/pay-applications/${id}`, JobsPage.paReadForm());
+            await API.post(`/pay-applications/${id}/approve`, {});
+            toast('Pay application approved — invoice created');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // Lien waivers (#555): one per payment and type, made here and printed.
+    paWaiversHtml(payments) {
+        const m = JobsPage.money;
+        const rows = (payments || []).map(p => {
+            const cells = Object.entries(JobsPage.WAIVER_TYPES).map(([type, label]) => {
+                const w = (p.waivers || []).find(x => x.waiver_type === type);
+                return w
+                    ? `<td><button class="btn btn-sm btn-secondary" onclick="window.open('/api/lien-waivers/${w.id}/pdf','_blank')">${label} PDF</button></td>`
+                    : `<td><button class="btn btn-sm btn-secondary" data-write onclick="JobsPage.paMakeWaiver(${p.id}, '${type}')">Make ${label.toLowerCase()}</button></td>`;
+            }).join('');
+            return `<tr><td>${escapeHtml(p.date || '')}</td><td class="amount">${m(p.amount)}</td>${cells}</tr>`;
+        }).join('');
+        return `<table class="data-table" style="font-size:12px"><thead><tr>
+                <th scope="col">Payment</th><th scope="col" class="amount">Amount</th>
+                ${Object.values(JobsPage.WAIVER_TYPES).map(l => `<th scope="col">${l}</th>`).join('')}
+            </tr></thead><tbody>${rows || '<tr><td colspan="6" style="color:var(--text-muted)">No payments on this application\'s invoice yet. Record the payment, then make its waivers here.</td></tr>'}</tbody></table>`;
+    },
+
+    async paWaivers(id) {
+        try {
+            const payments = await API.get(`/pay-applications/${id}/payments`);
+            JobsPage._paWaiverApp = id;
+            openModal('Lien waivers', JobsPage.paWaiversHtml(payments));
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paMakeWaiver(paymentId, type) {
+        try {
+            const w = await API.post('/lien-waivers', { payment_id: paymentId, waiver_type: type });
+            toast('Lien waiver made');
+            await JobsPage.paWaivers(JobsPage._paWaiverApp);
+            window.open(`/api/lien-waivers/${w.id}/pdf`, '_blank');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paVoid(id) {
+        if (!confirm('Void this pay application? The invoice is voided and any deposit restored.')) return;
+        try {
+            await API.post(`/pay-applications/${id}/void`, {});
+            toast('Pay application voided');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ---- Owner deposits (same tab) --------------------------------------------
+    depositsBlockHtml(data) {
+        data = data || { deposits: [], received: 0, applied: 0, unapplied: 0 };
+        const m = JobsPage.money;
+        const rows = (data.deposits || []).map(dp => `<tr>
+            <td>${escapeHtml(dp.date || '')}</td>
+            <td class="amount">${m(dp.amount)}</td>
+            <td>${escapeHtml(dp.memo || '')}</td>
+            <td>${dp.voided_at ? '<span class="badge">Void</span>' : `<button class="btn btn-sm btn-danger" data-destructive onclick="JobsPage.paVoidDeposit(${dp.id})">Void</button>`}</td>
+        </tr>`).join('');
+        return `<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-muted);margin:22px 0 6px 0">Owner deposits</h4>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+                <div><div style="font-size:11px;color:var(--text-muted)">Received</div><div style="font-weight:700">${m(data.received)}</div></div>
+                <div><div style="font-size:11px;color:var(--text-muted)">Applied</div><div style="font-weight:700">${m(data.applied)}</div></div>
+                <div><div style="font-size:11px;color:var(--text-muted)">Unapplied</div><div style="font-weight:700">${m(data.unapplied)}</div></div>
+            </div>
+            <div class="form-actions" data-write style="justify-content:flex-start;margin-bottom:8px">
+                <button class="btn btn-sm btn-secondary" onclick="JobsPage.paAddDeposit()">+ Record deposit</button>
+            </div>
+            <div class="table-container"><table class="data-table" id="pa-deposits" style="font-size:12px">
+                <thead><tr><th scope="col">Date</th><th scope="col" class="amount">Amount</th><th scope="col">Memo</th><th scope="col"></th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="4" style="color:var(--text-muted)">No deposits recorded.</td></tr>'}</tbody>
+            </table></div>`;
+    },
+
+    async paAddDeposit() {
+        const accounts = await API.get('/accounts?active_only=true').catch(() => []);
+        const banks = accounts.filter(a => (a.account_type === 'asset') && (a.bank_kind || /bank|checking|cash/i.test(a.name || '')));
+        const bankOpts = (banks.length ? banks : accounts.filter(a => a.account_type === 'asset'))
+            .map(a => `<option value="${a.id}">${escapeHtml(a.account_number || '')} ${escapeHtml(a.name)}</option>`).join('');
+        openModal('Record deposit', `
+            <form id="pa-dep-form" data-write onsubmit="JobsPage.paSaveDeposit(event)">
+                <div class="form-group"><label>Date</label><input name="date" type="date" value="${todayISO()}" required></div>
+                <div class="form-group"><label>Amount</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+                <div class="form-group"><label>Deposit to</label><select name="account" required>${bankOpts}</select></div>
+                <div class="form-group"><label>Memo</label><input name="memo" maxlength="200"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Record</button>
+                </div>
+            </form>`);
+    },
+
+    async paSaveDeposit(e) {
+        if (e) e.preventDefault();
+        const f = e.target;
+        try {
+            await API.post(`/jobs/${JobsPage._job.id}/deposits`, {
+                date: f.date.value,
+                amount: parseFloat(f.amount.value),
+                deposit_to_account_id: parseInt(f.account.value),
+                memo: f.memo.value || null,
+            });
+            toast('Deposit recorded');
+            closeModal();
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
+    },
+
+    async paVoidDeposit(id) {
+        if (!confirm('Void this deposit?')) return;
+        try {
+            await API.post(`/jobs/${JobsPage._job.id}/deposits/${id}/void`, {});
+            toast('Deposit voided');
+            await JobsPage.setTab('payapps');
+        } catch (err) { toast(err.message, 'error'); }
     },
 
     // ---- Transactions (flat) -------------------------------------------------------

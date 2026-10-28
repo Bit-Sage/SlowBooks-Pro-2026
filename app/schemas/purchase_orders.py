@@ -155,6 +155,7 @@ class POResponse(BaseModel):
     trade_package_id: Optional[int] = None
     trade_package_name: Optional[str] = None
     retainage_pct: Optional[Decimal] = None
+    retainage_released: Decimal = Decimal("0")
     scope_notes: Optional[str] = None
     subtotal: Decimal = Decimal("0")
     tax_rate: TaxRateOut = Decimal("0")

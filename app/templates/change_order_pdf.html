@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Change Order</title>
+<style>
+    @page { size: letter; margin: 0.6in 0.75in; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 10pt; color: #1a1a2e; line-height: 1.4; }
+    .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    .company-info { font-size: 9pt; color: #4a4a6a; }
+    .company-name { font-size: 16pt; font-weight: 700; color: #003366; margin-bottom: 4px; }
+    .company-logo { display: block; max-height: 60px; max-width: 200px; margin-bottom: 6px; }
+    .doc-title { text-align: right; }
+    .doc-title h1 { font-size: 22pt; font-weight: 700; color: #003366; margin: 0; letter-spacing: 0.04em; }
+    .doc-number { font-size: 12pt; color: #666; margin-top: 4px; }
+    .meta-table { width: 100%; margin-bottom: 16px; }
+    .meta-table td { padding: 3px 8px; font-size: 9pt; vertical-align: top; }
+    .meta-label { font-weight: 700; color: #4a4a6a; width: 110px; }
+    .co-title { font-size: 13pt; font-weight: 700; color: #003366; margin: 10px 0 2px 0; }
+    .co-desc { font-size: 9pt; color: #444; margin-bottom: 14px; white-space: pre-wrap; }
+    table.line-items { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    table.line-items th { background: #003366; color: white; padding: 5px 8px; font-size: 8pt; text-transform: uppercase; text-align: left; letter-spacing: 0.03em; }
+    table.line-items th.r { text-align: right; }
+    table.line-items td { padding: 5px 8px; font-size: 9pt; border-bottom: 1px solid #e0e0e0; }
+    table.line-items td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .totals { float: right; width: 260px; }
+    .totals table { width: 100%; }
+    .totals td { padding: 3px 8px; font-size: 9pt; }
+    .totals td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .totals .label { font-weight: 700; color: #4a4a6a; }
+    .totals .grand { font-size: 12pt; font-weight: 700; color: #003366; border-top: 2px solid #003366; padding-top: 4px; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 7pt; color: #999; padding: 8px 0; }
+</style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            {% if company_logo_data_uri %}<img class="company-logo" src="{{ company_logo_data_uri }}" alt="">{% endif %}
+            <div class="company-name">{{ company.company_name }}</div>
+            <div class="company-info">
+                {% if company.company_address1 %}{{ company.company_address1 }}<br>{% endif %}
+                {% set company_city = city_line(company.company_city, company.company_state, company.company_zip) %}
+                {% if company_city %}{{ company_city }}<br>{% endif %}
+                {% if company.company_phone %}{{ company.company_phone }}<br>{% endif %}
+                {% if company.company_email %}{{ company.company_email }}{% endif %}
+            </div>
+        </div>
+        <div class="doc-title">
+            <h1>CHANGE ORDER</h1>
+            <div class="doc-number">#{{ co.number }}{% if co.revision and co.revision > 1 %} (revision {{ co.revision }}){% endif %}</div>
+        </div>
+    </div>
+
+    <table class="meta-table"><tr>
+        <td class="meta-label">Date:</td><td>{{ co.date | fdate }}</td>
+        <td class="meta-label">Status:</td><td>{{ co.status | title }}</td>
+        <td class="meta-label">Funding:</td><td>{{ co.funding | title }}</td>
+        {# Whether markup was applied is on the record; the amount stays in the app. #}
+        {% if co.funding != 'contract' %}<td class="meta-label">Markup:</td><td>{{ 'Applied' if co.apply_markup else 'Not applied' }}</td>{% endif %}
+    </tr></table>
+
+    {% if co.title %}<div class="co-title">{{ co.title }}</div>{% endif %}
+    {% if co.description %}<div class="co-desc">{{ co.description }}</div>{% endif %}
+
+    {# The owner's document shows the PRICE (sell) per line and per cost type
+       and the total. Cost and markup stay in the app — they are the
+       contractor's own and are not itemised here (#554). #}
+    <table class="line-items">
+        <thead><tr>
+            <th>Description</th>
+            <th class="r" style="width:70px;">Qty</th>
+            <th class="r" style="width:90px;">Price</th>
+        </tr></thead>
+        <tbody>
+        {% for line in co.lines %}
+            <tr>
+                <td>{% if line.cost_code %}{{ line.cost_code.code }} {% endif %}{{ line.description or '' }} <span style="color:#888;font-size:8pt;">({{ line.cost_type }})</span></td>
+                <td class="r">{{ line.quantity | qty }}{% if line.unit %} {{ line.unit }}{% endif %}</td>
+                <td class="r">{{ line.sell_amount | currency }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="totals">
+        <table>
+            {% for ct, v in totals.by_cost_type.items() %}
+            <tr><td class="label">{{ ct | title }}</td><td class="r">{{ v.sell | currency }}</td></tr>
+            {% endfor %}
+            <tr><td class="label grand">Total</td><td class="r grand">{{ totals.sell_total | currency }}</td></tr>
+        </table>
+    </div>
+
+    <div class="footer">Generated by Slowbooks Pro 2026</div>
+</body>
+</html>

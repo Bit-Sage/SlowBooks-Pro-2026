@@ -142,7 +142,7 @@ revised sum so #554 shows original + changes = revised), `fee_pct`
 (Numeric(7,4)) and `fee_amount` (Numeric(15,2) — a fixed fee, which wins when
 both are set), `cap_amount` (Numeric(15,2) — the GMP maximum or a cost-plus
 not-to-exceed), `contingency_amount` (Numeric(15,2) — owner contingency inside
-the sum), `retainage_pct` (Numeric(5,2) — held per pay application, used by
+the sum), `retainage_pct` (Numeric(5,2) — held per pay application,
 #555), `contract_date` (Date) and `contract_estimate_id` (FK estimates, SET
 NULL).
 
@@ -159,13 +159,14 @@ New table `sov_lines` — the owner's schedule of values:
 | source_estimate_id (FK estimates, SET NULL) | set when built from an estimate |
 
 Unique `(job_id, line_no)`. A `scheduled_value` may be negative (a deduct
-alternate nets the sum down). No billed / stored / retainage columns yet —
-#555 adds them when progress billing bills the SOV. The contract sum and the
-schedule are **pre-tax** (tax is added per invoice). The contract summary
-(changes, fee, cap remaining, contingency remaining, SOV total and balance,
-billed to date) is computed, not stored — `app/services/contracts.py`.
-Migration `e2a4c6d8f0b1_construction_contract` (additive and
-nullable/defaulted; downgrade reverses).
+alternate nets the sum down). A line's billed / stored / retainage figures are
+not stored on it — a pay application bills it (#555, below), carrying those
+columns on `pay_application_lines` and reading `previous` from history. The
+contract sum and the schedule are **pre-tax** (tax is added per invoice). The
+contract summary (changes, fee, cap remaining, contingency remaining, SOV
+total and balance, billed to date) is computed, not stored —
+`app/services/contracts.py`. Migration `e2a4c6d8f0b1_construction_contract`
+(additive and nullable/defaulted; downgrade reverses).
 
 ## Buyout and commitments (#553)
 
@@ -200,7 +201,93 @@ package) is computed in `app/services/buyout.py`; `vendor_compliance` (Sub
 W-9 / COI flags) is computed from the vendor. Migration
 `f3b5d7e9a2c4_construction_buyout` (additive; backfills a closed PO's billed
 lines from its bill; downgrade reverses). Retainage release (a debit back to
-2050) is #555.
+2050) is a release bill — see *Progress billing and retainage* (#555).
+
+## Change orders (#554)
+
+How a locked budget, its contract and its commitments move. Two new tables:
+
+- `change_orders` — the document: `job_id` (FK, CASCADE), `number` String(80)
+  unique (per job and kind: `<job number>-CO-001` / `-PCO-001` / `-SCO-001`,
+  a PCO revision adds `-R2`; older `CO-0001` rows keep theirs), `kind` String(8)
+  (`pco` | `owner` | `sub`), `status` String(10) (`draft` | `pending` |
+  `approved` | `rejected` | `void` | `promoted` | `superseded`), `title`, `description`,
+  `date`, `funding` String(12) (`contract` | `allowance` | `contingency`),
+  `allowance_sov_line_id` (FK `sov_lines.id`, SET NULL — required when funding
+  = allowance), `markup_pct` Numeric(7,4) (the CO's default markup, null →
+  the job's `co_markup_pct`), `commitment_id` (FK `purchase_orders.id`, SET
+  NULL — required for a sub CO), `owner_change_order_id` (FK self, SET NULL),
+  `source_pco_id` (FK self, SET NULL), `apply_markup` Boolean (default true;
+  the API defaults it off for allowance/contingency funding), `revision`
+  Integer (default 1) and `supersedes_id` (FK self, SET NULL — the PCO revision
+  this one replaced), `promoted_to_id` (FK self, SET NULL — the owner CO a PCO
+  was rolled into; several PCOs may share one), `approved_at`, `voided_at`.
+- `change_order_lines` — `change_order_id` (FK, CASCADE), `line_order`,
+  `description`, `cost_type` String(20) NOT NULL (validated against
+  `cost_types`), `cost_code_id`, `trade_package_id`, `quantity`, `unit`,
+  `unit_cost`, `amount` (cost = qty × unit_cost, server-computed), `markup_pct`
+  (per-line override) and `sell_amount` (cost × (1 + markup/100), server-
+  computed; = cost under allowance funding or on a sub CO).
+
+Additive columns: `jobs.co_markup_pct` Numeric(7,4) (the default markup on
+owner change orders), and `sov_lines.change_order_id` (FK `change_orders.id`,
+SET NULL — the owner CO that owns a `change_order`-kind SOV line; `change_order`
+is added to `SOV_KINDS`). The math and the apply/reverse effects live in
+`app/services/change_orders.py`; the append-only commitment helper is in
+`app/routes/purchase_orders.py`. On approve an owner CO writes `job_budgets`
+rows with `source = change`, `locked = True` (the one path that may move a
+locked budget), which the job-cost tree reads into its Changes column.
+Migrations `a7c9e1f3b5d6_construction_change_orders` and
+`b8d0f2a4c6e8_change_order_revisions_markup_flag` (additive; downgrade
+reverses). A billed `change_order` SOV line can no longer be voided (409
+`co_billed`, filled by #555); the change-order log report is #556.
+
+## Progress billing and retainage (#555)
+
+The owner's progress bill from the schedule of values. Two new tables:
+
+- `pay_applications` — `job_id` (FK jobs, CASCADE), `application_no` Integer
+  (1, 2, … per job, unique `(job_id, application_no)`), `number` String(20)
+  unique (`PA-<job>-<no:02>`), `period_to` Date, `date` Date, `status`
+  String(10) (`draft` | `submitted` | `approved` | `void`), `retainage_pct`
+  Numeric(5,2) (copied from the job at creation, editable while draft),
+  `release_retainage` Numeric(15,2) default 0 (retainage billed back this
+  application), `deposit_applied` Numeric(15,2) default 0 (owner deposit
+  applied to the current due), `lien_waiver_status` String(16),
+  `invoice_id` (FK invoices, SET NULL — the invoice approve created; null for
+  an application that only moves stored material into the work),
+  `tax_rate` Numeric(7,4), `charge_tax` Boolean default true (#576),
+  `contract_sum_original` / `contract_sum_to_date` Numeric(15,2) nullable (the
+  contract sums as of approval), `approved_at`, `voided_at`, `notes`. Retainage
+  to date is net of releases.
+- `lien_waivers` (#576) — `payment_id` (FK payments, CASCADE), `job_id`,
+  `pay_application_id` (FK, SET NULL), `waiver_type` String(24)
+  (`conditional_progress` | `unconditional_progress` | `conditional_final` |
+  `unconditional_final`; unique per payment and type), `amount`,
+  `through_date`, `signed_by`, `notes`.
+- `pay_application_lines` — `pay_application_id` (FK, CASCADE), `sov_line_id`
+  (FK `sov_lines.id`, SET NULL), `line_no`, `item_no`, `description`,
+  `scheduled_value`, `this_period` and `stored` (Numeric(15,2); `previous` and
+  completed / retainage are computed from history, not stored).
+
+New table `job_deposits` — owner deposits: `job_id` (FK, CASCADE), `date`,
+`amount`, `deposit_to_account_id` (FK accounts — the bank), `memo`,
+`transaction_id` (FK), `voided_at`. A deposit posts DR bank / CR Customer
+Deposits (2210, source_type `job_deposit`); a pay application's
+`deposit_applied` draws it down with a payment to 2210 on approve.
+
+Additive columns: `invoices.retainage_held` and `invoices.retainage_released`
+(Numeric(15,2) NOT NULL default 0) and `invoices.pay_application_id` (FK
+`pay_applications.id`, SET NULL); `bills.retainage_released` and
+`purchase_orders.retainage_released` (Numeric(15,2) NOT NULL default 0). The
+pure math and the history helpers live in `app/services/pay_applications.py`;
+approve builds the invoice and its retainage journal (A/R net, Retainage
+Receivable 1150 held / released, income, tax) in
+`app/routes/pay_applications.py`, with the sub side (schedule and the 2050
+release bill) in `app/routes/purchase_orders.py` and the deposits in
+`app/routes/jobs.py`. Migration `e5c9a1f7b2d4_construction_progress_billing`
+(additive and nullable/defaulted; downgrade reverses). The WIP schedule,
+cost-to-complete and the other job reports are #556.
 
 ## Job cost model (milestone 3)
 
@@ -211,7 +298,8 @@ lines from its bill; downgrade reverses). Retainage release (a debit back to
 | equipment | code, name, hourly_rate, cost_code_id, recovery_account_id |
 | job_costs | number (JC-000001), date, job_id (NULL for allocations), memo, source manual/time_entry/allocation, status posted/void, transaction_id, total |
 | job_cost_lines | job_id, cost_code_id, cost_type, qty/rate/amount, debit_account_id, credit_account_id, employee_id, equipment_id, time_entry_id, is_burden, is_billable |
-| job_budgets | job_id × (cost_code_id and/or cost_type, or neither), amount, revenue_amount, source manual/estimate/change, estimate_id — the unique key is (job, code, type), so a row may carry both |
+| job_budgets | job_id × (cost_code_id and/or cost_type, or neither), amount, revenue_amount, source manual/estimate/change, estimate_id — the unique key is (job, code, type, source) (#554), so a change row coexists with an estimate/manual row on the same code and type |
+| job_cost_to_complete | job_id (CASCADE), cost_code_id (the section; NULL = Unassigned), cost_type ('' for Unassigned), amount — the typed cost to complete the WIP schedule reads (#556); unique (job, code, type), migration `c6e8f0a2d4b6` |
 | employees.cost_rate, burden_pct · estimate_lines.unit_cost · time_entries.job_cost_id · transaction_lines.cost_type | |
 
 Migration `a1b2c3d4e5f6_job_cost_model`.

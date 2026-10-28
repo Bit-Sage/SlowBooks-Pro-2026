@@ -68,6 +68,9 @@ class Bill(Base):
     # Retainage Payable, 2050, instead of A/P), and the sub's lien-waiver
     # status for the period. Retainage release is #555.
     retainage_held = Column(Numeric(15, 2), nullable=False, default=0)
+    # Retainage released on this bill (#555): a release bill debits Retainage
+    # Payable (2050) and credits A/P for this amount, payable through Pay Bills.
+    retainage_released = Column(Numeric(15, 2), nullable=False, default=0)
     lien_waiver_status = Column(String(16), nullable=True)
 
     notes = Column(Text, nullable=True)

@@ -208,6 +208,7 @@ class BillResponse(BaseModel):
     amount_paid: Decimal = Decimal("0")
     balance_due: Decimal = Decimal("0")
     retainage_held: Decimal = Decimal("0")
+    retainage_released: Decimal = Decimal("0")
     lien_waiver_status: Optional[str] = None
     notes: Optional[str] = None
     class_id: Optional[int] = None

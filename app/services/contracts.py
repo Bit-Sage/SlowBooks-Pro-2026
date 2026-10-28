@@ -11,7 +11,8 @@
 # (tax is added on each invoice, #555). The math here is pure where it can be
 # (sov_from_estimate, the summary arithmetic); build_sov is the one DB writer.
 # Later steps plug in here: #553 buyout/commitments, #554 change orders (fills
-# "changes" and "contingency_used"), #555 progress billing, #556 WIP reports.
+# "changes" and "contingency_used"), #555 progress billing. The #556 WIP
+# schedule reads contract_summary for each job's contract and billing.
 # ============================================================================
 
 from decimal import Decimal
@@ -33,14 +34,29 @@ from app.services.estimating import (
 
 def contract_is_locked(db: Session, job: Job) -> bool:
     """True once the contract sum and contingency can only move by change
-    order: the job has billing against its schedule of values or a change
-    order. Until then both edit freely, so a sum typed before the bid (or a
-    contingency set after the build) is just an edit.
+    order: the job has billing against its schedule of values or an approved
+    owner change order. Until then both edit freely, so a sum typed before the
+    bid (or a contingency set after the build) is just an edit.
 
-    Neither exists on this branch yet, so nothing locks. #576 (progress
-    billing) adds the billing condition and #575 (change orders) adds the
-    change-order condition here."""
-    return False
+    Only an approved owner change order counts: a draft or pending one, a
+    potential change order and a sub change order do not move the sum, and a
+    void puts it back. Billing counts from the first pay application that is
+    not void: a draft already carries this period's amounts against the
+    schedule."""
+    from app.models.change_orders import ChangeOrder
+    from app.models.pay_applications import PayApplication
+
+    live_co = db.query(ChangeOrder.id).filter(
+        ChangeOrder.job_id == job.id,
+        ChangeOrder.kind == "owner",
+        ChangeOrder.status == "approved",
+    )
+    billing = db.query(PayApplication.id).filter(
+        PayApplication.job_id == job.id, PayApplication.status != "void"
+    )
+    return bool(
+        db.query(live_co.exists()).scalar() or db.query(billing.exists()).scalar()
+    )
 
 
 def sov_from_estimate(estimate: Estimate) -> list[dict]:
@@ -165,6 +181,17 @@ def build_sov(db: Session, job: Job, estimate: Estimate, replace: bool = True) -
                 "message": "That estimate is not on this job.",
             },
         )
+    # #555: rebuilding the schedule would orphan what has been billed against
+    # it, so an approved pay application blocks a replace.
+    if replace and _has_approved_application(db, job.id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "sov_has_billings",
+                "message": "A pay application has billed this schedule; it can no longer be rebuilt.",
+            },
+        )
+
     lines = sov_from_estimate(estimate)
     # The owner contingency carried inside the contract is its own SOV line.
     if job.contingency_amount is not None:
@@ -231,18 +258,35 @@ def sync_contingency_line(db: Session, job: Job) -> None:
     db.flush()
 
 
+def _has_approved_application(db: Session, job_id: int) -> bool:
+    from app.models.pay_applications import PayApplication
+
+    return (
+        db.query(PayApplication.id)
+        .filter(PayApplication.job_id == job_id, PayApplication.status == "approved")
+        .first()
+        is not None
+    )
+
+
 def contract_summary(
     db: Session,
     job: Job,
     cost: Optional[Decimal] = None,
     billed: Optional[Decimal] = None,
+    as_of=None,
 ) -> dict:
     """The contract roll-up for one job. `cost` (actual job-to-date cost) and
     `billed` (posted revenue carrying the job) may be passed in by a caller
     that already has them — the job detail hands over the profitability
     figures it computed, so a plain job fetch costs no extra query. When they
     are None the cost tree supplies them, so the Contract tab always agrees
-    with the rest of the job page."""
+    with the rest of the job page.
+
+    `as_of` scopes the billing and retainage to the approved applications dated
+    on or before that day (the WIP schedule reads the books as of a date); with
+    the default None they are read to date. The caller passes `billed` already
+    scoped to the same date when it wants a clean as-of figure."""
     if cost is None or billed is None:
         from app.services.job_costing import job_cost_tree
 
@@ -273,8 +317,15 @@ def contract_summary(
     cap = job.cap_amount
     cap_remaining = _q(cap - (cost + fee)) if cap is not None else None
 
+    from app.services.change_orders import (
+        allowances_summary,
+        change_orders_summary,
+        contingency_used as co_contingency_used,
+    )
+
     contingency = job.contingency_amount
-    contingency_used = Decimal("0")  # #554 fills this
+    # Σ sell_total of approved contingency-funded owner change orders (#554).
+    contingency_used = co_contingency_used(db, job)
     contingency_remaining = (
         _q(contingency - contingency_used) if contingency is not None else None
     )
@@ -283,6 +334,27 @@ def contract_summary(
         (Decimal(str(r.scheduled_value)) for r in job.sov_lines), Decimal("0")
     )
     sov_balance = _q((amount or Decimal("0")) - sov_total)
+
+    # Progress billing (#555): billed-to-date switches to Σ approved
+    # applications' completed_to_date once the job has any application;
+    # otherwise the posted revenue figure above stands. Deposits and
+    # owner-side retainage ride alongside.
+    from app.services.pay_applications import (
+        billed_to_date as pa_billed_to_date,
+        deposits_figures,
+        has_approved_application,
+        retainage_held_to_date,
+        retainage_released_to_date,
+    )
+
+    # Only an approved application moves billed-to-date (a draft leaves the
+    # posted revenue figure standing); as of a date, one dated that day or
+    # earlier.
+    if has_approved_application(db, job.id, as_of):
+        billed = pa_billed_to_date(db, job.id, as_of)
+    deposits = deposits_figures(db, job.id)
+    ret_held = retainage_held_to_date(db, job.id, as_of)
+    ret_released = retainage_released_to_date(db, job.id, as_of)
     billed_pct = float(billed / amount * 100) if amount else None
 
     def f(v):
@@ -305,8 +377,24 @@ def contract_summary(
         "retainage_pct": f(job.retainage_pct),
         "contract_date": job.contract_date,
         "contract_estimate_id": job.contract_estimate_id,
+        "co_markup_pct": f(job.co_markup_pct),
         "sov_total": float(sov_total),
         "sov_balance": float(sov_balance),
         "billed_to_date": float(billed),
         "billed_pct": billed_pct,
+        # Change orders (#554): the allowance draw-down per line and the CO
+        # counts/total the Contract tab's Changes tile reads.
+        "allowances": allowances_summary(db, job),
+        "change_orders": change_orders_summary(db, job),
+        # Progress billing (#555): owner deposits and the owner-side retainage.
+        "deposits": {
+            "received": float(deposits["received"]),
+            "applied": float(deposits["applied"]),
+            "unapplied": float(deposits["unapplied"]),
+        },
+        "retainage": {
+            "held_to_date": float(ret_held),
+            "released_to_date": float(ret_released),
+            "outstanding": float(_q(ret_held - ret_released)),
+        },
     }
