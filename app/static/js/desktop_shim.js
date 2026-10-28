@@ -52,6 +52,9 @@
  *     (file:// needs no auth at all) in a window of its own, under a
  *     toolbar with Open in <the PDF app> and Show in folder.
  *
+ * Ctrl + / Ctrl - / Ctrl 0 (Cmd on a Mac) zoom the window from here too:
+ * pywebview's zoomable=True only gives the wheel (see zoomKey below).
+ *
  * In a normal browser this file is a no-op, but for
  * window.SlowbooksDesktop.saveFile(), which answers false there.
  */
@@ -143,7 +146,61 @@
         }
         return true;
     }
-    window.SlowbooksDesktop = { saveFile: saveFile };
+    // Ctrl + / Ctrl - / Ctrl 0 (Cmd on a Mac) zoom the window. pywebview's
+    // zoomable=True (desktop_launcher.py) only turns on Ctrl + wheel: the
+    // Windows release build switches WebView2's browser accelerator keys off,
+    // which takes the zoom keys with it, and WKWebView on a Mac has no zoom
+    // keys at all. The level is the document's CSS zoom, 0.5 to 2.0 by
+    // tenths, kept in localStorage so it holds across pages and launches.
+    // A document window (print preview, PDF) is its own page with no origin
+    // and no shim, so only the wheel reaches it.
+    const ZOOM_KEY = 'slowbooks.desktop.zoom';
+    const ZOOM_MIN = 0.5;
+    const ZOOM_MAX = 2;
+    const ZOOM_STEP = 0.1;
+
+    function readZoom() {
+        try {
+            const level = parseFloat(localStorage.getItem(ZOOM_KEY));
+            return level >= ZOOM_MIN && level <= ZOOM_MAX ? level : 1;
+        } catch (e) {
+            return 1;
+        }
+    }
+
+    function applyZoom(level) {
+        level = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level)) * 10) / 10;
+        document.documentElement.style.zoom = level === 1 ? '' : String(level);
+        try {
+            if (level === 1) localStorage.removeItem(ZOOM_KEY);
+            else localStorage.setItem(ZOOM_KEY, String(level));
+        } catch (e) {
+            // storage refused (private mode): the level lasts this page only
+        }
+        return level;
+    }
+
+    // The keydown handler: true when the key was a zoom key and taken. Only
+    // those combos are prevented; Ctrl+= in a text box zooms like anywhere
+    // else, and every other key (Ctrl+S, Ctrl+K, plain typing) passes.
+    function zoomKey(e) {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey || !inDesktopShell()) return false;
+        let direction;
+        if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') direction = 1;
+        else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') direction = -1;
+        else if (e.key === '0') direction = 0;
+        else return false;
+        e.preventDefault();
+        applyZoom(direction === 0 ? 1 : readZoom() + direction * ZOOM_STEP);
+        return true;
+    }
+    document.addEventListener('keydown', zoomKey, true);
+    if (inDesktopShell() && readZoom() !== 1) applyZoom(readZoom());
+
+    window.SlowbooksDesktop = {
+        saveFile: saveFile,
+        zoom: { handle: zoomKey, apply: applyZoom, read: readZoom },
+    };
 
     // Backups download URLs are handled by save_backup_file() instead of a
     // fetch (see module docstring) -- matched here so the click handler can
