@@ -267,10 +267,33 @@ class SettingValueError(ValueError):
     show them."""
 
 
+_ADDRESS_LIST_SETTINGS = {
+    "smtp_always_cc": "Always CC",
+    "smtp_always_bcc": "Always BCC",
+}
+
+
 def clean_setting_value(key: str, value) -> str:
     """The string to store for ``key``, or SettingValueError saying what to
     type instead. Settings without a rule are stored as given."""
     text = "" if value is None else str(value).strip()
+    if key in _ADDRESS_LIST_SETTINGS:
+        # stored as the clean comma-separated list, so what the send uses is
+        # what the page shows; an entry that is not an address is refused
+        from app.services.email_service import LOG_ADDRESSES_MAX, _parse_addresses
+
+        label = _ADDRESS_LIST_SETTINGS[key]
+        kept, rejected = _parse_addresses(text)
+        if rejected:
+            raise SettingValueError(
+                f"{label}: not an email address: " + ", ".join(rejected[:5]) + "."
+            )
+        joined = ", ".join(kept)
+        if len(joined) > LOG_ADDRESSES_MAX:
+            raise SettingValueError(
+                f"{label} is at most {LOG_ADDRESSES_MAX} characters of addresses."
+            )
+        return joined
     if key in _PERCENT_SETTINGS:
         label = _PERCENT_SETTINGS[key]
         if text == "":

@@ -12,7 +12,7 @@ from email import message_from_string
 import pytest
 
 from app.models.email_log import EmailLog
-from app.services.email_service import clean_addresses, send_email
+from app.services.email_service import bad_addresses, clean_addresses, send_email
 from app.services.settings_service import set_setting
 
 
@@ -76,8 +76,46 @@ def test_addresses_split_on_commas_and_semicolons_and_drop_blanks():
     assert clean_addresses(None) == [] and clean_addresses("") == []
 
 
-def test_header_injection_characters_are_stripped():
-    assert clean_addresses("a@x.com\r\nBcc: evil@x.com") == ["a@x.comBcc: evil@x.com"]
+def test_header_injection_is_dropped_not_sent():
+    """A CR/LF can only be an injection attempt: the forged header text is
+    not an address, so it is rejected, and the real one is kept."""
+    assert clean_addresses("a@x.com\r\nBcc: evil@x.com") == []
+    assert bad_addresses("a@x.com\r\nBcc: evil@x.com") == ["a@x.com Bcc: evil@x.com"]
+    assert clean_addresses("a@x.com,\r\nb@x.com") == ["a@x.com", "b@x.com"]
+
+
+def test_a_quoted_display_name_with_a_comma_is_one_address():
+    """Pasted from Outlook: "Smith, Bob" <bob@x.com> must not split at its comma."""
+    assert clean_addresses('"Smith, Bob" <bob@x.com>, carol@x.com') == [
+        "bob@x.com",
+        "carol@x.com",
+    ]
+
+
+def test_a_non_ascii_or_malformed_address_is_rejected_not_encoded():
+    kept = clean_addresses("Bob <bob@x.com>, jö@x.com, nobody, a b@x.com")
+    assert kept == ["bob@x.com"]
+    assert set(bad_addresses("Bob <bob@x.com>, jö@x.com, nobody")) == {
+        "jö@x.com",
+        "nobody",
+    }
+
+
+def test_the_log_row_is_cut_to_its_column(db_session, smtp):
+    many = ", ".join(f"person{i:03d}@example.com" for i in range(40))
+    assert _send(db_session, bcc=many)
+    envelope, _ = smtp[0]
+    assert len(envelope) == 41  # every address still goes out
+    row = db_session.query(EmailLog).order_by(EmailLog.id.desc()).first()
+    assert len(row.bcc) <= 500 and row.bcc.endswith("…")
+
+
+def test_a_missing_subject_still_logs_instead_of_raising(db_session):
+    assert not send_email(
+        db=db_session, to_email="a@x.com", subject=None, html_body="<p>x</p>"
+    )
+    row = db_session.query(EmailLog).order_by(EmailLog.id.desc()).first()
+    assert row.status == "failed" and row.subject == ""
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +153,7 @@ def test_the_log_records_the_copies(db_session, smtp):
     assert row.bcc == "c@x.com"
 
 
-def test_the_log_records_copies_on_a_failed_send(db_session, monkeypatch):
+def test_the_log_records_copies_on_a_failed_send(db_session):
     # SMTP unconfigured: send_email logs "failed" and the copies are still there
     assert not _send(db_session, bcc="c@x.com")
     row = db_session.query(EmailLog).order_by(EmailLog.id.desc()).first()
@@ -249,3 +287,40 @@ def test_always_copy_settings_round_trip_and_log_rows_carry_copies(client, db_se
     db_session.commit()
     row = client.get("/api/email-log").json()["rows"][0]
     assert row["cc"] == "b@x.com" and row["bcc"] == "c@x.com"
+
+
+def test_the_route_refuses_an_address_it_cannot_send_to(client, seed_accounts):
+    cust = client.post(
+        "/api/customers", json={"name": "Probe Co", "email": "a@b.com"}
+    ).json()
+    inv = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cust["id"],
+            "date": "2026-06-01",
+            "due_date": "2026-06-30",
+            "lines": [
+                {"description": "work", "quantity": 1, "rate": 100, "line_order": 0}
+            ],
+        },
+    ).json()
+    r = client.post(f"/api/invoices/{inv['id']}/email", json={"cc": "office, x@b.com"})
+    assert r.status_code == 400 and "office" in r.json()["detail"]
+    assert db_count(client) == 0
+
+
+def db_count(client):
+    return client.get("/api/email-log").json()["total"]
+
+
+def test_always_copy_settings_are_validated_and_normalised(client):
+    r = client.put("/api/settings", json={"smtp_always_cc": "nobody, a@b.com"})
+    assert r.status_code == 422 and "nobody" in r.json()["detail"]
+    r = client.put(
+        "/api/settings",
+        json={"smtp_always_bcc": '"Books, Inc" <books@b.com>; A@B.com, a@b.com'},
+    )
+    assert r.status_code == 200, r.text
+    assert (
+        client.get("/api/settings").json()["smtp_always_bcc"] == "books@b.com, A@B.com"
+    )
