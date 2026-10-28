@@ -45,10 +45,21 @@ def _get_smtp_settings(db: Session) -> dict:
     return settings
 
 
-def clean_addresses(value) -> list:
+# Caps on one Cc or Bcc field. 254 is the longest address RFC 5321 lets
+# through; 50 copies is past any real send and keeps a pasted mailing list
+# from going out as one mail.
+MAX_ADDRESSES = 50
+MAX_ADDRESS_LENGTH = 254
+
+
+def clean_addresses(value, label: str = "address") -> list:
     """Addresses typed as a comma- or semicolon-separated string, or given as
     a list, with header-injection characters stripped and blanks and
-    duplicates dropped. Order is kept."""
+    duplicates dropped. Order is kept.
+
+    Raises ValueError, worded for the operator, when the field holds more
+    than MAX_ADDRESSES or an address longer than MAX_ADDRESS_LENGTH;
+    ``label`` names the field in that sentence ("Cc", "Bcc")."""
     if not value:
         return []
     if isinstance(value, str):
@@ -58,8 +69,19 @@ def clean_addresses(value) -> list:
     out = []
     for raw in parts:
         addr = str(raw or "").replace("\r", "").replace("\n", "").strip()
-        if addr and addr.lower() not in {a.lower() for a in out}:
+        if not addr:
+            continue
+        if len(addr) > MAX_ADDRESS_LENGTH:
+            raise ValueError(
+                f"A {label} address is too long: an email address is at most "
+                f"{MAX_ADDRESS_LENGTH} characters."
+            )
+        if addr.lower() not in {a.lower() for a in out}:
             out.append(addr)
+    if len(out) > MAX_ADDRESSES:
+        raise ValueError(
+            f"Too many {label} addresses: at most {MAX_ADDRESSES} on one email."
+        )
     return out
 
 
@@ -103,8 +125,28 @@ def send_email(
     # Sanitize email headers to prevent injection
     to_email = to_email.replace("\r", "").replace("\n", "").strip()
     subject = subject.replace("\r", "").replace("\n", " ").strip()
-    cc_list = clean_addresses(cc) + clean_addresses(smtp.get("smtp_always_cc", ""))
-    bcc_list = clean_addresses(bcc) + clean_addresses(smtp.get("smtp_always_bcc", ""))
+    # Routes taking typed copies check them first and answer 400; a list
+    # over the cap reaching here (an always-copy setting, a caller that did
+    # not check) is a failed send with the reason logged, never a crash.
+    try:
+        cc_list = clean_addresses(cc, "Cc") + clean_addresses(
+            smtp.get("smtp_always_cc", ""), "Cc"
+        )
+        bcc_list = clean_addresses(bcc, "Bcc") + clean_addresses(
+            smtp.get("smtp_always_bcc", ""), "Bcc"
+        )
+    except ValueError as e:
+        log = EmailLog(
+            entity_type=entity_type or "",
+            entity_id=entity_id or 0,
+            recipient=to_email,
+            subject=subject,
+            status="failed",
+            error_message=str(e),
+        )
+        db.add(log)
+        db.commit()
+        return False
     # An address already receiving the mail is not copied on it again.
     cc_list = _without(cc_list, [to_email])
     bcc_list = _without(bcc_list, [to_email] + cc_list)
