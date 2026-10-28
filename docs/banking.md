@@ -166,6 +166,18 @@ split line on the stub. The register marks the rows that print
 (`printable`): money out of a bank account, not a card, not void. A bill
 payment's check prints from its bill.
 
+### A bill payment's check memo
+
+The memo line of a bill payment's check is the payment's memo (`notes`).
+When Pay Bills pays exactly one bill and no memo is typed on the payment, the
+payment takes that bill's memo, so the account or invoice number the vendor
+asked for is already on the check. A payment of several bills starts blank,
+for you to type (the stub lists each bill). A memo sent with the payment is
+never replaced. The payment's own view (Bill Payment) has a **Check memo**
+field; **Print Check** there saves what is in it, then opens the check
+(`PUT /api/bill-payments/{id}/memo`, `{"notes": "..."}`; blank clears it; a
+void payment is refused).
+
 ### Pre-printed check stock
 
 Settings → Check Printing chooses how every check prints, for the whole

@@ -251,6 +251,10 @@ class BillPaymentCreate(StrictModel):
     allocations: list[BillPaymentAllocationCreate] = []
 
 
+class BillPaymentMemoUpdate(StrictModel):
+    notes: Optional[str] = None
+
+
 class BillPaymentAllocationResponse(BaseModel):
     bill_id: int
     amount: Decimal = Decimal("0")

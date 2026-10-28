@@ -132,6 +132,14 @@ since a name changes no amount, and each donor line can print or email the
 same thank-you letter a donation gets. Check images on a deposit are not part of
 this.
 
+**A bill's memo prints on the check that pays it** (#602, from Discussion
+#594). A check printed from a bill payment had a blank memo line, though the
+bill carried the account or invoice number the vendor wants on it. Paying
+one bill now carries that bill's memo onto the payment and its check; paying
+several bills leaves the memo for you to type, and a memo you enter yourself
+is never replaced. The payment's view has a **Check memo** field you can edit,
+and Print Check saves it before the check opens.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
