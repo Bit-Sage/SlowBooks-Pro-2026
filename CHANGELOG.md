@@ -68,9 +68,10 @@ retainage held at the commitment's rate, wiping an amount that had been set
 by hand through the API. A hand-set retainage now stays; one that was just the
 commitment's rate on the old lines still follows the rate to the new lines.
 
-**The desktop window zooms.** Ctrl + and Ctrl - (Cmd + and Cmd - on a Mac)
-now make the desktop app's window and its document windows larger or smaller,
-as they do in a browser; they did nothing before. (#597)
+**The desktop window zooms.** Ctrl +, Ctrl - and Ctrl 0 (Cmd on a Mac) now
+make the desktop app's window larger, smaller or normal again, and the level
+holds across pages and launches; Ctrl + wheel zooms the window and its document
+windows. They did nothing before. (#597)
 
 **Void can record a refunded processing fee.** Voiding an online payment
 leaves the fee its provider kept booked as an expense, and the Void button
