@@ -126,3 +126,117 @@ def test_a_void_credits_the_same_sub_account(
     lines = _cogs_lines(db_session, item, MovementType.VOID)
     credits = {l.account_id: l.credit for l in lines if l.credit}
     assert credits == {sub.id: Decimal("40.00")}
+
+
+def _item_net_by_account(db, item):
+    """Net debit−credit per account over every cost entry the item's
+    movements posted (sale and reversal alike)."""
+    txn_ids = [
+        mv.transaction_id
+        for mv in db.query(InventoryMovement).filter_by(item_id=item.id).all()
+        if mv.transaction_id is not None
+    ]
+    net = {}
+    for ln in (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id.in_(txn_ids))
+        .all()
+    ):
+        net[ln.account_id] = (
+            net.get(ln.account_id, Decimal("0"))
+            + Decimal(str(ln.debit or 0))
+            - Decimal(str(ln.credit or 0))
+        )
+    return net
+
+
+def _asset_account(db, number="1390", name="Inventory — Widgets"):
+    acc = Account(
+        account_number=number,
+        name=name,
+        account_type=AccountType.ASSET,
+        balance=Decimal("0"),
+    )
+    db.add(acc)
+    db.commit()
+    return acc
+
+
+def test_a_void_reverses_onto_the_accounts_the_sale_used(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Sale to 5000, item moved to 5100, invoice voided: the reversal credits
+    5000 (what the sale debited), not 5100. Otherwise 5000 stays overstated
+    and 5100 goes negative. The asset side is held the same way."""
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)  # resolves to 5000
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=4, unit_rate="25.00"
+    )
+
+    sub = seed_accounts["5100"]  # Materials Cost, COGS-typed
+    other_asset = _asset_account(db_session)
+    item = db_session.get(Item, item.id)
+    item.expense_account_id = sub.id
+    item.asset_account_id = other_asset.id
+    db_session.commit()
+
+    assert client.post(f"/api/invoices/{inv['id']}/void").status_code == 200
+
+    db_session.expire_all()
+    lines = _cogs_lines(db_session, item, MovementType.VOID)
+    credits = {l.account_id: l.credit for l in lines if l.credit}
+    debits = {l.account_id: l.debit for l in lines if l.debit}
+    assert credits == {seed_accounts["5000"].id: Decimal("40.00")}
+    assert debits == {seed_accounts["1300"].id: Decimal("40.00")}
+
+    net = _item_net_by_account(db_session, item)
+    assert net.get(seed_accounts["5000"].id, Decimal("0")) == Decimal("0")
+    assert net.get(seed_accounts["1300"].id, Decimal("0")) == Decimal("0")
+    assert sub.id not in net and other_asset.id not in net
+
+
+def test_an_edit_that_lowers_quantity_reverses_onto_the_sales_account(
+    client, db_session, seed_accounts, seed_customer
+):
+    """An invoice edit that drops the quantity goes through reverse_sale too:
+    the units returned come off the account the sale debited."""
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)  # resolves to 5000
+    _create_bill_for_inventory(client, vendor.id, item.id, qty=10, unit_cost="10.00")
+    inv = _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=5, unit_rate="25.00"
+    )
+
+    sub = seed_accounts["5100"]  # Materials Cost, COGS-typed
+    item = db_session.get(Item, item.id)
+    item.expense_account_id = sub.id
+    db_session.commit()
+
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "tax_rate": "0",
+            "lines": [
+                {
+                    "item_id": item.id,
+                    "description": "Sold less",
+                    "quantity": "2",
+                    "rate": "25.00",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    db_session.expire_all()
+    lines = _cogs_lines(db_session, item, MovementType.VOID)
+    credits = {l.account_id: l.credit for l in lines if l.credit}
+    assert credits == {seed_accounts["5000"].id: Decimal("30.00")}
+
+    net = _item_net_by_account(db_session, item)
+    # Two units at $10 are still sold, and they stay on 5000.
+    assert net.get(seed_accounts["5000"].id) == Decimal("20.00")
+    assert net.get(seed_accounts["1300"].id) == Decimal("-20.00")
+    assert sub.id not in net
