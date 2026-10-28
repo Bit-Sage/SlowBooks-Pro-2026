@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Move lines and insert one in the middle of a document** (#604, from
+Discussion #595). On an invoice a line could only be added at the end or
+removed, so a missed line meant removing and re-keying everything below it.
+Every line form (invoices, estimates, sales receipts, credit memos, recurring
+invoices, bills, purchase orders and vendor credits) now has Move line up and
+Move line down buttons on each line, a handle to drag a line with the mouse,
+and an Insert line below button that opens a blank line right under that one.
+The totals follow, and the order is saved with the document and used on the
+screen, the PDF and the print view. Saving a document whose lines only
+changed order now keeps the new order, and the order is always the order the
+lines were sent in.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

@@ -116,7 +116,7 @@ def create_recurring(data: RecurringCreate, db: Session = Depends(get_db)):
                 is_taxable=(
                     line_data.is_taxable if line_data.is_taxable is not None else True
                 ),
-                line_order=line_data.line_order or i,
+                line_order=i,
             )
         )
 
@@ -177,7 +177,7 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
                         if line_data.is_taxable is not None
                         else True
                     ),
-                    line_order=line_data.line_order or i,
+                    line_order=i,
                 )
             )
 

@@ -115,6 +115,7 @@ const RecurringPage = {
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'}</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#rec-lines', { add: () => RecurringPage.addLine(), changed: () => RecurringPage.recalc() });
         if (!id && rec.customer_id) RecurringPage.customerSelected(rec.customer_id);
         RecurringPage.recalc();
     },

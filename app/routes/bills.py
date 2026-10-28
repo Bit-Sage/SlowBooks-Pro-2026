@@ -272,7 +272,7 @@ def _post_bill_lines(
                 ),
                 function=line_data.function,
                 is_billable=line_data.is_billable,
-                line_order=line_data.line_order or i,
+                line_order=i,
             )
         )
 

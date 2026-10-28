@@ -167,8 +167,6 @@ def _lines_changed(db: Session, estimate: Estimate, sent_lines) -> bool:
     get the same settling a save gives them (tax flag, at-cost rate, cost
     type) on copies, so an unchanged form payload compares equal."""
     sent = [ln.model_copy() for ln in sent_lines]
-    order = {id(ln): ln.line_order or i for i, ln in enumerate(sent)}
-    sent.sort(key=lambda ln: order[id(ln)])
     resolve_line_taxable(db, sent, db.get(Customer, estimate.customer_id))
     _enforce_at_cost(sent, terms_from_db(db).is_construction)
     for ln in sent:
@@ -396,7 +394,7 @@ def create_estimate(data: EstimateCreate, db: Session = Depends(get_db)):
             is_taxable=(
                 line_data.is_taxable if line_data.is_taxable is not None else True
             ),
-            line_order=line_data.line_order or i,
+            line_order=i,
         )
         db.add(line)
 
@@ -512,7 +510,7 @@ def update_estimate(
                 is_taxable=(
                     line_data.is_taxable if line_data.is_taxable is not None else True
                 ),
-                line_order=line_data.line_order or i,
+                line_order=i,
             )
             db.add(line)
 
