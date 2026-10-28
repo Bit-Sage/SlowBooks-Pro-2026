@@ -49,8 +49,20 @@ def get_inventory_asset_account_id(db: Session, item: Item) -> Optional[int]:
     return acc.id if acc else None
 
 
-def get_cogs_account_id(db: Session) -> Optional[int]:
-    """Resolve the COGS account. First COGS-typed account wins; fallback to #5000."""
+def get_cogs_account_id(db: Session, item: Optional[Item] = None) -> Optional[int]:
+    """Resolve the COGS account for an item's sale.
+
+    Priority: the item's own Expense or COGS Account when it is COGS-typed
+    (#622: it used to be ignored, so every sale landed on the first COGS
+    account, 5000, and the P&L showed "Direct postings to Cost of Goods Sold"
+    instead of the sub-account) → the first COGS-typed account → #5000.
+    An item pointed at an expense-typed account keeps the fallback: a sale's
+    cost side belongs in cost of goods, not operating expense.
+    """
+    if item is not None and item.expense_account_id:
+        own = db.get(Account, item.expense_account_id)
+        if own is not None and own.account_type == AccountType.COGS:
+            return own.id
     acc = (
         db.query(Account)
         .filter(Account.account_type == AccountType.COGS)
@@ -299,7 +311,7 @@ def record_sale(
     txn_id = None
     if cogs_amount > 0 and post_journal:
         asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = get_cogs_account_id(db)
+        cogs_id = get_cogs_account_id(db, item)
         if asset_id and cogs_id:
             from datetime import date as _date
 
@@ -373,7 +385,7 @@ def record_adjustment(
     if post_journal and amount > 0:
         asset_id = get_inventory_asset_account_id(db, item)
         adj_acc = db.query(Account).filter(Account.account_number == "5900").first()
-        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db)
+        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db, item)
         if asset_id and offset_id:
             from datetime import date as _date
 
@@ -493,7 +505,7 @@ def reverse_sale(
     txn_id = None
     if amount > 0 and post_journal:
         asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = get_cogs_account_id(db)
+        cogs_id = get_cogs_account_id(db, item)
         if asset_id and cogs_id:
             from datetime import date as _date
 

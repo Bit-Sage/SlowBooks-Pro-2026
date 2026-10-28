@@ -79,6 +79,17 @@ an online payment with a booked fee now has a "The provider refunded its
 processing fee" checkbox, unticked by default; tick it and the fee is
 reversed with the payment. Other payments' Void confirm is unchanged.
 
+**An inventory sale's cost posts to the item's COGS account** (#622, from
+Discussion #621, @Financials911). Selling a stocked item posted the cost side
+to the first cost-of-goods account in the chart (5000, the parent) whatever
+the item's *Expense or COGS Account* said, so the Profit & Loss showed it as
+"Direct postings to Cost of Goods Sold" instead of under the sub-account. The
+sale, its void, and a QuickBooks Online document that becomes ours now post to
+the item's account when it is a cost-of-goods account; an item with no account
+or an expense-typed one posts to 5000 as before. Entries already posted stay
+where they are: one journal entry moving them from 5000 to the right
+sub-account cleans up history.
+
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the

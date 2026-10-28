@@ -203,7 +203,7 @@ def restore_local_cost(db: Session, invoice) -> None:
             abs(Decimal(str(movement.quantity))) * Decimal(str(movement.unit_cost or 0))
         )
         asset_id = get_inventory_asset_account_id(db, item) if item else None
-        cogs_id = get_cogs_account_id(db)
+        cogs_id = get_cogs_account_id(db, item)
         if amount <= 0 or not (asset_id and cogs_id):
             continue
         txn = create_journal_entry(
