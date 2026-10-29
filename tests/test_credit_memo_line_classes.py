@@ -276,7 +276,9 @@ def test_the_migration_adds_and_removes_the_columns(tmp_path):
     fks = {fk["name"] for fk in insp.get_foreign_keys("credit_memo_lines")}
     assert {"fk_credit_memo_lines_class_id", "fk_credit_memo_lines_job_id"} <= fks
     eng.dispose()
-    command.downgrade(cfg, "-1")
+    command.downgrade(
+        cfg, "b8d4f2a6c1e3"
+    )  # back past this migration, whatever follows it
     eng = create_engine(url)
     cols = {c["name"] for c in inspect(eng).get_columns("credit_memo_lines")}
     assert not ({"class_id", "job_id"} & cols)

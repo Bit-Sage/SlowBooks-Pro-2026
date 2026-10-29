@@ -25,7 +25,7 @@ from app.models.transactions import (
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "d2f7a9c4e6b1"
-BEFORE = "b8d4f2a6c1e3"
+BEFORE = "b1a26772cc4e"  # the credit memo line classes migration (#640), which this one follows
 REFUSAL = "Value error, rate must be non-negative; use a credit memo for refunds"
 
 
