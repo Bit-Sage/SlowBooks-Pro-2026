@@ -51,6 +51,38 @@ os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
 os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
+# ---- No fsync on the suite's SQLite files ----
+# The Windows CI job spent most of its time waiting on fsync: every test that
+# walks the migration chain against a real SQLite file commits once per
+# migration, 15 to 80 s a test there against 1 to 3 s on Linux, and the
+# slowest of them outgrew the job's per-test timeout. synchronous=OFF on every
+# SQLite connection this test process opens (the migration runner's engine and
+# the company files' alike, through a class-level listener) writes the same
+# files without waiting for the disk. Test setup only: nothing in app/ reads
+# it. SLOWBOOKS_SQLITE_FSYNC=1 in the shell keeps fsync on, for a timing.
+import sqlite3 as _sqlite3  # noqa: E402
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+from sqlalchemy.engine import Engine as _Engine  # noqa: E402
+
+if os.environ.get("SLOWBOOKS_SQLITE_FSYNC") != "1":
+
+    @_sa_event.listens_for(_Engine, "connect")
+    def _suite_sqlite_without_fsync(dbapi_conn, _record):
+        module = type(dbapi_conn).__module__ or ""
+        if (
+            not isinstance(dbapi_conn, _sqlite3.Connection)
+            and "sqlcipher" not in module
+        ):
+            return
+        try:
+            dbapi_conn.execute("PRAGMA synchronous=OFF")
+        except Exception:
+            # an encrypted file before its key (company_file keys it next)
+            pass
+
+
 # The in-app scheduler (#605) is a background task the lifespan starts; it
 # would run against a lifespan test's single shared connection from its own
 # thread. Off for the suite; the tests of the task call it directly.
