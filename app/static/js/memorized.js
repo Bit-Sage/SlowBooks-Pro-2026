@@ -45,7 +45,7 @@ const MemorizedPage = {
                     <button class="btn btn-primary" onclick="MemorizedPage.showBillForm()">+ Memorized Bill</button>
                     <button class="btn btn-primary" onclick="MemorizedPage.showJournalForm()">+ Memorized Journal Entry</button>
                     <button class="btn btn-secondary" onclick="RecurringPage.showForm()">+ Recurring ${T('Invoice')}</button>
-                    <button id="mem-enter-all" class="btn btn-secondary" title="Enter every schedule that is due, every missed date in order, as the app does when it opens" onclick="MemorizedPage.enterAllDue(this)">Enter All Due</button>
+                    <button id="mem-enter-all" class="btn btn-secondary" title="Enter every schedule that is due, recurring invoices included, every missed date in order" onclick="MemorizedPage.enterAllDue(this)">Enter All Due</button>
                 </div>
             </div>
             ${MemorizedPage.whileAwayHtml(lastRun)}
@@ -59,9 +59,9 @@ const MemorizedPage = {
             </div>
             <div id="mem-table">${MemorizedPage.tableHtml(rows)}</div>
             <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:normal;"><input type="checkbox" id="mem-auto-enter" name="auto_enter_on_open" value="true" style="width:auto; vertical-align:middle; margin-right:6px;" ${autoEnter ? 'checked' : ''} onchange="MemorizedPage.setAutoEnter(this)">Enter due schedules when the app opens and once a day</label>
+                <label style="font-weight:normal;"><input type="checkbox" id="mem-auto-enter" name="auto_enter_on_open" value="true" style="width:auto; vertical-align:middle; margin-right:6px;" ${autoEnter ? 'checked' : ''} onchange="MemorizedPage.setAutoEnter(this)">Enter due memorized bills and journal entries when the app opens and once a day</label>
             </div>
-            <p class="hint" style="margin-top:8px;">An auto-enter schedule is entered on its date: the app enters every due schedule, recurring ${T('invoices')} included, when it opens and once a day while it runs, every missed date in order, and Enter All Due does the same at once. A remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed. A server install can run scripts/run_recurring.py from cron instead.</p>`;
+            <p class="hint" style="margin-top:8px;">An auto-enter memorized bill or journal entry is entered on its date: the app enters every due one when it opens and once a day while it runs, every missed date in order. Recurring ${T('invoices')} wait, as before, for Generate or Enter All Due, which enters every due schedule of both kinds at once. A remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed. A server install can run scripts/run_recurring.py from cron instead.</p>`;
     },
 
     // What the app entered by itself (when it opened, or its daily run)
@@ -90,7 +90,7 @@ const MemorizedPage = {
     async setAutoEnter(box) {
         try {
             await API.put('/settings', { auto_enter_on_open: box.checked ? 'true' : 'false' });
-            toast(box.checked ? 'Due schedules are entered when the app opens and once a day' : 'Due schedules wait for Enter All Due or Enter now');
+            toast(box.checked ? 'Due memorized bills and journal entries are entered when the app opens and once a day' : 'Due schedules wait for Enter All Due or Enter now');
         } catch (err) {
             box.checked = !box.checked;
             toast(err.message, 'error');

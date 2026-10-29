@@ -121,12 +121,15 @@ date's day and fifteen days later. A frequency that carries its own count
 (every two weeks, twice a month, quarterly, twice a year) takes no interval
 and is refused with one, naming the word; daily, weekly, monthly and yearly
 take one. In auto-enter mode the app posts the document on its date: it
-enters every due schedule, recurring invoices included, when it opens and
-once a day while it runs, every missed date in order, and Enter All Due on
-the page does the same at once; the Memorized Transactions page says what
-was entered while you were away, and a box under its list (on by default)
-turns the automatic runs off, for a server that runs
-`scripts/run_recurring.py` from cron instead. In remind mode it waits on the
+enters every due auto-enter memorized bill and journal entry when it opens
+and once a day while it runs, every missed date in order; the Memorized
+Transactions page says what was entered while you were away, and a box under
+its list (on by default) turns the automatic runs off, for a server that runs
+`scripts/run_recurring.py` from cron instead. Recurring invoices are not
+entered on their own: as before, they wait for Generate, Enter All Due or
+the server's cron, so a company upgrading with an overdue schedule finds no
+invoices it did not ask for. Enter All Due, pressed by you, enters every due
+schedule of both kinds, every missed date in order. In remind mode it waits on the
 due list until Enter now posts it, dated the scheduled date or today, and
 moves the schedule on. Two windows pressing Enter now on the same
 occurrence post one document: the schedule is moved on in one guarded

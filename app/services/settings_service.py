@@ -421,9 +421,10 @@ def refuse_oversell(db: Session) -> bool:
 
 
 def auto_enter_on_open(db: Session) -> bool:
-    """Whether the app enters due schedules by itself, when it opens and
-    once a day while it runs (Settings -> auto_enter_on_open, #605). On
-    unless set to "false"."""
+    """Whether the app enters due auto-enter memorized bills and journal
+    entries by itself, when it opens and once a day while it runs (Settings
+    -> auto_enter_on_open, #605). Recurring invoices are never entered by
+    those runs (app/services/scheduler.py). On unless set to "false"."""
     return get_setting_raw(db, "auto_enter_on_open") != "false"
 
 

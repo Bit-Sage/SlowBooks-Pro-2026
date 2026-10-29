@@ -1609,10 +1609,14 @@ def test_the_app_starts_the_scheduler_when_it_boots(monkeypatch, lifespan_client
 
 def test_the_page_offers_the_setting_and_the_docs_say_so():
     """W-66: the box on the page, the hint, the mode's words, the docs and
-    the changelog say the app enters due schedules when it opens and once a
-    day, recurring invoices the same way, and that the cron script stays."""
+    the changelog say the app enters due memorized bills and journal entries
+    when it opens and once a day, that recurring invoices wait for Generate
+    or Enter All Due as before, and that the cron script stays."""
     js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
-    assert "Enter due schedules when the app opens and once a day" in js
+    assert (
+        "Enter due memorized bills and journal entries when the app opens and once a day"
+        in js
+    )
     assert (
         'name="auto_enter_on_open"' in js and "MemorizedPage.setAutoEnter(this)" in js
     )
@@ -1631,7 +1635,7 @@ def test_the_page_offers_the_setting_and_the_docs_say_so():
     for doc in ("docs/features.md", "CHANGELOG.md"):
         text = _words(doc)
         assert "when it opens and once a day while it runs" in text, doc
-        assert "recurring invoices included" in text, doc
+        assert "not entered on their own" in text, doc
         assert "`scripts/run_recurring.py` from cron instead" in text, doc
         assert "takes no interval" in text, doc
         assert "has ended" in text, doc
@@ -1645,3 +1649,26 @@ def test_the_page_offers_the_setting_and_the_docs_say_so():
     assert "\u2014" not in paragraph  # no em-dashes
     assert "was entered while you were away" in " ".join(paragraph.split())
     assert "`auto_enter_on_open`" in paragraph
+
+
+def test_the_automatic_runs_leave_recurring_invoices_to_generate(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    """2.31.1 gate, Linux round 2: the Riverbend comparison found two monthly
+    recurring invoices overdue since September posted on the first open of
+    2.31.1, $700 nobody asked for. The startup and daily runs enter due
+    auto-enter memorized bills and journal entries only; a recurring invoice
+    waits for Generate or Enter All Due, as it always has."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)
+    out = scheduler.run_in_this_process("startup", today=lambda: date(2026, 3, 15))
+    assert out["invoices_created"] == 0 and out["invoice_ids"] == []
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0
+    assert out["entered_count"] == 2  # the memorized bill's Jan 31 and Feb 28
+    assert client.get(f"/api/memorized/{mem['id']}").json()["entered_count"] == 2
+    # Enter All Due, pressed by a person, enters both kinds
+    r = client.post("/api/memorized/enter-due?as_of=2026-03-15")
+    assert r.status_code == 200, r.text
+    assert r.json()["invoices_created"] == 3  # Jan 1, Feb 1, Mar 1
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 3

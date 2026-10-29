@@ -1,13 +1,17 @@
 # ============================================================================
 # The in-app scheduler (#605, 2.31.1 gate W-66): the app enters what is due
-# when it opens and once a day while it runs, so an auto-enter schedule is
-# entered on its date without anyone pressing Enter All Due. One run
-# generates every due recurring invoice and enters every due auto-enter
-# memorized bill and journal entry, every missed occurrence in order up to
-# today, and keeps a note of what it entered for the Memorized transactions
-# page to show ("Entered 3 scheduled documents while you were away"). The
-# setting auto_enter_on_open turns the automatic runs off; the cron script
-# (scripts/run_recurring.py) stays for a server install.
+# when it opens and once a day while it runs, so an auto-enter memorized
+# bill or journal entry is entered on its date without anyone pressing Enter
+# All Due, every missed occurrence in order up to today, and keeps a note of
+# what it entered for the Memorized transactions page to show ("Entered 3
+# scheduled documents while you were away"). Recurring invoices are not
+# entered by the automatic runs: they have always waited for the Generate
+# button (or the server's cron), and a company upgrading with a schedule
+# overdue must not find invoices posted, and owed, that nobody asked for
+# (2.31.1 gate, Linux round 2: the Riverbend comparison). Enter All Due,
+# pressed by a person, runs both. The setting auto_enter_on_open turns the
+# automatic runs off; the cron script (scripts/run_recurring.py) stays for a
+# server install.
 # ============================================================================
 
 import asyncio
@@ -40,19 +44,22 @@ POLL_SECONDS = 15 * 60
 ENV_SWITCH = "SLOWBOOKS_AUTO_ENTER"
 
 
-def run_due_schedules(db: Session, as_of: date | None = None) -> dict:
+def run_due_schedules(
+    db: Session, as_of: date | None = None, include_recurring: bool = True
+) -> dict:
     """What one run does, on the session given, under the lock: every due
-    recurring invoice (every missed installment, a pass each) and every due
     auto-enter memorized bill and journal entry (every missed occurrence, in
-    date order), up to as_of (today). Enter All Due on the page is this
-    too. Returns what it entered and what it had to skip."""
+    date order) and, when include_recurring (Enter All Due, pressed by a
+    person), every due recurring invoice (every missed installment, a pass
+    each), up to as_of (today). The automatic runs pass include_recurring
+    False. Returns what it entered and what it had to skip."""
     with _RUN_LOCK:
         if as_of is None:
             as_of = date.today()
         invoice_ids: list[int] = []
         invoice_skipped: list[dict] = []
         seen: set = set()
-        for _ in range(PASS_LIMIT):
+        for _ in range(PASS_LIMIT if include_recurring else 0):
             this_pass: list[dict] = []
             ids = recurring_service.generate_due_invoices(db, as_of, skipped=this_pass)
             # a schedule skipped for a closed period keeps its date and is
@@ -99,7 +106,8 @@ def run_in_this_process(origin: str = "startup", today=date.today) -> dict | Non
         try:
             if not enabled(db):
                 return None
-            result = run_due_schedules(db, today())
+            # memorized auto-enter schedules only (see the module note)
+            result = run_due_schedules(db, today(), include_recurring=False)
         except Exception:
             db.rollback()
             raise
