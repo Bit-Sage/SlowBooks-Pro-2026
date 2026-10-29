@@ -34,6 +34,9 @@ class CollectionLetterRequest(StrictModel):
     send_email: bool = False
 
 
+_AGING_COLS = ("current", "over_30", "over_60", "over_90", "total", "unapplied_credits")
+
+
 def _aging_row(customer_names: dict, cid: int) -> dict:
     return {
         "customer_name": customer_names.get(cid, "Unknown"),
@@ -44,6 +47,17 @@ def _aging_row(customer_names: dict, cid: int) -> dict:
         "over_90": Decimal(0),
         "total": Decimal(0),
         "unapplied_credits": Decimal(0),
+    }
+
+
+def _customer_labels(db: Session) -> dict[int, str]:
+    """Every customer's name for a report row: "Parent: Sub" for a
+    sub-customer (#638), so a tenant's row reads under its property."""
+    rows = db.query(Customer.id, Customer.name, Customer.parent_customer_id).all()
+    names = {cid: name for cid, name, _ in rows}
+    return {
+        cid: f"{names[pid]}: {name}" if pid in names else name
+        for cid, name, pid in rows
     }
 
 
@@ -97,26 +111,47 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
         .all()
     )
 
-    customer_names = {c.id: c.name for c in db.query(Customer.id, Customer.name).all()}
+    customer_names = _customer_labels(db)
+    # A sub-customer billed with its parent (#638) is on the parent's A/R:
+    # its open items age on the parent's row, and the row keeps, under
+    # "subs", what each such sub contributed, so the screen can show the
+    # sub's balance under the parent without counting it twice. A sub
+    # billed on its own has its own row, "Parent: Sub".
+    from app.services.sub_customers import billed_with_parent
+
+    routed = billed_with_parent(db)
 
     aging = {}
-    for inv in invoices:
-        cid = inv.customer_id
-        if cid not in aging:
-            aging[cid] = _aging_row(customer_names, cid)
+    detail: dict[int, dict[int, dict]] = {}
 
+    def rows_for(cid: int) -> list[dict]:
+        """The report row the customer's money lands on, and the detail
+        row under the parent when it is a sub billed with it."""
+        owner = routed.get(cid, cid)
+        if owner not in aging:
+            aging[owner] = _aging_row(customer_names, owner)
+        out = [aging[owner]]
+        if owner != cid:
+            sub_rows = detail.setdefault(owner, {})
+            if cid not in sub_rows:
+                sub_rows[cid] = _aging_row(customer_names, cid)
+            out.append(sub_rows[cid])
+        return out
+
+    for inv in invoices:
         days = (as_of_date - inv.due_date).days if inv.due_date else 0
         # At the rate it was booked at, as the ledger carries it.
         bal = home_amount(inv.balance_due, inv.exchange_rate)
-        if days <= 0:
-            aging[cid]["current"] += bal
-        elif days <= 30:
-            aging[cid]["over_30"] += bal
-        elif days <= 60:
-            aging[cid]["over_60"] += bal
-        else:
-            aging[cid]["over_90"] += bal
-        aging[cid]["total"] += bal
+        for row in rows_for(inv.customer_id):
+            if days <= 0:
+                row["current"] += bal
+            elif days <= 30:
+                row["over_30"] += bal
+            elif days <= 60:
+                row["over_60"] += bal
+            else:
+                row["over_90"] += bal
+            row["total"] += bal
 
     # Unapplied credit memos. A credit memo credits A/R the moment it is
     # issued, so summing only invoice balances reads HIGHER than account
@@ -141,14 +176,13 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
         for p in unapplied_payments(db, end=as_of_date)
     ]
     for cid, amt in held:
-        if cid not in aging:
-            aging[cid] = _aging_row(customer_names, cid)
-        aging[cid]["unapplied_credits"] += amt
-        # A credit has no due date: it offsets the newest bucket.
-        aging[cid]["current"] -= amt
-        aging[cid]["total"] -= amt
+        for row in rows_for(cid):
+            row["unapplied_credits"] += amt
+            # A credit has no due date: it offsets the newest bucket.
+            row["current"] -= amt
+            row["total"] -= amt
 
-    _COLS = ("current", "over_30", "over_60", "over_90", "total", "unapplied_credits")
+    _COLS = _AGING_COLS
     items = sorted(aging.values(), key=lambda i: (i["customer_name"] or "").lower())
     totals = {"customer_name": "TOTAL", "customer_id": 0}
     for k in _COLS:
@@ -157,6 +191,14 @@ def ar_aging_report(db: Session, as_of_date: date) -> dict:
     for item in items:
         for k in _COLS:
             item[k] = float(item[k])
+        subs = sorted(
+            detail.get(item["customer_id"], {}).values(),
+            key=lambda i: (i["customer_name"] or "").lower(),
+        )
+        for sub in subs:
+            for k in _COLS:
+                sub[k] = float(sub[k])
+        item["subs"] = subs
     for k in _COLS:
         totals[k] = float(totals[k])
 
@@ -207,7 +249,7 @@ def income_by_customer(
         return by_customer[cid]
 
     for inv in invoices:
-        r = row(inv.customer_id, inv.customer.name if inv.customer else "Unknown")
+        r = row(inv.customer_id, inv.customer.full_name if inv.customer else "Unknown")
         rate = inv.exchange_rate
         r["invoice_count"] += 1
         r["total_sales"] += home_amount(inv.subtotal, rate)
@@ -271,8 +313,22 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     from app.services.donor_documents import document_label
     from app.services.terminology import terms_from_db
 
+    from app.services.sub_customers import billed_subs
+
     words = terms_from_db(db)
     home = home_currency(db)
+
+    # A parent's statement carries the documents of the sub-customers
+    # billed with it (#638), each line naming the sub; a sub's own
+    # statement is its own activity.
+    subs = {s.id: s.name for s in billed_subs(db, customer.id)}
+    on_statement = [customer.id] + list(subs)
+
+    def who(doc) -> list[str]:
+        """The sub's name opens the line's description on the parent's
+        statement; a line of the customer's own says nothing."""
+        name = subs.get(doc.customer_id)
+        return [name] if name else []
 
     def foreign(doc) -> str:
         """The document's currency code when it is not the home currency."""
@@ -281,7 +337,7 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
 
     invoices = (
         db.query(Invoice)
-        .filter(Invoice.customer_id == customer.id)
+        .filter(Invoice.customer_id.in_(on_statement))
         .filter(Invoice.status != InvoiceStatus.VOID)
         .filter(Invoice.date <= as_of_date)
         .all()
@@ -291,14 +347,14 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
         .options(
             selectinload(Payment.allocations).joinedload(PaymentAllocation.invoice)
         )
-        .filter(Payment.customer_id == customer.id)
+        .filter(Payment.customer_id.in_(on_statement))
         .filter(or_(Payment.is_voided.is_(False), Payment.is_voided.is_(None)))
         .filter(Payment.date <= as_of_date)
         .all()
     )
     memos = (
         db.query(CreditMemo)
-        .filter(CreditMemo.customer_id == customer.id)
+        .filter(CreditMemo.customer_id.in_(on_statement))
         .filter(CreditMemo.status != CreditMemoStatus.VOID)
         .filter(CreditMemo.date <= as_of_date)
         .all()
@@ -311,7 +367,9 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     invoiced = Decimal(0)
     for inv in invoices:
         code = foreign(inv)
-        parts = [f"{code} {Decimal(str(inv.total or 0)):,.2f}"] if code else []
+        parts = who(inv)
+        if code:
+            parts.append(f"{code} {Decimal(str(inv.total or 0)):,.2f}")
         if inv.po_number:
             parts.append(f"PO {inv.po_number}")
         if inv.due_date:
@@ -352,7 +410,9 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
         if left > 0:
             relieved += home_amount(left, p.exchange_rate)
         received += relieved
-        parts = [f"{code} {Decimal(str(p.amount)):,.2f}"] if code else []
+        parts = who(p)
+        if code:
+            parts.append(f"{code} {Decimal(str(p.amount)):,.2f}")
         if p.method:
             parts.append(p.method)
         paid = numbers(a.invoice for a in p.allocations)
@@ -391,8 +451,9 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
                     "date": cm.date,
                     "type": "Credit Memo",
                     "number": cm.memo_number,
-                    "description": (
-                        f"applied to {applied_to}" if applied_to else "credit"
+                    "description": " · ".join(
+                        who(cm)
+                        + [f"applied to {applied_to}" if applied_to else "credit"]
                     ),
                     "amount": -Decimal(str(cm.total or 0)),
                     "currency": None,
@@ -466,7 +527,12 @@ def batch_email_statements(db: Session = Depends(get_db)):
         .filter(Invoice.due_date < as_of_date)
         .all()
     )
-    customer_ids = sorted({inv.customer_id for inv in overdue_invoices})
+    # A sub-customer billed with its parent (#638) is on the parent's
+    # statement: the parent gets one statement carrying it, the sub none.
+    from app.services.sub_customers import billed_to
+
+    owners = billed_to(db, {inv.customer_id for inv in overdue_invoices})
+    customer_ids = sorted(set(owners.values()))
     if not customer_ids:
         return {"sent": 0, "failed": 0, "errors": []}
     if not (settings.get("smtp_host") or "").strip():
@@ -555,14 +621,24 @@ def collection_letters(
         .filter(Invoice.due_date <= today - timedelta(days=min_days))
     )
     if customer_ids:
-        q = q.filter(Invoice.customer_id.in_(customer_ids))
+        from app.services.sub_customers import billed_subs
+
+        # a parent picked covers the sub-customers billed with it (#638)
+        wanted = set(customer_ids)
+        for cid in customer_ids:
+            wanted.update(s.id for s in billed_subs(db, cid))
+        q = q.filter(Invoice.customer_id.in_(wanted))
 
     overdue_invoices = q.all()
 
-    # Group by customer
+    # Group by the customer the invoice is billed to: the parent's letter
+    # lists the invoices of the sub-customers billed with it (#638).
+    from app.services.sub_customers import billed_to
+
+    owners = billed_to(db, {inv.customer_id for inv in overdue_invoices})
     by_customer = {}
     for inv in overdue_invoices:
-        by_customer.setdefault(inv.customer_id, []).append(inv)
+        by_customer.setdefault(owners[inv.customer_id], []).append(inv)
 
     generated = 0
     emailed = 0

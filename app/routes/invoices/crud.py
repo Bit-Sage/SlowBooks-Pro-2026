@@ -10,6 +10,7 @@ from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.items import Item
 from app.models.contacts import Customer
+from app.services.sub_customers import bill_to_parent
 from app.schemas.invoices import InvoiceCreate, InvoiceUpdate, InvoiceResponse
 from app.services.accounting import (
     _q,
@@ -47,6 +48,7 @@ def list_invoices(
     customer_id: int = None,
     is_sales_receipt: bool = None,
     open_only: bool = False,
+    billed_to: bool = False,
     skip: int = 0,
     limit: int = 500,
     db: Session = Depends(get_db),
@@ -55,7 +57,10 @@ def list_invoices(
     open_only: the invoices money can still be applied to (draft, sent or
     partial, with a balance due) — what Receive Payment, Batch Payments
     and the credit screens offer. Filtered here, so an old open invoice is
-    never lost behind the newest page of paid ones (issue #191)."""
+    never lost behind the newest page of paid ones (issue #191).
+    billed_to, with customer_id: the invoices billed to that customer, its
+    own and those of sub-customers billed with it (#638), what Receive
+    Payment offers a property."""
     skip, limit = clamp_pagination(skip, limit)
     # Eager-load customer (used for customer_name) and lines (in the
     # response model). Without these, returning 500 invoices triggered
@@ -74,7 +79,15 @@ def list_invoices(
             ),
             Invoice.balance_due > 0,
         )
-    if customer_id:
+    if customer_id and billed_to:
+        from app.services.sub_customers import billed_subs
+
+        q = q.filter(
+            Invoice.customer_id.in_(
+                [customer_id] + [s.id for s in billed_subs(db, customer_id)]
+            )
+        )
+    elif customer_id:
         q = q.filter(Invoice.customer_id == customer_id)
     if is_sales_receipt is not None:
         q = q.filter(Invoice.is_sales_receipt == is_sales_receipt)
@@ -88,7 +101,8 @@ def list_invoices(
     for inv in invoices:
         resp = InvoiceResponse.model_validate(inv)
         if inv.customer:
-            resp.customer_name = inv.customer.name
+            # "Parent: Sub" for a sub-customer's, as the pickers say it
+            resp.customer_name = inv.customer.full_name
         results.append(resp)
     return results
 
@@ -100,7 +114,7 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Invoice not found")
     resp = InvoiceResponse.model_validate(inv)
     if inv.customer:
-        resp.customer_name = inv.customer.name
+        resp.customer_name = inv.customer.full_name
     return resp
 
 
@@ -140,13 +154,17 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     # rollback the session (which expires `customer`) when two concurrent
     # requests both compute MAX+1 and race for the same invoice number.
     cust_id = customer.id
-    cust_name = customer.name
+    cust_name = customer.full_name
+    # A sub-customer billed with its parent is billed at the parent's
+    # address (#638): the invoice's Bill To is the parent's unless the
+    # request gives one.
+    billed = bill_to_parent(db, customer) or customer
     cust_fields = {
-        "bill_address1": data.bill_address1 or customer.bill_address1,
-        "bill_address2": data.bill_address2 or customer.bill_address2,
-        "bill_city": data.bill_city or customer.bill_city,
-        "bill_state": data.bill_state or customer.bill_state,
-        "bill_zip": data.bill_zip or customer.bill_zip,
+        "bill_address1": data.bill_address1 or billed.bill_address1,
+        "bill_address2": data.bill_address2 or billed.bill_address2,
+        "bill_city": data.bill_city or billed.bill_city,
+        "bill_state": data.bill_state or billed.bill_state,
+        "bill_zip": data.bill_zip or billed.bill_zip,
         "ship_address1": data.ship_address1 or customer.ship_address1,
         "ship_address2": data.ship_address2 or customer.ship_address2,
         "ship_city": data.ship_city or customer.ship_city,

@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models.payments import Payment, PaymentAllocation
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.contacts import Customer
+from app.services.sub_customers import pays_for
 from app.services.accounting import (
     create_journal_entry,
     get_ar_account_id,
@@ -119,7 +120,7 @@ def create_batch_payment(data: BatchPaymentCreate, db: Session = Depends(get_db)
             # Each line's payment is recorded for its customer_id, so the
             # invoice must be that customer's (#189). The batch is one commit:
             # a refused line writes nothing for any customer.
-            if invoice.customer_id != customer_id:
+            if not pays_for(db, customer_id, invoice):
                 raise HTTPException(
                     status_code=400,
                     detail=(
