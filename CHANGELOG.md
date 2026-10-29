@@ -7,6 +7,13 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Reinstalling the same version replaces the program file** (#643). Running
+the Windows Setup over an install of the same version replaced every file
+except SlowBooksPro.exe, because every build of a version carries the same
+version number and the installer took the program file already there for the
+one it was shipping. The installer now replaces the whole program folder
+whatever version is already there.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
