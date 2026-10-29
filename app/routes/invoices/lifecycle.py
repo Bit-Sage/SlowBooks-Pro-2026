@@ -27,6 +27,7 @@ from app.services.closing_date import check_closing_date
 
 from app.routes.invoices._router import router
 from app.routes.invoices.helpers import (
+    invoice_customer_name,
     _due_date_from_terms,
     _post_invoice_journal,
     confirm_zero_total,
@@ -204,7 +205,7 @@ def void_invoice_unchecked(invoice_id: int, db: Session, commit: bool = True):
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
-        resp.customer_name = invoice.customer.name
+        resp.customer_name = invoice_customer_name(invoice)
     return resp
 
 
@@ -223,7 +224,7 @@ def mark_invoice_sent(invoice_id: int, db: Session = Depends(get_db)):
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
-        resp.customer_name = invoice.customer.name
+        resp.customer_name = invoice_customer_name(invoice)
     return resp
 
 
@@ -491,7 +492,7 @@ def write_off_invoice(
     db.commit()
     db.refresh(cm)
     resp = CreditMemoResponse.model_validate(cm)
-    resp.customer_name = inv.customer.name if inv.customer else None
+    resp.customer_name = invoice_customer_name(inv)
     return resp
 
 
@@ -523,7 +524,7 @@ def _small_balances(db: Session, under: Decimal, as_of: dt_date) -> list:
                 "id": inv.id,
                 "invoice_number": inv.invoice_number,
                 "customer_id": inv.customer_id,
-                "customer_name": inv.customer.name if inv.customer else "",
+                "customer_name": invoice_customer_name(inv) or "",
                 "date": inv.date.isoformat(),
                 "due_date": inv.due_date.isoformat() if inv.due_date else None,
                 "days_overdue": (
@@ -589,7 +590,7 @@ def write_off_batch(data: WriteOffBatchRequest, db: Session = Depends(get_db)):
         written.append(
             {
                 **row,
-                "customer_name": inv.customer.name if inv.customer else "",
+                "customer_name": invoice_customer_name(inv) or "",
                 "amount": str(_q(balance)),
                 "credit_memo_id": cm.id,
                 "memo_number": cm.memo_number,
@@ -697,9 +698,8 @@ def duplicate_invoice(
     # The posting a new invoice gets: DR A/R, CR income per line with its
     # job / class / cost code, CR sales tax — converted to home currency at
     # the copy's rate.
-    customer = original.customer
     txn = _post_invoice_journal(
-        db, new_invoice, new_lines, customer.name if customer else ""
+        db, new_invoice, new_lines, invoice_customer_name(original) or ""
     )
     # A duplicated $0.00 invoice posts no journal, so it keeps no transaction.
     new_invoice.transaction_id = txn.id if txn is not None else None
@@ -714,6 +714,6 @@ def duplicate_invoice(
     db.refresh(new_invoice)
     resp = InvoiceResponse.model_validate(new_invoice)
     if new_invoice.customer:
-        resp.customer_name = new_invoice.customer.name
+        resp.customer_name = invoice_customer_name(new_invoice)
     resp.jobs_left_off = left_off
     return resp

@@ -21,6 +21,7 @@ from app.services.closing_date import check_closing_date
 from app.routes.invoices._router import router
 from app.services.contact_balances import home_amount
 from app.routes.invoices.helpers import (
+    invoice_customer_name,
     confirm_credit_limit,
     confirm_zero_total,
     opening_status,
@@ -103,7 +104,7 @@ def list_invoices(
         resp = InvoiceResponse.model_validate(inv)
         if inv.customer:
             # "Parent: Sub" for a sub-customer's, as the pickers say it
-            resp.customer_name = inv.customer.full_name
+            resp.customer_name = invoice_customer_name(inv)
         results.append(resp)
     return results
 
@@ -115,7 +116,7 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Invoice not found")
     resp = InvoiceResponse.model_validate(inv)
     if inv.customer:
-        resp.customer_name = inv.customer.full_name
+        resp.customer_name = invoice_customer_name(inv)
     return resp
 
 
@@ -560,7 +561,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                 db,
                 invoice,
                 effective_lines,
-                invoice.customer.name if invoice.customer else "",
+                invoice_customer_name(invoice) or "",
                 existing_transaction=old_txn,
             )
             if new_txn is None and old_txn is not None:
@@ -589,7 +590,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             db,
             invoice,
             list(invoice.lines),
-            invoice.customer.name if invoice.customer else "",
+            invoice_customer_name(invoice) or "",
             balance_on_income=True,
         )
         invoice.transaction_id = txn.id if txn is not None else None
@@ -612,6 +613,6 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
-        resp.customer_name = invoice.customer.name
+        resp.customer_name = invoice_customer_name(invoice)
     resp.warnings = stock_warnings
     return resp

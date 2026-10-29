@@ -356,6 +356,16 @@ def _build_invoice_journal_lines(
     return journal_lines
 
 
+def invoice_customer_name(invoice):
+    """The name an invoice (or the credit memo written off it) carries for
+    its customer, everywhere a response or a journal names it: "Parent:
+    Sub" for a sub-customer (#638), the customer's name otherwise, None
+    with no customer. One helper, so send, void, duplicate and edit answer
+    the name the list and get answer."""
+    customer = getattr(invoice, "customer", None)
+    return customer.full_name if customer is not None else None
+
+
 def _post_invoice_journal(
     db: Session,
     invoice,

@@ -101,7 +101,8 @@ def invoice_pdf_context(inv, company: dict) -> dict:
     on a nonprofit donation receipt, the IRS acknowledgment block; and the
     Bill To name, with the sub-customer named under it when the invoice's
     customer is a sub billed with its parent (#638): the parent's name
-    heads the block, "For: <sub>" closes it."""
+    heads the block, "For: <sub>" closes it, and the country printed is
+    the billed customer's (the parent's, then)."""
     t = terms_for(company)
     kind = invoice_doc_kind(inv, t)
     irs = None
@@ -117,6 +118,10 @@ def invoice_pdf_context(inv, company: dict) -> dict:
         customer.name if customer is not None else ""
     )
     bill_to_for = None
+    # The invoice keeps no country of its own: the billed customer's is
+    # printed under the address, the parent's when the invoice is billed
+    # to the parent (its street is the parent's), else the customer's.
+    bill_to_country = getattr(customer, "bill_country", None)
     parent = (
         customer.parent
         if customer is not None
@@ -126,11 +131,13 @@ def invoice_pdf_context(inv, company: dict) -> dict:
     )
     if parent is not None:
         bill_to_name, bill_to_for = parent.name, customer.name
+        bill_to_country = getattr(parent, "bill_country", None)
     return {
         "doc_kind": kind,
         "irs": irs,
         "bill_to_name": bill_to_name,
         "bill_to_for": bill_to_for,
+        "bill_to_country": bill_to_country,
     }
 
 

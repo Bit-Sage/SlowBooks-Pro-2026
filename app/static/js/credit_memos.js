@@ -199,7 +199,9 @@ const CreditMemosPage = {
         CreditMemosPage.recalc();
         if (!customerId) return;
         try {
-            const invoices = await fetchAllPages(`/invoices?customer_id=${encodeURIComponent(customerId)}&open_only=true`);
+            // the customer's open invoices and those of sub-customers billed
+            // with it (#638): a credit is routed the way a payment is
+            const invoices = await fetchAllPages(`/invoices?customer_id=${encodeURIComponent(customerId)}&open_only=true&billed_to=true`);
             CreditMemosPage._invoices = invoices.filter(i => i.status !== 'void');
         } catch (e) { return; }
         if (!sel || $('#cm-customer-select')?.value !== String(customerId)) return;
@@ -262,7 +264,7 @@ const CreditMemosPage = {
 
     async showApply(cmId) {
         const cm = await API.get(`/credit-memos/${cmId}`);
-        const invoices = await fetchAllPages(`/invoices?customer_id=${cm.customer_id}&open_only=true`);
+        const invoices = await fetchAllPages(`/invoices?customer_id=${cm.customer_id}&open_only=true&billed_to=true`);
         const openInv = invoices.filter(i => i.status !== 'void' && i.status !== 'paid' && i.balance_due > 0);
 
         let rows = openInv.map(inv => `

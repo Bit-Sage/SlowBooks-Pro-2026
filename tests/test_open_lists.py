@@ -106,10 +106,12 @@ def test_every_screen_that_applies_money_reads_every_open_page():
     uses = {
         "batch_payments.js": ["fetchAllPages('/invoices?open_only=true')"],
         "bills.js": ["fetchAllPages('/bills?open_only=true')"],
+        # the customer's open invoices and those of sub-customers billed
+        # with it (#638): the same pages, read whole
         "payments.js": [
             "fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true&billed_to=true`)"
         ],
-        "credit_memos.js": ["&open_only=true`)"],
+        "credit_memos.js": ["&open_only=true&billed_to=true`)"],
         "vendor_credits.js": [
             "fetchAllPages(`/bills?vendor_id=${vc.vendor_id}&open_only=true`)"
         ],

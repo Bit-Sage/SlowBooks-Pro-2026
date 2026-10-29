@@ -40,6 +40,7 @@ from app.services.jobs_service import (
     find_customer,
     find_job,
     find_sub_customer,
+    nested_customer_job,
     resolve_customer_and_job,
     split_customer_job,
 )
@@ -227,15 +228,37 @@ def _named(db: Session, model, name: str):
     """
     if not name:
         return None
-    row = db.query(model).filter(model.name == name).first()
+    q = db.query(model)
+    if model is Customer:
+        # A bare name is a top-level customer (#638): a sub-customer is
+        # reached only as "Parent:Sub", through find_sub_customer, so a
+        # file's "Smith" is not the tenant "Oak St:Smith".
+        q = q.filter(Customer.parent_customer_id.is_(None))
+    row = q.filter(model.name == name).first()
     if row is None:
         row = (
-            db.query(model)
-            .filter(func.lower(model.name) == name.lower())
-            .order_by(model.id)
-            .first()
+            q.filter(func.lower(model.name) == name.lower()).order_by(model.id).first()
         )
     return row
+
+
+def _nested_name_warning(name: str, sub_customers: bool) -> str:
+    """How a "A:B:C" name is flattened (#638 review): one level deep, said
+    in the import result rather than silently."""
+    parent_name, child = split_customer_job(name)
+    what = "sub-customer" if sub_customers else "job"
+    return (
+        f"Customer '{name}' has more than one level; imported as "
+        f"'{parent_name}' with {what} '{child}' (one level deep)"
+    )
+
+
+def _warn_nested_name(warnings, name: str, sub_customers: bool) -> None:
+    if warnings is None or not nested_customer_job(name):
+        return
+    message = _nested_name_warning(name, sub_customers)
+    if message not in warnings:
+        warnings.append(message)
 
 
 def _parse_iif_date(s: str) -> date:
@@ -828,6 +851,7 @@ def import_customers(db: Session, rows: list, sub_customers: bool = False) -> di
     """
     imported = 0
     errors = []
+    warnings: list[str] = []
 
     for i, row in enumerate(rows):
         sp = db.begin_nested()
@@ -842,6 +866,8 @@ def import_customers(db: Session, rows: list, sub_customers: bool = False) -> di
             if existing:
                 sp.rollback()
                 continue
+            # "A:B:C" keeps one level, and the result says so (#638 review)
+            _warn_nested_name(warnings, name, sub_customers)
 
             # A "Customer:Job" list row is a job, not a customer: create the
             # parent if the list didn't (QuickBooks exports parents first,
@@ -885,7 +911,7 @@ def import_customers(db: Session, rows: list, sub_customers: bool = False) -> di
             sp.rollback()
             errors.append({"row": i + 1, "message": safe_message(e, "IIF import")})
 
-    return {"imported": imported, "errors": errors}
+    return {"imported": imported, "errors": errors, "warnings": warnings}
 
 
 def import_vendors(db: Session, rows: list) -> dict:
@@ -1705,6 +1731,7 @@ def _import_invoice(
     # Job under the customer (created on first sight), and the invoice is
     # tagged to it so job costing survives the migration; or a sub-customer
     # (#638) when the list made one, or the import was told to.
+    _warn_nested_name(warnings, cust_name, sub_customers)
     customer, job = resolve_customer_and_job(db, cust_name, sub_customers=sub_customers)
 
     inv_date = _parse_iif_date(trns.get("DATE", ""))
@@ -1890,11 +1917,13 @@ def _import_payment(
         .join(Customer)
         .filter(
             # exact, or in any case (SQLite's lower() folds ASCII only, so
-            # "CAFÉ" must still match itself exactly)
+            # "CAFÉ" must still match itself exactly); a bare name is a
+            # top-level customer, never a sub-customer sharing it (#638)
             or_(
                 Customer.name == cust_name,
                 func.lower(Customer.name) == cust_name.lower(),
             ),
+            Customer.parent_customer_id.is_(None),
             Payment.date == (pmt_date or date.today()),
             Payment.amount == pmt_amount,
         )
@@ -2042,6 +2071,8 @@ def _import_cash_sale(
                     Customer.name == cust_name,
                     func.lower(Customer.name) == cust_name.lower(),
                 ),
+                # a bare name is a top-level customer (#638)
+                Customer.parent_customer_id.is_(None),
                 Invoice.date == sale_date,
                 Invoice.total == total,
                 Invoice.is_sales_receipt.is_(True),
@@ -2140,6 +2171,7 @@ def _import_estimate(
         raise DataProblem(
             f"ESTIMATE {doc_num or '(no number)'}: missing customer NAME on TRNS line"
         )
+    _warn_nested_name(warnings, cust_name, sub_customers)
     customer, job = resolve_customer_and_job(db, cust_name, sub_customers=sub_customers)
 
     est_date = _parse_iif_date(trns.get("DATE", ""))
@@ -2264,6 +2296,7 @@ def validate_iif(content: str) -> dict:
         "unsupported": [],
         "unsupported_counts": {},
         "customer_job_names": 0,
+        "nested_customer_job_names": [],
     }
 
     try:
@@ -2334,6 +2367,18 @@ def validate_iif(content: str) -> dict:
             # "Customer:Job" rows: jobs, or sub-customers if the person
             # importing says so (#638)
             report["customer_job_names"] += 1
+            name = row["NAME"].strip()
+            if nested_customer_job(name):
+                # "A:B:C": one level is kept, and the person is told
+                # before importing (#638 review)
+                parent_name, child = split_customer_job(name)
+                report["nested_customer_job_names"].append(name)
+                report["warnings"].append(
+                    f"Customer '{name}' has more than one level (a sub-job, "
+                    f"or a sub-customer under a sub-customer); it will be "
+                    f"imported as '{parent_name}' with job or sub-customer "
+                    f"'{child}' (one level deep)"
+                )
 
     # Validate vendors
     for i, row in enumerate(parsed.get("VEND", [])):
@@ -2476,6 +2521,7 @@ def import_all(
         r = import_customers(db, parsed["CUST"], sub_customers=sub_customers)
         result["customers"] = r["imported"]
         result["errors"].extend(r["errors"])
+        result["warnings"].extend(r.get("warnings", []))
 
     if parsed["VEND"]:
         r = import_vendors(db, parsed["VEND"])
@@ -2508,7 +2554,11 @@ def import_all(
         result["unsupported"] = counts.get("unsupported", 0)
         result["unsupported_blocks"] = r.get("unsupported", [])
         result["errors"].extend(r["errors"])
-        result["warnings"].extend(r.get("warnings", []))
+        # said once: a three-level name the customer list already
+        # warned about is not repeated for each transaction naming it
+        result["warnings"].extend(
+            w for w in r.get("warnings", []) if w not in result["warnings"]
+        )
 
     db.commit()
     # the payments it created get their cash-basis lines now (#483)

@@ -38,16 +38,32 @@ def split_customer_job(name: str) -> tuple[str, Optional[str]]:
     return cust, job
 
 
+def nested_customer_job(name: str) -> bool:
+    """Whether a QuickBooks name has more than one level ("A:B:C": a
+    sub-job, or a sub-customer under a sub-customer). split_customer_job
+    keeps one level, so the import flattens it to "A" with "B:C" under it,
+    and says so (#638 review) rather than silently."""
+    _cust, child = split_customer_job(name)
+    return bool(child) and split_customer_job(child)[1] is not None
+
+
 def find_customer(db: Session, name: str) -> Optional[Customer]:
-    """Exact, then in any case, as find_job does: an import that spells a
-    customer BOB JONES means the Bob Jones already on file (#195)."""
+    """The top-level customer called ``name``: exact, then in any case, as
+    find_job does: an import that spells a customer BOB JONES means the Bob
+    Jones already on file (#195).
+
+    A sub-customer (#638) is never matched by its bare name: in QuickBooks'
+    spelling a bare name is always a top-level customer, and a sub is
+    reached only as "Parent:Sub", through find_sub_customer under its
+    parent. A file's "Smith" used to post its invoice and payment to the
+    tenant "Oak St:Smith", and "Smith:Unit 2" made a third level under it."""
     if not name:
         return None
-    row = db.query(Customer).filter(Customer.name == name).first()
+    q = db.query(Customer).filter(Customer.parent_customer_id.is_(None))
+    row = q.filter(Customer.name == name).first()
     if not row:
         row = (
-            db.query(Customer)
-            .filter(sqlfunc.lower(Customer.name) == name.lower())
+            q.filter(sqlfunc.lower(Customer.name) == name.lower())
             .order_by(Customer.id)
             .first()
         )
@@ -102,7 +118,10 @@ def resolve_customer_and_job(
     A flat customer literally named "A:B" that already exists keeps
     matching (re-imports of pre-jobs files stay stable); otherwise the
     name splits, the customer is found or created, and the job is found
-    or created under it. `create=False` only looks up.
+    or created under it. `create=False` only looks up. The flat match and
+    the customer half resolve against top-level customers only
+    (find_customer): a bare name is a top-level customer, never a
+    sub-customer that happens to share it.
 
     Sub-customers (#638): a "Parent:Sub" whose Sub is a sub-customer on
     file under Parent resolves to that sub-customer, with no job, whatever
