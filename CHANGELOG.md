@@ -5,6 +5,38 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### Unreleased
+
+**Enter Bill shows the vendor beside the form** (#601, from Discussion #593).
+Pick a vendor on Enter Bill (or open a bill to edit it) and a panel beside the
+form shows what you owe them, their last five bills and payments, and their
+notes, with a link to the vendor's page that opens in a new tab so the bill you
+are typing stays put. The owed figure is the vendor page's and the A/P aging's.
+It fills in while you work, never holds the form up, clears when the vendor is
+cleared, and sits below the form on a narrow window.
+
+**Receipts on register entries** (#600, from Discussion #593). A check, a
+deposit or a card charge typed straight into a bank or card register can now
+take attachments, the same Attachments panel a journal entry has. Open the
+entry with Edit and attach the receipt, the scanned check or the deposit
+slip; it stays with the entry, even if the entry is later voided. A firm that
+keeps a paper trail for every transaction no longer has to re-enter register
+entries as Expenses just to hold the file.
+
+**An expense can be split across several accounts** (#599, from Discussion
+#592). A lump sum on a bank or card statement often covers several kinds of
+cost, and the Expense form could only record it against one account. The form
+now has a Lines grid like a bill's: each line takes an account, a memo, a job,
+a cost code and cost type, a class and function, and a billable mark of its
+own, and a running total shows the amount paid against what the lines add up
+to. It starts with one line, so a plain receipt is entered as before; Scan
+Receipt fills that first line. The lines must add up to the amount paid, and
+a line of 0.00 is refused. The ledger takes one debit per line and a single
+credit to the account it was paid from, so reports by account, job costing and
+the printed check's stub (which lists every line) see each share; voiding
+reverses all of them. Through the API, `POST /api/expenses` takes `lines`, and
+the older single `expense_account_id` still works as one line.
+
 ### v2.30.0 — Construction from estimate to pay application, and reports on a cash basis
 
 **Stripe payments record again.** On the current Stripe library a paid
@@ -191,22 +223,6 @@ one bill now carries that bill's memo onto the payment and its check; paying
 several bills leaves the memo for you to type, and a memo you enter yourself
 is never replaced. The payment's view has a **Check memo** field you can edit,
 and Print Check saves it before the check opens.
-
-**Enter Bill shows the vendor beside the form** (#601, from Discussion #593).
-Pick a vendor on Enter Bill (or open a bill to edit it) and a panel beside the
-form shows what you owe them, their last five bills and payments, and their
-notes, with a link to the vendor's page that opens in a new tab so the bill you
-are typing stays put. The owed figure is the vendor page's and the A/P aging's.
-It fills in while you work, never holds the form up, clears when the vendor is
-cleared, and sits below the form on a narrow window.
-
-**Receipts on register entries** (#600, from Discussion #593). A check, a
-deposit or a card charge typed straight into a bank or card register can now
-take attachments, the same Attachments panel a journal entry has. Open the
-entry with Edit and attach the receipt, the scanned check or the deposit
-slip; it stays with the entry, even if the entry is later voided. A firm that
-keeps a paper trail for every transaction no longer has to re-enter register
-entries as Expenses just to hold the file.
 
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that

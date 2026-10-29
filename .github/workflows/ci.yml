@@ -227,7 +227,10 @@ jobs:
           # (test_deposit_split_names.py::test_one_deposit_of_two_gifts_counts_for_each_donor_and_a_void_drops_out
           # and ::test_a_split_deposit_line_gets_an_acknowledgment_letter, which
           # render the giving statement and the letter PDF, so WeasyPrint-skipped here).
-          MAX_SKIPS: "192"
+          # 193 with the split expense's check stub test (#599,
+          # test_register_check_print.py::test_a_split_expense_check_lists_each_line_on_the_stub,
+          # which renders the check through WeasyPrint, not on the runner).
+          MAX_SKIPS: "193"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

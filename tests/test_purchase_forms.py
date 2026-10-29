@@ -190,7 +190,9 @@ def test_the_labels_say_cost_of_goods_too():
     assert (
         "PurchaseAccounts.options(expenseAccts, item.expense_account_id)" in item_form
     )
-    assert "PurchaseAccounts.options(expenseAccts)" in _js("expenses.js")
+    assert "PurchaseAccounts.options(ExpensesPage._expenseAccounts" in _js(
+        "expenses.js"
+    )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
