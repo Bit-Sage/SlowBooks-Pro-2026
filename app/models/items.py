@@ -69,6 +69,12 @@ class Item(Base):
     expense_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     is_taxable = Column(Boolean, default=True)
     is_active = Column(Boolean, default=True)
+    # A discount or concession item (#639): a line on it may carry a
+    # negative price, which comes off the item's income account. The item a
+    # QuickBooks Online discount came in on was marked the same way by the
+    # migration that added the column (d2f7a9c4e6b1), so one rule covers
+    # both: services/discount_items.py.
+    allows_negative_price = Column(Boolean, default=False, nullable=False)
 
     # ---- Phase 11: inventory tracking ----
     # Only items with track_inventory=True hit the inventory ledger; the rest
@@ -121,6 +127,14 @@ class InventoryMovement(Base):
         Integer, ForeignKey("transactions.id"), nullable=True
     )  # COGS/inventory JE
     memo = Column(Text, nullable=True)
+    # A VOID movement names the SALE movement it reverses (#622), so a later
+    # reversal knows exactly what each posting has left and comes off the
+    # same accounts at the same cost. A credit memo's RETURN_IN names the
+    # SALE posting its cost comes back against, and the memo's void names
+    # the RETURN_IN it takes out (#641). Null on rows from before 2.30.
+    reverses_movement_id = Column(
+        Integer, ForeignKey("inventory_movements.id"), nullable=True, index=True
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

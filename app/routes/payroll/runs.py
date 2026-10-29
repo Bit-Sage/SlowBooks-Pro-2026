@@ -24,6 +24,7 @@ from app.models.deductions import GarnishmentOrder
 from app.models.accounts import Account
 from app.schemas.payroll import PayRunCreate, PayRunResponse
 from app.schemas.deductions import GrossUpRequest, GrossUpResponse
+from app.services.payroll_accounts import PayrollAccountProblem, posting_accounts
 from app.services.payroll_service import _q, calculate_withholdings, wage_base_note
 from app.services.accounting import create_journal_entry
 from app.services.garnishment import (
@@ -550,7 +551,13 @@ def process_pay_run(
     acknowledge_stale: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    """Process a pay run — posts the payroll journal entry."""
+    """Process a pay run: posts the payroll journal entry.
+
+    Where each line posts is a setting (#620, Settings → Payroll Accounts):
+    net pay to a bank account or, for wages paid later, a liability such as
+    2300 Payroll Liabilities; the rest to the seeded accounts unless another
+    is chosen. The void reverses the entry line for line, so it puts back
+    whatever accounts the run used, whatever the settings say by then."""
     from app.services.closing_date import check_closing_date
 
     run = (
@@ -585,23 +592,31 @@ def process_pay_run(
             return _acct(fallback)
         return None
 
-    # Expense accounts (fall back to generic expense if payroll accounts are
-    # missing on an un-migrated company file).
-    wage_expense = _acct("6110", "6000")
-    payroll_tax_expense = _acct("6120", "6000")
+    # Where each piece posts (#620): the account chosen under Settings →
+    # Payroll Accounts, else the seeded one by number as it always was (6110
+    # wages and 6120 employer taxes, 6000 on an un-migrated chart; 1000
+    # Checking for the net pay; 2310–2370 for the payables, each falling back
+    # to the umbrella 2300 Payroll Liabilities). A chosen account that no
+    # longer works is refused in a sentence rather than posted somewhere else.
+    try:
+        posting = posting_accounts(db)
+    except PayrollAccountProblem as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    wage_expense = posting["payroll_wages_account_id"]
+    payroll_tax_expense = posting["payroll_employer_tax_account_id"]
     reimb_expense = _acct("6140", "6950")
-    bank = _acct("1000")
-    # Liability payables fall back to the umbrella "Payroll Liabilities" (2300).
-    fed = _acct("2310", "2300")
-    state_wh = _acct("2320", "2300")
-    ss_acct = _acct("2330", "2300")
-    medicare_acct = _acct("2340", "2300")
-    futa_acct = _acct("2350", "2300")
-    suta_acct = _acct("2360", "2300")
-    other_acct = _acct("2370", "2300")
+    # A bank account, or a liability when the wages are paid later.
+    net_pay_acct = posting["payroll_net_pay_account_id"]
+    fed = posting["payroll_federal_withholding_account_id"]
+    state_wh = posting["payroll_state_withholding_account_id"]
+    ss_acct = posting["payroll_social_security_account_id"]
+    medicare_acct = posting["payroll_medicare_account_id"]
+    futa_acct = posting["payroll_futa_account_id"]
+    suta_acct = posting["payroll_suta_account_id"]
+    other_acct = posting["payroll_other_deductions_account_id"]
     benefits_expense = _acct("6150", "6120") or payroll_tax_expense
 
-    if not wage_expense or not bank:
+    if not wage_expense or not net_pay_acct:
         raise HTTPException(
             status_code=400,
             detail="Required payroll accounts not found (need 6110/6000 and 1000).",
@@ -710,7 +725,7 @@ def process_pay_run(
         (total_futa, futa_acct, "FUTA payable", "2350"),
         (total_suta, suta_acct, "SUTA payable", "2360"),
         (total_other, other_acct, "Other payroll deductions payable", "2370"),
-        (total_net, bank, "Net payroll", "1000"),
+        (total_net, net_pay_acct, "Net payroll", "1000"),
     ]
     # A withholding with nowhere to post used to be left out, and the entry
     # then failed to balance as a 500 (2.23.5 round 2, W-16 / NEW-139: the

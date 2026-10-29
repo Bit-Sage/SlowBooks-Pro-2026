@@ -77,6 +77,33 @@ def confirm_zero_total(
     )
 
 
+def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
+    """A sale of more of a stock item than is on hand (#642). The sale
+    posts whatever the count is, as it always has (some businesses enter
+    the receiving bill after the sale), and the count went below zero with
+    nothing said at the point of sale. Now the sentences to carry back as
+    ``warnings`` are returned ("Widget: 2 on hand; this sale takes it to
+    -4."), one per item; an empty list when nothing is short. With
+    Settings -> inventory_refuse_oversell on, the sale is refused instead
+    with a 422 naming each item and how many short. ``before`` is the
+    invoice's stored lines on an edit, so only what the edit adds counts.
+    Called before anything is written, so the refused request writes
+    nothing."""
+    from app.services.inventory_hooks import (
+        oversell_refusal,
+        oversell_warning,
+        oversold_items,
+    )
+    from app.services.settings_service import refuse_oversell
+
+    shorts = oversold_items(db, lines, before)
+    if not shorts:
+        return []
+    if refuse_oversell(db):
+        raise HTTPException(status_code=422, detail=oversell_refusal(shorts))
+    return [oversell_warning(s) for s in shorts]
+
+
 def confirm_credit_limit(
     db,
     customer,
@@ -212,14 +239,15 @@ def resolve_line_taxable(db: Session, lines_data, customer=None) -> None:
 
 
 def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
-    """A negative price is a discount. A line may carry one on a discount
-    item (the one a QuickBooks Online discount came in on:
-    qbo_common.is_discount_item), or on an item (or no item) the invoice
-    being edited already has a negative line on: a QuickBooks Online
-    document keeps the negative lines it came with, and an edit saves them
-    back. Any other is refused as it always was, in the same words: a
-    refund belongs on a credit memo."""
-    from app.services.qbo_common import is_discount_item
+    """A negative price is a discount. A line may carry one on an item that
+    takes a negative price (services/discount_items.py: one marked as a
+    discount or concession, #639, or the one a QuickBooks Online discount
+    came in on), or on an item (or no item) the invoice being edited
+    already has a negative line on: a QuickBooks Online document keeps the
+    negative lines it came with, and an edit saves them back. Any other is
+    refused as it always was, in the same words: a refund belongs on a
+    credit memo."""
+    from app.services.discount_items import takes_negative_price
 
     had = {
         line.item_id
@@ -229,7 +257,7 @@ def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
     for index, line in enumerate(lines):
         if Decimal(str(line.rate or 0)) >= 0:
             continue
-        if line.item_id in had or is_discount_item(db, line.item_id):
+        if line.item_id in had or takes_negative_price(db, line.item_id):
             continue
         raise RequestValidationError(
             [

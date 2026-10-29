@@ -1514,6 +1514,9 @@ a:hover { text-decoration: underline; }
 .toast-success { background: var(--sb-green); }
 .toast-error   { background: var(--qb-red); }
 .toast-info    { background: var(--qb-blue); }
+/* a caution that is not a failure (a sale past the stock, #642; a pay run's
+   notes): the orange, white on it 4.82:1 */
+.toast-warning { background: var(--qb-orange); }
 
 @keyframes toast-in {
     from { transform: translateY(20px); opacity: 0; }
@@ -1581,6 +1584,13 @@ a:hover { text-decoration: underline; }
 .line-items-table .col-rate   { width: 80px; }
 .line-items-table .col-amount { width: 80px; text-align: right; white-space: nowrap; }
 .line-items-table .col-actions{ width: 30px; text-align: center; }
+.line-items-table .col-order  { width: 120px; white-space: nowrap; text-align: center; }
+.line-order-cell { white-space: nowrap; text-align: center; }
+.line-order-cell .btn { padding: 0 5px; min-width: 22px; }
+.line-order-handle { cursor: grab; color: var(--gray-600); padding: 0 4px; user-select: none; }
+tr.line-order-dragging { opacity: 0.5; }
+tr.line-order-over-top > td { box-shadow: inset 0 2px 0 var(--qb-blue); }
+tr.line-order-over-bottom > td { box-shadow: inset 0 -2px 0 var(--qb-blue); }
 
 .invoice-logo-option {
     display: flex;
@@ -1804,6 +1814,25 @@ tr.clickable { cursor: pointer; }
 .splash-whatsnew-title { font-weight: 700; margin-bottom: 4px; }
 .splash-whatsnew ul { margin: 0; padding-left: 16px; }
 .splash-whatsnew li { margin: 2px 0; }
+
+/* The artists credited (#635): the same panel as the notes above it, the
+   link in the navy the terms' LICENSE link reads at (dark.css overrides). */
+.splash-artists {
+    text-align: left;
+    margin: 10px 0 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--gray-300, #d1d5db);
+    background: rgba(255, 255, 255, 0.55);
+    font-size: 11px;
+    line-height: 1.35;
+    max-height: 170px;
+    overflow-y: auto;
+}
+.splash-artists-title { font-weight: 700; margin-bottom: 4px; }
+.splash-artists ul { margin: 0; padding-left: 16px; }
+.splash-artists li { margin: 2px 0; }
+.splash-artists p { margin: 0; }
+.splash-artists a { color: #002244; font-weight: 600; }
 
 .splash-terms {
     text-align: left;
@@ -3078,4 +3107,21 @@ tbody tr.row--dim > td.amount { color: var(--text-muted); }
     :where(#page-content, #modal) :is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]), select, textarea):focus {
         outline: 2px solid Highlight;
     }
+}
+
+/* Enter Bill: the vendor's summary beside the form (#601); below the form
+   on a narrow window. */
+.bill-with-summary { display: flex; gap: 16px; align-items: flex-start; }
+.bill-with-summary__form { flex: 1 1 auto; min-width: 0; }
+.bill-vendor-summary { flex: 0 0 260px; font-size: 12px; border-left: 1px solid var(--border, #ccc); padding-left: 12px; }
+.bill-vendor-summary[hidden] { display: none; }
+.bill-vendor-summary h3 { margin: 0 0 6px; font-size: 14px; }
+.bill-vendor-summary h4 { margin: 10px 0 4px; font-size: 12px; }
+.bill-vendor-summary__table { width: 100%; border-collapse: collapse; }
+.bill-vendor-summary__table td { padding: 2px 4px 2px 0; }
+.bill-vendor-summary__none { margin: 0; color: var(--text-muted); }
+.bill-vendor-summary__notes { white-space: pre-wrap; margin: 0; }
+@media (max-width: 900px) {
+    .bill-with-summary { flex-direction: column; }
+    .bill-vendor-summary { flex-basis: auto; width: 100%; border-left: 0; border-top: 1px solid var(--border, #ccc); padding: 8px 0 0; }
 }

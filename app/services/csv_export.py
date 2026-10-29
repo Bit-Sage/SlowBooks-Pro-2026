@@ -210,9 +210,20 @@ def export_items(db: Session) -> str:
     items = db.query(Item).filter(Item.is_active).all()
     output = io.StringIO()
     writer = _SafeWriter(output)
-    # Code after Name (#445), as the item form shows it
+    # Code after Name (#445), as the item form shows it; Negative Price is
+    # the item's "Discount or concession" flag (#639)
     writer.writerow(
-        ["ID", "Name", "Code", "Type", "Description", "Rate", "Cost", "Taxable"]
+        [
+            "ID",
+            "Name",
+            "Code",
+            "Type",
+            "Description",
+            "Rate",
+            "Cost",
+            "Taxable",
+            "Negative Price",
+        ]
     )
     for i in items:
         writer.writerow(
@@ -225,6 +236,7 @@ def export_items(db: Session) -> str:
                 _rate_text(i.rate or 0),
                 _rate_text(i.cost or 0),
                 i.is_taxable,
+                bool(i.allows_negative_price),
             ]
         )
     return output.getvalue()

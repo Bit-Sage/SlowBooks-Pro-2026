@@ -1,5 +1,7 @@
 from typing import Optional as _Optional
 
+from pydantic import Field
+
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import Response
 from app.schemas.common import StrictModel
@@ -24,9 +26,10 @@ class _EmailInvoiceRequest(StrictModel):
     # before it reached any of the code below. The box was not merely
     # ignored; it broke the button it sat on (issue #140, mdornich).
     message: _Optional[str] = None
-    # Copies on this send (#611): comma-separated addresses, or none.
-    cc: _Optional[str] = None
-    bcc: _Optional[str] = None
+    # Copies on this send (#611): comma-separated addresses, or none. Bounded
+    # so a pasted novel cannot reach the log columns.
+    cc: _Optional[str] = Field(default=None, max_length=2000)
+    bcc: _Optional[str] = Field(default=None, max_length=2000)
 
 
 @router.get("/{invoice_id}/pdf")
@@ -134,13 +137,23 @@ def email_invoice(
                 "customer or type one here."
             ),
         )
-    # Too many copies, or one that is not an address, is a 400 with the
-    # reason before anything is rendered or sent.
-    try:
-        from app.services.email_service import clean_addresses
+    # An entry that is not an address, too many copies, or one too long is a
+    # 400 with the reason before anything is rendered or sent.
+    from app.services.email_service import bad_addresses, clean_addresses
 
-        clean_addresses(data.cc, "Cc")
-        clean_addresses(data.bcc, "Bcc")
+    rejected = bad_addresses(data.cc) + bad_addresses(data.bcc)
+    if rejected:
+        raise HTTPException(
+            status_code=400,
+            detail="Not an email address: " + ", ".join(rejected[:5]) + ".",
+        )
+    # The caps count the always-copy settings too: forty-nine typed plus two
+    # in Settings is fifty-one, refused here in the limit's own words rather
+    # than as a failed send blamed on the SMTP settings (W-52).
+    from app.services.email_service import _get_smtp_settings, copy_lists
+
+    try:
+        copy_lists(_get_smtp_settings(db), data.cc, data.bcc)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     company = get_settings(db)
@@ -217,6 +230,8 @@ def email_invoice(
             entity_type="invoice",
             entity_id=inv.id,
             recipient=recipient,
+            cc=", ".join(clean_addresses(data.cc)) or None,
+            bcc=", ".join(clean_addresses(data.bcc)) or None,
             subject=subject,
             status="failed",
             error_message=message,

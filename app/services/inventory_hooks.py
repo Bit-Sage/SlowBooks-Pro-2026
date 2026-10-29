@@ -5,24 +5,31 @@
 # these helpers so nobody forgets to post the inventory movement + COGS JE.
 #
 # Callers: invoices.create/update/void/duplicate, estimates.convert_to_invoice,
-# credit_memos.create, recurring_service.generate_due_invoices, iif_import,
+# credit_memos.create/void, recurring_service.generate_due_invoices, iif_import,
 # bills.create/void.
 #
 # Design rule: all helpers are NO-OPS if track_inventory=False on the item,
 # so they're safe to call unconditionally for every line.
 # ============================================================================
 
+import logging
 from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.items import Item, MovementType
+from app.models.items import InventoryMovement, Item, MovementType
+from app.models.transactions import Transaction
+from app.services.accounting import _q, create_journal_entry, reversing_lines
 from app.services.inventory_service import (
     record_sale,
+    return_cost_accounts,
     reverse_sale,
+    sale_pieces,
     _append_movement,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _get_item(db: Session, item_id: Optional[int]) -> Optional[Item]:
@@ -91,26 +98,173 @@ def reverse_sale_for_invoice(
             )
 
 
+def _memo_ref(credit_memo) -> str:
+    return getattr(credit_memo, "memo_number", None) or f"cm#{credit_memo.id}"
+
+
 def post_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> None:
-    """A credit memo returns stock. For each inventory line, add qty back at
-    the item's current avg_cost (approximation — original sale's cost isn't
-    reliably linkable across invoices)."""
-    _ = txn_date or credit_memo.date  # reserved: future COGS-reversal JE
-    ref = getattr(credit_memo, "credit_memo_number", None) or f"cm#{credit_memo.id}"
+    """A credit memo returns stock: each inventory line's quantity goes back
+    on the shelf, and the cost of what came back goes back with it, one
+    journal entry per memo, DR Inventory Asset / CR COGS (#641), which the
+    return movements link to (transaction_id).
+
+    The cost is the original sale's when the memo names an invoice: the
+    quantity comes off that invoice's sale postings the way a void does
+    (sale_pieces, newest first, earlier reversals and returns already
+    taken off), each piece at the posting's own cost and back onto the
+    accounts its entry used, with one RETURN_IN movement per piece naming
+    the posting. What the postings do not cover, or every line of a memo
+    naming no invoice, is at the item's current avg_cost onto the item's
+    (else the chart's) accounts, the cost the return already used for the
+    quantity. The same item on two lines returns their total. A line whose
+    item is not tracked, or of zero quantity, moves and posts nothing.
+    """
+    date_to_use = txn_date or credit_memo.date
+    ref = _memo_ref(credit_memo)
+    invoice_id = getattr(credit_memo, "original_invoice_id", None)
+
+    wanted: dict = {}  # item_id -> [item, quantity], in line order
     for line in credit_memo.lines:
         item = _get_item(db, line.item_id)
-        if item and item.track_inventory:
-            unit_cost = Decimal(str(item.avg_cost or 0))
-            _append_movement(
+        quantity = Decimal(str(line.quantity or 0))
+        if not (item and item.track_inventory) or quantity <= 0:
+            continue
+        wanted.setdefault(item.id, [item, Decimal("0")])[1] += quantity
+
+    returns = []  # (item, piece)
+    for item, quantity in wanted.values():
+        returns.extend(
+            (item, piece)
+            for piece in sale_pieces(
                 db,
                 item,
-                MovementType.RETURN_IN,
-                quantity=Decimal(str(line.quantity)),
-                unit_cost=unit_cost,
-                source_type="credit_memo",
-                source_id=credit_memo.id,
-                memo=f"Return: {ref}",
+                quantity,
+                "invoice" if invoice_id else None,
+                invoice_id,
+                count_returns=True,
             )
+        )
+    if not returns:
+        return
+
+    # One debit/credit pair per item and pair of accounts, in return order.
+    amounts: dict = {}
+    for item, piece in returns:
+        amount = _q(piece[0] * piece[1])
+        if amount <= 0:
+            continue
+        asset_id, cogs_id = return_cost_accounts(db, item, piece)
+        if not (asset_id and cogs_id):
+            logger.warning(
+                "credit memo %s: no inventory or COGS account for a %s return of "
+                "item %s; its stock is returned but no entry is posted for it",
+                ref,
+                amount,
+                item.id,
+            )
+            continue
+        key = (item.id, item.name, asset_id, cogs_id)
+        amounts[key] = amounts.get(key, Decimal("0")) + amount
+    lines = []
+    for (_item_id, name, asset_id, cogs_id), amount in amounts.items():
+        lines.append(
+            {
+                "account_id": asset_id,
+                "debit": amount,
+                "credit": Decimal("0"),
+                "description": f"Inventory returned: {name}",
+            }
+        )
+        lines.append(
+            {
+                "account_id": cogs_id,
+                "debit": Decimal("0"),
+                "credit": amount,
+                "description": f"COGS returned: {name}",
+            }
+        )
+    txn_id = None
+    if lines:
+        txn = create_journal_entry(
+            db,
+            date_to_use,
+            f"Credit Memo {ref} - returned stock",
+            lines,
+            source_type="credit_memo",
+            source_id=credit_memo.id,
+        )
+        txn_id = txn.id
+
+    for item, (quantity, unit_cost, _cogs, _asset, sale) in returns:
+        _append_movement(
+            db,
+            item,
+            MovementType.RETURN_IN,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            source_type="credit_memo",
+            source_id=credit_memo.id,
+            transaction_id=txn_id,
+            memo=f"Return: {ref}",
+            reverses_movement_id=sale.id if sale is not None else None,
+        )
+
+
+def reverse_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> None:
+    """Void a credit memo's return (#641): the stock it put back goes out
+    again and its cost entry is reversed, mirror-image. Every RETURN_IN
+    movement the memo made gets a VOID movement of the same quantity at the
+    same cost naming it (so the ledger nets to zero at the return's cost,
+    as a sale's void does), and the entry the returns link to is reversed
+    line for line under "credit_memo_void". A memo from before the entry
+    existed only has its stock taken back out. An item no longer tracked
+    is left alone, as a sale's reversal leaves it.
+    """
+    date_to_use = txn_date or credit_memo.date
+    ref = _memo_ref(credit_memo)
+    returns = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.source_type == "credit_memo",
+            InventoryMovement.source_id == credit_memo.id,
+            InventoryMovement.movement_type == MovementType.RETURN_IN,
+        )
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    reversal_of: dict = {}  # return entry id -> reversing entry id
+    for mv in returns:
+        if not mv.transaction_id or mv.transaction_id in reversal_of:
+            continue
+        reversal_of[mv.transaction_id] = None
+        txn = db.get(Transaction, mv.transaction_id)
+        if txn is None:
+            continue
+        reversal_of[mv.transaction_id] = create_journal_entry(
+            db,
+            date_to_use,
+            f"VOID Credit Memo {ref} - returned stock",
+            reversing_lines(txn.lines),
+            source_type="credit_memo_void",
+            source_id=credit_memo.id,
+        ).id
+    for mv in returns:
+        item = mv.item
+        quantity = Decimal(str(mv.quantity or 0))
+        if not (item and item.track_inventory) or quantity <= 0:
+            continue
+        _append_movement(
+            db,
+            item,
+            MovementType.VOID,
+            quantity=-quantity,
+            unit_cost=Decimal(str(mv.unit_cost or 0)),
+            source_type="credit_memo_void",
+            source_id=credit_memo.id,
+            transaction_id=reversal_of.get(mv.transaction_id),
+            memo=f"VOID Credit Memo {ref}",
+            reverses_movement_id=mv.id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +345,83 @@ def reconcile_invoice_inventory_delta(
                 txn_date=date_to_use,
                 post_journal=post_journal,
             )
+
+
+# ---------------------------------------------------------------------------
+# Selling past what is on hand (#642)
+# ---------------------------------------------------------------------------
+
+
+def _quantity_by_item(lines) -> dict[int, Decimal]:
+    """The quantity of each item on these lines (the lines of one item added
+    together); a line with no item is left out. Takes the lines of a
+    request and the stored lines of an invoice alike: both carry item_id
+    and quantity."""
+    out: dict[int, Decimal] = {}
+    for line in lines or ():
+        item_id = getattr(line, "item_id", None)
+        if not item_id:
+            continue
+        out[item_id] = out.get(item_id, Decimal("0")) + Decimal(
+            str(getattr(line, "quantity", 0) or 0)
+        )
+    return out
+
+
+def plain_quantity(value) -> str:
+    """A quantity in plain figures for a sentence: 2, -4, 2.5; never a tail
+    of zeros."""
+    text = format(Decimal(str(value or 0)).normalize(), "f")
+    return "0" if text in ("0", "-0") else text
+
+
+def oversold_items(db: Session, lines, before=()) -> list[dict[str, Any]]:
+    """The tracked items these lines take past what is on hand, as
+    {"item", "on_hand", "after"}: the count now and the count the sale
+    would leave. ``before`` is the invoice's stored lines when this is an
+    edit, so only what the edit adds is taken off the count (the stored
+    lines already came out of stock). A sale that lands exactly on zero is
+    not past the stock. Reads the books and writes nothing, so a route can
+    ask before anything is saved."""
+    wanted = _quantity_by_item(lines)
+    had = _quantity_by_item(before)
+    out = []
+    for item_id, quantity in wanted.items():
+        taken = quantity - had.get(item_id, Decimal("0"))
+        if taken <= 0:
+            continue
+        item = _get_item(db, item_id)
+        if not (item and item.track_inventory):
+            continue
+        on_hand = Decimal(str(item.quantity_on_hand or 0))
+        if taken <= on_hand:
+            continue
+        out.append({"item": item, "on_hand": on_hand, "after": on_hand - taken})
+    return out
+
+
+def oversell_warning(short: dict[str, Any]) -> str:
+    """One sentence for a sale past the stock, as the response carries it:
+    'Widget: 2 on hand; this sale takes it to -4.'"""
+    return (
+        f"{short['item'].name}: {plain_quantity(short['on_hand'])} on hand; "
+        f"this sale takes it to {plain_quantity(short['after'])}."
+    )
+
+
+def oversell_refusal(shorts: list[dict[str, Any]]) -> str:
+    """The sentence a refused sale answers with when Settings says to
+    refuse: each item, its count and how many short, and what to do."""
+    parts = [
+        f"{s['item'].name}: {plain_quantity(s['on_hand'])} on hand; this sale "
+        f"takes it to {plain_quantity(s['after'])}, "
+        f"{plain_quantity(-s['after'])} short."
+        for s in shorts
+    ]
+    return " ".join(parts) + (
+        " Enter the receiving bill first, or turn off Refuse a sale of more "
+        "than is on hand under Settings."
+    )
 
 
 def snapshot_invoice_lines(invoice) -> list[dict[str, Any]]:

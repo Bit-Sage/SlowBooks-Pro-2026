@@ -1,0 +1,6 @@
+{
+  "note": "The turtle is waiting for its first artist. See the art repo.",
+  "repo": "https://github.com/VonHoltenCodes/Slowbooks-Pro-Art",
+  "how": "One entry per artist, in the order they were credited: name is the credit line, pieces says what each piece is and where the app uses it, link is optional and must start with https://.",
+  "artists": []
+}

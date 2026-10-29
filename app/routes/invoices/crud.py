@@ -31,6 +31,7 @@ from app.routes.invoices.helpers import (
     kept_tax,
     refuse_negative_lines,
     _reverse_and_delete_journal,
+    warn_or_refuse_oversell,
 )
 from app.services.donor_documents import document_label
 from app.services.jobs_service import (
@@ -170,6 +171,9 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     confirm_credit_limit(
         db, customer, home_amount(total, doc_rate), data.allow_over_credit_limit, noun
     )
+    # More of a stock item than is on hand (#642): said in the response,
+    # or refused here when Settings says so. Nothing is written yet.
+    stock_warnings = warn_or_refuse_oversell(db, data.lines)
 
     for _ in range(10):
         invoice_number = next_invoice_number(db)
@@ -229,7 +233,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             is_taxable=(
                 line_data.is_taxable if line_data.is_taxable is not None else True
             ),
-            line_order=line_data.line_order or i,
+            line_order=i,
         )
         db.add(line)
 
@@ -263,6 +267,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     resp.customer_name = cust_name
+    resp.warnings = stock_warnings
     return resp
 
 
@@ -327,6 +332,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             detail="status cannot be empty; leave it out to keep the invoice's status",
         )
     date_changed = data.date is not None and data.date != invoice.date
+    stock_warnings: list[str] = []
 
     if "currency" in update_data or "exchange_rate" in update_data:
         from app.services.currency import resolve_rate
@@ -403,6 +409,14 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                 exclude_invoice_id=(
                     invoice.id if new_customer_id == invoice.customer_id else None
                 ),
+            )
+        # New lines that take a stock item past what is on hand (#642):
+        # only what the edit adds counts, since the stored lines already
+        # came out of stock. Said in the response, or refused when Settings
+        # says so; still before anything is written.
+        if data.lines is not None:
+            stock_warnings = warn_or_refuse_oversell(
+                db, data.lines, before=list(invoice.lines)
             )
 
     # An invoice or sales receipt the QuickBooks Online import created
@@ -496,7 +510,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                             if line_data.is_taxable is not None
                             else True
                         ),
-                        line_order=line_data.line_order or i,
+                        line_order=i,
                     )
                 )
             db.flush()
@@ -581,4 +595,5 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
         resp.customer_name = invoice.customer.name
+    resp.warnings = stock_warnings
     return resp

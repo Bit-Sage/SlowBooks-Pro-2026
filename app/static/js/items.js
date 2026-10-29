@@ -11,6 +11,16 @@ const ItemsPage = {
     // The search box (#445): name or code, over the list already loaded.
     _query: '',
 
+    // A count below zero (#642): the sale posted before the receiving bill
+    // was entered. The list says it in a title; the item's own form, Adjust
+    // and History say it in words.
+    belowZeroTitle: 'Below zero: more has been sold than received. Enter the receiving bill, or adjust the count.',
+    belowZeroHtml(item) {
+        if (!item || !item.track_inventory || !(Number(item.quantity_on_hand || 0) < 0)) return '';
+        const count = Number(item.quantity_on_hand || 0).toLocaleString();
+        return `<div class="qty-below-zero-note" style="font-size:11px; color:var(--text-warning); margin-top:4px;">${count} on hand: more of this item has been sold than received. Enter the receiving bill, or adjust the count.</div>`;
+    },
+
     _matches(item, query) {
         const q = (query || '').trim().toLowerCase();
         return !q || `${item.name || ''} ${item.code || ''}`.toLowerCase().includes(q);
@@ -66,8 +76,11 @@ const ItemsPage = {
                 </tr></thead><tbody>`;
             for (const item of items) {
                 const short = lowById[item.id];
+                // A count below zero (#642): more sold than received, in the
+                // warning colour, with the title saying so.
+                const belowZero = item.track_inventory && Number(item.quantity_on_hand || 0) < 0;
                 const qtyCell = item.track_inventory
-                    ? `<strong>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>${short && !reorderOnly ? ' <span style="color:var(--text-danger); font-weight:700;" title="At or under the reorder point">↓</span>' : ''}`
+                    ? `<strong${belowZero ? ` class="qty-below-zero" style="color:var(--text-warning);" title="${escapeHtml(ItemsPage.belowZeroTitle)}"` : ''}>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>${short && !reorderOnly ? ' <span style="color:var(--text-danger); font-weight:700;" title="At or under the reorder point">↓</span>' : ''}`
                     : `<span style="color:var(--text-muted)">—</span>`;
                 const reorderCells = reorderOnly
                     ? `<td class="amount">${Number(short.reorder_point || 0).toLocaleString()}</td><td class="amount" style="color:var(--text-danger); font-weight:700;">${Number(short.shortage || 0).toLocaleString()}</td>`
@@ -104,6 +117,7 @@ const ItemsPage = {
     async showForm(id = null) {
         let item = { name:'', code:'', item_type:'service', description:'', rate:0, cost:0,
             income_account_id:'', expense_account_id:'', is_taxable: TaxDefault.on(),
+            allows_negative_price:false,
             track_inventory:false, quantity_on_hand:0, reorder_point:0,
             asset_account_id:'', avg_cost:0 };
         if (id) item = await API.get(`/items/${id}`);
@@ -121,6 +135,9 @@ const ItemsPage = {
         // Phase 11 inventory only makes sense for tangible items.
         const trackable = ['product','material'].includes(item.item_type);
         const showInv = trackable && item.track_inventory;
+        // A discount or concession (#639) is a product or service item; a
+        // line on it may carry a negative price.
+        const canDiscount = ['product','service'].includes(item.item_type);
         const qtyEditableOnCreate = !id;
 
         openModal(id ? 'Edit Item' : 'New Item', `
@@ -154,6 +171,10 @@ const ItemsPage = {
                     <div class="form-group"><label>
                         <input type="checkbox" name="is_taxable" ${item.is_taxable?'checked':''}>
                         Taxable</label></div>
+                    <div class="form-group full-width" id="neg-price-group" style="${canDiscount ? '' : 'display:none;'}"><label>
+                        <input type="checkbox" name="allows_negative_price" id="neg-price-chk" ${item.allows_negative_price ? 'checked' : ''}>
+                        Discount or concession: may carry a negative price</label>
+                        <div style="font-size:10px; color:var(--text-muted);">A line on this item can be entered at a negative price on an invoice or sales receipt, and the amount comes off the item's income account. Every other item's price stays at zero or more; a refund belongs on a credit memo.</div></div>
                     ${id ? `<div class="form-group"><label>
                         <input type="checkbox" name="is_active" ${item.is_active !== false ? 'checked' : ''}>
                         Active</label>
@@ -177,7 +198,7 @@ const ItemsPage = {
                         </label>
                             <input name="quantity_on_hand" type="number" step="1" min="0"
                                    value="${item.quantity_on_hand || 0}"
-                                   data-original="${item.quantity_on_hand || 0}"></div>
+                                   data-original="${item.quantity_on_hand || 0}">${ItemsPage.belowZeroHtml(item)}</div>
                         ${id ? '' : `<div class="form-group"><label>Opening as of
                             <span style="font-size:10px;color:var(--text-muted)">(blank = today)</span></label>
                             <input name="opening_as_of" type="date"></div>
@@ -209,12 +230,18 @@ const ItemsPage = {
         const fs = document.getElementById('inv-fieldset');
         const trackChk = document.getElementById('track-inv-chk');
         const detailGrid = document.getElementById('inv-detail-grid');
+        const negGroup = document.getElementById('neg-price-group');
+        const negChk = document.getElementById('neg-price-chk');
 
         const syncFieldset = () => {
             const isTrackable = ['product','material'].includes(typeSel.value);
             fs.style.display = isTrackable ? '' : 'none';
             if (!isTrackable) trackChk.checked = false;
             detailGrid.style.display = (isTrackable && trackChk.checked) ? '' : 'none';
+            // The discount box is offered to product and service items.
+            const discountable = ['product','service'].includes(typeSel.value);
+            if (negGroup) negGroup.style.display = discountable ? '' : 'none';
+            if (negChk && !discountable) negChk.checked = false;
         };
         if (typeSel) typeSel.addEventListener('change', syncFieldset);
         if (trackChk) trackChk.addEventListener('change', syncFieldset);
@@ -235,6 +262,7 @@ const ItemsPage = {
             income_account_id: form.income_account_id.value ? parseInt(form.income_account_id.value) : null,
             expense_account_id: form.expense_account_id.value ? parseInt(form.expense_account_id.value) : null,
             is_taxable: form.is_taxable.checked,
+            allows_negative_price: form.allows_negative_price ? form.allows_negative_price.checked : false,
             track_inventory: trackInv,
             reorder_point: trackInv && form.reorder_point ? parseFloat(form.reorder_point.value) || 0 : 0,
             asset_account_id: trackInv && form.asset_account_id && form.asset_account_id.value
@@ -326,6 +354,7 @@ const ItemsPage = {
             <div style="margin-bottom:10px;font-size:12px;color:var(--text-muted);">
                 On hand: <strong>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>
                 &nbsp;·&nbsp; Weighted avg cost: <strong>${formatCurrency(item.avg_cost || 0)}</strong>
+                ${ItemsPage.belowZeroHtml(item)}
             </div>
             <div class="table-container" style="max-height:60vh;overflow:auto;"><table>
                 <thead><tr>
@@ -355,6 +384,7 @@ const ItemsPage = {
                             <strong>${currentQty.toLocaleString()}</strong> on hand
                             &middot; avg cost <strong>${formatCurrency(currentAvg)}</strong>
                         </div>
+                        ${ItemsPage.belowZeroHtml(item)}
                     </div>
                     <div class="form-group">
                         <label>Mode *</label>

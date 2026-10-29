@@ -34,6 +34,15 @@
                     <li>Governed by Illinois law; disputes in Will County, Illinois. The full terms are the <a href="https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/blob/main/LICENSE" target="_blank" rel="noopener">license</a>, version <span id="splash-license-version"></span>.</li>
                 </ul>
             </div>
+            <!-- The artists credited (#635): /static/artists.json, read by
+                 app.js App.loadArtists. One entry per artist in that file is
+                 the whole of adding a credit; while it is empty, its note and
+                 a link to the art repo. -->
+            <div class="splash-artists" id="splash-artists" hidden>
+                <div class="splash-artists-title">Artists</div>
+                <ul id="splash-artists-list" hidden></ul>
+                <p id="splash-artists-note" hidden></p>
+            </div>
             <div class="splash-legal">
                 Independent reimplementation built from published SDK<br>
                 documentation (QBFC 5.0) and 14 years as a paying customer.<br>
@@ -220,8 +229,8 @@
                     <!-- External URL: the desktop shim only intercepts
                          same-origin _blank links, so this opens in the
                          system browser (same path as the update badge). -->
-                    <a href="https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/discussions/39"
-                       target="_blank" rel="noopener" class="footer-link">Using SlowBooks for real work? Tell us &rarr;</a>
+                    <a href="https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/discussions/636"
+                       target="_blank" rel="noopener" class="footer-link">Artists: the turtle needs you &rarr;</a>
                     <span id="app-version-footer">Slowbooks Pro 2026</span><br>
                     &copy; 2026 Slowbooks
                 </div>
@@ -260,6 +269,7 @@
     <script src="/static/js/api.js"></script>
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/combobox.js"></script>
+    <script src="/static/js/line_order.js"></script>
     <script src="/static/js/terms.js"></script>
     <script src="/static/js/active_lists.js"></script>
     <script src="/static/js/ocr_canvas.js"></script>

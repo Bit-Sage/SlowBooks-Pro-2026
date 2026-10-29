@@ -4,7 +4,7 @@
 # One step, no bill to pay later; the Scan Receipt flow lands here.
 # ============================================================================
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from app.database import get_db
 from app.models.accounts import Account
 from app.models.contacts import Vendor
 from app.models.transactions import Transaction
-from app.schemas.expenses import ExpenseCreate, ExpenseResponse
+from app.schemas.expenses import ExpenseCreate, ExpenseLineOut, ExpenseResponse
 from app.services.accounting import create_journal_entry, reversing_lines
 from app.services.job_costing import line_cost_type
 from app.services.bank_posting import assert_not_reconciled, release_statement_links
@@ -49,7 +49,9 @@ def _serialize(
 ) -> ExpenseResponse:
     if voided is None:
         voided = txn.id in _void_ids(db, [txn.id])
-    debit_line = next((ln for ln in txn.lines if ln.debit > 0), None)
+    # the expense's lines are the ledger's debit lines, in the order posted
+    debit_lines = sorted((ln for ln in txn.lines if ln.debit > 0), key=lambda x: x.id)
+    debit_line = debit_lines[0] if debit_lines else None
     credit_line = next((ln for ln in txn.lines if ln.credit > 0), None)
     vendor = (
         db.query(Vendor).filter(Vendor.id == txn.source_id).first()
@@ -63,15 +65,39 @@ def _serialize(
         date=txn.date,
         payee=payee,
         vendor_id=vendor.id if vendor else None,
+        expense_account_id=debit_line.account_id if debit_line else None,
+        lines=[
+            ExpenseLineOut(
+                account_id=ln.account_id,
+                account_name=ln.account.name if ln.account else "",
+                amount=float(ln.debit),
+                description=ln.description or "",
+                class_id=ln.class_id,
+                job_id=ln.job_id,
+                cost_code_id=ln.cost_code_id,
+                cost_type=ln.cost_type,
+                function=ln.function,
+                is_billable=bool(ln.is_billable),
+                line_order=i,
+            )
+            for i, ln in enumerate(debit_lines)
+        ],
         expense_account_name=(
             debit_line.account.name if debit_line and debit_line.account else ""
         ),
         paid_from_account_name=(
             credit_line.account.name if credit_line and credit_line.account else ""
         ),
-        amount=float(debit_line.debit) if debit_line else 0.0,
+        amount=float(sum((ln.debit for ln in debit_lines), Decimal("0"))),
         reference=txn.reference or "",
-        memo=(debit_line.description or "") if debit_line else "",
+        # the memo typed on the expense: the bank line carries it (a split's
+        # debit lines carry their own, #599); with none typed the bank line
+        # holds the payee, which is not a memo (W-51, 2.31.0 gate)
+        memo=(
+            credit_line.description or ""
+            if credit_line and (credit_line.description or "") != payee
+            else ""
+        ),
         status="void" if voided else "recorded",
         printable=(
             not voided
@@ -142,6 +168,79 @@ def void_expense(expense_id: int, db: Session = Depends(get_db)):
     return _serialize(txn, db, True)
 
 
+def _line_specs(data: ExpenseCreate) -> list[dict]:
+    """The expense's lines as plain dicts, checked: the older single
+    expense_account_id + amount is one line; `lines` must add up to the
+    amount paid, and no line may be zero or negative."""
+    if data.lines is not None and data.expense_account_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Send either lines or expense_account_id, not both",
+        )
+    if data.lines is None:
+        if data.expense_account_id is None:
+            raise HTTPException(
+                status_code=422, detail="An expense needs an account or lines"
+            )
+        if data.amount is None or Decimal(str(data.amount)) <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be positive")
+        # the header-level fields are the one line's own
+        return [
+            {
+                "account_id": data.expense_account_id,
+                "amount": Decimal(str(data.amount)),
+                "description": None,
+                "class_id": None,
+                "job_id": None,
+                "cost_code_id": data.cost_code_id,
+                "cost_type": data.cost_type,
+                "is_billable": data.is_billable,
+                "function": data.function,
+                "set_function": "function" in data.model_fields_set,
+            }
+        ]
+    if not data.lines:
+        raise HTTPException(
+            status_code=422, detail="An expense needs at least one line"
+        )
+    specs = []
+    for n, ln in enumerate(data.lines, 1):
+        part = Decimal(str(ln.amount)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        if part == 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Line {n} is 0.00 and posts nothing; enter its share or remove the line",
+            )
+        if part < 0:
+            raise HTTPException(
+                status_code=422, detail=f"Line {n}: the amount must be positive"
+            )
+        specs.append(
+            {
+                "account_id": ln.account_id,
+                "amount": part,
+                "description": (ln.description or "").strip() or None,
+                "class_id": ln.class_id,
+                "job_id": ln.job_id,
+                "cost_code_id": ln.cost_code_id,
+                "cost_type": ln.cost_type,
+                "is_billable": ln.is_billable,
+                "function": ln.function,
+                "set_function": "function" in ln.model_fields_set,
+            }
+        )
+    total = sum((sp["amount"] for sp in specs), Decimal("0"))
+    if data.amount is not None and Decimal(str(data.amount)) != total:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The lines add up to ${total:,.2f} but the amount paid is "
+                f"${Decimal(str(data.amount)):,.2f}; they must match"
+            ),
+        )
+    return specs
+
+
 @router.post("", response_model=ExpenseResponse, status_code=201)
 def create_expense(
     data: ExpenseCreate,
@@ -150,15 +249,14 @@ def create_expense(
 ):
     check_closing_date(db, data.date)
 
-    amount = Decimal(str(data.amount))
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Amount must be positive")
-
-    expense_account = (
-        db.query(Account).filter(Account.id == data.expense_account_id).first()
-    )
-    if expense_account is None:
-        raise HTTPException(status_code=404, detail="Expense account not found")
+    specs = _line_specs(data)
+    amount = sum((sp["amount"] for sp in specs), Decimal("0"))
+    expense_accounts = {}
+    for sp in specs:
+        acct = db.query(Account).filter(Account.id == sp["account_id"]).first()
+        if acct is None:
+            raise HTTPException(status_code=404, detail="Expense account not found")
+        expense_accounts[acct.id] = acct
 
     paid_from = (
         db.query(Account).filter(Account.id == data.paid_from_account_id).first()
@@ -170,7 +268,7 @@ def create_expense(
             status_code=400,
             detail="Paid-from must be a bank, cash, or credit card account",
         )
-    if paid_from.id == expense_account.id:
+    if paid_from.id in expense_accounts:
         raise HTTPException(
             status_code=400, detail="Expense and paid-from accounts must differ"
         )
@@ -190,28 +288,33 @@ def create_expense(
     payee = (data.payee or "").strip() or (vendor.name if vendor else "")
     memo = (data.memo or "").strip()
     line_desc = memo or payee
-    journal_lines = [
-        {
-            "account_id": expense_account.id,
-            "debit": amount,
+    journal_lines = []
+    for sp in specs:
+        line = {
+            "account_id": sp["account_id"],
+            "debit": sp["amount"],
             "credit": Decimal("0"),
-            "description": line_desc,
-            "cost_code_id": data.cost_code_id,
-            "cost_type": line_cost_type(db, data.cost_code_id, data.cost_type),
-            "is_billable": data.is_billable,
-            **(
-                {"function": data.function}
-                if "function" in data.model_fields_set
-                else {}
-            ),
-        },
+            "description": sp["description"] or line_desc,
+            "cost_code_id": sp["cost_code_id"],
+            "cost_type": line_cost_type(db, sp["cost_code_id"], sp["cost_type"]),
+            "is_billable": sp["is_billable"],
+        }
+        # a line's own class and job; left out, the expense's (the ledger
+        # fills them in)
+        for key in ("class_id", "job_id"):
+            if sp[key] is not None:
+                line[key] = sp[key]
+        if sp["set_function"]:
+            line["function"] = sp["function"]
+        journal_lines.append(line)
+    journal_lines.append(
         {
             "account_id": paid_from.id,
             "debit": Decimal("0"),
             "credit": amount,
             "description": line_desc,
-        },
-    ]
+        }
+    )
 
     txn = create_journal_entry(
         db,

@@ -190,7 +190,9 @@ def test_the_labels_say_cost_of_goods_too():
     assert (
         "PurchaseAccounts.options(expenseAccts, item.expense_account_id)" in item_form
     )
-    assert "PurchaseAccounts.options(expenseAccts)" in _js("expenses.js")
+    assert "PurchaseAccounts.options(ExpensesPage._expenseAccounts" in _js(
+        "expenses.js"
+    )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -320,10 +322,14 @@ def test_money_leaving_a_bank_account_warns_before_it_overdraws():
 
 def test_processing_a_pay_run_warns_before_it_overdraws():
     # macbase1 S-a named payroll too: net pay leaves 1000 when a run is
-    # processed, and took Checking to -$2,986.90 without a word.
+    # processed, and took Checking to -$2,986.90 without a word. The account
+    # asked about is the net pay account chosen under Settings → Payroll
+    # Accounts (#620), 1000 when none is; a liability chosen there is not a
+    # bank, and Overdraft.confirm asks nothing for it.
     process = _method(_js("payroll.js"), "async process(id)")
+    assert "App.settings.payroll_net_pay_account_id" in process
     assert (
-        "await Overdraft.confirm(null, Number(run.total_net) || 0, '1000', 'Process')"
+        "await Overdraft.confirm(netPayAcct, Number(run.total_net) || 0, '1000', 'Process')"
         in process
     )
     assert process.index("Overdraft.confirm") < process.index(

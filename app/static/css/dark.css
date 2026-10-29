@@ -389,6 +389,14 @@
     color: #e0e4ec;
 }
 [data-theme="dark"] .splash-whatsnew-title { color: #ffffff; }
+/* The artists' panel (#635): the same dark panel as the two above it. */
+[data-theme="dark"] .splash-artists {
+    background: #1e2632;
+    border-color: #3a4656;
+    color: #e0e4ec;
+}
+[data-theme="dark"] .splash-artists-title { color: #ffffff; }
+[data-theme="dark"] .splash-artists a { color: #8ab4f8; }
 
 /* Line items table */
 [data-theme="dark"] .line-items-table { border-color: var(--panel-border); }
@@ -540,6 +548,7 @@
 [data-theme="dark"] .toast-success { background: #257321; }   /* the leaf green, white on it 5.91 (2.23.1) */
 [data-theme="dark"] .toast-error   { background: #cc3333; }
 [data-theme="dark"] .toast-info    { background: #336699; }
+[data-theme="dark"] .toast-warning { background: #8a4b1d; }   /* white on it 6.8:1 */
 
 /* The tinted notes (style.css .note--*): a dark tint of each, under this
    theme's text. As inline pale boxes they took the light text on a pale

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.attachments import Attachment
+from app.models.transactions import Transaction
 from app.schemas.attachments import AttachmentResponse
 from app.services import file_store
 
@@ -41,6 +42,10 @@ _ENTITY_TYPE_DIRS = {
     # to equity — an Expense can only be paid from an asset or liability),
     # and its receipt belongs in the company file with it (#281).
     "journal_entry": "journal_entry",
+    # A check, deposit or card charge typed straight into a register has its
+    # receipt too, keyed by the entry's id, so it need not be re-entered as
+    # an Expense just to hold the file (#600).
+    "bank_entry": "bank_entry",
 }
 
 # Whitelist of MIME types we accept for attachments. An attachment is served
@@ -107,6 +112,21 @@ def _entity_type(entity_type: str) -> str:
     return type_dir
 
 
+def _check_record(db: Session, entity_type: str, entity_id: int) -> None:
+    """A register entry's id must be a register entry's: 404 for any other
+    transaction (an invoice's posting, a transfer) or none at all. The other
+    types are not checked, so a void entry still takes a file, as they do."""
+    if entity_type != "bank_entry":
+        return
+    found = (
+        db.query(Transaction.id)
+        .filter(Transaction.id == entity_id, Transaction.source_type == "bank_entry")
+        .first()
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="Bank entry not found")
+
+
 def _record_attachment(db: Session, attachment_id: int) -> Attachment | None:
     """An attachment on a record — never an employee document. Those share
     the table, and this route has none of their admin-only rule: a read-only
@@ -132,6 +152,7 @@ async def upload_attachment(
     db: Session = Depends(get_db),
 ):
     _entity_type(entity_type)
+    _check_record(db, entity_type, entity_id)
 
     safe_filename = _sanitize_filename(file.filename or "")
     extension = Path(safe_filename).suffix.lower()
@@ -183,6 +204,7 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
 @router.get("/{entity_type}/{entity_id}", response_model=list[AttachmentResponse])
 def list_attachments(entity_type: str, entity_id: int, db: Session = Depends(get_db)):
     _entity_type(entity_type)
+    _check_record(db, entity_type, entity_id)
     return (
         db.query(Attachment)
         .filter(

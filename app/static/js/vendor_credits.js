@@ -115,6 +115,7 @@ const VendorCreditsPage = {
                     <button type="submit" class="btn btn-primary">Create Vendor Credit</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#vc-lines', { add: () => VendorCreditsPage.addLine(), changed: () => VendorCreditsPage.recalc() });
     },
 
     lineHtml(idx) {

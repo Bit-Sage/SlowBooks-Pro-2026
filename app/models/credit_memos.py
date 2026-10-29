@@ -92,6 +92,11 @@ class CreditMemoLine(Base):
     # The line amount is still rounded to the cent (accounting._q).
     rate = Column(Numeric(17, 4), default=0)
     amount = Column(Numeric(15, 2), default=0)
+    # The line's own class and job (#640); NULL falls back to the memo's
+    # header, as an invoice line's does, so a memo that credits work in two
+    # divisions reverses each division's income on the P&L by Class.
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     line_order = Column(Integer, default=0)
 
     credit_memo = relationship("CreditMemo", back_populates="lines")

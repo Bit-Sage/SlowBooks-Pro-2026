@@ -57,6 +57,8 @@ def _range(data: dict) -> str:
         period += " (adjusting entries left out)"
     if data.get("basis") == "cash":
         period += " (cash basis)"
+    if data.get("hide_zero"):
+        period += " (zero balances hidden)"
     return period
 
 
@@ -439,7 +441,10 @@ def profit_loss_detail_csv(data: dict, company: str, words) -> str:
     period = _range(data)
     scope = detail_scope(data, words)
     if data.get("class_name") or data.get("job_name"):
-        period += f" ({scope.replace(', adjusting entries left out', '')})"
+        # the period line already says these two
+        for said in (", adjusting entries left out", ", zero balances hidden"):
+            scope = scope.replace(said, "")
+        period += f" ({scope})"
     _preamble(w, company, detail_title(data, words), period)
     w.writerow(
         [
@@ -695,6 +700,8 @@ def balance_sheet_csv(
         period += f" compared with {prior['as_of_date']}"
     if data.get("basis") == "cash":
         period += " (cash basis)"
+    if data.get("hide_zero"):
+        period += " (zero balances hidden)"
     _preamble(w, company, words("Balance Sheet"), period)
     groups = data.get("groups") or {}
     tree = data.get("tree") or {}

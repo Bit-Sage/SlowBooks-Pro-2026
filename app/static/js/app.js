@@ -1087,7 +1087,7 @@ const App = {
         'BenefitsPage.createRemittanceBill', 'BenefitsPage.deleteRate', 'BenefitsPage.deleteGroup',
         'OnboardingPage.completeTask', 'FixedAssetsPage.showPostPurchaseForm', 'FixedAssetsPage.showDisposeForm',
         'FixedAssetsPage.showDepreciationForm', 'FixedAssetsPage.showImportForm', 'ItemsPage.showAdjust',
-        'BankingPage.voidEntry', 'BankingPage.editEntry', 'BankingPage.saveEntryAnyway', 'BankingPage.voidTransfer', 'BankingPage.showEntryForm', 'BankingPage.showTransferForm',
+        'BankingPage.voidEntry', 'BankingPage.editEntry', 'BankingPage.uploadAttachment', 'BankingPage.deleteAttachment', 'BankingPage.saveEntryAnyway', 'BankingPage.voidTransfer', 'BankingPage.showEntryForm', 'BankingPage.showTransferForm',
         'BankingPage.showAccountForm', 'BankingPage.showOFXImport', 'BankingPage.confirmOFXImport', 'BankingPage.startReconcile',
         'BankingPage.finishReconcile', 'BankingPage.abandonReconcile', 'BankingPage.matchLine', 'BankingPage.showMatch',
         'BankingPage.excludeLine', 'BankingPage.findMatches', 'BankingPage.addAll', 'BankingPage.postLegacy',
@@ -1189,8 +1189,69 @@ const App = {
     },
 
     showAbout() {
+        App.loadArtists();  // the credits, in case the read at start did not land
         const splash = $('#splash');
         if (splash) splash.classList.remove('hidden');
+    },
+
+    // The artists credited on About (#635). The community art repo promises
+    // a credit in the app to everyone whose work ships, and the credits are
+    // data, /static/artists.json, so a new one is a line in that file and
+    // not a code change. Read once per page: at start, since the splash
+    // opens by itself on a first run or a new version, and from About in
+    // case that read did not land. Best-effort, like the notes beside it:
+    // a missing or unreadable file leaves the section hidden.
+    _artists: null,
+
+    loadArtists() {
+        if (!App._artists) {
+            App._artists = App._fetchArtists().catch(() => { App._artists = null; });
+        }
+        return App._artists;
+    },
+
+    async _fetchArtists() {
+        if (!$('#splash-artists')) return;
+        // a raw fetch, not the API wrapper: /static/ needs no sign-in, and a
+        // refusal here must never pop the auth prompt
+        const res = await fetch('/static/artists.json', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        App.renderArtists(await res.json());
+    },
+
+    // Each artist by their credit line, the pieces and where each is used,
+    // the name linked when a link was given; an empty list shows the file's
+    // note and a link to the repo. Everything through escapeHtml: the file
+    // ships with the app, but a credit is text, not markup.
+    renderArtists(data) {
+        const box = $('#splash-artists');
+        const list = $('#splash-artists-list');
+        const note = $('#splash-artists-note');
+        if (!box || !list || !note) return;
+        data = data && typeof data === 'object' ? data : {};
+        const artists = (Array.isArray(data.artists) ? data.artists : []).filter(a => a && a.name);
+        const linked = (href, text) => (/^https?:\/\//.test(String(href || ''))
+            ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`
+            : escapeHtml(text));
+        if (artists.length) {
+            list.innerHTML = artists.map(a => {
+                const name = linked(a.link, a.name);
+                const pieces = (Array.isArray(a.pieces) ? a.pieces : [])
+                    .filter(p => p && p.what)
+                    .map(p => escapeHtml(p.what) + (p.where ? ` (${escapeHtml(p.where)})` : ''))
+                    .join(', ');
+                return `<li><strong>${name}</strong>${pieces ? `: ${pieces}` : ''}</li>`;
+            }).join('');
+            note.innerHTML = '';
+        } else {
+            list.innerHTML = '';
+            const repo = String(data.repo || '');
+            note.innerHTML = escapeHtml(data.note || '')
+                + (repo ? ` ${linked(repo, repo.replace(/^https?:\/\//, ''))}` : '');
+        }
+        list.hidden = !artists.length;
+        note.hidden = !!artists.length;
+        box.hidden = false;
     },
 
     // Theme toggle — Feature 12: Dark Mode
@@ -2596,6 +2657,10 @@ const App = {
         // Start clock — ticks once a second
         App.updateClock();
         setInterval(App.updateClock, 60000);
+
+        // The About dialog's artist credits (#635): the splash can open by
+        // itself at start, so they are read here too, not only from About.
+        App.loadArtists();
 
         // Settings first: the vocabulary and the nonprofit nav items must
         // be in place before the first page paints (no flash of "Customers"

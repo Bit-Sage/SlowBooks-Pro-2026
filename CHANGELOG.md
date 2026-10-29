@@ -5,6 +5,205 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.31.0 — Split expenses, lines that move, and stock that comes back
+
+**From the release gate.** Voiding a credit memo's return took the stock out at
+the return's own cost without re-averaging what was left, so once a dearer
+receipt had come in the ledger's Inventory and the stock valuation (quantity
+times average cost) parted ways, and a residue stayed in Inventory with
+nothing on hand; the average now follows the value that leaves, and the two
+figures stay one figure. An expense's `memo` over the API read as its first
+line's memo once lines carried their own; it is the memo typed on the expense
+again. Typed Cc addresses plus the always-copy settings over fifty together
+were refused as a failed send blamed on the SMTP settings; the limit's own
+sentence answers (400) before anything is rendered. Insert line below left
+the keyboard on the page, because the new line's item picker becomes a
+type-ahead box a moment after the line lands; the focus now goes to that box.
+
+**A sale's reversal comes off each posting's own accounts at its own cost**
+(#622, @ContractorKeith). Voiding a sale, or editing its quantity down,
+reversed the cost at the item's current average cost against the item's
+current accounts, so a reversal after the item's cost or accounts had
+changed left a residue in Cost of Goods Sold and Inventory. The reversal now
+walks the sale's own postings, newest first, and takes each off the accounts
+it went to at the cost it carried, one reversal movement per posting naming
+the one it reverses (`inventory_movements.reverses_movement_id`, migration
+`b8d4f2a6c1e3`); a reversal of a sale posted before this release is charged
+to the oldest posting, and a piece with no account to post to is logged
+rather than dropped. The credit memo return in this release (#641) walks the
+same postings.
+
+**The sidebar's bottom link now calls for artists.** The link under the left menu pointed at the discussion asking who uses SlowBooks for real work; it now opens the artists' call to action (discussion #636), which is how the community art repo finds its contributors.
+
+**Reinstalling the same version replaces the program file** (#643). Running
+the Windows Setup over an install of the same version replaced every file
+except SlowBooksPro.exe, because every build of a version carries the same
+version number and the installer took the program file already there for the
+one it was shipping. The installer now replaces the whole program folder
+whatever version is already there.
+
+**Job reports read a timestamp on the local day** (#644). A cost-to-complete
+forecast and a change order approval are stored with a UTC timestamp, and the
+construction reports compared that timestamp's UTC date with the local "as of"
+day. On a US evening, once it was already the next day in UTC, a forecast
+typed that night made the WIP Schedule as of the same day warn that it was
+entered the next day (on the screen, in the CSV and in the PDF), and a sub
+change order approved that night dropped out of Commitment Status as of that
+day; the change order log and the WIP revised contract read an owner change
+order's approval the same way. The timestamp is now read as the local calendar
+date before the comparison. Also, a commitment that is partly billed now reads
+as sent on an as-of day before its first bill, the way a commitment closed by
+a later bill already read as open before that bill.
+
+**The About dialog credits the artists** (#635). The community art repo,
+github.com/VonHoltenCodes/Slowbooks-Pro-Art, promises everyone whose art
+ships in the app a credit in About, and About now keeps it: an Artists
+section with each artist by name, the pieces they made and where the app
+uses them, and a link to them when they gave one. The credits are a small
+file shipped with the app, app/static/artists.json, so adding an artist is
+one line in that file and not a code change. Until the first piece lands the
+section says the turtle is waiting for its first artist and links to the art
+repo.
+
+**A credit memo's lines take their own class and job** (#640, from
+Discussion #633). A memo's lines all posted with the header's class, so a
+credit against work in two divisions had to be two memos. Each line now
+takes a class and a job of its own, as an invoice line does: the form draws
+the Class cell on every line once the company has a class to choose, the
+reversal of that line's income posts with the line's class and job, the tax
+and receivable lines with the memo's, and a line left without one takes the
+memo's. P&L by Class and P&L by Job net the credit against the division or
+job that earned the sale, and a void nets each back to zero. The memo's
+entry now carries the memo's own job as well (it carried the class only), so
+a memo with a job counts on P&L by Job, and a job on a memo line alone keeps
+the job with its customer the way a job on an invoice line does. Over the API
+a line's `class_id` and `job_id` are optional, and a line's job must be the
+customer's, as the memo's is.
+
+**A sale past what is on hand says so** (#642). An invoice or a sales
+receipt that sold more of a stock item than was on hand posted without a
+word, and the count went below zero where only the Items page's To reorder
+list showed it. The sale still posts as before (some businesses enter the
+receiving bill after the sale), and now the response carries a `warnings`
+list in plain words ("Widget: 2 on hand; this sale takes it to -4."), which
+the invoice and sales receipt forms show as a toast after the save; a line
+shows "N on hand" under its quantity once a stock item is picked. A new
+setting, Refuse a sale of more than is on hand (`inventory_refuse_oversell`,
+off by default, under Invoice Defaults), turns the warning into a refusal
+naming the item and how many short, with nothing posted. The Items page
+shows a count below zero in the warning colour with a note saying what it
+means, and the item's form, Adjust and History say it in words.
+
+**Hide zero balances on the statements** (#625, from Discussion #354). The
+Profit & Loss and the Balance Sheet already left out an account with no
+activity, but one that had activity and nets to $0.00 for the period, or a
+Balance Sheet account that ends at $0.00, still printed. The Profit & Loss,
+the Balance Sheet, the Trial Balance and the P&L Detail now have a Hide zero
+balances checkbox (`hide_zero=true` on the report, its PDF and its CSV) that
+leaves those accounts out, a parent whose every sub-account is zero with
+them. The totals are the same either way, and the choice rides on the
+address, the saved report and the PDF and CSV links the way the Basis choice
+does. On the Trial Balance a row goes when both of its columns are empty, so
+each column still adds up to its total. Off unless asked for.
+
+**An item of your own can be a discount** (#639, from Discussion #633). A
+negative line on an invoice or sales receipt was allowed only on the item a
+QuickBooks Online discount came in on; a discount item made here was refused
+with "rate must be non-negative; use a credit memo for refunds". The item
+form (product and service items) now has "Discount or concession: may carry
+a negative price". A line on such an item takes a negative price, and the
+amount comes off the item's income account on the accrual and the cash basis
+both. Every other item, and a line with no item, is refused as before, in the
+same words. The item a QuickBooks Online discount came in on is marked the
+same way by the migration, so one rule covers both; the items CSV export and
+import carry a Negative Price column, and an IIF item of type DISC imports
+marked. API: `allows_negative_price` on the item create, update and response,
+with `is_discount` saying whether a line on the item may go negative.
+
+**Choose where each piece of a pay run posts** (#620). Settings → Payroll
+Accounts names the account for net pay, gross wages, employer payroll taxes
+and each payable (federal and state withholding, Social Security, Medicare,
+FUTA, SUTA, other deductions). Each defaults to the seeded account payroll
+always posted to, so a company that chooses nothing posts exactly as before.
+Net pay can go to a bank account or to a liability such as 2300 Payroll
+Liabilities, for wages paid later: the run then credits 2300 instead of the
+bank, the Balance Sheet carries the wages until they are paid, and the
+payment is recorded against 2300 when it goes out (a check or register entry,
+a bill payment, or a journal entry). The save refuses an account of the wrong
+type, an inactive one, a credit card or a control liability, in a sentence
+saying what the piece takes; a chosen account that stops working refuses the
+pay run rather than posting somewhere else; and voiding a run reverses the
+accounts it posted to, whatever the settings say by then.
+`GET /api/settings/payroll-accounts` lists the pieces with their chosen and
+default accounts.
+
+**A credit memo that takes stock back puts its cost back too** (#641, from
+Discussion #633). A credit memo for a returned stock item put the quantity
+back on the shelf but posted nothing for its cost, so Inventory and Cost of
+Goods Sold kept the sale's cost after the goods were back. The return now
+posts the cost of what came back, Dr Inventory / Cr Cost of Goods Sold, in
+one entry per memo that the stock movement links to. When the memo names the
+invoice it credits, the cost is the original sale's, taken off that invoice's
+sale postings newest first and put back on the accounts those postings used,
+even if the item's cost or accounts have changed since; a memo naming no
+invoice uses the item's average cost and the item's accounts. Voiding the memo
+reverses the entry and the movement together. The Profit & Loss's cost of
+goods and Sales by Item's COGS column both net the return, so the margin on a
+sale that was partly returned is what it should be. Returns posted before this
+release stay as they are: one journal entry moving the cost from Cost of Goods
+Sold to Inventory corrects a past return.
+
+**Cc and Bcc addresses are read the way a mail program reads them** (#611,
+@ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
+display name is dropped, so the Cc header carries bare addresses; an entry
+that is not an address (non-ASCII, malformed, or text left over from a
+header-injection attempt) refuses the send (400) or the settings save (422)
+naming it, rather than sending to a guess; an address both typed and in the
+always-copy settings is copied once; the always-copy settings are stored
+normalised, at most 500 characters of addresses; and the log row is cut to
+its column so a long list can never fail the send's own log entry.
+
+**Move lines and insert one in the middle of a document** (#604, from
+Discussion #595). On an invoice a line could only be added at the end or
+removed, so a missed line meant removing and re-keying everything below it.
+Every line form (invoices, estimates, sales receipts, credit memos, recurring
+invoices, bills, purchase orders and vendor credits) now has Move line up and
+Move line down buttons on each line, a handle to drag a line with the mouse,
+and an Insert line below button that opens a blank line right under that one.
+The totals follow, and the order is saved with the document and used on the
+screen, the PDF and the print view. Saving a document whose lines only
+changed order now keeps the new order, and the order is always the order the
+lines were sent in.
+
+**Enter Bill shows the vendor beside the form** (#601, from Discussion #593).
+Pick a vendor on Enter Bill (or open a bill to edit it) and a panel beside the
+form shows what you owe them, their last five bills and payments, and their
+notes, with a link to the vendor's page. The owed figure is the vendor page's and the A/P aging's.
+It fills in while you work, never holds the form up, clears when the vendor is
+cleared, and sits below the form on a narrow window.
+
+**Receipts on register entries** (#600, from Discussion #593). A check, a
+deposit or a card charge typed straight into a bank or card register can now
+take attachments, the same Attachments panel a journal entry has. Open the
+entry with Edit and attach the receipt, the scanned check or the deposit
+slip; it stays with the entry, even if the entry is later voided. A firm that
+keeps a paper trail for every transaction no longer has to re-enter register
+entries as Expenses just to hold the file.
+
+**An expense can be split across several accounts** (#599, from Discussion
+#592). A lump sum on a bank or card statement often covers several kinds of
+cost, and the Expense form could only record it against one account. The form
+now has a Lines grid like a bill's: each line takes an account, a memo, a job,
+a cost code and cost type, a class and function, and a billable mark of its
+own, and a running total shows the amount paid against what the lines add up
+to. It starts with one line, so a plain receipt is entered as before; Scan
+Receipt fills that first line. The lines must add up to the amount paid, and
+a line of 0.00 is refused. The ledger takes one debit per line and a single
+credit to the account it was paid from, so reports by account, job costing and
+the printed check's stub (which lists every line) see each share; voiding
+reverses all of them. Through the API, `POST /api/expenses` takes `lines`, and
+the older single `expense_account_id` still works as one line.
+
 ### v2.30.0 — Construction from estimate to pay application, and reports on a cash basis
 
 **Stripe payments record again.** On the current Stripe library a paid
@@ -191,7 +390,6 @@ one bill now carries that bill's memo onto the payment and its check; paying
 several bills leaves the memo for you to type, and a memo you enter yourself
 is never replaced. The payment's view has a **Check memo** field you can edit,
 and Print Check saves it before the check opens.
-
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
@@ -1552,7 +1750,6 @@ Three schema changes, run in every company file one after the other: the
 payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
-
 
 ### v2.28.0 — Account types and sub-accounts
 
@@ -4695,7 +4892,6 @@ was closed as released, while docs/features.md claimed a chart CSV import
 that did not exist. The reporter came back on the 16th. The docs line is
 now true, and the CSV page's result line no longer says "Imported undefined"
 (it read a field the import never returned).
-
 
 ### v2.14.0 — In and out of a company, and the terms once
 

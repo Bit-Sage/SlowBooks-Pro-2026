@@ -57,6 +57,25 @@ const SalesLines = {
         return item;
     },
 
+    // The stock a tracked item has, as a small note under the line's
+    // quantity box (#642): "2 on hand", in the warning colour once it is
+    // below zero. Nothing for a service or an untracked item. Drawn from
+    // the items the form already fetched, so it costs no request.
+    onHandHtml(itemId, items) {
+        const item = (items || []).find(i => i.id == itemId);
+        const tracked = !!(item && item.track_inventory);
+        const count = tracked ? Number(item.quantity_on_hand || 0) : 0;
+        const colour = count < 0 ? 'var(--text-warning)' : 'var(--text-muted)';
+        return `<div class="line-on-hand" style="font-size:10px; white-space:nowrap; color:${colour};"${tracked ? '' : ' hidden'}>${tracked ? `${count.toLocaleString()} on hand` : ''}</div>`;
+    },
+
+    // Redraw the row's on-hand note for the item now picked.
+    showOnHand(row, items) {
+        const note = row.querySelector('.line-on-hand');
+        if (!note) return;
+        note.outerHTML = SalesLines.onHandHtml(row.querySelector('.line-item')?.value, items);
+    },
+
     // Recompute every row of `tbody` and return {subtotal, tax, total}. A
     // row without a Tax box counts as taxable, as it does on the server.
     totals(tbody, taxPct, currency) {
@@ -767,6 +786,7 @@ const InvoicesPage = {
         if (!id && inv.customer_id) InvoicesPage.customerSelected(inv.customer_id);
         // the totals carry the document's currency; follow a change of it
         $('#invoice-form [name="currency"]')?.addEventListener('change', () => InvoicesPage.recalc());
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#inv-lines', { add: () => InvoicesPage.addLine(), changed: () => InvoicesPage.recalc() });
         InvoicesPage.recalc();
         // Populate due_date for fresh invoices that don't already have one.
         if (!inv.due_date) InvoicesPage._recomputeDueDate();
@@ -852,7 +872,7 @@ const InvoicesPage = {
                 ${ItemQuickAdd.options(items, line.item_id)}</select></td>
             <td><input class="line-desc" value="${escapeHtml(line.description || '')}"></td>
             ${InvoicesPage.lineClasses() ? Nonprofit.classCellHtml('line-class', line.class_id) : ''}
-            <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="InvoicesPage.recalc()"></td>
+            <td><input class="line-qty" type="number" step="0.0001" value="${line.quantity || 1}" oninput="InvoicesPage.recalc()">${SalesLines.onHandHtml(line.item_id, items)}</td>
             <td><input class="line-rate money" type="number" step="0.0001" ${Number(line.rate) < 0 || items.some(i => i.is_discount && i.id == line.item_id) ? '' : 'min="0" '}value="${Number(line.rate) || 0}" oninput="InvoicesPage.recalc()"></td>
             <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked(line)} onchange="InvoicesPage.recalc()"></td>
             <td class="col-amount line-amount">${formatCurrency((line.quantity||1) * (line.rate||0))}</td>
@@ -877,6 +897,7 @@ const InvoicesPage = {
         const row = $(`[data-line="${idx}"]`);
         // "+ Add item" opens the quick add; its save picks the item here (#445)
         if (row && ItemQuickAdd.selected(row.querySelector('.line-item'), InvoicesPage._items, () => InvoicesPage.itemSelected(idx))) return;
+        if (row) SalesLines.showOnHand(row, InvoicesPage._items);
         if (row && SalesLines.fillFromItem(row, InvoicesPage._items)) InvoicesPage.recalc();
     },
 
@@ -988,6 +1009,8 @@ const InvoicesPage = {
             }, InvoicesPage._overLimitOk ? { allow_over_credit_limit: true } : {});
             if (!saved) return; // $0.00 and the user said no: the form stays open
             toastPosted(Terms.text(id ? 'Invoice updated' : 'Invoice created'));
+            // a stock item sold past what is on hand (#642): posted, and said
+            for (const w of (saved && saved.warnings) || []) toast(w, 'warning');
             App.refresh();
         } catch (err) { toast(err.message, 'error'); }
     },

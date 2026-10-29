@@ -123,11 +123,13 @@ def list_items(
 
 
 def _flag_discounts(db: Session, items):
-    """Item responses, a Discount item marked so the forms let its line
-    take a negative price."""
-    from app.services.qbo_common import discount_item_ids
+    """Item responses, each item a line may carry a negative price on
+    marked (is_discount: its own "Discount or concession" flag, #639, or a
+    QuickBooks Online discount came in on it) so the sales forms let its
+    line's price go negative."""
+    from app.services.discount_items import negative_price_item_ids
 
-    discounts = discount_item_ids(db)
+    discounts = negative_price_item_ids(db)
     out = []
     for item in items:
         resp = ItemResponse.model_validate(item)
@@ -272,7 +274,7 @@ def create_item(data: ItemCreate, db: Session = Depends(get_db)):
         record_opening_quantity(db, item, opening_qty, data.cost, as_of=as_of)
     db.commit()
     db.refresh(item)
-    return item
+    return _flag_discounts(db, [item])[0]
 
 
 @router.put("/{item_id}", response_model=ItemResponse)
@@ -301,7 +303,7 @@ def update_item(item_id: int, data: ItemUpdate, db: Session = Depends(get_db)):
         setattr(item, key, val)
     db.commit()
     db.refresh(item)
-    return item
+    return _flag_discounts(db, [item])[0]
 
 
 @router.delete("/{item_id}")

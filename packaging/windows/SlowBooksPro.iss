@@ -44,7 +44,10 @@ CloseApplications=yes
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
-Source: "dist\SlowBooksPro\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+; ignoreversion: every build is stamped x.y.z.0 (version_info.py), so a
+; same-version reinstall kept the old SlowBooksPro.exe ("Same version.
+; Skipping.") while replacing everything else (#643).
+Source: "dist\SlowBooksPro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The license the wizard showed, kept beside the program.
 Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"
 ; Microsoft's Evergreen WebView2 bootstrapper (~2 MB), downloaded by CI.

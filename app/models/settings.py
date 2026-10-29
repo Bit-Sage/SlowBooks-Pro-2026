@@ -197,6 +197,11 @@ DEFAULT_SETTINGS = {
     "warn_date_future_days": "30",
     "warn_duplicate_check_number": "false",
     "warn_edit_transaction": "false",
+    # A sale of more of a stock item than is on hand (#642): "false" posts
+    # it, as always, and the response says so (a `warnings` list the forms
+    # show; the count goes below zero until the receiving bill is entered).
+    # "true" refuses it with a 422 naming the item and how many short.
+    "inventory_refuse_oversell": "false",
     # Sidebar items a company doesn't use, hidden from the menu (#334): a
     # JSON list of nav-link pages ("payroll", "hr-onboarding", …) and nav
     # sections ("section:Payroll & HR"). The pages stay reachable by
@@ -213,6 +218,21 @@ DEFAULT_SETTINGS = {
     "ach_immediate_origin": "",
     "ach_company_id": "",
     "ach_company_account": "",
+    # Where a pay run posts (#620): the account id for each piece, "" for the
+    # seeded account it always used (services/payroll_accounts.py holds the
+    # table). Net pay takes a bank account or a liability such as 2300
+    # Payroll Liabilities, for wages paid later; the two expenses take an
+    # expense or cost of goods sold account; each payable a liability.
+    "payroll_net_pay_account_id": "",
+    "payroll_wages_account_id": "",
+    "payroll_employer_tax_account_id": "",
+    "payroll_federal_withholding_account_id": "",
+    "payroll_state_withholding_account_id": "",
+    "payroll_social_security_account_id": "",
+    "payroll_medicare_account_id": "",
+    "payroll_futa_account_id": "",
+    "payroll_suta_account_id": "",
+    "payroll_other_deductions_account_id": "",
     # Phase 10: Late Fee Automation
     "late_fee_enabled": "false",
     "late_fee_rate": "1.5",

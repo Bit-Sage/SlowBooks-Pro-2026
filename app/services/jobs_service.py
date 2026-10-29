@@ -236,7 +236,7 @@ def documents_carrying_job(db: Session, job_id: int, t: Terms) -> list[tuple[str
     they could never be moved."""
     from sqlalchemy import or_
 
-    from app.models.credit_memos import CreditMemo, CreditMemoStatus
+    from app.models.credit_memos import CreditMemo, CreditMemoLine, CreditMemoStatus
     from app.models.estimates import Estimate, EstimateLine
     from app.models.in_kind import InKindGift, InKindGiftLine
     from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
@@ -264,9 +264,15 @@ def documents_carrying_job(db: Session, job_id: int, t: Terms) -> list[tuple[str
     for inv in live_invoices:
         noun = document_label(inv, t).lower()
         counts[noun] = counts.get(noun, 0) + 1
+    on_memo_line = db.query(CreditMemoLine.credit_memo_id).filter(
+        CreditMemoLine.job_id == job_id
+    )
     counts["credit memo"] = (
         db.query(CreditMemo)
-        .filter(CreditMemo.job_id == job_id, CreditMemo.status != CreditMemoStatus.VOID)
+        .filter(
+            or_(CreditMemo.job_id == job_id, CreditMemo.id.in_(on_memo_line)),
+            CreditMemo.status != CreditMemoStatus.VOID,
+        )
         .count()
     )
     counts["estimate"] = (

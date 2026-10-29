@@ -101,6 +101,8 @@ const CreditMemosPage = {
         CreditMemosPage._invoices = [];
         CreditMemosPage.lineCount = 1;
         const classGroup = await classFormGroupHtml();
+        // the line Class cell (#640), drawn as the invoice form draws it
+        if (CreditMemosPage.lineClasses()) await Nonprofit.loadFunds();
         // The company's rate, as on a new invoice; picking the invoice being
         // credited switches to that invoice's rate. It defaulted to 0%, so
         // returned taxable goods were credited without their tax (W-L14, F14).
@@ -124,7 +126,7 @@ const CreditMemosPage = {
                 </div>
                 <h3 style="margin:12px 0 8px;font-size:14px;">Credit Lines</h3>
                 <table class="line-items-table">
-                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th><th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" title="Sales tax applies to this line">Tax</th><th scope="col" class="col-amount">Amount</th><th scope="col" class="col-actions"></th></tr></thead>
+                    <thead><tr><th scope="col">Item</th><th scope="col">Description</th>${CreditMemosPage.lineClasses() ? Nonprofit.classHeadHtml() : ''}<th scope="col" class="col-qty">Qty</th><th scope="col" class="col-rate">Rate</th><th scope="col" title="Sales tax applies to this line">Tax</th><th scope="col" class="col-amount">Amount</th><th scope="col" class="col-actions"></th></tr></thead>
                     <tbody id="cm-lines">${CreditMemosPage.lineRowHtml(0)}</tbody>
                 </table>
                 <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="CreditMemosPage.addLine()">+ Add Line</button>
@@ -140,7 +142,21 @@ const CreditMemosPage = {
                     <button type="submit" class="btn btn-primary">Create Credit Memo</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#cm-lines', { add: () => CreditMemosPage.addLine(), changed: () => CreditMemosPage.recalc() });
         CreditMemosPage.recalc();
+    },
+
+    // The line Class cell is the shared helper in utils.js (#243), drawn here
+    // as the invoice form draws it (#640): once the company has a class of
+    // its own, and always for a nonprofit's funds. The form still renders
+    // where that helper is not loaded (the node probes build a bare page
+    // from this file alone).
+    lineClasses() { return typeof Nonprofit !== 'undefined' && !!Nonprofit.classCellHtml; },
+    // A line's class for the payload: the cell's choice, or none ("Same as
+    // header"), and the posting takes the memo's class, as an invoice line's
+    // does. The form has no job picker, so a line's job is set over the API.
+    lineClassFromRow(row) {
+        return row.querySelector('.line-class-fund') ? Nonprofit.fundFromRow(row, 'line-class') : null;
     },
 
     // One credit line, priced from the item the way an invoice line is.
@@ -148,6 +164,7 @@ const CreditMemosPage = {
         return `<tr data-cmline="${idx}">
                 <td><select class="line-item" onchange="CreditMemosPage.itemSelected(${idx})">${ItemQuickAdd.options(CreditMemosPage._items)}</select></td>
                 <td><input class="line-desc"></td>
+                ${CreditMemosPage.lineClasses() ? Nonprofit.classCellHtml('line-class', null) : ''}
                 <td><input class="line-qty" type="number" step="0.0001" value="1" oninput="CreditMemosPage.recalc()"></td>
                 <td><input class="line-rate money" type="number" step="0.0001" min="0" value="0" oninput="CreditMemosPage.recalc()"></td>
                 <td style="text-align:center"><input type="checkbox" class="line-taxable" title="Sales tax applies to this line" ${TaxDefault.checked()} onchange="CreditMemosPage.recalc()"></td>
@@ -217,6 +234,7 @@ const CreditMemosPage = {
                 quantity: parseFloat(row.querySelector('.line-qty')?.value) || 1,
                 rate: parseFloat(row.querySelector('.line-rate')?.value) || 0,
                 is_taxable: row.querySelector('.line-taxable') ? row.querySelector('.line-taxable').checked : null,
+                class_id: CreditMemosPage.lineClassFromRow(row),
                 line_order: i,
             });
         });
@@ -230,7 +248,7 @@ const CreditMemosPage = {
             lines,
         };
         if (!(await TxnWarn.ok(form))) return;
-        if (!(await ClassWarn.ok(form))) return;
+        if (!(await ClassWarn.ok(form, { rows: '#cm-lines tr', cls: 'line-class' }))) return;
         try {
             // $0.00 asks "Save it anyway?" first (SalesLines.sendAllowingZero)
             const saved = await SalesLines.sendAllowingZero(flags =>

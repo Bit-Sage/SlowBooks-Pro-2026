@@ -6,6 +6,7 @@
 import logging
 import re
 import smtplib
+from email.utils import getaddresses
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -47,42 +48,105 @@ def _get_smtp_settings(db: Session) -> dict:
 
 # Caps on one Cc or Bcc field. 254 is the longest address RFC 5321 lets
 # through; 50 copies is past any real send and keeps a pasted mailing list
-# from going out as one mail.
+# from going out as one mail (2.30.0 gate, check 20).
 MAX_ADDRESSES = 50
 MAX_ADDRESS_LENGTH = 254
 
 
+# An address the SMTP envelope will take: ASCII local@domain, no spaces or
+# header punctuation. A display name is accepted on input and dropped.
+_ADDR_SPEC = re.compile(r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9.-]+$")
+# The log columns are String(500); a pasted list longer than that is cut
+# there so the send's own log row can never fail the insert on PostgreSQL.
+LOG_ADDRESSES_MAX = 500
+
+
+# One entry of a typed list: a quoted display name may hold a comma, so the
+# split respects quotes. ("Smith, Bob" <bob@x.com>, carol@x.com)
+_ENTRY = re.compile(r'(?:"[^"]*"|[^,])+')
+
+
+def parse_addresses(value) -> tuple:
+    """(kept, rejected): ``value`` is a comma- or semicolon-separated string,
+    or a list, of addresses, each possibly with a display name. Kept entries
+    are bare addr-specs, deduplicated without regard to case, in order;
+    rejected ones are the entries that are not an address (non-ASCII,
+    malformed, or text left over from a header-injection attempt)."""
+    if not value:
+        return [], []
+    pieces = [value] if isinstance(value, str) else [str(v or "") for v in value]
+    entries = []
+    for piece in pieces:
+        # a semicolon is a separator to the people typing it; a CR/LF can
+        # only be an injection attempt, and what it carried is not an address
+        piece = piece.replace("\r", " ").replace("\n", " ").replace(";", ",")
+        entries.extend(" ".join(e.split()) for e in _ENTRY.findall(piece))
+    kept, rejected, seen = [], [], set()
+    for entry in entries:
+        if not entry:
+            continue
+        parsed = getaddresses([entry])
+        addr = parsed[0][1].strip() if len(parsed) == 1 else ""
+        if not _ADDR_SPEC.fullmatch(addr):
+            rejected.append(entry)
+            continue
+        if addr.lower() in seen:
+            continue
+        seen.add(addr.lower())
+        kept.append(addr)
+    return kept, rejected
+
+
 def clean_addresses(value, label: str = "address") -> list:
-    """Addresses typed as a comma- or semicolon-separated string, or given as
-    a list, with header-injection characters stripped and blanks and
-    duplicates dropped. Order is kept.
+    """The usable addresses in ``value`` (see parse_addresses), in order,
+    duplicates and anything that is not an address dropped.
 
     Raises ValueError, worded for the operator, when the field holds more
     than MAX_ADDRESSES or an address longer than MAX_ADDRESS_LENGTH;
     ``label`` names the field in that sentence ("Cc", "Bcc")."""
-    if not value:
-        return []
-    if isinstance(value, str):
-        parts = re.split(r"[,;]", value)
-    else:
-        parts = list(value)
-    out = []
-    for raw in parts:
-        addr = str(raw or "").replace("\r", "").replace("\n", "").strip()
-        if not addr:
-            continue
+    kept = parse_addresses(value)[0]
+    for addr in kept:
         if len(addr) > MAX_ADDRESS_LENGTH:
             raise ValueError(
                 f"A {label} address is too long: an email address is at most "
                 f"{MAX_ADDRESS_LENGTH} characters."
             )
-        if addr.lower() not in {a.lower() for a in out}:
-            out.append(addr)
-    if len(out) > MAX_ADDRESSES:
+    if len(kept) > MAX_ADDRESSES:
         raise ValueError(
             f"Too many {label} addresses: at most {MAX_ADDRESSES} on one email."
         )
-    return out
+    return kept
+
+
+def copy_lists(smtp: dict, cc=None, bcc=None) -> tuple:
+    """The Cc and Bcc lists a send carries: the typed copies merged with the
+    always-copy settings, each list cleaned once more so an address both
+    typed and in Settings is copied once (sb-qa, #611) and the caps apply to
+    the merged list, not the typed one alone (W-52, 2.31.0 gate). Raises
+    ValueError in a sentence naming the field and the limit; a route asks
+    before it renders anything and answers 400 with that sentence."""
+    cc_list = clean_addresses(
+        clean_addresses(cc, "Cc")
+        + clean_addresses(smtp.get("smtp_always_cc", ""), "Cc"),
+        "Cc",
+    )
+    bcc_list = clean_addresses(
+        clean_addresses(bcc, "Bcc")
+        + clean_addresses(smtp.get("smtp_always_bcc", ""), "Bcc"),
+        "Bcc",
+    )
+    return cc_list, bcc_list
+
+
+def bad_addresses(value) -> list:
+    """The pieces of ``value`` that cannot be sent to, for an error message."""
+    return parse_addresses(value)[1]
+
+
+def _clip(text, limit: int = LOG_ADDRESSES_MAX):
+    if text is None or len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def _without(addresses: list, taken: list) -> list:
@@ -123,18 +187,13 @@ def send_email(
     use_tls = smtp.get("smtp_use_tls", "true").lower() == "true"
 
     # Sanitize email headers to prevent injection
-    to_email = to_email.replace("\r", "").replace("\n", "").strip()
-    subject = subject.replace("\r", "").replace("\n", " ").strip()
+    to_email = (to_email or "").replace("\r", "").replace("\n", "").strip()
+    subject = (subject or "").replace("\r", "").replace("\n", " ").strip()
     # Routes taking typed copies check them first and answer 400; a list
     # over the cap reaching here (an always-copy setting, a caller that did
     # not check) is a failed send with the reason logged, never a crash.
     try:
-        cc_list = clean_addresses(cc, "Cc") + clean_addresses(
-            smtp.get("smtp_always_cc", ""), "Cc"
-        )
-        bcc_list = clean_addresses(bcc, "Bcc") + clean_addresses(
-            smtp.get("smtp_always_bcc", ""), "Bcc"
-        )
+        cc_list, bcc_list = copy_lists(smtp, cc, bcc)
     except ValueError as e:
         log = EmailLog(
             entity_type=entity_type or "",
@@ -152,14 +211,15 @@ def send_email(
     bcc_list = _without(bcc_list, [to_email] + cc_list)
     cc_text = ", ".join(cc_list) or None
     bcc_text = ", ".join(bcc_list) or None
+    log_cc, log_bcc = _clip(cc_text), _clip(bcc_text)
 
     if not host or not from_email:
         log = EmailLog(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
-            cc=cc_text,
-            bcc=bcc_text,
+            cc=log_cc,
+            bcc=log_bcc,
             subject=subject,
             status="failed",
             error_message="SMTP not configured",
@@ -204,8 +264,8 @@ def send_email(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
-            cc=cc_text,
-            bcc=bcc_text,
+            cc=log_cc,
+            bcc=log_bcc,
             subject=subject,
             status="sent",
         )
@@ -223,8 +283,8 @@ def send_email(
             entity_type=entity_type or "",
             entity_id=entity_id or 0,
             recipient=to_email,
-            cc=cc_text,
-            bcc=bcc_text,
+            cc=log_cc,
+            bcc=log_bcc,
             subject=subject,
             status="failed",
             error_message=str(e),

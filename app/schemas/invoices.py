@@ -193,6 +193,10 @@ class InvoiceResponse(BaseModel):
     # copy left off, as "Customer: Job" (a stored job from before the rule
     # that an invoice carries its own customer's jobs). Empty otherwise.
     jobs_left_off: list[str] = []
+    # Set by create and edit only (#642): a sentence for each stock item the
+    # sale took past what was on hand ("Widget: 2 on hand; this sale takes
+    # it to -4."). The sale posted; this says what it did. Empty otherwise.
+    warnings: list[str] = []
     is_sales_receipt: bool = False
     is_pledge: bool = False
     fair_value_amount: Optional[Decimal] = None

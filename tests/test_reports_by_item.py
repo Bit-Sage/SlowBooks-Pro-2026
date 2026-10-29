@@ -289,12 +289,13 @@ def test_cogs_and_margin_from_movements_for_tracked_only(client, data):
     d = client.get(f"/api/reports/sales-by-item?{PERIOD}").json()
     gadget = _row(d["items"], data["tracked"])
     # Sold 2 @ cost 10 = 20 COGS. The credit memo puts one back on the shelf
-    # with no COGS entry (post_return_for_credit_memo), so the P&L's COGS
-    # stays 20 and so does the report's. Margin = 50 amount − 20 = 30, 60%.
-    assert gadget["cogs"] == 20.0
-    assert gadget["gross_margin"] == 30.0
-    assert round(gadget["margin_pct"], 1) == 60.0
-    assert d["total_cogs"] == 20.0
+    # and its cost back on Inventory, off COGS (#641), at the average cost
+    # of 10 since it names no invoice, so COGS is 10, the P&L's figure.
+    # Margin = 50 amount − 10 = 40, 80%.
+    assert gadget["cogs"] == 10.0
+    assert gadget["gross_margin"] == 40.0
+    assert round(gadget["margin_pct"], 1) == 80.0
+    assert d["total_cogs"] == 10.0
 
     service = _row(d["items"], data["service"])
     assert service["cogs"] is None
