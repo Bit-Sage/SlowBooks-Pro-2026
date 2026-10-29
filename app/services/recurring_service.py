@@ -19,6 +19,7 @@ from app.models.invoices import Invoice, InvoiceLine
 from app.models.items import Item
 from app.services.jobs_service import own_job
 from app.services.numbering import next_invoice_number
+from app.services.sub_customers import invoice_addresses
 from app.services.accounting import (
     taxed_copy_lines,
     _q,
@@ -564,6 +565,12 @@ def _post_installment(
             ", ".join(left_off),
         )
 
+    # The payer's whole Bill To as of now (the property's street, name and
+    # country for a tenant billed with it) and the customer's own Ship To,
+    # through the helper every other new invoice uses. A generated invoice
+    # used to carry no street at all, so it printed a name alone.
+    addresses = invoice_addresses(db, rec.customer) if rec.customer else {}
+
     invoice = None
     invoice_number = None
     for _ in range(10):
@@ -571,6 +578,7 @@ def _post_installment(
         candidate = Invoice(
             invoice_number=invoice_number,
             customer_id=rec.customer_id,
+            **addresses,
             date=on,
             due_date=due_date,
             terms=rec.terms,

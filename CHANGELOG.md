@@ -138,8 +138,10 @@ at the upgrade). An invoice moved to another customer by an edit, a
 duplicate and an estimate converted to an invoice are billed as of that
 moment: the whole Bill To, street, name and country, is the payer's then
 (the property's for a tenant billed with it) and the ship-to the
-customer's. An edit can correct the invoice's addresses, and a duplicate is
-checked against the credit limit as a new invoice is. Every customer now
+customer's. Recurring invoices and a pay application's invoice, which used
+to carry no street and printed a name alone, are billed the same way. An
+edit can correct the invoice's addresses, and a duplicate is checked against
+the credit limit as a new invoice is. Every customer now
 answers `billed_balance`, what sits on its A/R, its own open documents plus
 those of the tenants billed with it, the figure its A/R Aging row shows; the
 Customer Center shows it as what a property owes, beside its own balance and

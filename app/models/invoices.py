@@ -163,10 +163,11 @@ def _freeze_bill_to(_mapper, connection, target):
     it: create, Duplicate, Convert and the QuickBooks Online carry-over set
     the whole Bill To with the street, through
     sub_customers.invoice_addresses, as an edit to another customer does.
-    One query on the customer and its parent, so every other path that
-    makes an invoice (the scheduler, progress billing, the IIF and
-    QuickBooks report importers, none of which writes a street) freezes
-    the same thing without each saying so."""
+    The scheduler's recurring invoices and a pay application's invoice
+    take it the same way. One query on the customer and its parent, so
+    every other path that makes an invoice (the IIF and QuickBooks report
+    importers, which write no street) freezes the same thing without each
+    saying so."""
     if target.bill_to_name is not None or target.customer_id is None:
         return
     freeze_bill_to(connection, target)

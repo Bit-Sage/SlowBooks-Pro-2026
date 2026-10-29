@@ -18,8 +18,9 @@ limit checked is the payer's (W-62); every tenant under its property
 shows its own name and Unit 2 beside Unit 1 is not a duplicate (W-69).
 
 Round 3: an invoice moved to another customer by an edit (W-72), a
-duplicate (W-73), a converted estimate (W-80) and an invoice carried over
-from QuickBooks Online take the payer's whole Bill To as of then, the
+duplicate (W-73), a converted estimate (W-80), an invoice carried over
+from QuickBooks Online, a generated recurring invoice and a pay
+application's invoice take the payer's whole Bill To as of then, the
 street with the name and country; an edit can correct the addresses; and
 a duplicate is checked against the credit limit (W-79).
 """
@@ -1734,3 +1735,109 @@ def test_an_open_invoice_carried_from_quickbooks_online_bills_the_payer(
             "For: Unit 4B",
         ]
     }
+
+
+def test_a_generated_recurring_invoice_prints_the_payers_whole_bill_to(
+    client, db_session, seed_accounts
+):
+    """The scheduler's invoices carried no street, so a recurring invoice
+    printed a name alone. It takes the payer's whole Bill To as of the day
+    it is generated, through the helper every new invoice uses: for a
+    tenant billed with its property, the property's street under its name
+    and country, "For:" the tenant, and the tenant's own ship-to; billed on
+    its own, its own street."""
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    r = client.put(f"/api/customers/{unit['id']}", json={"ship_address1": "Apt 4B"})
+    assert r.status_code == 200, r.text
+
+    def generated(cid, day):
+        r = client.post(
+            "/api/recurring",
+            json={
+                "customer_id": cid,
+                "frequency": "monthly",
+                "start_date": day,
+                "lines": [{"description": "Rent", "quantity": 1, "rate": 900}],
+            },
+        )
+        assert r.status_code == 201, r.text
+        out = client.post(f"/api/recurring/generate?as_of={day}").json()
+        assert out["invoices_created"] == 1, out
+        return db_session.get(Invoice, out["invoice_ids"][0])
+
+    inv = generated(unit["id"], "2026-09-01")
+    assert (inv.bill_to_customer_id, inv.bill_address1, inv.ship_address1) == (
+        maple["id"],
+        "12 Maple St",
+        "Apt 4B",
+    )
+    assert _printed(db_session, inv.id) == {
+        "Bill To": [
+            "Maple St",
+            "12 Maple St",
+            "Springfield, IL 62704",
+            "Canada",
+            "For: Unit 4B",
+        ],
+        "Ship To": ["Apt 4B"],
+    }
+    r = client.put(f"/api/customers/{unit['id']}", json={"bill_with_parent": False})
+    assert r.status_code == 200, r.text
+    own = generated(unit["id"], "2026-09-02")
+    assert _printed(db_session, own.id)["Bill To"] == [
+        "Unit 4B",
+        "12 Maple St, Apt 4B",
+        "Springfield",
+    ]
+
+
+def test_a_pay_applications_invoice_prints_the_payers_whole_bill_to(
+    client, db_session, seed_accounts
+):
+    """A pay application's invoice carried no street either; approving one
+    for a tenant billed with its property bills the property's street,
+    name and country, "For:" the tenant."""
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    r = client.post("/api/jobs", json={"customer_id": unit["id"], "name": "Lobby"})
+    assert r.status_code == 201, r.text
+    job = r.json()
+    r = client.put(
+        f"/api/jobs/{job['id']}/contract",
+        json={
+            "contract_type": "lump_sum",
+            "contract_amount": 10000,
+            "retainage_pct": 0,
+        },
+    )
+    assert r.status_code == 200, r.text
+    r = client.put(
+        f"/api/jobs/{job['id']}/sov",
+        json={
+            "lines": [{"description": "Tile", "kind": "work", "scheduled_value": 10000}]
+        },
+    )
+    assert r.status_code == 200, r.text
+    sov = client.get(f"/api/jobs/{job['id']}/contract").json()["sov"]
+    r = client.post(
+        "/api/pay-applications", json={"job_id": job["id"], "date": "2026-06-01"}
+    )
+    assert r.status_code == 201, r.text
+    app_id = r.json()["id"]
+    r = client.put(
+        f"/api/pay-applications/{app_id}",
+        json={
+            "lines": [{"sov_line_id": sov[0]["id"], "this_period": 2500, "stored": 0}]
+        },
+    )
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/pay-applications/{app_id}/approve")
+    assert r.status_code == 200, r.text
+    inv = db_session.get(Invoice, r.json()["invoice_id"])
+    assert (inv.bill_to_customer_id, inv.bill_address1) == (maple["id"], "12 Maple St")
+    assert _printed(db_session, inv.id)["Bill To"] == [
+        "Maple St",
+        "12 Maple St",
+        "Springfield, IL 62704",
+        "Canada",
+        "For: Unit 4B",
+    ]
