@@ -22,6 +22,7 @@ from app.services.terminology import document_reference
 
 ZERO_TOTAL_CODE = "zero_total"
 CREDIT_LIMIT_CODE = "credit_limit"
+MONEY_APPLIED_CODE = "money_applied"
 logger = logging.getLogger(__name__)
 
 
@@ -202,6 +203,137 @@ def refuse_due_before_date(doc_date: date | None, due_date: date | None) -> None
                 f"({_day(doc_date)}). Pick a due date on or after the invoice date."
             ),
         )
+
+
+def money_applied(db: Session, invoice) -> list[dict]:
+    """The payments and credit memos (a write-off is one) applied to an
+    invoice and still standing, oldest first, each as ``{kind, id,
+    number, customer_id, customer_name, date, amount}``: ``kind`` is
+    "payment", "credit_memo" or "write_off", ``customer_name`` whose money
+    it is ("Parent: Sub" for a sub-customer). A voided payment, or a
+    credit memo voided (which takes its applications off), is not on the
+    invoice any more."""
+    from sqlalchemy import or_
+
+    from app.models.credit_memos import (
+        CreditApplication,
+        CreditMemo,
+        CreditMemoStatus,
+    )
+    from app.models.payments import Payment, PaymentAllocation
+
+    found: dict = {}
+
+    def add(kind, doc, number, amount):
+        row = found.setdefault(
+            (kind, doc.id),
+            {
+                "kind": kind,
+                "id": doc.id,
+                "number": number,
+                "customer_id": doc.customer_id,
+                "customer_name": doc.customer.full_name if doc.customer else "",
+                "date": doc.date,
+                "amount": Decimal("0"),
+            },
+        )
+        row["amount"] += Decimal(str(amount or 0))
+
+    for payment, amount in (
+        db.query(Payment, PaymentAllocation.amount)
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+        .filter(
+            PaymentAllocation.invoice_id == invoice.id,
+            or_(Payment.is_voided.is_(False), Payment.is_voided.is_(None)),
+        )
+    ):
+        add("payment", payment, payment.check_number or payment.reference, amount)
+    for memo, amount in (
+        db.query(CreditMemo, CreditApplication.amount)
+        .join(CreditApplication, CreditApplication.credit_memo_id == CreditMemo.id)
+        .filter(
+            CreditApplication.invoice_id == invoice.id,
+            CreditMemo.status != CreditMemoStatus.VOID,
+        )
+    ):
+        kind = "write_off" if memo.is_write_off else "credit_memo"
+        add(kind, memo, memo.memo_number, amount)
+    return sorted(
+        (row for row in found.values() if row["amount"]),
+        key=lambda row: (row["date"], row["kind"] != "payment", row["id"]),
+    )
+
+
+def _money_phrase(row: dict) -> str:
+    amount = f"${row['amount']:,.2f}"
+    who = f"{row['customer_name']}'s" if row["customer_name"] else "a"
+    if row["kind"] == "payment":
+        return f"{who} payment of {amount} ({_day(row['date'])})"
+    noun = "write-off" if row["kind"] == "write_off" else "credit memo"
+    number = f" {row['number']}" if row["number"] else ""
+    return f"{who} {noun}{number} for {amount}"
+
+
+def refuse_moving_money(db: Session, invoice, moved_to, words) -> None:
+    """An edit may not move an invoice to another customer while a payment
+    or credit memo is applied to it (2.31.1 gate, round 3): moved, an
+    invoice Alpha paid went to Beta's statement with Alpha's payment on
+    it, and Alpha's statement still listed the payment, so both carried
+    it. Refused with 409 ``{"code": "money_applied", "message",
+    "applied"}``, the message naming each payment and credit, whose it is
+    and for how much, and the way out: void it, and enter it again where
+    it belongs, then move the invoice. The rule W-58 keeps for a tenant
+    while its parent's money is on its invoices, for every invoice. An
+    unpaid invoice moves; nothing is written by the refused request."""
+    from app.services.donor_documents import document_label
+    from app.services.terminology import document_reference
+
+    applied = money_applied(db, invoice)
+    paid = Decimal(str(invoice.amount_paid or 0))
+    if not applied and paid <= 0:
+        return
+    face = document_label(invoice, words)
+    noun = face.lower()
+    ref = document_reference(face, invoice.invoice_number)
+    what = f"{ref} cannot move to {moved_to.full_name}"
+    if applied:
+        phrases = [_money_phrase(row) for row in applied]
+        listed = (
+            phrases[0]
+            if len(phrases) == 1
+            else ", ".join(phrases[:-1]) + " and " + phrases[-1]
+        )
+        if len(applied) == 1:
+            kind = {"payment": "payment", "write_off": "write-off"}.get(
+                applied[0]["kind"], "credit memo"
+            )
+            undo = f"Void the {kind} first and enter it again where it belongs"
+        else:
+            undo = "Void them first and enter them again where they belong"
+        message = (
+            f"{what} while money is applied to it: {listed}. {undo}, then "
+            f"move the {noun}."
+        )
+    else:
+        message = (
+            f"{what} while money is applied to it: ${paid:,.2f} is paid on it. "
+            f"Void what was paid on it first, then move the {noun}."
+        )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": MONEY_APPLIED_CODE,
+            "message": message,
+            "applied": [
+                {
+                    **row,
+                    "date": row["date"].isoformat() if row["date"] else None,
+                    "amount": str(_q(row["amount"])),
+                }
+                for row in applied
+            ],
+        },
+    )
 
 
 def _due_date_from_terms(base_date: date, terms: str | None) -> date:

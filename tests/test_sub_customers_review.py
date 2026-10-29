@@ -25,7 +25,8 @@ street with the name and country; an edit can correct the addresses; and
 a duplicate is checked against the credit limit (W-79).
 
 Round 3's notes: the printed Ship To keeps the country frozen with its
-street.
+street; and an invoice with a payment or credit memo on it stays with its
+customer.
 """
 
 import csv
@@ -1852,7 +1853,8 @@ def test_a_pay_applications_invoice_prints_the_payers_whole_bill_to(
     ]
 
 
-# ── the 2.31.1 gate, round 3's notes: the Ship To's country ───────────
+# ── the 2.31.1 gate, round 3's notes: the Ship To's country, and a paid
+# invoice's move ────────────────────────────────────────────────────────
 
 
 def _preview_blocks(client, inv_id):
@@ -2104,3 +2106,112 @@ def test_the_ship_to_country_migration_backfills_from_each_invoices_own_customer
     assert "ship_to_country" not in names
     assert {"bill_to_name", "bill_to_country", "ship_address1"} <= names
     engine.dispose()
+
+
+def test_an_invoice_with_money_on_it_stays_with_its_customer(
+    client, db_session, seed_accounts
+):
+    """An invoice Alpha paid could be edited onto Beta, and Alpha's payment
+    then showed on both customers' statements. While a payment or credit
+    memo (a write-off is one) is applied to the invoice, a move is refused
+    (409 money_applied), the sentence naming each, whose it is and what to
+    do, and nothing changes; an edit that keeps the customer goes through.
+    Once the money is off it, voided, the invoice moves."""
+    alpha = _customer(client, "Alpha")
+    beta = _customer(client, "Beta SARL")
+    inv = _invoice(client, alpha["id"], 300, 1)
+    n = inv["invoice_number"]
+    pay = _payment(client, alpha["id"], 120, 5, [(inv["id"], 120)])
+    assert pay.status_code == 201, pay.text
+
+    def move(**extra):
+        return client.put(
+            f"/api/invoices/{inv['id']}", json={"customer_id": beta["id"], **extra}
+        )
+
+    r = move()
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "money_applied"
+    assert detail["message"] == (
+        f"Invoice #{n} cannot move to Beta SARL while money is applied to it: "
+        "Alpha's payment of $120.00 (Sep 5, 2026). Void the payment first and "
+        "enter it again where it belongs, then move the invoice."
+    )
+    assert [
+        (a["kind"], a["id"], a["customer_id"], a["amount"], a["date"])
+        for a in detail["applied"]
+    ] == [("payment", pay.json()["id"], alpha["id"], "120.00", "2026-09-05")]
+    # with other changes beside it, nothing of the edit is saved
+    r = move(notes="moved", lines=[{"description": "Rent", "quantity": 1, "rate": 400}])
+    assert r.status_code == 409, r.text
+    db_session.expire_all()
+    stored = db_session.get(Invoice, inv["id"])
+    assert (stored.customer_id, stored.bill_to_name, stored.notes) == (
+        alpha["id"],
+        "Alpha",
+        None,
+    )
+    assert stored.total == Decimal("300.00")
+    assert _statement(db_session, beta["id"])["lines"] == []
+    # an edit that keeps the customer (the form sends it as stored) is fine
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": alpha["id"], "notes": "thanks"},
+    )
+    assert r.status_code == 200, r.text
+
+    # a credit memo and a write-off are named too, oldest first
+    cm = _credit_memo(client, alpha["id"], 30, 6)
+    assert cm.status_code == 201, cm.text
+    cm = cm.json()
+    r = client.post(
+        f"/api/credit-memos/{cm['id']}/apply",
+        json={"invoice_id": inv["id"], "amount": 30},
+    )
+    assert r.status_code == 200, r.text
+    r = client.post(
+        f"/api/invoices/{inv['id']}/write-off",
+        json={"date": "2026-09-07", "amount": 20},
+    )
+    assert r.status_code == 201, r.text
+    wo = r.json()
+    r = move()
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["message"] == (
+        f"Invoice #{n} cannot move to Beta SARL while money is applied to it: "
+        f"Alpha's payment of $120.00 (Sep 5, 2026), Alpha's credit memo "
+        f"{cm['memo_number']} for $30.00 and Alpha's write-off "
+        f"{wo['memo_number']} for $20.00. Void them first and enter them again "
+        "where they belong, then move the invoice."
+    )
+    assert [a["kind"] for a in r.json()["detail"]["applied"]] == [
+        "payment",
+        "credit_memo",
+        "write_off",
+    ]
+
+    # the way out: off the invoice, it moves, billed as Beta is
+    assert client.post(f"/api/payments/{pay.json()['id']}/void").status_code == 200
+    for memo in (cm, wo):
+        r = client.post(f"/api/credit-memos/{memo['id']}/void")
+        assert r.status_code == 200, r.text
+    r = move()
+    assert r.status_code == 200, r.text
+    assert (r.json()["customer_id"], r.json()["bill_to_name"]) == (
+        beta["id"],
+        "Beta SARL",
+    )
+
+    # a tenant's invoice its property paid names the property's payment
+    maple, unit = _property_and_tenant(client)
+    rent = _invoice(client, unit["id"], 1000, 2)
+    assert _payment(client, maple["id"], 1000, 5, [(rent["id"], 1000)]).status_code == (
+        201
+    )
+    r = client.put(f"/api/invoices/{rent['id']}", json={"customer_id": beta["id"]})
+    assert r.status_code == 409, r.text
+    assert (
+        "while money is applied to it: Maple St's payment of $1,000.00 (Sep 5, 2026)."
+        in r.json()["detail"]["message"]
+    )

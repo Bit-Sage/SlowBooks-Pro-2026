@@ -31,6 +31,7 @@ from app.routes.invoices.helpers import (
     _compute_totals,
     _post_invoice_journal,
     kept_tax,
+    refuse_moving_money,
     refuse_negative_lines,
     _reverse_and_delete_journal,
     warn_or_refuse_oversell,
@@ -283,6 +284,10 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
 
 @router.put("/{invoice_id}", response_model=InvoiceResponse)
 def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(get_db)):
+    """Edit an invoice: what the request sends changes, what it leaves out
+    stays as stored. A move to another customer is refused (409
+    ``money_applied``) while a payment or credit memo is applied to the
+    invoice, naming each; an unpaid invoice moves."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -308,8 +313,20 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         data.model_dump(exclude_unset=True, exclude={"lines", "allow_zero_total"}),
     )
     if update_data.get("customer_id") not in (None, invoice.customer_id):
-        if db.get(Customer, update_data["customer_id"]) is None:
+        moved_to = db.get(Customer, update_data["customer_id"])
+        if moved_to is None:
             raise HTTPException(status_code=404, detail="Customer not found")
+        # The money on an invoice stays with its customer (round 3). Read
+        # under the row lock a payment takes: a payment landing now is
+        # either seen here or waits for the move.
+        invoice = (
+            db.query(Invoice)
+            .filter(Invoice.id == invoice_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        refuse_moving_money(db, invoice, moved_to, words)
     # What the edit changes — the customer, the header's job, a line's job —
     # must leave the invoice on its customer's jobs (NEW-36); what it leaves
     # alone is not judged, so a note saved over a job the user didn't touch
