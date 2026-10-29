@@ -1679,3 +1679,52 @@ def test_an_estimate_converted_for_a_billed_tenant_bills_the_property_street_and
         "12 Maple St, Apt 4B",
         "Springfield",
     ]
+
+
+def test_an_open_invoice_carried_from_quickbooks_online_bills_the_payer(
+    client, db_session, seed_accounts
+):
+    """The QuickBooks Online export's carried-over open invoices copied the
+    customer's own street; for a tenant already on file billed with its
+    property, the name and country frozen were the property's, so the
+    invoice printed the property over the tenant's street. They take the
+    payer's Bill To through the same helper as every new invoice."""
+    from app.models.accounts import Account, AccountType
+    from app.services import qbo_export_import as qbo
+
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    db_session.add(
+        Account(
+            name="Accounts Receivable (A/R)",
+            account_type=AccountType.ASSET,
+            balance=Decimal("0"),
+        )
+    )
+    db_session.commit()
+    plan = {
+        "receivable": "Accounts Receivable (A/R)",
+        "invoices": [
+            {
+                "customer": "Maple St:Unit 4B",
+                "num": "1044",
+                "date": date(2026, 9, 1),
+                "due_date": date(2026, 10, 1),
+                "open": Decimal("250.00"),
+                "amount": Decimal("250.00"),
+            }
+        ],
+        "payments": [],
+    }
+    assert qbo._import_carried(db_session, plan) == (1, 0)
+    db_session.commit()
+    inv = db_session.query(Invoice).filter(Invoice.invoice_number == "1044").one()
+    assert (inv.customer_id, inv.bill_to_customer_id) == (unit["id"], maple["id"])
+    assert _printed(db_session, inv.id) == {
+        "Bill To": [
+            "Maple St",
+            "12 Maple St",
+            "Springfield, IL 62704",
+            "Canada",
+            "For: Unit 4B",
+        ]
+    }
