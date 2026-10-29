@@ -55,28 +55,25 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.30 — Construction from estimate to pay application, and reports on a
-cash basis.** A construction company runs a job from the estimate (packages
-and sections, allowances, alternates, unit prices, markups) through the
-contract and its schedule of values, buyout and commitments with retainage,
-change orders (owner, sub and potential, numbered per job), progress billing
-with retainage held and released, lien waivers, and the job reports: WIP with
-its adjusting entry, cost to complete, the change-order log and commitment
-status (#550–#556). Reports run on a cash basis: a basis on every ledger
-line, cash recognised at payment, and the P&L, Balance Sheet, Trial Balance,
-General Ledger, P&L Detail and Sales Tax switch between the company default,
-accrual and cash (#483). The Trial Balance shows balance-sheet accounts at
-their balance as of the end date (#597). Online payments post to a clearing
-account per provider with the fee, and a payout is recorded and matched to
-the bank feed (#583, #584). Account numbers are optional on the chart (#567),
-vendors search and show a payment history (#569), the register keeps the last
-entry's date and links the payee to a vendor (#566, #590), one deposit can
-carry several donors (#606), email takes Cc and Bcc (#611), the company
-records its legal entity type with the equity accounts and returns to match
-(#488), a bill's memo prints on the check and Pay Bills prints its checks
-in one go (#602, #603), and the desktop window zooms (#597).
+**v2.31 — Split expenses, lines that move, and stock that comes back.** An
+expense splits across several accounts, each line with its own job, cost
+code, class and billable mark, and the check stub lists every line (#599);
+every line form moves a line up or down, drags it, and inserts one in the
+middle (#604); Enter Bill shows the vendor's balance, last bills and
+payments and notes beside the form (#601); a register entry takes
+attachments (#600). A credit memo's lines take their own class and job
+(#640), a return puts the cost back with the quantity, at the original
+sale's cost when the memo names the invoice (#641), an item of your own can
+carry a negative price as a discount (#639), and a sale past what is on hand
+says so, or is refused by a setting (#642). The statements hide zero
+balances on request (#625), each piece of a pay run posts to an account you
+choose, with net pay able to wait in 2300 Payroll Liabilities (#620), the
+job reports read a timestamp on the local day (#644), Cc and Bcc addresses
+are read the way a mail program reads them (#611), the Windows installer
+replaces the program file on a same-version reinstall (#643), and About
+credits the artists from the community art repo (#635).
 
-Patch releases and everything before 2.30 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.31 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -91,7 +88,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (719 operations in v2.30.0) — built for Claude
+self-documenting local REST API (721 operations in v2.31.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

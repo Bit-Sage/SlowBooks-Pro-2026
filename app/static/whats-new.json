@@ -1,4 +1,15 @@
 {
+  "2.31.0": {
+    "title": "Split expenses, lines that move, and stock that comes back",
+    "items": [
+      "An expense splits across several accounts, each line with its own job, cost code, class and billable mark; the printed check's stub lists every line.",
+      "Every line form moves a line up or down, drags it, and inserts a line in the middle; Enter Bill shows the vendor's balance, last bills and payments and notes beside the form; a register entry takes attachments.",
+      "A credit memo's lines take their own class and job, and a return puts the cost back with the quantity, at the original sale's cost when the memo names the invoice.",
+      "An item of your own can carry a negative price as a discount, and a sale of more than is on hand says so in the response and the form, or is refused by a new setting.",
+      "The Profit & Loss, Balance Sheet, Trial Balance and P&L Detail can hide zero balances; each piece of a pay run posts to an account you choose, and net pay can wait in 2300 Payroll Liabilities.",
+      "Job reports read a timestamp on the local day, Cc and Bcc addresses are read the way a mail program reads them, a same-version reinstall on Windows replaces the program file, and About credits the artists."
+    ]
+  },
   "2.30.0": {
     "title": "Construction from estimate to pay application, and reports on a cash basis",
     "items": [
