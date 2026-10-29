@@ -68,6 +68,18 @@ naming the item and how many short, with nothing posted. The Items page
 shows a count below zero in the warning colour with a note saying what it
 means, and the item's form, Adjust and History say it in words.
 
+**Hide zero balances on the statements** (#625, from Discussion #354). The
+Profit & Loss and the Balance Sheet already left out an account with no
+activity, but one that had activity and nets to $0.00 for the period, or a
+Balance Sheet account that ends at $0.00, still printed. The Profit & Loss,
+the Balance Sheet, the Trial Balance and the P&L Detail now have a Hide zero
+balances checkbox (`hide_zero=true` on the report, its PDF and its CSV) that
+leaves those accounts out, a parent whose every sub-account is zero with
+them. The totals are the same either way, and the choice rides on the
+address, the saved report and the PDF and CSV links the way the Basis choice
+does. On the Trial Balance a row goes when both of its columns are empty, so
+each column still adds up to its total. Off unless asked for.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry

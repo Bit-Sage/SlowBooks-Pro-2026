@@ -21,6 +21,7 @@ from app.routes.reports._router import router
 from app.routes.reports.financial import (
     _EXCLUDE_ADJUSTING,
     _BASIS_QUERY,
+    _HIDE_ZERO,
     _SORT_QUERY,
     _account_order,
     _chart_index,
@@ -32,6 +33,7 @@ from app.routes.reports.financial import (
     _money,
     _pdf_response,
     _pl_section_of,
+    _with_figures,
     pl_totals,
 )
 from app.services import cash_basis
@@ -73,14 +75,18 @@ def profit_loss_detail(
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     """Every posted line under each P&L account for the period (#477), in
     the P&L's sections and order. `sections` has each section's accounts
     with their lines; `tree` the same as printed rows, sub-accounts beneath
     their parents (statement_layout.family_rows); the totals are the
-    P&L's own keys. `basis` (#483): accrual or cash, else the company's."""
+    P&L's own keys. `basis` (#483): accrual or cash, else the company's.
+    `hide_zero` (#625) leaves out an account whose lines net to nothing,
+    its lines with it; the totals are the P&L's either way."""
     basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     exclude_adjusting = _flag(exclude_adjusting)
+    hide_zero = _flag(hide_zero)
     sort = sort if isinstance(sort, str) else "number"
     class_id = class_id if isinstance(class_id, int) else None
     job_id = job_id if isinstance(job_id, int) else None
@@ -109,6 +115,10 @@ def profit_loss_detail(
     sections = {key: [] for key in PL_SECTIONS}
     for block in sorted(blocks.values(), key=order):
         sections[block["section"]].append(block)
+    # the totals from every account, before a zero one goes (#625)
+    totals = pl_totals(*(sections[k] for k in PL_SECTIONS))
+    if hide_zero:
+        sections = {key: _with_figures(lines) for key, lines in sections.items()}
 
     section_of = {aid: _pl_section_of(row[3], row[4]) for aid, row in chart.items()}
     accounts = account_chart(index=chart)
@@ -133,10 +143,12 @@ def profit_loss_detail(
         "exclude_adjusting": bool(exclude_adjusting),
         "basis": basis,
         "basis_note": cash_basis.receivable_note(db, end_date, basis),
+        "hide_zero": bool(hide_zero),
         "sections": sections,
         "tree": tree,
-        "line_count": sum(len(b["entries"]) for b in blocks.values()),
-        **pl_totals(*(sections[k] for k in PL_SECTIONS)),
+        # the lines printed: a hidden account's go with it
+        "line_count": sum(len(b["entries"]) for s in sections.values() for b in s),
+        **totals,
     }
     data["has_other_income"] = _has_other(sections["other_income"])
     data["has_other_expense"] = _has_other(sections["other_expense"])
@@ -192,6 +204,8 @@ def detail_scope(data: dict, t) -> str:
         words.append(f"{t('Job')}: {data['job_name']} only")
     if data.get("exclude_adjusting"):
         words.append("adjusting entries left out")
+    if data.get("hide_zero"):
+        words.append("zero balances hidden")
     return ", ".join(words)
 
 
@@ -314,6 +328,7 @@ def profit_loss_detail_pdf(
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     data = profit_loss_detail(
         start_date,
@@ -324,6 +339,7 @@ def profit_loss_detail_pdf(
         sort=sort,
         exclude_adjusting=exclude_adjusting,
         basis=basis,
+        hide_zero=hide_zero,
     )
     t = terms_from_db(db)
     return _pdf_response(
@@ -345,6 +361,7 @@ def profit_loss_detail_csv_route(
     sort: str = _SORT_QUERY,
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     from app.services.ledger_exports import profit_loss_detail_csv
 
@@ -357,6 +374,7 @@ def profit_loss_detail_csv_route(
         sort=sort,
         exclude_adjusting=exclude_adjusting,
         basis=basis,
+        hide_zero=hide_zero,
     )
     t = terms_from_db(db)
     return _csv_download(
