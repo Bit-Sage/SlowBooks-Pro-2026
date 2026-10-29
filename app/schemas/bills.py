@@ -223,6 +223,12 @@ class BillResponse(BaseModel):
     # read it to flag a Sub's missing W-9 or expired COI.
     vendor_compliance: Optional[VendorCompliance] = None
     created_at: Optional[datetime] = None
+    # Set by void and edit only (W-67, the shape of an invoice's #642
+    # warnings): a sentence for each stock item the reversal of the bill's
+    # receipts took past what was on hand ("Widget: 2 on hand; this void
+    # takes it to -3."). The void or edit posted; this says what it did.
+    # Empty otherwise.
+    warnings: list[str] = []
     model_config = {"from_attributes": True}
 
 

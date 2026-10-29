@@ -77,7 +77,7 @@ def confirm_zero_total(
     )
 
 
-def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
+def warn_or_refuse_oversell(db, lines, before=(), action: str = "sale") -> list[str]:
     """A sale of more of a stock item than is on hand (#642). The sale
     posts whatever the count is, as it always has (some businesses enter
     the receiving bill after the sale), and the count went below zero with
@@ -89,19 +89,25 @@ def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
     invoice's stored lines on an edit, so only what the edit adds counts.
     Called before anything is written, so the refused request writes
     nothing."""
-    from app.services.inventory_hooks import (
-        oversell_refusal,
-        oversell_warning,
-        oversold_items,
-    )
+    from app.services.inventory_hooks import oversold_items
+
+    return warn_or_refuse_shorts(db, oversold_items(db, lines, before), action)
+
+
+def warn_or_refuse_shorts(db, shorts, action: str = "sale") -> list[str]:
+    """The sentences for stock items already found short (oversold_items'
+    shape), or the 422 when Settings says to refuse. A bill's void and edit
+    find their shorts from the bill's receipts (oversold_by_reversal, W-67)
+    and say "this void" or "this edit" in place of "this sale"; the refusal
+    says what to do about that one."""
+    from app.services.inventory_hooks import oversell_refusal, oversell_warning
     from app.services.settings_service import refuse_oversell
 
-    shorts = oversold_items(db, lines, before)
     if not shorts:
         return []
     if refuse_oversell(db):
-        raise HTTPException(status_code=422, detail=oversell_refusal(shorts))
-    return [oversell_warning(s) for s in shorts]
+        raise HTTPException(status_code=422, detail=oversell_refusal(shorts, action))
+    return [oversell_warning(s, action) for s in shorts]
 
 
 def confirm_credit_limit(

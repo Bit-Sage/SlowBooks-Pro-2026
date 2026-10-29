@@ -19,6 +19,13 @@
 #                              the inventory-side JE separately so services
 #                              on the same bill still hit their expense accts)
 #       Sale (via invoice):   DR COGS              CR Inventory Asset
+#   - A count below zero (stock sold ahead of its receipt) is carried at the
+#     average of the time. Stock coming in fills that hole first, and the
+#     difference between what the units sold ahead were costed at and what
+#     they cost now goes to cost of goods under the document that brought
+#     the stock in (#647's receiving side, W-60); what is left past the hole
+#     is stock at its own price. _append_at_cost posts it; _append_movement
+#     never posts anything.
 # ============================================================================
 
 import logging
@@ -129,19 +136,34 @@ def _pool_after(
     ledger's Inventory and quantity x average stay one figure (W-50, 2.31.0
     gate).
 
-    The residue is the value such a take-out leaves between the two where
-    no average can carry it (#647): the pool's value less the cost taken out
-    when the count lands on zero (the average goes to zero with it), the
-    shortfall when the cost taken out is more than the pool held (the
-    average is held at zero rather than going below it), and the cost's
-    distance from the average when the count is below zero (the average is
-    kept). Positive, the ledger holds more than quantity x average;
-    negative, less. Zero for every other movement: the rounding of a
-    four-place average is not a residue, and a receipt blends in.
+    The residue is the value a movement leaves between the two where no
+    average can carry it (#647). For such a take-out: the pool's value less
+    the cost taken out when the count lands on zero (the average goes to
+    zero with it), the shortfall when the cost taken out is more than the
+    pool held (the average is held at zero rather than going below it), and
+    the cost's distance from the average when the count is below zero (the
+    average is kept). For stock coming in while the count is below zero
+    (W-60, 2.31.1 gate): the units sold ahead were costed at the average of
+    the time, and the stock fills that hole first, so the residue is the
+    hole filled times the cost's distance from that average; what is left
+    past the hole is stock at its own cost, the new average (the count
+    landing on zero zeroes the average, as a take-out's does). Positive,
+    the ledger holds more than quantity x average; negative, less. Zero for
+    every other movement: the rounding of a four-place average is not a
+    residue, and a receipt into stock on hand blends in.
     """
     new_qty = old_qty + quantity
     residue = Decimal("0")
-    if quantity > 0 and new_qty > 0:
+    if quantity > 0 and old_qty < 0:
+        filled = min(quantity, -old_qty)
+        residue = filled * (unit_cost - old_avg)
+        if new_qty > 0:
+            new_avg = quantize_to(unit_cost, COST_Q)
+        elif new_qty == 0:
+            new_avg = Decimal("0")
+        else:
+            new_avg = old_avg
+    elif quantity > 0 and new_qty > 0:
         new_avg = quantize_to(
             ((old_qty * old_avg) + (quantity * unit_cost)) / new_qty,
             COST_Q,
@@ -180,7 +202,7 @@ def _append_movement(
     """
     # Update running balances BEFORE writing the row so balance_* reflects
     # the post-movement state (standard ledger convention). The average is
-    # _pool_after's; the residue it reports is reverse_at_cost's to post,
+    # _pool_after's; the residue it reports is _append_at_cost's to post,
     # never this row's.
     old_qty = Decimal(str(item.quantity_on_hand or 0))
     old_avg = Decimal(str(item.avg_cost or 0))
@@ -221,6 +243,13 @@ def record_purchase(
     """Record an inventory receipt. Posts DR Inventory / CR Accounts Payable
     when post_journal=True. Callers that already include the inventory line
     in their own balanced JE should pass post_journal=False.
+
+    Either way the entry carries quantity x unit_cost on Inventory. A
+    receipt into a count below zero fills the hole first, and what the
+    units sold ahead cost beyond what they were costed at is posted to the
+    item's cost of goods account under (source_type, source_id), dated
+    txn_date (_append_at_cost, W-60), so afterwards Inventory in the ledger
+    reads quantity x average cost.
 
     Returns the movement row (or None if the item isn't inventory-tracked).
     """
@@ -263,7 +292,7 @@ def record_purchase(
             )
             txn_id = txn.id
 
-    return _append_movement(
+    return _append_at_cost(
         db,
         item,
         MovementType.PURCHASE,
@@ -271,6 +300,7 @@ def record_purchase(
         unit_cost=unit_cost,
         source_type=source_type,
         source_id=source_id,
+        txn_date=txn_date,
         transaction_id=txn_id,
         memo=memo,
     )
@@ -443,7 +473,11 @@ def record_adjustment(
 
     quantity_delta can be positive (increase stock) or negative (decrease).
     If post_journal=True, books a one-sided JE to an "Inventory Adjustment"
-    expense account if #5900 exists, otherwise to COGS.
+    expense account if #5900 exists, otherwise to COGS, and what the pool
+    cannot carry of a unit_cost of its own (a count up into a count below
+    zero fills the hole first, W-60; a count down at a cost of its own that
+    empties the shelf, #647) goes to the item's cost of goods account under
+    the adjustment (_append_at_cost).
     """
     if not item.track_inventory:
         return None
@@ -511,7 +545,19 @@ def record_adjustment(
             )
             txn_id = txn.id
 
-    return _append_movement(
+    if not post_journal:
+        return _append_movement(
+            db,
+            item,
+            MovementType.ADJUSTMENT,
+            quantity=quantity_delta,
+            unit_cost=unit_cost,
+            source_type="adjustment",
+            source_id=item.id,
+            transaction_id=txn_id,
+            memo=memo,
+        )
+    return _append_at_cost(
         db,
         item,
         MovementType.ADJUSTMENT,
@@ -519,8 +565,10 @@ def record_adjustment(
         unit_cost=unit_cost,
         source_type="adjustment",
         source_id=item.id,
+        txn_date=txn_date,
         transaction_id=txn_id,
         memo=memo,
+        entry_memo="Inventory adjustment",
     )
 
 
@@ -726,6 +774,11 @@ def reverse_sale(
     Looks up the original SALE movement by (source_type, source_id) and
     uses its unit_cost. Falls back to current avg_cost if we can't find
     the original (legacy rows, manual corrections) but logs the fact.
+
+    Stock coming back into a count below zero fills the hole first (W-60):
+    what the units sold ahead were costed at beyond the sale's cost comes
+    back out of the item's cost of goods account under the reversal
+    (_append_at_cost), so Inventory reads quantity x average cost after.
     """
     if not item.track_inventory:
         return None
@@ -796,10 +849,7 @@ def reverse_sale(
 
     last = None
     for q, c, _cogs, _asset, mv in pieces:
-        last = _append_movement(
-            db,
-            item,
-            MovementType.VOID,
+        piece = dict(
             quantity=q,
             unit_cost=c,
             source_type=source_type,
@@ -808,6 +858,17 @@ def reverse_sale(
             memo="Sale reversal" if mv is not None else _BEYOND_POSTINGS_MEMO,
             reverses_movement_id=mv.id if mv is not None else None,
         )
+        if post_journal:
+            last = _append_at_cost(
+                db,
+                item,
+                MovementType.VOID,
+                txn_date=txn_date,
+                entry_memo="Sale reversal",
+                **piece,
+            )
+        else:
+            last = _append_movement(db, item, MovementType.VOID, **piece)
     return last
 
 
@@ -883,11 +944,15 @@ def _post_residue(
     txn_date,
     memo: Optional[str],
 ) -> Optional[int]:
-    """Post what a take-out at a cost of its own left between the ledger's
+    """Post what a movement at a cost of its own left between the ledger's
     Inventory and quantity x average (_pool_after's residue, #647), under the
     caller's source: Dr Cost of Goods Sold / Cr Inventory for value left
-    with no stock to carry it, Dr Inventory / Cr Cost of Goods Sold for a
-    take-out worth more than the stock held. The cost side is the item's
+    with no stock to carry it (a take-out that empties the shelf, stock into
+    a count below zero that cost more than the units sold ahead were costed
+    at), Dr Inventory / Cr Cost of Goods Sold for the reverse (a take-out
+    worth more than the stock held, stock into the hole that cost less). The
+    entry is "{memo} - Inventory set to quantity x average cost: {item}",
+    so a drill-down says why it is there. The cost side is the item's
     COGS account (its own, else the chart's) and the asset side the item's
     inventory account, where a sale of the item would post today. Returns
     the entry's id, or None when there is nothing to post or no account to
@@ -972,27 +1037,66 @@ def reverse_at_cost(
     the ledger reads quantity x average cost, 0.00 with nothing on hand.
     Used by a bill's void and edit (reverse_receipts_for_bill, #646) and a
     credit memo's void (reverse_return_for_credit_memo, #641)."""
-    quantity = Decimal(str(quantity))
-    unit_cost = Decimal(str(movement.unit_cost or 0))
+    return _append_at_cost(
+        db,
+        item,
+        MovementType.VOID,
+        quantity=-Decimal(str(quantity)),
+        unit_cost=Decimal(str(movement.unit_cost or 0)),
+        source_type=source_type,
+        source_id=source_id,
+        txn_date=txn_date,
+        transaction_id=transaction_id,
+        memo=memo,
+        reverses_movement_id=movement.id,
+    )
+
+
+def _append_at_cost(
+    db: Session,
+    item: Item,
+    movement_type: MovementType,
+    quantity: Decimal,
+    unit_cost: Decimal,
+    source_type: str,
+    source_id: int,
+    txn_date=None,
+    transaction_id: Optional[int] = None,
+    memo: Optional[str] = None,
+    reverses_movement_id: Optional[int] = None,
+    entry_memo: Optional[str] = None,
+) -> InventoryMovement:
+    """One movement at a cost of its own, and what the pool cannot carry of
+    it posted under the caller's source (#647, both ways): the residue
+    _pool_after reports goes Dr Cost of Goods Sold / Cr Inventory or the
+    reverse (_post_residue), so afterwards Inventory in the ledger reads
+    quantity x average cost. The caller's own entry carries quantity x
+    unit_cost on Inventory (a bill's lines, a void's reversing entry, a
+    sale's reversal, a memo's return, an adjustment's). _append_movement
+    stays journal-free; this is the one place a movement's residue is
+    posted. `entry_memo` names the residue entry where the movement's memo
+    would not (an adjustment's memo is the user's)."""
     _new_qty, _new_avg, residue = _pool_after(
         Decimal(str(item.quantity_on_hand or 0)),
         Decimal(str(item.avg_cost or 0)),
-        -quantity,
+        quantity,
         unit_cost,
     )
     mv = _append_movement(
         db,
         item,
-        MovementType.VOID,
-        quantity=-quantity,
+        movement_type,
+        quantity=quantity,
         unit_cost=unit_cost,
         source_type=source_type,
         source_id=source_id,
         transaction_id=transaction_id,
         memo=memo,
-        reverses_movement_id=movement.id,
+        reverses_movement_id=reverses_movement_id,
     )
-    _post_residue(db, item, residue, source_type, source_id, txn_date, memo)
+    _post_residue(
+        db, item, residue, source_type, source_id, txn_date, entry_memo or memo
+    )
     return mv
 
 

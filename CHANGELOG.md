@@ -32,7 +32,23 @@ lands the count on zero, or is worth more than the stock holds, left the
 difference sitting in Inventory. That difference is now posted to the item's
 cost of goods account (its own, else the chart's) under the void or edit that
 caused it, so Inventory reads quantity x average cost afterwards, 0.00 with
-nothing on hand.
+nothing on hand. The receiving side is covered as well: stock that comes in
+while the count is below zero (sold ahead of its receipt) first fills that
+hole, and the difference between what the units sold ahead were costed at and
+what they cost now goes to the same cost of goods account under the bill, so
+bill 5 at 10.00, invoice 8, bill 3 at 14.00 leaves 0 on hand, Inventory 0.00
+and the 12.00 difference in cost of goods, where it used to leave 12.00 in
+Inventory with nothing on the shelf; a receipt bigger than the hole is stock
+at its own price past it, and a sale's void, a credit memo's return and a
+count adjustment up fill the hole the same way. A bill's void or edit that
+takes stock already sold below zero now says so in the response's `warnings`
+("Widget: 2 on hand; this void takes it to -3."), the way a sale past the
+stock does, and the Bills page shows it as a toast; with Refuse a sale of
+more than is on hand turned on, the void or edit is refused naming the item
+and the shortfall, with nothing posted. Each reversal movement names the
+receipt it reverses ("VOID Bill B-2 line 2") and the movements API carries
+`reverses_movement_id`, so the two reversals of a two-line bill no longer
+read the same.
 
 **Sub-customers with parent billing** (#638, from Discussion #633). A customer
 can now sit under another, one level deep, the way QuickBooks spells

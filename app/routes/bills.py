@@ -190,7 +190,7 @@ def _post_bill_lines(
         record_purchase,
     )
 
-    inv_receipts = []  # [(item, quantity, unit_cost), ...]
+    inv_receipts = []  # [(item, quantity, unit_cost, line number), ...]
 
     # Round per line so stored BillLine.amount matches compute_line_totals
     # and the JE debit lands on the same cents as the rounded AP credit.
@@ -236,6 +236,7 @@ def _post_bill_lines(
                         unit_cost_with_tax(
                             amt, tax_shares[i], line_data.quantity, line_data.rate
                         ),
+                        i + 1,
                     )
                 )
         elif amt > 0 or line_data.account_id:
@@ -336,8 +337,11 @@ def _post_bill_lines(
         bill.transaction_id = txn.id
 
     # Phase 11: record inventory movements (no additional JE — the bill's
-    # existing JE already debits the Inventory Asset account for these lines)
-    for item, qty, unit_cost in inv_receipts:
+    # existing JE already debits the Inventory Asset account for these lines;
+    # a receipt into a count below zero posts what the hole cost under the
+    # bill, W-60). The memo names the line, so a reversal can name the
+    # receipt it reverses (W-68).
+    for item, qty, unit_cost, line_no in inv_receipts:
         record_purchase(
             db,
             item,
@@ -345,7 +349,7 @@ def _post_bill_lines(
             unit_cost=unit_cost,
             source_type="bill",
             source_id=bill.id,
-            memo=f"Bill {bill.bill_number}",
+            memo=f"Bill {bill.bill_number} line {line_no}",
             post_journal=False,
             txn_date=txn_date,
         )
@@ -789,6 +793,19 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         if txn:
             check_closing_date(db, txn.date)
 
+    # The old receipts come out and the new lines go in (below): a net take
+    # past what is on hand is said in the response, or refused with the
+    # setting on, the way a sale past the stock is (W-67), before anything
+    # is written.
+    stock_warnings: list[str] = []
+    if needs_repost:
+        from app.routes.invoices.helpers import warn_or_refuse_shorts
+        from app.services.inventory_hooks import oversold_by_reversal
+
+        stock_warnings = warn_or_refuse_shorts(
+            db, oversold_by_reversal(db, bill, effective_lines), "edit"
+        )
+
     renumbered = number != bill.bill_number or vendor.id != bill.vendor_id
     for key, val in update_data.items():
         setattr(bill, key, val)
@@ -834,7 +851,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
             bill,
             source_type="bill_edit",
             txn_date=bill.date,
-            memo=f"Edit Bill {bill.bill_number}: previous receipt reversed",
+            memo="Edit {receipt}: previous receipt reversed",
         )
         _post_bill_lines(
             db,
@@ -881,6 +898,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
     resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
+    resp.warnings = stock_warnings
     return resp
 
 
@@ -907,6 +925,14 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     # closing date like invoice/payment/journal voids already do, or a bill
     # can be reversed into a locked period.
     check_closing_date(db, bill.date)
+
+    # The receipts still in stock come back out: past what is on hand, the
+    # void says so in the response, or is refused with the setting on, the
+    # way a sale past the stock is (W-67), before anything is written.
+    from app.routes.invoices.helpers import warn_or_refuse_shorts
+    from app.services.inventory_hooks import oversold_by_reversal
+
+    stock_warnings = warn_or_refuse_shorts(db, oversold_by_reversal(db, bill), "void")
 
     reversal_id = None
     if bill.transaction_id:
@@ -941,7 +967,7 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         bill,
         source_type="bill_void",
         txn_date=bill.date,
-        memo=f"VOID Bill {bill.bill_number}",
+        memo="VOID {receipt}",
         transaction_id=reversal_id,
     )
 
@@ -987,4 +1013,5 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
         resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
+    resp.warnings = stock_warnings
     return resp
