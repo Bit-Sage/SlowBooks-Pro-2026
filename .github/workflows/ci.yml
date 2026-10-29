@@ -115,6 +115,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Keep Defender's real-time scan off the test tree
+        # The suite is file-bound here (SQLite company files, migrations
+        # walked on a real file, PDFs): Defender scanning every write is
+        # what made this job take 30 to 40 minutes. The exclusions cover the
+        # checkout, the runner's temp (pytest's tmp_path) and the Python
+        # install; the runner is thrown away after the job.
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE", "$env:RUNNER_TEMP", (Split-Path -Parent (Get-Command python).Source)
+          (Get-MpPreference).ExclusionPath
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -241,9 +251,11 @@ jobs:
           # in the log rather than guessed at. The timeout is generous because
           # the alembic migration tests walk 36 migrations against a real file
           # and take ~3 s on Linux but far longer here — a Windows runner's
-          # file I/O with real-time scanning is the difference. 300 s catches a
-          # genuine hang without failing an honestly slow test.
-          pytest -q --timeout=300 --tb=short | Tee-Object -Variable out
+          # file I/O with real-time scanning was the difference before the
+          # Defender exclusions above. 120 s catches a genuine hang without
+          # failing an honestly slow test (the slowest test here is well under
+          # a minute).
+          pytest -q --timeout=120 --tb=short | Tee-Object -Variable out
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $line = ($out | Select-String -Pattern '\d+ passed').Line
           Write-Host "summary: $line"
