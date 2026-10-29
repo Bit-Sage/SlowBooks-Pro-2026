@@ -488,6 +488,183 @@ def record_adjustment(
     )
 
 
+def _returned_against(db: Session, sale_ids: list) -> dict:
+    """Per sale posting id: the quantity that credit memo returns naming it
+    have put back, net of the voids that took those returns out again (a
+    memo's void names each RETURN_IN it reverses, #641)."""
+    out = {sale_id: Decimal("0") for sale_id in sale_ids}
+    returns = (
+        db.query(
+            InventoryMovement.id,
+            InventoryMovement.reverses_movement_id,
+            InventoryMovement.quantity,
+        )
+        .filter(
+            InventoryMovement.movement_type == MovementType.RETURN_IN,
+            InventoryMovement.reverses_movement_id.in_(sale_ids),
+        )
+        .all()
+    )
+    if not returns:
+        return out
+    voided = dict(
+        db.query(
+            InventoryMovement.reverses_movement_id,
+            func.coalesce(func.sum(InventoryMovement.quantity), 0),
+        )
+        .filter(
+            InventoryMovement.movement_type == MovementType.VOID,
+            InventoryMovement.reverses_movement_id.in_([r[0] for r in returns]),
+        )
+        .group_by(InventoryMovement.reverses_movement_id)
+        .all()
+    )
+    for return_id, sale_id, quantity in returns:
+        out[sale_id] += Decimal(str(quantity or 0)) + Decimal(
+            str(voided.get(return_id, 0) or 0)
+        )
+    return out
+
+
+def _sale_postings_left(
+    db: Session,
+    item: Item,
+    original_source_type: str,
+    original_source_id: int,
+    count_returns: bool = False,
+) -> list:
+    """The SALE movements a document posted for the item, newest first, each
+    with the quantity it has left: [(movement, left), ...], empty when the
+    document posted none.
+
+    An invoice can hold more than one SALE movement for the item (each
+    quantity-up edit adds one) and, since #622, they can sit on different
+    accounts at different costs. Each posting's remainder is what earlier
+    reversals that name it left; reversals from before the link existed
+    name nothing, so their total is taken off the oldest postings first
+    (such a reversal predates every posting made after it, so it can only
+    have consumed the postings of its day; postings were all on 5000 back
+    then, so for an install with no newer posting nothing changes). With
+    `count_returns`, a credit memo's return that names the posting (#641)
+    counts as taken too, net of a void of that memo.
+    """
+    originals = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.item_id == item.id,
+            InventoryMovement.source_type == original_source_type,
+            InventoryMovement.source_id == original_source_id,
+            InventoryMovement.movement_type == MovementType.SALE,
+        )
+        .order_by(InventoryMovement.id.desc())
+        .all()
+    )
+    if not originals:
+        return []
+    void_q = db.query(func.coalesce(func.sum(InventoryMovement.quantity), 0)).filter(
+        InventoryMovement.item_id == item.id,
+        InventoryMovement.movement_type == MovementType.VOID,
+    )
+    unattributed = Decimal(
+        str(
+            void_q.filter(
+                InventoryMovement.source_id == original_source_id,
+                InventoryMovement.source_type.in_(
+                    (f"{original_source_type}_void", f"{original_source_type}_edit")
+                ),
+                InventoryMovement.reverses_movement_id.is_(None),
+                or_(
+                    InventoryMovement.memo.is_(None),
+                    InventoryMovement.memo != _BEYOND_POSTINGS_MEMO,
+                ),
+            ).scalar()
+            or 0
+        )
+    )
+    taken = {
+        mv.id: Decimal(
+            str(
+                void_q.filter(InventoryMovement.reverses_movement_id == mv.id).scalar()
+                or 0
+            )
+        )
+        for mv in originals
+    }
+    if count_returns:
+        for sale_id, returned in _returned_against(db, list(taken)).items():
+            taken[sale_id] += returned
+    left = {}
+    for mv in reversed(originals):
+        room = max(abs(Decimal(str(mv.quantity))) - taken[mv.id], Decimal("0"))
+        legacy = min(room, unattributed)
+        unattributed -= legacy
+        left[mv.id] = room - legacy
+    return [(mv, left[mv.id]) for mv in originals]
+
+
+def sale_pieces(
+    db: Session,
+    item: Item,
+    quantity: Decimal,
+    original_source_type: Optional[str] = None,
+    original_source_id: Optional[int] = None,
+    count_returns: bool = False,
+) -> list:
+    """How `quantity` coming back comes off the sale postings of a document:
+    one piece per posting, newest first, as (quantity, unit_cost,
+    cogs_account_id, asset_account_id, sale movement), at the posting's own
+    cost and against the accounts its entry used (None for either when it
+    posted none). What the postings cannot cover, or all of it when no
+    document is named, is a last piece at the current avg_cost with no
+    accounts and no movement, for the caller to place. Used by a sale's
+    reversal (reverse_sale) and a credit memo's return (#641).
+    """
+    pieces = []
+    remaining = quantity
+    postings = []
+    if original_source_type and original_source_id:
+        postings = _sale_postings_left(
+            db, item, original_source_type, original_source_id, count_returns
+        )
+        for mv, left in postings:
+            if remaining <= 0:
+                break
+            if left <= 0:
+                continue
+            take = min(left, remaining)
+            cogs_id, asset_id = _sale_entry_accounts(db, mv)
+            pieces.append(
+                (take, Decimal(str(mv.unit_cost or 0)), cogs_id, asset_id, mv)
+            )
+            remaining -= take
+    if remaining > 0:
+        if postings:
+            logger.warning(
+                "%s of %s #%s for item %s exceeds its sale postings; "
+                "the remainder is costed at avg_cost",
+                remaining,
+                original_source_type,
+                original_source_id,
+                item.id,
+            )
+        pieces.append((remaining, Decimal(str(item.avg_cost or 0)), None, None, None))
+    return pieces
+
+
+def return_cost_accounts(db: Session, item: Item, piece) -> tuple:
+    """(asset_account_id, cogs_account_id) a returned piece's cost goes back
+    on (#641): the accounts the sale posting's entry used; a posting that
+    put no entry on the books could only have gone to the chart's COGS
+    account, never the item's (as reverse_sale falls back); a piece with no
+    posting (no invoice named, or more than its postings cover) goes where
+    a sale of the item would post today. Either may be None."""
+    _quantity, _cost, cogs_id, asset_id, sale = piece
+    asset_id = asset_id or get_inventory_asset_account_id(db, item)
+    if sale is None:
+        return asset_id, get_cogs_account_id(db, item)
+    return asset_id, cogs_id or get_cogs_account_id(db)
+
+
 def reverse_sale(
     db: Session,
     item: Item,
@@ -521,100 +698,14 @@ def reverse_sale(
     if quantity <= 0:
         return None
 
-    # The reversal comes off where the sale went on. An invoice can hold more
-    # than one SALE movement for the item (each quantity-up edit adds one)
-    # and, since #622, they can sit on different accounts at different costs.
-    # Each posting's remainder is what earlier reversals that name it left;
-    # reversals from before this release name nothing, so their total is
-    # taken off the newest postings first (the order they were made in).
-    # Walk the postings newest first, one reversal movement per piece, at the
-    # piece's own cost, against the piece's own accounts (sb-qa). With no
-    # original to match: current avg_cost and the chart's accounts, as before.
-    pieces = (
-        []
-    )  # (quantity, unit_cost, cogs_account_id, asset_account_id, sale movement)
-    remaining = quantity
-    originals = []
-    if original_source_type and original_source_id:
-        originals = (
-            db.query(InventoryMovement)
-            .filter(
-                InventoryMovement.item_id == item.id,
-                InventoryMovement.source_type == original_source_type,
-                InventoryMovement.source_id == original_source_id,
-                InventoryMovement.movement_type == MovementType.SALE,
-            )
-            .order_by(InventoryMovement.id.desc())
-            .all()
-        )
-        void_q = db.query(
-            func.coalesce(func.sum(InventoryMovement.quantity), 0)
-        ).filter(
-            InventoryMovement.item_id == item.id,
-            InventoryMovement.movement_type == MovementType.VOID,
-        )
-        unattributed = Decimal(
-            str(
-                void_q.filter(
-                    InventoryMovement.source_id == original_source_id,
-                    InventoryMovement.source_type.in_(
-                        (f"{original_source_type}_void", f"{original_source_type}_edit")
-                    ),
-                    InventoryMovement.reverses_movement_id.is_(None),
-                    or_(
-                        InventoryMovement.memo.is_(None),
-                        InventoryMovement.memo != _BEYOND_POSTINGS_MEMO,
-                    ),
-                ).scalar()
-                or 0
-            )
-        )
-        linked_taken = {
-            mv.id: Decimal(
-                str(
-                    void_q.filter(
-                        InventoryMovement.reverses_movement_id == mv.id
-                    ).scalar()
-                    or 0
-                )
-            )
-            for mv in originals
-        }
-        # A reversal from before the link existed predates every posting made
-        # after it, so it can only have consumed the postings of its day:
-        # allocate it oldest-first (sb-qa). Postings were all on 5000 back
-        # then, so for an install with no newer posting nothing changes.
-        legacy_taken = {}
-        for mv in reversed(originals):
-            room = abs(Decimal(str(mv.quantity))) - linked_taken[mv.id]
-            legacy_taken[mv.id] = max(min(room, unattributed), Decimal("0"))
-            unattributed -= legacy_taken[mv.id]
-        for mv in originals:
-            if remaining <= 0:
-                break
-            available = (
-                abs(Decimal(str(mv.quantity)))
-                - linked_taken[mv.id]
-                - legacy_taken[mv.id]
-            )
-            if available <= 0:
-                continue
-            take = min(available, remaining)
-            cogs_id, asset_id = _sale_entry_accounts(db, mv)
-            pieces.append(
-                (take, Decimal(str(mv.unit_cost or 0)), cogs_id, asset_id, mv)
-            )
-            remaining -= take
-    if remaining > 0:
-        if originals:
-            logger.warning(
-                "reverse_sale: %s of %s for item %s exceeds its sale postings; "
-                "the remainder is reversed at avg_cost",
-                remaining,
-                original_source_type,
-                item.id,
-            )
-        pieces.append((remaining, Decimal(str(item.avg_cost or 0)), None, None, None))
+    # The reversal comes off where the sale went on: one piece per sale
+    # posting at its own cost, against its own accounts (sb-qa; sale_pieces
+    # does the walk), and with no original to match, the current avg_cost
+    # and the chart's accounts, as before. A credit memo's return (#641) is
+    # not counted against the postings here: a sale voided after a return
+    # still comes off its posting in full, at its cost, so the sale, the
+    # return and their voids cancel to the cent.
+    pieces = sale_pieces(db, item, quantity, original_source_type, original_source_id)
 
     txn_id = None
     if post_journal:

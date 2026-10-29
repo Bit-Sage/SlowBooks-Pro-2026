@@ -7,6 +7,22 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A credit memo that takes stock back puts its cost back too** (#641, from
+Discussion #633). A credit memo for a returned stock item put the quantity
+back on the shelf but posted nothing for its cost, so Inventory and Cost of
+Goods Sold kept the sale's cost after the goods were back. The return now
+posts the cost of what came back, Dr Inventory / Cr Cost of Goods Sold, in
+one entry per memo that the stock movement links to. When the memo names the
+invoice it credits, the cost is the original sale's, taken off that invoice's
+sale postings newest first and put back on the accounts those postings used,
+even if the item's cost or accounts have changed since; a memo naming no
+invoice uses the item's average cost and the item's accounts. Voiding the memo
+reverses the entry and the movement together. The Profit & Loss's cost of
+goods and Sales by Item's COGS column both net the return, so the margin on a
+sale that was partly returned is what it should be. Returns posted before this
+release stay as they are: one journal entry moving the cost from Cost of Goods
+Sold to Inventory corrects a past return.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
