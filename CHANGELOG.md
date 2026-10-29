@@ -195,9 +195,12 @@ the item's *Expense or COGS Account* said, so the Profit & Loss showed it as
 "Direct postings to Cost of Goods Sold" instead of under the sub-account. The
 sale, its void, and a QuickBooks Online document that becomes ours now post to
 the item's account when it is a cost-of-goods account; an item with no account
-or an expense-typed one posts to 5000 as before. Entries already posted stay
-where they are: one journal entry moving them from 5000 to the right
-sub-account cleans up history.
+or an expense-typed one posts to 5000 as before. A void or a quantity-down edit
+reverses each sale posting against the accounts it went to, at its own cost,
+even if the item's accounts changed in between: one reversal movement per
+posting, naming it (`inventory_movements.reverses_movement_id`, migration
+`b8d4f2a6c1e3`). Entries already posted stay where they are: one journal entry
+moving them from 5000 to the right sub-account cleans up history.
 
 **CC and BCC on email** (#611, from Discussion #607, @PeterRichardsonGolf).
 The Email Invoice dialog now has CC and BCC boxes, comma-separated. Settings →

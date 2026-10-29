@@ -121,6 +121,12 @@ class InventoryMovement(Base):
         Integer, ForeignKey("transactions.id"), nullable=True
     )  # COGS/inventory JE
     memo = Column(Text, nullable=True)
+    # A VOID movement names the SALE movement it reverses (#622), so a later
+    # reversal knows exactly what each posting has left and comes off the
+    # same accounts at the same cost. Null on rows from before 2.30.
+    reverses_movement_id = Column(
+        Integer, ForeignKey("inventory_movements.id"), nullable=True, index=True
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
