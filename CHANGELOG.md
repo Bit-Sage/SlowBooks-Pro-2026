@@ -7,6 +7,16 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Cc and Bcc addresses are read the way a mail program reads them** (#611,
+@ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
+display name is dropped, so the Cc header carries bare addresses; an entry
+that is not an address (non-ASCII, malformed, or text left over from a
+header-injection attempt) refuses the send (400) or the settings save (422)
+naming it, rather than sending to a guess; an address both typed and in the
+always-copy settings is copied once; the always-copy settings are stored
+normalised, at most 500 characters of addresses; and the log row is cut to
+its column so a long list can never fail the send's own log entry.
+
 **Move lines and insert one in the middle of a document** (#604, from
 Discussion #595). On an invoice a line could only be added at the end or
 removed, so a missed line meant removing and re-keying everything below it.
