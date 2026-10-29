@@ -381,14 +381,19 @@ const PayrollPage = {
 
     async process(id) {
         if (!confirm('Process this pay run? This will create journal entries.')) return;
-        // Net pay leaves the bank account (1000) when the run is processed;
-        // ask first if that would overdraw it, as expenses and Pay Bills do
-        // (macbase1: payroll took Checking to -$2,986.90 without a word).
+        // Net pay leaves the net pay account when the run is processed: the
+        // one chosen under Settings → Payroll Accounts (#620), 1000 Checking
+        // when none is. Ask first if that would overdraw it, as expenses and
+        // Pay Bills do (macbase1: payroll took Checking to -$2,986.90 without
+        // a word). A liability chosen there (wages paid later) is not a bank,
+        // so there is nothing to ask.
         let stale = null;
         try {
             const run = await API.get(`/payroll/${id}`);
             stale = run.stale_reason;
-            if (!(await Overdraft.confirm(null, Number(run.total_net) || 0, '1000', 'Process'))) return;
+            const chosen = (typeof App !== 'undefined' && App.settings && App.settings.payroll_net_pay_account_id) || '';
+            const netPayAcct = chosen ? Number(chosen) : null;
+            if (!(await Overdraft.confirm(netPayAcct, Number(run.total_net) || 0, '1000', 'Process'))) return;
         } catch (e) { /* a failed lookup never blocks processing */ }
         // A draft figured before an employee's opening YTD changed (#433):
         // say so, and process it as figured only when asked to; otherwise

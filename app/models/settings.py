@@ -213,6 +213,21 @@ DEFAULT_SETTINGS = {
     "ach_immediate_origin": "",
     "ach_company_id": "",
     "ach_company_account": "",
+    # Where a pay run posts (#620): the account id for each piece, "" for the
+    # seeded account it always used (services/payroll_accounts.py holds the
+    # table). Net pay takes a bank account or a liability such as 2300
+    # Payroll Liabilities, for wages paid later; the two expenses take an
+    # expense or cost of goods sold account; each payable a liability.
+    "payroll_net_pay_account_id": "",
+    "payroll_wages_account_id": "",
+    "payroll_employer_tax_account_id": "",
+    "payroll_federal_withholding_account_id": "",
+    "payroll_state_withholding_account_id": "",
+    "payroll_social_security_account_id": "",
+    "payroll_medicare_account_id": "",
+    "payroll_futa_account_id": "",
+    "payroll_suta_account_id": "",
+    "payroll_other_deductions_account_id": "",
     # Phase 10: Late Fee Automation
     "late_fee_enabled": "false",
     "late_fee_rate": "1.5",

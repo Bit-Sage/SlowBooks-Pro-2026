@@ -132,6 +132,22 @@ def get_unreadable_secrets(db: Session = Depends(get_db)):
     return {"keys": unreadable_secret_keys(db)}
 
 
+@router.get("/payroll-accounts")
+def get_payroll_accounts(db: Session = Depends(get_db)):
+    """Where each piece of a pay run posts (#620): the pieces in posting
+    order (net pay, gross wages, employer payroll taxes, each payable), each
+    with its settings key, the account chosen for it (`chosen`, "" for the
+    default), the seeded account it posts to when none is chosen
+    (`default`), what it takes in words (`wanted`), and `problem`, the
+    sentence that says why a chosen account no longer works; plus
+    `choices`, per kind (bank, liability, expense), the active accounts a
+    piece of that kind may be pointed at. The Settings page draws its
+    Payroll Accounts pickers from this."""
+    from app.services import payroll_accounts
+
+    return payroll_accounts.describe(db)
+
+
 def _guard_closing_period(request: Request, db: Session, fields: dict):
     """The closing-date lock is only a control if the principal it constrains
     cannot switch it off. A token could previously clear closing_date, post
@@ -250,6 +266,32 @@ def _guard_clearing_accounts(db: Session, cleaned: dict) -> None:
                 )
 
 
+def _guard_payroll_accounts(db: Session, cleaned: dict) -> None:
+    """A chosen payroll posting account (#620) must exist, be active and be
+    a kind the piece takes: a bank account or a liability for net pay, an
+    expense or cost of goods sold account for wages and employer taxes, a
+    liability that is not a credit card or a control account for each
+    payable. Refused with a 400 saying so at save, rather than a pay run
+    that posts somewhere wrong later. "" clears the choice (the seeded
+    default); the table is services/payroll_accounts.py."""
+    from app.models.accounts import Account
+    from app.services import payroll_accounts
+
+    for key, value in cleaned.items():
+        piece = payroll_accounts.PIECE_BY_KEY.get(key)
+        if piece is None or not value:
+            continue
+        acct_id = payroll_accounts.parse_id(value)
+        if acct_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The {piece.label} account id must be a number.",
+            )
+        problem = payroll_accounts.account_problem(db.get(Account, acct_id), piece, db)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+
+
 def _clearing_off_warnings(db: Session, cleaned: dict) -> list[str]:
     """Turning a provider's clearing off while its clearing account still
     holds money is allowed, with a warning (#584): payouts stay available
@@ -339,6 +381,7 @@ def update_settings(
             detail=" ".join(problems) + " Nothing was saved.",
         )
     _guard_clearing_accounts(db, cleaned)
+    _guard_payroll_accounts(db, cleaned)
     # The "Taxed as" select is hidden for a non-LLC but the form still submits
     # its last value; drop a stale election so it never lingers (#488).
     if "llc_tax_election" in cleaned:
