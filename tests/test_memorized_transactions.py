@@ -1403,14 +1403,23 @@ def test_a_cadence_word_takes_no_interval(client, seed_accounts):
         f"/api/memorized/{mem['id']}",
         json={"frequency": "every two weeks", "interval": 2},
     )
-    assert r.status_code == 422 and "every two weeks takes no interval" in r.text
+    assert r.status_code == 422
+    assert "every two weeks takes no interval" in r.json()["detail"].lower()
     got = client.get(f"/api/memorized/{mem['id']}").json()
     assert (got["frequency"], got["interval"]) == ("weekly", 2)
-    for word in ("twice a year", "quarterly", "semimonthly", "bimonthly", "annually"):
+    for word in (
+        "twice a year",
+        "twice a month",
+        "quarterly",
+        "semimonthly",
+        "bimonthly",
+        "annually",
+    ):
         r = client.put(
             f"/api/memorized/{mem['id']}", json={"frequency": word, "interval": 2}
         )
-        assert r.status_code == 422 and f"{word} takes no interval" in r.text, word
+        assert r.status_code == 422, word
+        assert f"{word} takes no interval" in r.json()["detail"].lower(), word
     # the word with no interval, or 1, is the count it carries
     r = client.put(
         f"/api/memorized/{mem['id']}", json={"frequency": "twice a year", "interval": 1}
@@ -2004,3 +2013,80 @@ def test_twice_a_month_takes_one_or_none_and_names_itself_otherwise(
         "Twice a month takes no interval; for every N months use monthly with "
         "an interval."
     ]
+
+
+def test_an_edit_refused_says_one_plain_sentence(client, seed_accounts):
+    """W-77: an edit the create rules refuse answered the validator's dump
+    of the whole request ("1 validation error for MemorizedCreate ...
+    input_value={...}"). It answers one plain sentence now, the first
+    error's message with the field named in words, as a create's refusal
+    reads on the page."""
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(client, vendor_id, seed_accounts)
+    url = f"/api/memorized/{mem['id']}"
+    cadence = {"frequency": "every two weeks", "interval": 2}
+    created = client.post(
+        "/api/memorized",
+        json={
+            "kind": "bill",
+            "name": "New",
+            "start_date": "2026-01-05",
+            "vendor_id": vendor_id,
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+            **cadence,
+        },
+    )
+    assert created.status_code == 422
+    for body, sentence in (
+        (
+            cadence,
+            "Every two weeks takes no interval; for every N weeks use weekly "
+            "with an interval.",
+        ),
+        ({"name": "   "}, "Name may not be blank."),
+        ({"mode": "later"}, None),
+        (
+            {"end_date": "2026-01-01"},
+            "The end date (2026-01-01) is before the first date (2026-01-31).",
+        ),
+        (
+            {"lines": [{"account_id": seed_accounts["6500"].id, "amount": -5}]},
+            "Line 1: Amount must be non-negative; use a vendor credit for refunds.",
+        ),
+    ):
+        r = client.put(url, json=body)
+        assert r.status_code == 422, (body, r.text)
+        detail = r.json()["detail"]
+        assert isinstance(detail, str), detail
+        for dump in ("validation error", "input_value", "pydantic", "[type="):
+            assert dump not in detail, (body, detail)
+        assert detail[0].isupper() and detail.endswith("."), detail
+        if sentence:
+            assert detail == sentence, detail
+    # the same sentence the create's refusal gives the page
+    assert client.put(url, json=cadence).json()["detail"] == (
+        created.json()["detail"][0]["message"]
+    )
+    # and a create's refusal of a line no longer carries the line's dump
+    r = client.post(
+        "/api/memorized",
+        json={
+            "kind": "bill",
+            "name": "New",
+            "frequency": "monthly",
+            "start_date": "2026-01-05",
+            "vendor_id": vendor_id,
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": -5}],
+        },
+    )
+    assert r.status_code == 422
+    assert [e["message"] for e in r.json()["detail"]] == [
+        "Line 1: Amount must be non-negative; use a vendor credit for refunds."
+    ]
+    assert (
+        client.put(url, json={"mode": "later"})
+        .json()["detail"]
+        .startswith("Mode must be auto")
+    )
+    got = client.get(url).json()
+    assert got["name"] == "Electric bill" and got["end_date"] is None

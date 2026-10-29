@@ -12,6 +12,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -47,6 +48,7 @@ from app.services.memorized_service import (
     schedule_rows,
     status_of,
 )
+from app.services.validation_messages import plain_message
 
 router = APIRouter(prefix="/api/memorized", tags=["memorized"])
 
@@ -284,6 +286,10 @@ def update_memorized(mem_id: int, data: MemorizedUpdate, db: Session = Depends(g
         whole[key] = value
     try:
         checked = MemorizedCreate(**whole)
+    except ValidationError as e:
+        # one plain sentence, as a create's refusal reads on the page, not
+        # the validator's dump of the whole request (2.31.1 gate W-77)
+        raise HTTPException(status_code=422, detail=plain_message(e.errors()[0]))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     _check_with_books(db, checked)
