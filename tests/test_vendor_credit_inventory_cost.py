@@ -124,7 +124,7 @@ def test_a_credit_into_a_count_below_zero_posts_its_distance_from_the_average(
     own, residue = _entries(db_session, "vendor_credit", credit["id"])
     assert move.transaction_id == own.id
     assert _sides(own) == _ap_and_inventory(seed_accounts, "14.00")
-    assert residue.description == _residue_memo("Return to vendor: VC-0001")
+    assert residue.description == _residue_memo("Vendor credit VC-0001 line 1")
     assert str(residue.date) == "2026-04-20"  # the credit's date
     debits, credits = _sides(residue)
     assert debits == {seed_accounts["1300"].id: Decimal("4.00")}
@@ -188,7 +188,7 @@ def test_a_credit_voided_back_into_a_count_below_zero_fills_the_hole_at_its_cost
     reversal, residue = _entries(db_session, "vendor_credit_void", credit["id"])
     debits, credits = _sides(reversal)  # the mirror of the credit's own entry
     assert (credits, debits) == _ap_and_inventory(seed_accounts, "24.00")
-    assert residue.description == _residue_memo("VOID Vendor Credit VC-0001")
+    assert residue.description == _residue_memo("VOID Vendor credit VC-0001 line 1")
     assert str(residue.date) == "2026-04-20"
     debits, credits = _sides(residue)
     assert debits == {seed_accounts["5000"].id: Decimal("5.00")}
@@ -237,7 +237,7 @@ def test_a_credit_that_empties_the_shelf_for_more_than_it_cost_leaves_inventory_
     )
     own, residue = _entries(db_session, "vendor_credit", credit["id"])
     assert _sides(own) == _ap_and_inventory(seed_accounts, "60.00")
-    assert residue.description == _residue_memo("Return to vendor: VC-0001")
+    assert residue.description == _residue_memo("Vendor credit VC-0001 line 1")
     debits, credits = _sides(residue)
     assert debits == {seed_accounts["1300"].id: Decimal("10.00")}
     assert credits == {seed_accounts["5000"].id: Decimal("10.00")}
@@ -417,10 +417,10 @@ def test_the_void_names_each_return_it_reverses(
         (r["movement_type"], r["memo"], r["reverses_movement_id"]) for r in rows
     ] == [
         ("purchase", "Bill B-1 line 1", None),
-        ("return_out", "Return to vendor: VC-0001", None),
-        ("return_out", "Return to vendor: VC-0001", None),
-        ("void", "VOID Vendor Credit VC-0001", first.id),
-        ("void", "VOID Vendor Credit VC-0001", second.id),
+        ("return_out", "Vendor credit VC-0001 line 1", None),
+        ("return_out", "Vendor credit VC-0001 line 2", None),
+        ("void", "VOID Vendor credit VC-0001 line 1", first.id),
+        ("void", "VOID Vendor credit VC-0001 line 2", second.id),
     ]
     assert _on_hand(db_session, item.id) == Decimal("10")
     assert _average(db_session, item.id) == Decimal("10.0000")

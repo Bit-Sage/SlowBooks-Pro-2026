@@ -374,7 +374,9 @@ def reverse_returns_for_vendor_credit(
             source_id=vendor_credit.id,
             txn_date=date_to_use,
             transaction_id=transaction_id,
-            memo=f"VOID Vendor Credit {vendor_credit.credit_number}",
+            # "VOID Vendor credit VC-0001 line 2": the return's own memo, so
+            # each reversal names the line it reverses (W-68's rule for bills)
+            memo="VOID " + (mv.memo or f"Vendor credit {vendor_credit.credit_number}"),
         )
 
 

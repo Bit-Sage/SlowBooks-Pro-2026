@@ -169,7 +169,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
         )
 
     journal_lines = []
-    returns = []  # [(item, quantity, unit_cost), ...] for inventory lines
+    returns = []  # [(item, quantity, unit_cost, line_no), ...] for inventory lines
 
     # Round per line so the stored line amount matches compute_line_totals
     # and the credits land on the same cents as the rounded A/P debit.
@@ -214,6 +214,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                         unit_cost_with_tax(
                             amt, tax_shares[i], line_data.quantity, line_data.rate
                         ),
+                        i + 1,
                     )
                 )
         elif amt > 0 or line_data.account_id:
@@ -287,7 +288,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
         from app.models.items import MovementType
         from app.services.inventory_service import _append_at_cost
 
-        for item, qty, unit_cost in returns:
+        for item, qty, unit_cost, line_no in returns:
             # Negative quantity: the goods went back to the vendor. Costed at
             # what the credit took off Inventory (the line's rate with its
             # share of the tax), not avg_cost, so a bill and the credit that
@@ -305,7 +306,9 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                 source_id=vc.id,
                 txn_date=data.date,
                 transaction_id=txn.id,
-                memo=f"Return to vendor: {vc.credit_number}",
+                # names the credit's line, so the void's reversal of each
+                # return can say which one it is (as bills do, W-68)
+                memo=f"Vendor credit {vc.credit_number} line {line_no}",
             )
 
     db.commit()
