@@ -7,7 +7,7 @@ every customer from before this release stays a top-level one billed on its
 own. downgrade drops the columns.
 
 Revision ID: c1e5a7b9d2f4
-Revises: b8d4f2a6c1e3
+Revises: d2f7a9c4e6b1
 Create Date: 2026-10-28
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "c1e5a7b9d2f4"
-down_revision: Union[str, None] = "b8d4f2a6c1e3"
+down_revision: Union[str, None] = "d2f7a9c4e6b1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

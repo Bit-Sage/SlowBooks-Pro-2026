@@ -533,4 +533,6 @@ def test_the_migration_follows_the_head():
     cfg.set_main_option("script_location", str(ROOT / "migrations"))
     script = ScriptDirectory.from_config(cfg)
     assert len(script.get_heads()) == 1
-    assert script.get_revision("c1e5a7b9d2f4").down_revision == "b8d4f2a6c1e3"
+    assert (
+        script.get_revision("c1e5a7b9d2f4").down_revision == "d2f7a9c4e6b1"
+    )  # 2.31.0's head
