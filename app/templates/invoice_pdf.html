@@ -97,8 +97,10 @@
                 {% if inv.bill_address2 %}{{ inv.bill_address2 }}<br>{% endif %}
                 {% set bill_city = city_line(inv.bill_city, inv.bill_state, inv.bill_zip) %}
                 {% if bill_city %}{{ bill_city }}<br>{% endif %}
-                {# The invoice keeps no country of its own; a customer abroad prints theirs. #}
-                {% if inv.bill_address1 or bill_city %}{% set bill_country = country_line(inv.customer.bill_country if inv.customer else None) %}{% if bill_country %}{{ bill_country }}<br>{% endif %}{% endif %}
+                {# The invoice keeps no country of its own; the billed customer's prints
+                   (bill_to_country from invoice_pdf_context: the parent's when the
+                   invoice is billed to the parent, #638), a customer abroad theirs. #}
+                {% if inv.bill_address1 or bill_city %}{% set bill_country = country_line(bill_to_country if bill_to_country is defined else (inv.customer.bill_country if inv.customer else None)) %}{% if bill_country %}{{ bill_country }}<br>{% endif %}{% endif %}
                 {% if bill_to_for %}For: {{ bill_to_for }}{% endif %}
             </div>
         </div>

@@ -32,7 +32,23 @@ statements and collection letters go to the parent, and the parent's payments
 apply to the sub-customer's invoices. Without it a sub-customer is billed and
 aged on its own. The IIF import asks whether a file's Customer:Job names are
 sub-customers or jobs (jobs, as before, unless told), and the QuickBooks
-Online export's "Parent:Sub" customers come in as parent and sub-customer.
+Online export's "Parent:Sub" customers come in as parent and sub-customer. A
+name in an imported file is read the way QuickBooks spells it: a bare name is
+a top-level customer, never a tenant that happens to share it, so a file's
+"Smith" does not post to "Oak St:Smith" and "Smith:Unit 2" never makes a
+third level; a three-level name is imported one level deep and the import
+says so. A statement's payment and credit lines are what relieved the
+invoices on it, whoever paid, so a tenant's own statement shows the
+property's payment that paid its rent and reads what the tenant owes, and
+while the property's money is on a tenant's open invoices, Bill with parent
+stays on. A property is not made inactive while a tenant billed with it
+still owes (the 409 says what is owed and what to do), the question about
+active tenants names each one's open balance, and a tenant is not made
+active again under an inactive property. A credit memo of the property
+applies to a tenant billed with it, as a payment does. The IIF export spells
+a sub-customer "Parent:Sub" on every row, every invoice response names a
+sub-customer the same way, the printed invoice prints the billed customer's
+country, and a second property's Unit 1 is not a duplicate of the first's.
 
 **Memorized bills and journal entries, entered on a schedule** (#605, asked
 by two people moving from QuickBooks). A bill or a journal entry can now be
