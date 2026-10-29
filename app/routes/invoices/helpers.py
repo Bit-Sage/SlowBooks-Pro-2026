@@ -77,6 +77,33 @@ def confirm_zero_total(
     )
 
 
+def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
+    """A sale of more of a stock item than is on hand (#642). The sale
+    posts whatever the count is, as it always has (some businesses enter
+    the receiving bill after the sale), and the count went below zero with
+    nothing said at the point of sale. Now the sentences to carry back as
+    ``warnings`` are returned ("Widget: 2 on hand; this sale takes it to
+    -4."), one per item; an empty list when nothing is short. With
+    Settings -> inventory_refuse_oversell on, the sale is refused instead
+    with a 422 naming each item and how many short. ``before`` is the
+    invoice's stored lines on an edit, so only what the edit adds counts.
+    Called before anything is written, so the refused request writes
+    nothing."""
+    from app.services.inventory_hooks import (
+        oversell_refusal,
+        oversell_warning,
+        oversold_items,
+    )
+    from app.services.settings_service import refuse_oversell
+
+    shorts = oversold_items(db, lines, before)
+    if not shorts:
+        return []
+    if refuse_oversell(db):
+        raise HTTPException(status_code=422, detail=oversell_refusal(shorts))
+    return [oversell_warning(s) for s in shorts]
+
+
 def confirm_credit_limit(
     db,
     customer,

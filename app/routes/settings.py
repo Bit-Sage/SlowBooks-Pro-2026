@@ -80,6 +80,7 @@ ENUM_SETTINGS = {
     "warn_date_future": frozenset({"true", "false"}),
     "warn_duplicate_check_number": frozenset({"true", "false"}),
     "warn_edit_transaction": frozenset({"true", "false"}),
+    "inventory_refuse_oversell": frozenset({"true", "false"}),
 }
 
 

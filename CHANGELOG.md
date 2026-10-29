@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A sale past what is on hand says so** (#642). An invoice or a sales
+receipt that sold more of a stock item than was on hand posted without a
+word, and the count went below zero where only the Items page's To reorder
+list showed it. The sale still posts as before (some businesses enter the
+receiving bill after the sale), and now the response carries a `warnings`
+list in plain words ("Widget: 2 on hand; this sale takes it to -4."), which
+the invoice and sales receipt forms show as a toast after the save; a line
+shows "N on hand" under its quantity once a stock item is picked. A new
+setting, Refuse a sale of more than is on hand (`inventory_refuse_oversell`,
+off by default, under Invoice Defaults), turns the warning into a refusal
+naming the item and how many short, with nothing posted. The Items page
+shows a count below zero in the warning colour with a note saying what it
+means, and the item's form, Adjust and History say it in words.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry

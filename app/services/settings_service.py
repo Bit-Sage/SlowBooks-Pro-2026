@@ -413,6 +413,13 @@ def use_account_numbers(db: Session) -> bool:
     return get_setting_raw(db, "use_account_numbers") != "false"
 
 
+def refuse_oversell(db: Session) -> bool:
+    """Whether a sale of more of a stock item than is on hand is refused
+    (Settings -> inventory_refuse_oversell, #642). Off unless set to
+    "true": by default such a sale posts and the response warns."""
+    return get_setting_raw(db, "inventory_refuse_oversell") == "true"
+
+
 def is_nonprofit(db: Session) -> bool:
     """True when the company file is set to nonprofit mode (Settings ->
     company_type). Gates the nonprofit documents, reports and vocabulary."""

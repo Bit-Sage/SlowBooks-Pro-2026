@@ -193,6 +193,83 @@ def reconcile_invoice_inventory_delta(
             )
 
 
+# ---------------------------------------------------------------------------
+# Selling past what is on hand (#642)
+# ---------------------------------------------------------------------------
+
+
+def _quantity_by_item(lines) -> dict[int, Decimal]:
+    """The quantity of each item on these lines (the lines of one item added
+    together); a line with no item is left out. Takes the lines of a
+    request and the stored lines of an invoice alike: both carry item_id
+    and quantity."""
+    out: dict[int, Decimal] = {}
+    for line in lines or ():
+        item_id = getattr(line, "item_id", None)
+        if not item_id:
+            continue
+        out[item_id] = out.get(item_id, Decimal("0")) + Decimal(
+            str(getattr(line, "quantity", 0) or 0)
+        )
+    return out
+
+
+def plain_quantity(value) -> str:
+    """A quantity in plain figures for a sentence: 2, -4, 2.5; never a tail
+    of zeros."""
+    text = format(Decimal(str(value or 0)).normalize(), "f")
+    return "0" if text in ("0", "-0") else text
+
+
+def oversold_items(db: Session, lines, before=()) -> list[dict[str, Any]]:
+    """The tracked items these lines take past what is on hand, as
+    {"item", "on_hand", "after"}: the count now and the count the sale
+    would leave. ``before`` is the invoice's stored lines when this is an
+    edit, so only what the edit adds is taken off the count (the stored
+    lines already came out of stock). A sale that lands exactly on zero is
+    not past the stock. Reads the books and writes nothing, so a route can
+    ask before anything is saved."""
+    wanted = _quantity_by_item(lines)
+    had = _quantity_by_item(before)
+    out = []
+    for item_id, quantity in wanted.items():
+        taken = quantity - had.get(item_id, Decimal("0"))
+        if taken <= 0:
+            continue
+        item = _get_item(db, item_id)
+        if not (item and item.track_inventory):
+            continue
+        on_hand = Decimal(str(item.quantity_on_hand or 0))
+        if taken <= on_hand:
+            continue
+        out.append({"item": item, "on_hand": on_hand, "after": on_hand - taken})
+    return out
+
+
+def oversell_warning(short: dict[str, Any]) -> str:
+    """One sentence for a sale past the stock, as the response carries it:
+    'Widget: 2 on hand; this sale takes it to -4.'"""
+    return (
+        f"{short['item'].name}: {plain_quantity(short['on_hand'])} on hand; "
+        f"this sale takes it to {plain_quantity(short['after'])}."
+    )
+
+
+def oversell_refusal(shorts: list[dict[str, Any]]) -> str:
+    """The sentence a refused sale answers with when Settings says to
+    refuse: each item, its count and how many short, and what to do."""
+    parts = [
+        f"{s['item'].name}: {plain_quantity(s['on_hand'])} on hand; this sale "
+        f"takes it to {plain_quantity(s['after'])}, "
+        f"{plain_quantity(-s['after'])} short."
+        for s in shorts
+    ]
+    return " ".join(parts) + (
+        " Enter the receiving bill first, or turn off Refuse a sale of more "
+        "than is on hand under Settings."
+    )
+
+
 def snapshot_invoice_lines(invoice) -> list[dict[str, Any]]:
     """Helper: capture the (item_id, quantity) of each line BEFORE an edit
     rebuilds them. Used by reconcile_invoice_inventory_delta."""

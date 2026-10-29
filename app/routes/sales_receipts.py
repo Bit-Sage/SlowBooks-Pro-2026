@@ -174,4 +174,9 @@ def create_sales_receipt(data: SalesReceiptCreate, db: Session = Depends(get_db)
             pass
         raise
 
-    return SalesReceiptResponse(invoice=get_invoice(inv_resp.id, db), payment=pay_resp)
+    # the invoice step's stock warnings (#642) ride on the receipt's answer
+    return SalesReceiptResponse(
+        invoice=get_invoice(inv_resp.id, db),
+        payment=pay_resp,
+        warnings=inv_resp.warnings,
+    )

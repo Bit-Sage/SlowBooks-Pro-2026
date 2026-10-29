@@ -1514,6 +1514,9 @@ a:hover { text-decoration: underline; }
 .toast-success { background: var(--sb-green); }
 .toast-error   { background: var(--qb-red); }
 .toast-info    { background: var(--qb-blue); }
+/* a caution that is not a failure (a sale past the stock, #642; a pay run's
+   notes): the orange, white on it 4.82:1 */
+.toast-warning { background: var(--qb-orange); }
 
 @keyframes toast-in {
     from { transform: translateY(20px); opacity: 0; }
