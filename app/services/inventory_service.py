@@ -131,8 +131,9 @@ def _pool_after(
     A receipt re-averages what it joins. A sale, or an adjustment out at the
     average, leaves the average alone: shipping stock does not revalue what
     stays. A take-out at a cost of its own (a return's void at the return's
-    cost, #641; a receipt's void at what it was received at, #646) takes
-    that much value out of the pool, and what remains re-averages, so the
+    cost, #641; a receipt's void at what it was received at, #646; a return
+    to the vendor at what its credit takes off Inventory, W-74) takes that
+    much value out of the pool, and what remains re-averages, so the
     ledger's Inventory and quantity x average stay one figure (W-50, 2.31.0
     gate).
 
@@ -1027,16 +1028,20 @@ def reverse_at_cost(
     transaction_id: Optional[int] = None,
     memo: Optional[str] = None,
 ) -> InventoryMovement:
-    """Take `quantity` of a receipt or a return back out of stock at the cost
-    that movement carried: one VOID movement naming it (reverses_movement_id),
-    linked to the entry the caller posted for the cost (`transaction_id`; a
-    bill's void passes its reversing entry, an edit that re-posts the bill's
-    own entry nothing). The caller's entry mirrors what the movement put on
-    Inventory, and what the pool cannot absorb of it (#647) is posted here
-    under the caller's source (_post_residue), so afterwards Inventory in
-    the ledger reads quantity x average cost, 0.00 with nothing on hand.
-    Used by a bill's void and edit (reverse_receipts_for_bill, #646) and a
-    credit memo's void (reverse_return_for_credit_memo, #641)."""
+    """Reverse `quantity` of a receipt or a return at the cost that movement
+    carried: one VOID movement naming it (reverses_movement_id), linked to
+    the entry the caller posted for the cost (`transaction_id`; a bill's
+    void passes its reversing entry, an edit that re-posts the bill's own
+    entry nothing). `quantity` is signed as the movement is: a receipt's or
+    a customer's return is positive and goes back out of stock, a return to
+    the vendor is negative and comes back in. The caller's entry mirrors
+    what the movement put on Inventory, and what the pool cannot absorb of
+    it (#647) is posted here under the caller's source (_post_residue), so
+    afterwards Inventory in the ledger reads quantity x average cost, 0.00
+    with nothing on hand. Used by a bill's void and edit
+    (reverse_receipts_for_bill, #646), a credit memo's void
+    (reverse_return_for_credit_memo, #641) and a vendor credit's void
+    (reverse_returns_for_vendor_credit, W-74)."""
     return _append_at_cost(
         db,
         item,
@@ -1071,11 +1076,12 @@ def _append_at_cost(
     _pool_after reports goes Dr Cost of Goods Sold / Cr Inventory or the
     reverse (_post_residue), so afterwards Inventory in the ledger reads
     quantity x average cost. The caller's own entry carries quantity x
-    unit_cost on Inventory (a bill's lines, a void's reversing entry, a
-    sale's reversal, a memo's return, an adjustment's). _append_movement
-    stays journal-free; this is the one place a movement's residue is
-    posted. `entry_memo` names the residue entry where the movement's memo
-    would not (an adjustment's memo is the user's)."""
+    unit_cost on Inventory (a bill's lines, a vendor credit's, a void's
+    reversing entry, a sale's reversal, a memo's return, an adjustment's).
+    _append_movement stays journal-free; this is the one place a
+    movement's residue is posted. `entry_memo` names the residue entry
+    where the movement's memo would not (an adjustment's memo is the
+    user's)."""
     _new_qty, _new_avg, residue = _pool_after(
         Decimal(str(item.quantity_on_hand or 0)),
         Decimal(str(item.avg_cost or 0)),

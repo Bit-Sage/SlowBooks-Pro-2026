@@ -194,7 +194,7 @@ const VendorCreditsPage = {
         if (!(await TxnWarn.ok(form))) return;
         if (!(await ClassWarn.ok(form))) return;
         try {
-            await API.post('/vendor-credits', {
+            const saved = await API.post('/vendor-credits', {
                 vendor_id: parseInt(form.vendor_id.value),
                 date: form.date.value,
                 ref_number: form.ref_number.value || null,
@@ -204,6 +204,8 @@ const VendorCreditsPage = {
                 lines,
             });
             toastPosted('Vendor credit created');
+            // stock the return took below what was on hand (W-74): posted, and said
+            for (const w of (saved && saved.warnings) || []) toast(w, 'warning');
             closeModal();
             App.navigate('#/vendor-credits');
         } catch (err) { toast(err.message, 'error'); }

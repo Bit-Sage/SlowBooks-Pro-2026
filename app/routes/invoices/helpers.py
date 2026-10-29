@@ -87,8 +87,9 @@ def warn_or_refuse_oversell(db, lines, before=(), action: str = "sale") -> list[
     Settings -> inventory_refuse_oversell on, the sale is refused instead
     with a 422 naming each item and how many short. ``before`` is the
     invoice's stored lines on an edit, so only what the edit adds counts.
-    Called before anything is written, so the refused request writes
-    nothing."""
+    A vendor credit's return to the supplier is asked the same way, with
+    ``action="credit"`` ("this credit takes it to -3.", W-74). Called
+    before anything is written, so the refused request writes nothing."""
     from app.services.inventory_hooks import oversold_items
 
     return warn_or_refuse_shorts(db, oversold_items(db, lines, before), action)

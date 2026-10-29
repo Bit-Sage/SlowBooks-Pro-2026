@@ -100,4 +100,9 @@ class VendorCreditResponse(BaseModel):
     job_id: Optional[int] = None
     lines: list[VendorCreditLineResponse] = []
     created_at: Optional[datetime] = None
+    # Set by create only (W-74, the shape of an invoice's #642 warnings): a
+    # sentence for each stock item the credit's return took past what was on
+    # hand ("Widget: 2 on hand; this credit takes it to -3."). The credit
+    # posted; this says what it did. Empty otherwise: a void puts stock back.
+    warnings: list[str] = []
     model_config = {"from_attributes": True}
