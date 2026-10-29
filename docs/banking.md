@@ -77,6 +77,11 @@ memo-only entry from a payee-only one and shows a blank Payee in the
 register. No migration; entries posted before this still read their memo as
 the payee.
 
+The Edit dialog also carries an **Attachments** panel (#600): attach a receipt,
+scanned check or deposit slip to a register entry as you would to a journal
+entry (`/api/attachments/bank_entry/{id}`). The files stay with the entry if
+it is voided.
+
 An entry a completed reconciliation holds says so when it opens: its
 amount and date stay as the statement has them (refused, as its void is;
 correct the difference with a new entry). Its payee, memo, check number,
