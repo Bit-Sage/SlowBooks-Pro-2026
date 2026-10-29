@@ -1090,16 +1090,21 @@ function _listTableHtml(state) {
     const ths = columns.map(c => {
         const col = typeof c === 'string' ? { label: c } : c;
         const cls = [col.cls || ''];
-        let arrow = '', click = '';
-        if (sort && col.key) {
-            cls.push('sortable');
-            if (sort.column === col.key) {
-                cls.push('sort-active');
-                arrow = ` <span class="sort-arrow">${sort.direction === 'asc' ? '▲' : '▼'}</span>`;
-            }
-            click = ` onclick="sortListRows('${sort.id}', '${col.key}')"`;
+        if (!(sort && col.key)) {
+            return `<th scope="col" class="${cls.filter(Boolean).join(' ')}">${col.label}</th>`;
         }
-        return `<th scope="col" class="${cls.filter(Boolean).join(' ')}"${click}>${col.label}${arrow}</th>`;
+        // A sortable heading is a button, so the keyboard reaches it (Tab,
+        // then Enter or Space), and the header cell says how the column is
+        // sorted (aria-sort) for a screen reader (#650).
+        cls.push('sortable');
+        let arrow = '', ariaSort = 'none';
+        if (sort.column === col.key) {
+            cls.push('sort-active');
+            ariaSort = sort.direction === 'asc' ? 'ascending' : 'descending';
+            arrow = ` <span class="sort-arrow" aria-hidden="true">${sort.direction === 'asc' ? '▲' : '▼'}</span>`;
+        }
+        return `<th scope="col" class="${cls.filter(Boolean).join(' ')}" aria-sort="${ariaSort}">`
+            + `<button type="button" class="th-sort" onclick="sortListRows('${sort.id}', '${col.key}')">${col.label}${arrow}</button></th>`;
     }).join('');
     return `<table>
         <thead><tr>${ths}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
@@ -1163,6 +1168,13 @@ function renderListPage({ title, headerHtml = '', filter = null, empty, columns,
         return html + `<div class="empty-state">${empty}</div>`;
     }
     if (sort) {
+        // Coming back to the list (after an edit, or from another page)
+        // keeps the order last chosen on it (#650).
+        const kept = _listSortState[sort.id]?.sort;
+        if (kept && kept.column) {
+            sort.column = kept.column;
+            sort.direction = kept.direction;
+        }
         sort.direction = sort.direction || 'asc';
         const state = { columns, items, row, sort, filter };
         _listSortState[sort.id] = state;
@@ -1187,6 +1199,8 @@ function sortListRows(sortId, key) {
     if (!wrap) return;
     wrap.innerHTML = _listTableHtml(state);
     if (state.filter) filterRows(state.filter.id, state.filter.rowSelector);
+    // the keyboard stays on the heading it pressed
+    wrap.querySelector(`th.sort-active .th-sort`)?.focus();
 }
 
 function filterRows(selectId, rowSelector) {

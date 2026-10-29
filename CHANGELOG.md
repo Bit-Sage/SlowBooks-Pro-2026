@@ -7,6 +7,12 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.31.1 — Sub-customers, memorized transactions, and stock that comes back out at its own cost
 
+**The Invoices list sorts by any column** (#650, from the gate). Press a
+heading (number, customer, date, due date, status, total, balance) to sort by
+it, and again to reverse; numbers sort as numbers. A sortable heading on any
+list is now a button the keyboard reaches, and it tells a screen reader how
+the column is sorted. The order chosen is kept when you come back to the list.
+
 **An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
 expense's memo was read back off its bank line, which holds the memo or,
 when none was typed, the payee. So a memo typed the same as the payee came

@@ -917,6 +917,22 @@ thead th.sort-active {
     font-weight: 800;
     background: linear-gradient(180deg, #d4dde6 0%, #b8c4d0 100%);
 }
+thead th .th-sort {
+    /* the heading's own look: a button only for the keyboard (#650) */
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    text-align: inherit;
+    cursor: pointer;
+    width: 100%;
+}
+thead th .th-sort:focus-visible {
+    outline: 2px solid var(--qb-navy);
+    outline-offset: 2px;
+}
 thead th .sort-arrow {
     font-size: 9px;
     margin-left: 2px;

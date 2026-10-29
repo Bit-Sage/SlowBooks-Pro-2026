@@ -228,8 +228,19 @@ const InvoicesPage = {
             },
             empty: Terms.text(`<p>No invoices yet.</p>
                 <button class="btn btn-primary" onclick="InvoicesPage.showForm()" style="margin-top:10px;">+ Create your first invoice</button>`),
-            columns: ['#', T('Customer'), 'Date', 'Due Date', 'Status',
-                { label: 'Total', cls: 'amount' }, { label: 'Balance', cls: 'amount' }, 'Actions'],
+            // Every column but Actions sorts (#650); until a heading is
+            // pressed the list keeps the server's order, newest first.
+            columns: [
+                { label: '#', key: 'invoice_number' },
+                { label: T('Customer'), key: 'customer_name' },
+                { label: 'Date', key: 'date' },
+                { label: 'Due Date', key: 'due_date' },
+                { label: 'Status', key: 'status' },
+                { label: 'Total', cls: 'amount', key: 'total' },
+                { label: 'Balance', cls: 'amount', key: 'balance_due' },
+                'Actions',
+            ],
+            sort: { id: 'inv-list' },
             items: invoices,
             row: inv => `<tr class="inv-row" data-status="${inv.status}">
                     <td><strong>${escapeHtml(inv.invoice_number)}</strong></td>
