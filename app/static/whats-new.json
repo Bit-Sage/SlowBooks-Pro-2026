@@ -6,7 +6,8 @@
       "Memorized bills and journal entries beside recurring invoices: every QuickBooks frequency, auto-enter or remind, a Due list with Enter now, pause and resume, and one Memorized transactions page for all of them; the app enters due auto-enter memorized bills and journal entries when it opens and once a day, and says what it entered while you were away; recurring invoices still wait for Generate or Enter All Due.",
       "A bill's void or edit takes its stock back out at the cost it came in at, and a reversal's leftover goes to Cost of Goods Sold, so Inventory always reads quantity times average cost.",
       "An expense keeps the memo it was given.",
-      "The Invoices list sorts by any column: press a heading, again to reverse."
+      "The Invoices list sorts by any column: press a heading, again to reverse.",
+      "A bank feed imports into any bank account in your chart: no need to add it on the Banking page first."
     ]
   },
   "2.31.0": {

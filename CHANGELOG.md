@@ -7,6 +7,16 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.31.1 — Sub-customers, memorized transactions, and stock that comes back out at its own cost
 
+**A bank feed imports into any bank account in the chart** (from a support
+email). The "Imports into" list beside a SimpleFIN or Mercury feed offered only
+the bank accounts added with + New Bank Account, so a company whose bank
+accounts were already in its chart saw an empty list, and SimpleFIN's section
+did not say why. Both lists now offer every bank account in the chart (and,
+for SimpleFIN, every credit-card account), and choosing one that has never been
+set up on the Banking page sets it up when the mapping is saved. A chart with no
+bank account at all gets a sentence saying how to add one. API: the map routes
+take `ledger_mapping`, a feed's account to a chart account.
+
 **The Invoices list sorts by any column** (#650, from the gate). Press a
 heading (number, customer, date, due date, status, total, balance) to sort by
 it, and again to reverse; numbers sort as numbers. A sortable heading on any

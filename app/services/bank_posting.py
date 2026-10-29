@@ -35,6 +35,47 @@ from app.services.closing_date import check_closing_date
 from app.services.entry_text import BANK_ENTRY_HEADER
 
 
+def feed_for_ledger_account(db: Session, account_id: int, kinds=None):
+    """The bank feed record (BankAccount) for a bank or credit-card account
+    in the chart, made when it has none. A bank feed's "Imports into" list
+    offers the chart's own bank and card accounts, so choosing one there
+    needs no trip to + New Bank Account first (a support email, 2.31.1: the
+    list showed only accounts added on the Banking page, so a company with
+    its accounts in the chart saw an empty list). An account that already
+    has an active feed record gets that one; a new one is named after the
+    account, with no opening balance posted. `kinds` limits the accounts
+    accepted (Mercury feeds bank accounts only)."""
+    from app.models.banking import BankAccount
+
+    acct = require_bank_account(db, account_id)
+    if not acct.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{acct.name} is inactive. Make it active in the chart first.",
+        )
+    if kinds and acct.bank_kind not in kinds:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{acct.name} is a credit-card account; this feed imports into bank accounts only.",
+        )
+    feed = (
+        db.query(BankAccount)
+        .filter(BankAccount.account_id == acct.id, BankAccount.is_active)
+        .first()
+    )
+    if feed is None:
+        feed = BankAccount(
+            name=acct.name,
+            account_id=acct.id,
+            bank_name=None,
+            last_four=None,
+            legacy_balance=None,
+        )
+        db.add(feed)
+        db.flush()
+    return feed
+
+
 def require_bank_account(db: Session, account_id: int) -> Account:
     acct = db.query(Account).filter(Account.id == account_id).first()
     if not acct:
