@@ -12,6 +12,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -48,7 +49,6 @@ from app.services.memorized_service import (
     schedule_rows,
     status_of,
 )
-from app.services.validation_messages import plain_message
 
 router = APIRouter(prefix="/api/memorized", tags=["memorized"])
 
@@ -289,9 +289,15 @@ def update_memorized(mem_id: int, data: MemorizedUpdate, db: Session = Depends(g
     try:
         checked = MemorizedCreate(**whole)
     except ValidationError as e:
-        # one plain sentence, as a create's refusal reads on the page, not
-        # the validator's dump of the whole request (2.31.1 gate W-77)
-        raise HTTPException(status_code=422, detail=plain_message(e.errors()[0]))
+        # The API's one shape for a refused field (2.31.1 gate W-77, then its
+        # round-3 note): the list the request's own validation answers, each
+        # error with a plain `message` (the page shows it), as the invoice
+        # routes raise it in-route, never the validator's dump of the whole
+        # request. Round 3 answered a bare sentence here, so a client read
+        # this router's refusals two ways.
+        raise RequestValidationError(
+            [{**err, "loc": ("body", *err.get("loc", ()))} for err in e.errors()]
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     _check_with_books(db, checked)
