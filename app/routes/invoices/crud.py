@@ -31,6 +31,7 @@ from app.routes.invoices.helpers import (
     _compute_totals,
     _post_invoice_journal,
     kept_tax,
+    refuse_moving_money,
     refuse_negative_lines,
     _reverse_and_delete_journal,
     warn_or_refuse_oversell,
@@ -159,10 +160,11 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     cust_name = customer.full_name
     # The Bill To whole is the payer's (#638; the parent of a sub-customer
     # billed with it), its street with its name and country, and the
-    # ship-to the customer's; an address part the request gives wins.
-    cust_fields = invoice_addresses(
-        db, customer, {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
-    )
+    # ship-to the customer's, its country with it; an address part the
+    # request gives a value wins. One left out, or sent empty, is the
+    # customer's, as it always was on create (an edit's "" blanks a part).
+    given = {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
+    cust_fields = invoice_addresses(db, customer, {k: v for k, v in given.items() if v})
 
     invoice = None
     invoice_number = None
@@ -282,6 +284,21 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
 
 @router.put("/{invoice_id}", response_model=InvoiceResponse)
 def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(get_db)):
+    """Edit an invoice: what the request sends changes, what it leaves out
+    stays as stored.
+
+    The addresses (2.31.1): a bill or ship address part sent, or
+    ``ship_to_country``, is what the invoice gets, "" or null blanking it.
+    The Bill To's name and country stay the ones the invoice was billed
+    with. An edit that moves the invoice to another customer takes the
+    new customer's addresses as create does, the payer's whole Bill To
+    (street, name and country) and the customer's own Ship To with its
+    country, and a part sent with the move wins over the one copied, ""
+    or null blanking it. The invoice form sends no address part: its save
+    keeps the stored addresses, and a change of customer there takes the
+    new customer's. A move is refused (409 ``money_applied``) while a
+    payment or credit memo is applied to the invoice, naming each; an
+    unpaid invoice moves."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -307,8 +324,20 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         data.model_dump(exclude_unset=True, exclude={"lines", "allow_zero_total"}),
     )
     if update_data.get("customer_id") not in (None, invoice.customer_id):
-        if db.get(Customer, update_data["customer_id"]) is None:
+        moved_to = db.get(Customer, update_data["customer_id"])
+        if moved_to is None:
             raise HTTPException(status_code=404, detail="Customer not found")
+        # The money on an invoice stays with its customer (round 3). Read
+        # under the row lock a payment takes: a payment landing now is
+        # either seen here or waits for the move.
+        invoice = (
+            db.query(Invoice)
+            .filter(Invoice.id == invoice_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        refuse_moving_money(db, invoice, moved_to, words)
     # What the edit changes — the customer, the header's job, a line's job —
     # must leave the invoice on its customer's jobs (NEW-36); what it leaves
     # alone is not judged, so a note saved over a job the user didn't touch
@@ -476,10 +505,11 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         setattr(invoice, key, val)
     # Moved to another customer: the Bill To whole is the new customer's
     # payer's as of now, as create makes it, the street with the name and
-    # country, and the ship-to the new customer's; an address sent with the
-    # move wins over the one copied (2.31.1 gate, W-59, W-72). An edit that
-    # keeps the customer keeps the Bill To the invoice was made with, but
-    # for the address parts it sends (set above).
+    # country, and the ship-to the new customer's with its country; an
+    # address part sent with the move wins over the one copied, "" or null
+    # blanking it (2.31.1 gate, W-59, W-72; round 3). An edit that keeps
+    # the customer keeps the Bill To the invoice was made with, but for the
+    # address parts it sends (set above).
     if invoice.customer_id != previous_customer_id:
         sent = {k: v for k, v in update_data.items() if k in INVOICE_ADDRESS_FIELDS}
         moved_to = db.get(Customer, invoice.customer_id)

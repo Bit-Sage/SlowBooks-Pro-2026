@@ -110,10 +110,11 @@ def payer_for(db: Session, customer: Customer) -> Customer:
 
 
 ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
-# The address fields an invoice takes, the Bill To street and the Ship To.
+# The address fields an invoice takes, the Bill To street and the Ship To,
+# its country with it (2.31.1 gate, round 3).
 INVOICE_ADDRESS_FIELDS = tuple(
     f"{side}_{part}" for side in ("bill", "ship") for part in ADDRESS_PARTS
-)
+) + ("ship_to_country",)
 
 
 def invoice_addresses(
@@ -124,8 +125,17 @@ def invoice_addresses(
     Bill To whole, the street, name and country of the payer (the parent
     of a sub-customer billed with it, else the customer) with
     ``bill_to_customer_id`` naming it, and the Ship To of the customer
-    itself. An address field in ``sent`` (what the request gave) wins over
-    the one copied, as it always did on create.
+    itself, its country frozen with it in ``ship_to_country`` (the
+    customer's own, never the payer's; the printed Ship To used to read it
+    off the customer at print time, under the frozen street).
+
+    ``sent`` is what the request gave of INVOICE_ADDRESS_FIELDS: a field
+    in it is taken as given, and a field left out of it is copied. The
+    caller says what counts as given: create passes only the parts it was
+    given a value for, so a part left out or sent empty takes the
+    customer's, as it always did; an edit that moves the invoice passes
+    every part the request sent, so one sent as "" (or null) blanks that
+    part instead of taking the new customer's (round 3).
 
     One helper for every way an invoice is made or moved to another
     customer: create, an edit to another customer, Duplicate, an
@@ -135,17 +145,13 @@ def invoice_addresses(
     printed Bill To could put one customer's name over another's street."""
     payer = payer_for(db, customer)
     sent = sent or {}
-    fields = {
-        f"bill_{part}": sent.get(f"bill_{part}") or getattr(payer, f"bill_{part}")
-        for part in ADDRESS_PARTS
-    }
-    fields.update(
-        {
-            f"ship_{part}": sent.get(f"ship_{part}")
-            or getattr(customer, f"ship_{part}")
-            for part in ADDRESS_PARTS
-        }
-    )
+
+    def part(field, source, attr=None):
+        return sent[field] if field in sent else getattr(source, attr or field)
+
+    fields = {f"bill_{p}": part(f"bill_{p}", payer) for p in ADDRESS_PARTS}
+    fields.update({f"ship_{p}": part(f"ship_{p}", customer) for p in ADDRESS_PARTS})
+    fields["ship_to_country"] = part("ship_to_country", customer, "ship_country")
     fields.update(
         bill_to_customer_id=payer.id,
         bill_to_name=payer.name,

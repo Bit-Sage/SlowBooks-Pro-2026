@@ -23,6 +23,10 @@ from QuickBooks Online, a generated recurring invoice and a pay
 application's invoice take the payer's whole Bill To as of then, the
 street with the name and country; an edit can correct the addresses; and
 a duplicate is checked against the credit limit (W-79).
+
+Round 3's notes: the printed Ship To keeps the country frozen with its
+street; an invoice with a payment or credit memo on it stays with its
+customer; and an address part sent as "" with a move blanks it.
 """
 
 import csv
@@ -1149,10 +1153,16 @@ def test_the_bill_to_migration_backfills_from_the_customer_billed_to(tmp_path):
     ]
     engine.dispose()
 
+    # down from head through the Ship To's country (d7b3f9a1c5e2) and this
     command.downgrade(cfg, "f3a9c7e1b5d4")
     engine = create_engine(f"sqlite:///{db}")
     names = {c["name"] for c in inspect(engine).get_columns("invoices")}
-    assert not names & {"bill_to_customer_id", "bill_to_name", "bill_to_country"}
+    assert not names & {
+        "bill_to_customer_id",
+        "bill_to_name",
+        "bill_to_country",
+        "ship_to_country",
+    }
     assert "bill_address1" in names
     engine.dispose()
 
@@ -1841,3 +1851,477 @@ def test_a_pay_applications_invoice_prints_the_payers_whole_bill_to(
         "Canada",
         "For: Unit 4B",
     ]
+
+
+# ── the 2.31.1 gate, round 3's notes: the Ship To's country, a paid
+# invoice's move, and a part sent empty with a move ─────────────────────
+
+
+def _preview_blocks(client, inv_id):
+    """The print preview's address blocks, as _printed reads the PDF's."""
+    import re
+
+    r = client.get(f"/api/invoices/{inv_id}/print-preview")
+    assert r.status_code == 200, r.text
+    blocks = {}
+    for label, text in re.findall(
+        r'<div class="address-label">(.*?)</div>\s*'
+        r'<div class="address-text">(.*?)</div>',
+        r.text,
+        re.S,
+    ):
+        lines = (re.sub(r"<[^>]+>", "", part).strip() for part in text.split("<br>"))
+        blocks[label] = [line for line in lines if line]
+    return blocks
+
+
+def test_the_printed_ship_to_keeps_the_country_it_was_made_with(
+    client, db_session, seed_accounts
+):
+    """The printed Ship To read its country off the customer at print time,
+    under the ship-to street frozen on the invoice, so an old invoice
+    printed "2 Dock Rd, Austin, TX 78702, Canada" once the customer's ship
+    country changed. The country is frozen with the street
+    (ship_to_country on every response): the customer's own, never the
+    payer's, taken again by a move, and a request may give it as it gives
+    the ship street. The PDF and the print preview print the same."""
+    alpha = _customer(
+        client,
+        "Alpha",
+        ship_address1="2 Dock Rd",
+        ship_city="Austin",
+        ship_state="TX",
+        ship_zip="78702",
+    )
+    dock = ["2 Dock Rd", "Austin, TX 78702"]
+    old = _invoice(client, alpha["id"], 300, 1)
+    assert _printed(db_session, old["id"])["Ship To"] == dock
+
+    r = client.put(f"/api/customers/{alpha['id']}", json={"ship_country": "CA"})
+    assert r.status_code == 200, r.text
+    assert _printed(db_session, old["id"])["Ship To"] == dock
+    assert _preview_blocks(client, old["id"])["Ship To"] == dock
+    assert old["ship_to_country"] == "US"
+    assert client.get(f"/api/invoices/{old['id']}").json()["ship_to_country"] == "US"
+    # an invoice made now, and a duplicate (a new invoice), take the
+    # country the customer has now
+    new = _invoice(client, alpha["id"], 100, 2)
+    assert new["ship_to_country"] == "CA"
+    assert _printed(db_session, new["id"])["Ship To"] == dock + ["Canada"]
+    r = client.post(f"/api/invoices/{old['id']}/duplicate")
+    assert r.status_code == 201, r.text
+    assert r.json()["ship_to_country"] == "CA"
+    assert _preview_blocks(client, r.json()["id"])["Ship To"] == dock + ["Canada"]
+
+    # the Ship To is the customer's own: a tenant billed with its property
+    # is billed the property's way and shipped its own
+    maple, unit = _property_and_tenant(client, ship_country="DE")
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"ship_address1": "Apt 4B", "ship_country": "MX"},
+    )
+    assert r.status_code == 200, r.text
+    rent = _invoice(client, unit["id"], 900, 3)
+    assert (rent["bill_to_customer_id"], rent["ship_to_country"]) == (
+        maple["id"],
+        "MX",
+    )
+    assert _printed(db_session, rent["id"])["Ship To"] == ["Apt 4B", "Mexico"]
+
+    # a move takes the new customer's ship-to, its country with it
+    beta = _customer(
+        client,
+        "Beta SARL",
+        ship_address1="9 Rue de Paris",
+        ship_city="Paris",
+        ship_zip="75001",
+        ship_country="FR",
+    )
+    r = client.put(f"/api/invoices/{old['id']}", json={"customer_id": beta["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["ship_to_country"] == "FR"
+    paris = ["9 Rue de Paris", "Paris, 75001"]
+    assert _printed(db_session, old["id"])["Ship To"] == paris + ["France"]
+    # an edit corrects it, as it corrects the ship street...
+    r = client.put(f"/api/invoices/{old['id']}", json={"ship_to_country": "BE"})
+    assert r.status_code == 200, r.text
+    assert r.json()["ship_to_country"] == "BE"
+    assert _preview_blocks(client, old["id"])["Ship To"] == paris + ["Belgium"]
+    # ...and one sent with a move wins over the one copied
+    r = client.put(
+        f"/api/invoices/{old['id']}",
+        json={"customer_id": alpha["id"], "ship_to_country": "US"},
+    )
+    assert r.status_code == 200, r.text
+    assert _printed(db_session, old["id"])["Ship To"] == dock
+    # create takes one too, over the customer's
+    given = _invoice(client, alpha["id"], 50, 4, ship_to_country="MX")
+    assert given["ship_to_country"] == "MX"
+    assert _printed(db_session, given["id"])["Ship To"] == dock + ["Mexico"]
+
+
+def test_every_way_an_invoice_is_made_freezes_its_customers_ship_country(
+    client, db_session, seed_accounts
+):
+    """Convert and the scheduler's recurring invoices freeze the Ship To's
+    country with the ship-to through the one helper, the customer's own
+    and not the payer's; an invoice made by any other path (an importer
+    that writes no street) takes it on insert, and one made with a country
+    keeps it."""
+    from app.models.invoices import InvoiceStatus
+
+    maple, unit = _property_and_tenant(client, ship_country="DE")
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"ship_address1": "Apt 4B", "ship_country": "MX"},
+    )
+    assert r.status_code == 200, r.text
+
+    r = client.post(
+        "/api/estimates",
+        json={
+            "customer_id": unit["id"],
+            "date": "2026-09-01",
+            "tax_rate": 0,
+            "lines": [{"description": "Repaint", "quantity": 1, "rate": 400}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    r = client.post(f"/api/estimates/{r.json()['id']}/convert")
+    assert r.status_code == 200, r.text
+    assert r.json()["ship_to_country"] == "MX"
+
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": unit["id"],
+            "frequency": "monthly",
+            "start_date": "2026-09-01",
+            "lines": [{"description": "Rent", "quantity": 1, "rate": 900}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    out = client.post("/api/recurring/generate?as_of=2026-09-01").json()
+    assert out["invoices_created"] == 1, out
+    db_session.expire_all()
+    generated = db_session.get(Invoice, out["invoice_ids"][0])
+    assert (generated.bill_to_customer_id, generated.ship_to_country) == (
+        maple["id"],
+        "MX",
+    )
+
+    def made(**extra):
+        inv = Invoice(
+            invoice_number=f"SHIP-{len(extra)}",
+            customer_id=unit["id"],
+            date=date(2026, 9, 1),
+            status=InvoiceStatus.SENT,
+            **extra,
+        )
+        db_session.add(inv)
+        db_session.flush()
+        return inv
+
+    bare = made()
+    assert (bare.bill_to_name, bare.ship_to_country) == ("Maple St", "MX")
+    kept = made(ship_to_country="CA")
+    assert (kept.bill_to_name, kept.ship_to_country) == ("Maple St", "CA")
+
+
+def test_the_ship_to_country_migration_backfills_from_each_invoices_own_customer(
+    tmp_path,
+):
+    """Books from before the column: every invoice takes its own customer's
+    ship country at the upgrade, which is what it printed until now; a
+    tenant billed with its property takes the tenant's, not the
+    property's. downgrade drops the column and leaves the Bill To."""
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, inspect, text
+
+    db = tmp_path / "shipto.db"
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.attributes["database_url"] = "sqlite:///" + db.as_posix()
+    script = ScriptDirectory.from_config(cfg)
+    assert len(script.get_heads()) == 1
+    assert script.get_revision("d7b3f9a1c5e2").down_revision == "b4d8e2a6c7f1"
+
+    command.upgrade(cfg, "b4d8e2a6c7f1")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        assert "ship_to_country" not in {
+            c["name"] for c in inspect(conn).get_columns("invoices")
+        }
+        conn.execute(
+            text(
+                "INSERT INTO customers (id, name, bill_country, ship_country, "
+                "parent_customer_id, bill_with_parent, is_active) VALUES "
+                "(1, 'Maple St', 'CA', 'DE', NULL, 0, 1), "
+                "(2, 'Unit 4B', 'US', 'MX', 1, 1, 1), "
+                "(3, 'Oak Ave', 'US', NULL, NULL, 0, 1)"
+            )
+        )
+        # each with the Bill To frozen at that revision: the property's
+        # for the tenant billed with it
+        for inv_id, cid, billed, name in (
+            (10, 2, 1, "Maple St"),
+            (11, 1, 1, "Maple St"),
+            (12, 3, 3, "Oak Ave"),
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO invoices (id, invoice_number, customer_id, date, "
+                    "status, retainage_held, retainage_released, is_sales_receipt, "
+                    "is_pledge, bill_to_customer_id, bill_to_name) VALUES (:id, "
+                    ":num, :cid, '2026-09-01', 'SENT', 0, 0, 0, 0, :billed, :name)"
+                ),
+                {
+                    "id": inv_id,
+                    "num": str(inv_id),
+                    "cid": cid,
+                    "billed": billed,
+                    "name": name,
+                },
+            )
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, bill_to_name, ship_to_country FROM invoices ORDER BY id")
+        ).all()
+    assert [tuple(r) for r in rows] == [
+        (10, "Maple St", "MX"),  # billed to the property, shipped the tenant's
+        (11, "Maple St", "DE"),
+        (12, "Oak Ave", None),
+    ]
+    engine.dispose()
+
+    command.downgrade(cfg, "b4d8e2a6c7f1")
+    engine = create_engine(f"sqlite:///{db}")
+    names = {c["name"] for c in inspect(engine).get_columns("invoices")}
+    assert "ship_to_country" not in names
+    assert {"bill_to_name", "bill_to_country", "ship_address1"} <= names
+    engine.dispose()
+
+
+def test_an_invoice_with_money_on_it_stays_with_its_customer(
+    client, db_session, seed_accounts
+):
+    """An invoice Alpha paid could be edited onto Beta, and Alpha's payment
+    then showed on both customers' statements. While a payment or credit
+    memo (a write-off is one) is applied to the invoice, a move is refused
+    (409 money_applied), the sentence naming each, whose it is and what to
+    do, and nothing changes; an edit that keeps the customer goes through.
+    Once the money is off it, voided, the invoice moves."""
+    alpha = _customer(client, "Alpha")
+    beta = _customer(client, "Beta SARL")
+    inv = _invoice(client, alpha["id"], 300, 1)
+    n = inv["invoice_number"]
+    pay = _payment(client, alpha["id"], 120, 5, [(inv["id"], 120)])
+    assert pay.status_code == 201, pay.text
+
+    def move(**extra):
+        return client.put(
+            f"/api/invoices/{inv['id']}", json={"customer_id": beta["id"], **extra}
+        )
+
+    r = move()
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "money_applied"
+    assert detail["message"] == (
+        f"Invoice #{n} cannot move to Beta SARL while money is applied to it: "
+        "Alpha's payment of $120.00 (Sep 5, 2026). Void the payment first and "
+        "enter it again where it belongs, then move the invoice."
+    )
+    assert [
+        (a["kind"], a["id"], a["customer_id"], a["amount"], a["date"])
+        for a in detail["applied"]
+    ] == [("payment", pay.json()["id"], alpha["id"], "120.00", "2026-09-05")]
+    # with other changes beside it, nothing of the edit is saved
+    r = move(notes="moved", lines=[{"description": "Rent", "quantity": 1, "rate": 400}])
+    assert r.status_code == 409, r.text
+    db_session.expire_all()
+    stored = db_session.get(Invoice, inv["id"])
+    assert (stored.customer_id, stored.bill_to_name, stored.notes) == (
+        alpha["id"],
+        "Alpha",
+        None,
+    )
+    assert stored.total == Decimal("300.00")
+    assert _statement(db_session, beta["id"])["lines"] == []
+    # an edit that keeps the customer (the form sends it as stored) is fine
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": alpha["id"], "notes": "thanks"},
+    )
+    assert r.status_code == 200, r.text
+
+    # a credit memo and a write-off are named too, oldest first
+    cm = _credit_memo(client, alpha["id"], 30, 6)
+    assert cm.status_code == 201, cm.text
+    cm = cm.json()
+    r = client.post(
+        f"/api/credit-memos/{cm['id']}/apply",
+        json={"invoice_id": inv["id"], "amount": 30},
+    )
+    assert r.status_code == 200, r.text
+    r = client.post(
+        f"/api/invoices/{inv['id']}/write-off",
+        json={"date": "2026-09-07", "amount": 20},
+    )
+    assert r.status_code == 201, r.text
+    wo = r.json()
+    r = move()
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["message"] == (
+        f"Invoice #{n} cannot move to Beta SARL while money is applied to it: "
+        f"Alpha's payment of $120.00 (Sep 5, 2026), Alpha's credit memo "
+        f"{cm['memo_number']} for $30.00 and Alpha's write-off "
+        f"{wo['memo_number']} for $20.00. Void them first and enter them again "
+        "where they belong, then move the invoice."
+    )
+    assert [a["kind"] for a in r.json()["detail"]["applied"]] == [
+        "payment",
+        "credit_memo",
+        "write_off",
+    ]
+
+    # the way out: off the invoice, it moves, billed as Beta is
+    assert client.post(f"/api/payments/{pay.json()['id']}/void").status_code == 200
+    for memo in (cm, wo):
+        r = client.post(f"/api/credit-memos/{memo['id']}/void")
+        assert r.status_code == 200, r.text
+    r = move()
+    assert r.status_code == 200, r.text
+    assert (r.json()["customer_id"], r.json()["bill_to_name"]) == (
+        beta["id"],
+        "Beta SARL",
+    )
+
+    # a tenant's invoice its property paid names the property's payment
+    maple, unit = _property_and_tenant(client)
+    rent = _invoice(client, unit["id"], 1000, 2)
+    assert _payment(client, maple["id"], 1000, 5, [(rent["id"], 1000)]).status_code == (
+        201
+    )
+    r = client.put(f"/api/invoices/{rent['id']}", json={"customer_id": beta["id"]})
+    assert r.status_code == 409, r.text
+    assert (
+        "while money is applied to it: Maple St's payment of $1,000.00 (Sep 5, 2026)."
+        in r.json()["detail"]["message"]
+    )
+
+
+def test_a_part_sent_empty_with_a_move_blanks_it(client, db_session, seed_accounts):
+    """On a move, an address part sent as "" took the new customer's anyway,
+    so the copied street could not be blanked. An edit takes a part as it
+    is sent, "" or null blanking it, with a move as without one; a part
+    left out keeps what is stored, or with a move is copied. Create keeps
+    its rule: a part left out or sent empty is the customer's. The invoice
+    form sends no address part, so its save never blanks one."""
+    alpha = _customer(client, "Alpha", bill_address1="1 Solo Way", bill_city="Austin")
+    beta = _customer(
+        client,
+        "Beta SARL",
+        bill_address1="8 Rue des Lilas",
+        bill_address2="Bat. B",
+        bill_city="Lyon",
+        bill_zip="69001",
+        bill_country="FR",
+        ship_address1="Quai 2",
+        ship_city="Lyon",
+        ship_country="FR",
+    )
+    inv = _invoice(client, alpha["id"], 300, 1)
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": beta["id"], "bill_address2": "", "ship_address1": ""},
+    )
+    assert r.status_code == 200, r.text
+    moved = r.json()
+    assert (
+        moved["bill_address1"],
+        moved["bill_address2"],
+        moved["bill_city"],
+        moved["bill_zip"],
+        moved["ship_address1"],
+        moved["ship_city"],
+    ) == ("8 Rue des Lilas", "", "Lyon", "69001", "", "Lyon")
+    assert moved["ship_to_country"] == "FR"
+    # the Ship To's street is blank, so no Ship To prints
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Beta SARL", "8 Rue des Lilas", "Lyon, 69001", "France"]
+    }
+    # null blanks a part too, as it does on an edit that keeps the customer
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": alpha["id"], "bill_city": None, "ship_to_country": ""},
+    )
+    assert r.status_code == 200, r.text
+    back = r.json()
+    assert (back["bill_address1"], back["bill_city"], back["ship_to_country"]) == (
+        "1 Solo Way",
+        None,
+        "",
+    )
+    r = client.put(f"/api/invoices/{inv['id']}", json={"bill_address1": ""})
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_address1"] == ""
+
+    # create: left out or sent empty, a part is the customer's
+    made = _invoice(
+        client, beta["id"], 50, 2, bill_address2="", ship_city="", ship_to_country=""
+    )
+    assert (
+        made["bill_address2"],
+        made["ship_address1"],
+        made["ship_city"],
+        made["ship_to_country"],
+    ) == ("Bat. B", "Quai 2", "Lyon", "FR")
+
+    # the invoice form's save sends no address part: its edit keeps the
+    # addresses, and its change of customer takes the new customer's whole
+    js = _js("invoices.js")
+    save = js[js.index("    async save(e, id) {") : js.index("async creditLimitOk(")]
+    from app.services.sub_customers import INVOICE_ADDRESS_FIELDS
+
+    assert "const data = {" in save
+    assert not [f for f in INVOICE_ADDRESS_FIELDS + ("bill_to_",) if f in save]
+    form = {
+        "customer_id": beta["id"],
+        "date": "2026-09-01",
+        "due_date": None,
+        "terms": "Net 30",
+        "po_number": None,
+        "is_pledge": False,
+        "class_id": None,
+        "job_id": None,
+        "currency": None,
+        "exchange_rate": None,
+        "tax_rate": 0,
+        "notes": None,
+        "lines": [{"description": "Rent", "quantity": 1, "rate": 300}],
+    }
+    other = _invoice(client, alpha["id"], 300, 3)
+    r = client.put(f"/api/invoices/{other['id']}", json=form)
+    assert r.status_code == 200, r.text
+    assert _printed(db_session, other["id"]) == {
+        "Bill To": [
+            "Beta SARL",
+            "8 Rue des Lilas",
+            "Bat. B",
+            "Lyon, 69001",
+            "France",
+        ],
+        "Ship To": ["Quai 2", "Lyon", "France"],
+    }
+    r = client.put(f"/api/invoices/{other['id']}", json={**form, "notes": "again"})
+    assert r.status_code == 200, r.text
+    assert (
+        r.json()["bill_address2"] == "Bat. B" and r.json()["ship_address1"] == "Quai 2"
+    )

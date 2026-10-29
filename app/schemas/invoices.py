@@ -97,6 +97,9 @@ class InvoiceCreate(StrictModel):
     ship_city: Optional[str] = None
     ship_state: Optional[str] = None
     ship_zip: Optional[str] = None
+    # The Ship To's country; left out, the customer's ship country, as a
+    # ship street left out is the customer's (2.31.1 gate, round 3).
+    ship_to_country: Optional[str] = Field(None, max_length=100)
     tax_rate: TaxRate = Decimal("0")
     notes: Optional[str] = None
     class_id: Optional[int] = None
@@ -130,11 +133,13 @@ class InvoiceUpdate(StrictModel):
     terms: Optional[str] = None
     po_number: Optional[str] = None
     # The addresses (2.31.1 gate, W-72): sent, they correct the invoice's
-    # Bill To street or its Ship To, and nothing else of the Bill To (the
-    # name and country stay the ones it was billed with). An edit that
-    # moves the invoice to another customer takes that customer's, the
-    # payer's Bill To whole as create does, and a part sent with it wins
-    # over the one copied. Left out, an edit keeps what is stored.
+    # Bill To street or its Ship To, the Ship To's country with it (round
+    # 3), and nothing else of the Bill To (the name and country stay the
+    # ones it was billed with). An edit that moves the invoice to another
+    # customer takes that customer's, the payer's Bill To whole as create
+    # does and the customer's Ship To, and a part sent with it wins over
+    # the one copied: "" (or null) blanks that part. Left out, an edit
+    # keeps what is stored, and a move copies it.
     bill_address1: Optional[str] = Field(None, max_length=200)
     bill_address2: Optional[str] = Field(None, max_length=200)
     bill_city: Optional[str] = Field(None, max_length=100)
@@ -145,6 +150,7 @@ class InvoiceUpdate(StrictModel):
     ship_city: Optional[str] = Field(None, max_length=100)
     ship_state: Optional[str] = Field(None, max_length=50)
     ship_zip: Optional[str] = Field(None, max_length=20)
+    ship_to_country: Optional[str] = Field(None, max_length=100)
     status: Optional[InvoiceStatus] = None
     tax_rate: Optional[TaxRate] = None
     notes: Optional[str] = None
@@ -197,6 +203,10 @@ class InvoiceResponse(BaseModel):
     ship_city: Optional[str]
     ship_state: Optional[str]
     ship_zip: Optional[str]
+    # The Ship To's country, frozen with the ship-to street (round 3): the
+    # customer's own ship country when the invoice was made or moved to
+    # it, or what a request gave. What the printed Ship To block shows.
+    ship_to_country: Optional[str] = None
     subtotal: Decimal
     tax_rate: TaxRateOut
     tax_amount: Decimal
