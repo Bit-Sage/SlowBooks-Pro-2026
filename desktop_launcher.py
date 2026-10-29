@@ -1508,39 +1508,121 @@ class PickerApi:
         return {"success": True, "url": f"http://127.0.0.1:{self._port}"}
 
 
-def _webview2_installed() -> bool:
-    """Is the Microsoft WebView2 runtime present? (Windows only.)
+# The lowest Microsoft Edge WebView2 runtime the app's window works on. Two
+# floors meet here, and this is the higher one:
+#   * The window. pywebview 6.2.1 always sets the WinForms control's
+#     CreationProperties.IsInPrivateModeEnabled, and with it set the control
+#     asks the runtime for ICoreWebView2Environment10 (multiple profiles),
+#     which Microsoft made stable in SDK 1.0.1210.39, "for Runtime
+#     101.0.1210.39 or later". On an older runtime the control fails to
+#     start, pywebview only logs it, and the window stays white with nothing
+#     in it (a support email on 2.29.2: "Full white screen on startup ... no
+#     menus or sidebars").
+#   * The page. The app's JavaScript needs Chromium 93 (Object.hasOwn);
+#     tests/test_webview2_floor.py keeps this constant at or above every
+#     browser feature the code uses.
+# pywebview's own check asks only for 86 (winforms._is_chromium), so any
+# runtime from 86 up to this one opened the white window. The installer's
+# IsWebView2Current compares against the same number
+# (tests/test_windows_packaging.py keeps the two equal).
+MIN_WEBVIEW2 = "101.0.1210.39"
 
-    Same detection Microsoft documents (and pywebview itself uses): the
-    Evergreen runtime registers a 'pv' version under an EdgeUpdate key.
+# Where a WebView2 runtime registers its version (a 'pv' value under
+# EdgeUpdate\Clients\{guid}): the Evergreen runtime, then the Microsoft Edge
+# preview channels a WebView2 app also runs on, in the order the WebView2
+# loader tries them by default, most stable first (Microsoft's
+# ChannelSearchKind). pywebview's own check reads the same four.
+WEBVIEW2_CLIENTS = (
+    "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",  # WebView2 Runtime
+    "{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}",  # Microsoft Edge Beta
+    "{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}",  # Microsoft Edge Dev
+    "{65C35B14-6C1D-4122-AC46-7148CC9D6497}",  # Microsoft Edge Canary
+)
+
+
+def _version_parts(text) -> tuple[int, ...] | None:
+    """'130.0.2849.80' -> (130, 0, 2849, 80), padded to four numbers. None
+    for anything that is not a version, and for 0.0.0.0, which is what an
+    uninstalled runtime leaves behind (Microsoft's docs)."""
+    try:
+        parts = tuple(int(p) for p in str(text).strip().split("."))
+    except ValueError:
+        return None
+    if not any(parts):
+        return None
+    return parts + (0,) * (4 - len(parts))
+
+
+def _webview2_version() -> str | None:
+    """The version of the WebView2 runtime the window would run on, or None
+    when there is none. (Windows only; None anywhere else.)
+
+    Same detection Microsoft documents (and pywebview itself uses): a
+    runtime registers a 'pv' version under an EdgeUpdate key, per machine
+    (HKLM) or per user (HKCU). The first channel installed is the one the
+    WebView2 loader uses, so it is the one that counts; within it, the
+    highest version its keys name.
+    """
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    for guid in WEBVIEW2_CLIENTS:
+        key_paths = [
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}",
+            ),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}",
+            ),
+            (
+                winreg.HKEY_CURRENT_USER,
+                rf"Software\Microsoft\EdgeUpdate\Clients\{guid}",
+            ),
+        ]
+        found = []
+        for root, path in key_paths:
+            try:
+                with winreg.OpenKey(root, path) as key:
+                    pv, _ = winreg.QueryValueEx(key, "pv")
+            except OSError:
+                continue
+            if _version_parts(pv):
+                found.append(str(pv).strip())
+        if found:
+            return max(found, key=_version_parts)
+    return None
+
+
+def _webview2_status() -> tuple[str, str | None]:
+    """("missing" | "old" | "ok", the version found). Off Windows there is
+    no WebView2 to check, and the answer is ("ok", None).
+
     This must be checked HERE, before opening the window: pywebview does
     NOT fail when WebView2 is missing -- even with gui='edgechromium'
     forced it silently falls back to the legacy IE/MSHTML control, where
     neither the app's JavaScript nor the js_api bridge works (endless
     "SyncRoot ... maximum recursion depth exceeded" spam, dead buttons).
+    An old runtime fails as quietly: below MIN_WEBVIEW2 the window opens
+    white and stays white.
     """
     if sys.platform != "win32":
-        return True
-    import winreg
+        return "ok", None
+    version = _webview2_version()
+    if version is None:
+        return "missing", None
+    if _version_parts(version) < _version_parts(MIN_WEBVIEW2):
+        return "old", version
+    return "ok", version
 
-    guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-    key_paths = [
-        (
-            winreg.HKEY_LOCAL_MACHINE,
-            rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}",
-        ),
-        (winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"),
-        (winreg.HKEY_CURRENT_USER, rf"Software\Microsoft\EdgeUpdate\Clients\{guid}"),
-    ]
-    for root, path in key_paths:
-        try:
-            with winreg.OpenKey(root, path) as key:
-                pv, _ = winreg.QueryValueEx(key, "pv")
-                if pv and pv != "0.0.0.0":
-                    return True
-        except OSError:
-            continue
-    return False
+
+def _webview2_installed() -> bool:
+    """Is a Microsoft WebView2 runtime present, whatever its version?
+    (Windows only; True anywhere else.) _webview2_status says whether it is
+    new enough."""
+    return _webview2_status()[0] != "missing"
 
 
 WEBVIEW2_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
@@ -1612,14 +1694,41 @@ def _hold_until_dismissed(message: str, title: str = "SlowBooks Pro 2026") -> No
         pass
 
 
-def _run_without_webview2(port: int, log_fh=None) -> int:
-    """The window cannot open. Say why in terms the reader can act on and,
-    on Windows, offer the one thing that works without the runtime: the
-    app in the system browser, held open by a box the user closes to
-    stop it. Verified by unit test with a fake registry; the end-to-end
-    on a machine with the runtime genuinely absent needs a scratch VM
-    (issue #149) and is recorded as uncovered, not as passed."""
-    msg = _no_webview2_message()
+def _old_webview2_message(version: str) -> str:
+    """What to tell someone whose WebView2 runtime is older than
+    MIN_WEBVIEW2: the version found, the version needed, and the same ways
+    out a missing runtime has. A reinstall is one of them now that the
+    installer updates an old runtime; before, it ran Microsoft's
+    bootstrapper only when there was none ("I have tried reinstalling as
+    well", the support email)."""
+    why = (
+        "SlowBooks Pro needs a newer Microsoft Edge WebView2 runtime to show "
+        f"its window. This computer has version {version}; SlowBooks needs "
+        f"{MIN_WEBVIEW2} or later.\n"
+    )
+    if FROZEN:
+        return why + (
+            "\n"
+            f"Update it from Microsoft: {WEBVIEW2_URL}\n"
+            f"or run the SlowBooks Pro installer, {WINDOWS_INSTALLER}, again, "
+            "which updates it.\n"
+        )
+    return why + (
+        f"Update it from Microsoft: {WEBVIEW2_URL}\n"
+        "You can also start without a native window:\n"
+        "    python desktop_launcher.py --no-window"
+    )
+
+
+def _run_without_webview2(port: int, log_fh=None, msg: str | None = None) -> int:
+    """The window cannot open: no WebView2 runtime, or (with ``msg``, the
+    old-runtime message) one too old to draw it. Say why in terms the
+    reader can act on and, on Windows, offer the one thing that works
+    without the runtime: the app in the system browser, held open by a box
+    the user closes to stop it. Verified by unit test with a fake registry;
+    the end-to-end on a machine with the runtime genuinely absent needs a
+    scratch VM (issue #149) and is recorded as uncovered, not as passed."""
+    msg = msg or _no_webview2_message()
     print(msg)
     if not _ask_yes_no(msg + "\nOpen SlowBooks Pro in your web browser instead?"):
         _show_error_box(msg)
@@ -1804,8 +1913,14 @@ def run_window(port: int, log_fh=None) -> int:
         _show_error_box(msg)
         return 1
 
-    if not _webview2_installed():
+    status, version = _webview2_status()
+    if sys.platform == "win32":
+        # one line in launcher.log, for whoever reads it next
+        print(f"WebView2 runtime: {version or 'none'} (needs {MIN_WEBVIEW2} or later)")
+    if status == "missing":
         return _run_without_webview2(port, log_fh)
+    if status == "old":
+        return _run_without_webview2(port, log_fh, _old_webview2_message(version))
 
     # pywebview CANCELS downloads by default -- without this, saving a PDF,
     # a CSV export, or a backup from inside the app silently does nothing.
@@ -1848,7 +1963,8 @@ def run_window(port: int, log_fh=None) -> int:
     except Exception as exc:
         if sys.platform == "win32":
             guidance = (
-                "This usually means the Microsoft WebView2 runtime is missing.\n"
+                "This usually means the Microsoft WebView2 runtime is missing "
+                "or out of date.\n"
                 "Install it from:\n"
                 "    https://developer.microsoft.com/microsoft-edge/webview2/"
             )
