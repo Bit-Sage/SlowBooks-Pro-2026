@@ -54,6 +54,22 @@ def find_customer(db: Session, name: str) -> Optional[Customer]:
     return row
 
 
+def find_sub_customer(db: Session, parent_id: int, name: str) -> Optional[Customer]:
+    """The sub-customer called ``name`` under this parent (#638): exact,
+    then in any case, as find_job does."""
+    if not name:
+        return None
+    q = db.query(Customer).filter(Customer.parent_customer_id == parent_id)
+    row = q.filter(Customer.name == name).first()
+    if not row:
+        row = (
+            q.filter(sqlfunc.lower(Customer.name) == name.lower())
+            .order_by(Customer.id)
+            .first()
+        )
+    return row
+
+
 def find_job(db: Session, customer_id: int, name: str) -> Optional[Job]:
     """Exact, then case-insensitive match within one customer."""
     if not name:
@@ -79,7 +95,7 @@ def get_or_create_job(db: Session, customer_id: int, name: str) -> Job:
 
 
 def resolve_customer_and_job(
-    db: Session, full_name: str, create: bool = True
+    db: Session, full_name: str, create: bool = True, sub_customers: bool = False
 ) -> tuple[Optional[Customer], Optional[Job]]:
     """Resolve an imported "Customer:Job" name to (customer, job).
 
@@ -87,6 +103,12 @@ def resolve_customer_and_job(
     matching (re-imports of pre-jobs files stay stable); otherwise the
     name splits, the customer is found or created, and the job is found
     or created under it. `create=False` only looks up.
+
+    Sub-customers (#638): a "Parent:Sub" whose Sub is a sub-customer on
+    file under Parent resolves to that sub-customer, with no job, whatever
+    was asked; ``sub_customers`` says a child never seen before is made a
+    sub-customer, not a job (the IIF import's "Customer:Job names are
+    sub-customers" choice; QuickBooks Online's export, which has no jobs).
     """
     raw = (full_name or "").strip()
     if not raw:
@@ -104,7 +126,17 @@ def resolve_customer_and_job(
         db.flush()
     if not job_name:
         return customer, None
+    sub = find_sub_customer(db, customer.id, job_name)
+    if sub:
+        return sub, None
     job = find_job(db, customer.id, job_name)
+    if not job and create and sub_customers:
+        sub = Customer(
+            name=job_name[:200], parent_customer_id=customer.id, is_active=True
+        )
+        db.add(sub)
+        db.flush()
+        return sub, None
     if not job and create:
         job = get_or_create_job(db, customer.id, job_name)
     return customer, job

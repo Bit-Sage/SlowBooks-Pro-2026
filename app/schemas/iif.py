@@ -41,3 +41,6 @@ class IIFValidationReport(BaseModel):
     caps_name_examples: list[dict] = []
     unsupported: list[dict] = []  # #288: the blocks the import would not take
     unsupported_counts: dict = {}
+    # How many "Customer:Job" rows the customer list holds: jobs, or
+    # sub-customers if the import is told so (#638)
+    customer_job_names: int = 0

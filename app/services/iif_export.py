@@ -279,7 +279,7 @@ def _item_fields(il, rate: Decimal = Decimal("1"), home_amount=None) -> list[str
 def _customer_job(db: Session, customer, job_id) -> str:
     """QuickBooks' NAME for a sale, raw: "Customer" or "Customer:Job" (the
     caller cleans it as it does any name)."""
-    name = customer.name if customer else ""
+    name = customer.qb_name if customer else ""
     if job_id:
         from app.models.jobs import Job
 
@@ -385,6 +385,9 @@ def export_customers(db: Session) -> str:
     customers = (
         db.query(Customer).filter(Customer.is_active).order_by(Customer.name).all()
     )
+    # A sub-customer (#638) goes out as QuickBooks' "Parent:Sub", after
+    # every top-level customer so its parent is on file first.
+    customers.sort(key=lambda c: (c.parent_customer_id is not None, c.name.lower()))
 
     lines = header
     for c in customers:
@@ -402,7 +405,7 @@ def export_customers(db: Session) -> str:
         lines += _iif_line(
             [
                 "CUST",
-                _iif_text(c.name),
+                _iif_text(c.qb_name),
                 _iif_text(c.company),
                 _iif_text(first),
                 _iif_text(last),
@@ -427,7 +430,9 @@ def export_customers(db: Session) -> str:
         # QuickBooks "Customer:Job" — every job goes out as a CUST row under
         # its customer, which is exactly what the importer splits back.
         for job in sorted(getattr(c, "jobs", None) or [], key=lambda j: j.name):
-            lines += _iif_line(["CUST", _iif_text(f"{c.name}:{job.name}")] + [""] * 14)
+            lines += _iif_line(
+                ["CUST", _iif_text(f"{c.qb_name}:{job.name}")] + [""] * 14
+            )
     return lines
 
 
