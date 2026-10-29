@@ -1063,7 +1063,7 @@ const App = {
         'InvoicesPage.emailInvoice', 'InvoicesPage.copyPaymentLink', 'InvoicesPage.checkPaymentStatus',
         'EstimatesPage.convert', 'EstimatesPage.accept',
         'SalesReceiptsPage.void', 'CreditMemosPage.void', 'CreditMemosPage.showApply',
-        'CreditMemosPage.doApply', 'PaymentsPage.void', 'PaymentsPage.showApplyCredit', 'DepositsPage.voidDeposit',
+        'CreditMemosPage.doApply', 'PaymentsPage.void', 'PaymentsPage.doVoid', 'PaymentsPage.showApplyCredit', 'DepositsPage.voidDeposit',
         'DepositsPage.makeDeposit', 'DepositsPage.editDeposit', 'DepositsPage.saveEdit', 'JournalPage.editEntry',
         'BillsPage.void', 'BillsPage.voidBillPayment', 'BillsPage.uploadAttachment',
         'BillsPage.deleteAttachment', 'BillsPage.showPayForm', 'BillsPage.saveLienWaiver', 'VendorCreditsPage.void', 'VendorCreditsPage.showApply',
@@ -1072,6 +1072,12 @@ const App = {
         'JournalPage.void', 'JournalPage.uploadAttachment', 'JournalPage.deleteAttachment',
         'JobCostsPage.voidEntry', 'JobCostsPage.showAllocate', 'JobsPage.postTime', 'JobsPage.remove',
         'JobsPage.saveBudget', 'JobsPage.seedBudget', 'JobsPage.saveContract', 'JobsPage.saveSov', 'JobsPage.buildSov',
+        'JobsPage.coNew', 'JobsPage.coEdit', 'JobsPage.coSave', 'JobsPage.coAddLine', 'JobsPage.coRemoveLine',
+        'JobsPage.coSubmit', 'JobsPage.coApprove', 'JobsPage.coReject', 'JobsPage.coVoid', 'JobsPage.coPromote',
+        'JobsPage.coMakeSub', 'JobsPage.coSubmitSubOrder',
+        'JobsPage.paNew', 'JobsPage.paEdit', 'JobsPage.paSave', 'JobsPage.paSubmit', 'JobsPage.paApprove',
+        'JobsPage.paVoid', 'JobsPage.paMakeWaiver', 'JobsPage.paAddDeposit', 'JobsPage.paSaveDeposit', 'JobsPage.paVoidDeposit',
+        'PurchaseOrdersPage.subPayApp', 'PurchaseOrdersPage.releaseRetainage',
         'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
         'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',
         'RecurringPage.del', 'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
@@ -2468,6 +2474,7 @@ const App = {
         if (typeof MutationObserver === 'function') new MutationObserver(mark).observe(document.body, { childList: true, subtree: true });
         window.addEventListener('resize', mark);
         window.addEventListener('resize', () => ReportsPage._gridFit());
+        window.addEventListener('resize', () => ReportsPage._resizeSticky());
 
         // Load saved theme
         App.loadTheme();

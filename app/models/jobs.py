@@ -41,7 +41,9 @@ CONTRACT_TYPES = ("lump_sum", "gmp", "cost_plus")
 # A schedule-of-values line kind. "work" is the ordinary scope line (one per
 # trade package); allowance / contingency and the four estimate markups —
 # general_conditions / insurance / fee / bond — are the carried items an owner
-# reads on a pay application.
+# reads on a pay application. "change_order" is a line an approved owner
+# change order appended (#554) — its value is owned by the CO, so the SOV
+# grid shows it read-only.
 SOV_KINDS = (
     "work",
     "allowance",
@@ -50,6 +52,7 @@ SOV_KINDS = (
     "insurance",
     "fee",
     "bond",
+    "change_order",
 )
 
 
@@ -84,6 +87,9 @@ class Job(Base):
     cap_amount = Column(Numeric(15, 2), nullable=True)  # GMP max / cost-plus NTE
     contingency_amount = Column(Numeric(15, 2), nullable=True)  # owner contingency
     retainage_pct = Column(Numeric(5, 2), nullable=True)  # held per pay app (#555)
+    # The default markup on owner change orders (#554), a contract term. Null
+    # means no default; a CO or a CO line can still carry its own.
+    co_markup_pct = Column(Numeric(7, 4), nullable=True)
     contract_date = Column(Date, nullable=True)
     contract_estimate_id = Column(
         Integer, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True
@@ -135,6 +141,12 @@ class SovLine(Base):
     scheduled_value = Column(Numeric(15, 2), nullable=False, default=0)
     source_estimate_id = Column(
         Integer, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True
+    )
+    # The owner change order that owns this line (#554), when kind ==
+    # "change_order". SET NULL so removing the line's CO leaves the row's FK
+    # empty rather than cascading; void removes the line itself.
+    change_order_id = Column(
+        Integer, ForeignKey("change_orders.id", ondelete="SET NULL"), nullable=True
     )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

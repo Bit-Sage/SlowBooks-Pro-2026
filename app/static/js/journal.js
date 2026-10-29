@@ -94,7 +94,7 @@ const JournalPage = {
                 <strong>Date:</strong> ${formatDate(entry.date)}<br>
                 <strong>Description:</strong> ${escapeHtml(entry.description)}<br>
                 ${entry.reference ? `<strong>Reference:</strong> ${escapeHtml(entry.reference)}<br>` : ''}
-                <strong>Type:</strong> ${escapeHtml(sourceWord(entry.source_type))}${entry.is_adjusting ? ' · <strong>Adjusting entry</strong>' : ''}<br>
+                <strong>Type:</strong> ${escapeHtml(sourceWord(entry.source_type))}${entry.is_adjusting ? ' · <strong>Adjusting entry</strong>' : ''}${entry.basis === 'accrual' ? ' · <strong>Accrual only</strong>' : entry.basis === 'cash' ? ' · <strong>Cash only</strong>' : ''}<br>
                 ${entry.posted_by ? `<strong>Posted by:</strong> ${escapeHtml(entry.posted_by)}` : ''}
                 ${entry.register_account_id ? `<div id="journal-register-note" style="margin-top:6px; color:var(--gray-500);">Posted from the bank register of <a href="#/banking/${Number(entry.register_account_id)}">${escapeHtml(entry.register_account_name)}</a>; edit it there.</div>` : ''}
                 ${entry.voided ? '<div class="journal-voided" style="color:var(--danger);font-weight:700;margin-top:6px;">Voided</div>' : ''}
@@ -211,6 +211,15 @@ const JournalPage = {
                         </label>
                         <div class="hint">An accountant's correction to the books: marked on the entry, listed by the Adjusting Journal Entries report, and left out of a statement on request.</div>
                     </div>
+                    <div class="form-group">
+                        <label for="je-basis">Basis</label>
+                        <select id="je-basis" name="basis" data-no-search>
+                            <option value="both" selected>Both</option>
+                            <option value="accrual">Accrual only</option>
+                            <option value="cash">Cash only</option>
+                        </select>
+                        <div class="hint">${Terms.text('Accrual only: counts on accrual reports, e.g. an opening A/R balance. Cash only: counts on cash reports.')}</div>
+                    </div>
                 </div>
                 <h3 style="margin:12px 0 8px; font-size:14px;">Lines</h3>
                 <table class="line-items-table">
@@ -260,6 +269,7 @@ const JournalPage = {
         if (form.reference) form.reference.value = entry.reference || '';
         form.description.value = entry.description || '';
         if (form.is_adjusting) form.is_adjusting.checked = !!entry.is_adjusting;
+        if (form.basis) form.basis.value = entry.basis || 'both';
         const submit = $('#je-submit');
         if (submit) submit.textContent = 'Save';
         const body = $('#je-lines');
@@ -393,6 +403,7 @@ const JournalPage = {
             class_id: classIdFromForm(form),
             job_id: jobIdFromForm(form),
             is_adjusting: !!(form.is_adjusting && form.is_adjusting.checked),
+            basis: form.basis ? form.basis.value : 'both',
             lines,
         };
         const entryId = form.dataset.entryId ? parseInt(form.dataset.entryId, 10) : null;

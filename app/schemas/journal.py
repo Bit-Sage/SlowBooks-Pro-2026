@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
+from app.models.transactions import BASES
 from app.schemas.common import StrictModel, clean_line_cost_type
 
 
@@ -56,7 +57,18 @@ class JournalEntryCreate(StrictModel):
     # An adjusting entry (#341). Left out, an accountant's sign-in posts
     # adjusting entries and every other sign-in posts ordinary ones.
     is_adjusting: Optional[bool] = None
+    # Which reports the entry counts on (#483): "both" (the default),
+    # "accrual" (accrual reports only, e.g. an opening A/R balance) or
+    # "cash" (cash reports only). On an edit, left out keeps the entry's.
+    basis: Optional[str] = None
     lines: list[JournalLineCreate]
+
+    @field_validator("basis")
+    @classmethod
+    def _basis(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in BASES:
+            raise ValueError(f"basis must be one of {', '.join(BASES)}")
+        return value
 
 
 class JournalEntryUpdate(JournalEntryCreate):
@@ -90,6 +102,8 @@ class JournalEntryResponse(BaseModel):
     # (#340, #341); documents' postings carry neither.
     is_adjusting: bool = False
     posted_by: str = ""
+    # The reports the entry counts on: both, accrual or cash (#483)
+    basis: str = "both"
     lines: list[JournalLineResponse] = []
     total_debit: float = 0
     total_credit: float = 0

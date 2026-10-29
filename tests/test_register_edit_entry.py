@@ -837,7 +837,7 @@ def test_a_split_entry_round_trips(client, db_session, seed_accounts):
     )
     e = client.get(f"/api/banking/entries/{posted['id']}").json()
     assert e["amount"] == "-500.00" and e["category_account_id"] == a.id
-    no_own = {"class_id": None, "job_id": None}
+    no_own = {"class_id": None, "job_id": None, "customer_id": None}
     assert e["splits"] == [
         {
             "category_account_id": a.id,

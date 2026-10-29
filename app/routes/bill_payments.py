@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.bills import Bill, BillStatus, BillPayment, BillPaymentAllocation
 from app.models.contacts import Vendor
-from app.schemas.bills import BillPaymentCreate, BillPaymentResponse
+from app.schemas.bills import (
+    BillPaymentCreate,
+    BillPaymentMemoUpdate,
+    BillPaymentResponse,
+)
 from app.services.accounting import (
     all_lines,
     create_journal_entry,
@@ -221,6 +225,12 @@ def create_bill_payment(
         else:
             bill.status = BillStatus.PARTIAL
 
+    # A payment of one bill carries that bill's memo, for the check's memo
+    # line (#602); a memo typed on the payment wins, and a payment of
+    # several bills leaves the memo for the person to type.
+    if not (data.notes or "").strip() and len(applied_bills) == 1:
+        payment.notes = (applied_bills[0][0].notes or "").strip() or None
+
     # Journal: DR AP, CR Bank — always; the accounts were resolved above
     if True:
         # Cash paid, in home currency at the payment-date rate; A/P
@@ -283,6 +293,27 @@ def create_bill_payment(
     resp.vendor_name = vendor.name
     request_keys.finish(db, replay, 201, resp.model_dump(mode="json"), response)
     db.commit()
+    return resp
+
+
+@router.put("/{bill_payment_id}/memo", response_model=BillPaymentResponse)
+def update_bill_payment_memo(
+    bill_payment_id: int, data: BillPaymentMemoUpdate, db: Session = Depends(get_db)
+):
+    """Set the payment's memo, which prints on its check's memo line (#602).
+    Print Check saves the memo here first. Nothing is posted: the memo is
+    not in the books, so a closed period does not refuse it."""
+    payment = db.query(BillPayment).filter(BillPayment.id == bill_payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Bill payment not found")
+    if payment.is_voided:
+        raise HTTPException(status_code=400, detail="A void payment has no check.")
+    payment.notes = (data.notes or "").strip() or None
+    db.commit()
+    db.refresh(payment)
+    resp = BillPaymentResponse.model_validate(payment)
+    if payment.vendor:
+        resp.vendor_name = payment.vendor.name
     return resp
 
 

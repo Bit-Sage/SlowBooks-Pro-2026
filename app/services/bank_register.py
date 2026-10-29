@@ -123,6 +123,10 @@ _LINKS = {
     # document it voided (its source_id is that document's).
     "job_cost": "/#/job-costs/{id}",
     "job_cost_void": "/#/job-costs/{id}",
+    # An owner deposit (#555) has no document page of its own (it lives in
+    # the job's Pay apps tab), so it and its void open as the journal entry.
+    "job_deposit": "/#/journal/{txn}",
+    "job_deposit_void": "/#/journal/{txn}",
     "payroll": "/#/payroll/{id}",
     "payroll_void": "/#/payroll/{id}",
     "credit_memo": "/#/credit-memos/{id}",
@@ -286,6 +290,18 @@ def payees_for(db: Session, txns) -> dict[int, str]:
         pay_names = {p.id: customers.get(p.customer_id, "") for p in pays}
     else:
         pay_names = {}
+    # the names on a register deposit's lines (#606), one query for the page
+    entry_ids = [t.id for t in by_type.get("bank_entry", [])]
+    donors = defaultdict(list)
+    if entry_ids:
+        for txn_id, cname in (
+            db.query(TransactionLine.transaction_id, Customer.name)
+            .join(Customer, Customer.id == TransactionLine.customer_id)
+            .filter(TransactionLine.transaction_id.in_(entry_ids))
+            .order_by(TransactionLine.id)
+        ):
+            if cname not in donors[txn_id]:
+                donors[txn_id].append(cname)
     for t in txns:
         name = ""
         if t.source_type == "expense":
@@ -302,6 +318,11 @@ def payees_for(db: Session, txns) -> dict[int, str]:
         # its header (bank_entry_lines), not a counterparty: show it blank
         if t.source_type == "bank_entry" and name == BANK_ENTRY_HEADER:
             name = ""
+        # ...and with no payee typed, the name on its lines stands in: the
+        # donor of a one-name deposit, "Split (2 names)" for several
+        if t.source_type == "bank_entry" and not name and donors.get(t.id):
+            names = donors[t.id]
+            name = names[0] if len(names) == 1 else f"Split ({len(names)} names)"
         out[t.id] = name
     return out
 
@@ -364,6 +385,7 @@ def account_register(
     end: date | None = None,
     class_id: int | None = None,
     job_id: int | None = None,
+    basis: str = "accrual",
 ) -> dict:
     """Every ledger line on `account`, natural-balance running balance,
     period totals, and — when a start date is given — the balance carried
@@ -371,7 +393,11 @@ def account_register(
     lines of that class (the line's own, else its transaction's, else
     Uncategorized), the opening balance included (#213); with `job_id`,
     only that job's lines the same way (the line's own, else its
-    transaction's), 0 meaning the lines with no job (#242)."""
+    transaction's), 0 meaning the lines with no job (#242). `basis` reads the
+    ledger as accrual or cash (#483), the opening balance on the same one."""
+    from app.services import cash_basis
+
+    reading = cash_basis.reading(basis)
     debit_normal = is_debit_normal(account)
     in_class = line_scope(db, class_id, job_id)
 
@@ -388,7 +414,7 @@ def account_register(
         )
         if in_class is not None:
             before = before.filter(in_class)
-        dr, cr = before.one()
+        dr, cr = before.execution_options(**reading).one()
         dr, cr = Decimal(str(dr)), Decimal(str(cr))
         opening = (dr - cr) if debit_normal else (cr - dr)
 
@@ -403,7 +429,11 @@ def account_register(
         q = q.filter(Transaction.date >= start)
     if end:
         q = q.filter(Transaction.date <= end)
-    rows = q.order_by(Transaction.date, Transaction.id, TransactionLine.id).all()
+    rows = (
+        q.order_by(Transaction.date, Transaction.id, TransactionLine.id)
+        .execution_options(**reading)
+        .all()
+    )
 
     txns = {txn.id: txn for _, txn in rows}
     voided = voided_transaction_ids(db, txns.keys())

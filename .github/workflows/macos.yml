@@ -172,9 +172,21 @@ jobs:
             "$artifact_dir/${BUILD_BASENAME}-unsigned-app.zip"
           ditto "$app" "$stage/SlowBooks Pro.app"
           ln -s /Applications "$stage/Applications"
-          hdiutil create -volname "SlowBooks Pro" \
-            -srcfolder "$stage" -ov -format UDZO \
-            "$artifact_dir/${BUILD_BASENAME}-unsigned.dmg"
+          # hdiutil create fails with "Resource busy" now and then on
+          # GitHub's macOS runners right after a large copy like the ditto
+          # above (run 40800371868, 2026-10-28; a known runner flake). Let
+          # the copy settle, and give the create a few tries.
+          sync
+          for attempt in 1 2 3 4 5; do
+            if hdiutil create -volname "SlowBooks Pro" \
+                -srcfolder "$stage" -ov -format UDZO \
+                "$artifact_dir/${BUILD_BASENAME}-unsigned.dmg"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then echo "hdiutil create failed 5 times"; exit 1; fi
+            echo "hdiutil create failed (attempt $attempt of 5); retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
 
           unzip -tq "$artifact_dir/${BUILD_BASENAME}-unsigned-app.zip"
           hdiutil verify "$artifact_dir/${BUILD_BASENAME}-unsigned.dmg"
@@ -274,6 +286,20 @@ jobs:
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD"
+
+      # xcrun stapler fetches and checks the notarization ticket from Apple's
+      # CloudKit over HTTP/3 (UDP 443) once the first response advertises it,
+      # and that path drops on GitHub-hosted macOS runners: "The network
+      # connection was lost" after ~7 s, stapler exit 68, on every other
+      # call (four sign jobs in a row on 2026-10-28; GitHub reproduced it,
+      # actions/runner-images#14924). Refusing UDP 443 for this job makes
+      # stapler fall back to HTTPS over TCP, which works every time.
+      # notarytool, the timestamp service and the artifact upload are TCP
+      # and unaffected. Product issue #634.
+      - name: Keep stapler on TCP (actions/runner-images#14924)
+        run: |
+          echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
+          sudo pfctl -E
 
       - name: Sign, notarize, and staple via release.py
         run: |

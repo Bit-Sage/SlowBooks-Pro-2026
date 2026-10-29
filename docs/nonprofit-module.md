@@ -90,6 +90,45 @@ actual and variance for the grant while the fund reports show restriction.
   property and never states a value — the donor values the gift, not the
   charity (IRS Publication 1771).
 
+### One deposit, several donors
+
+When the bank shows one deposit of $1,500 that is really two $750 gifts,
+book it as one entry with a line per donor, so the bank balance matches the
+statement and each donor is still credited with their own gift:
+
+1. **From the register** — **+ Entry**, enter the deposit's total as the
+   amount, then **Split this entry…**. Give each line its income account,
+   its share, and the **Donor**. The **Fund** column appears on each line
+   when you use funds; a line left on "Same as header" takes the entry's
+   fund. **+ New Donor** in the Donor list adds a donor without leaving the
+   entry.
+2. **Against the bank feed** — book the split deposit in the register as
+   above and **Match** the feed's deposit row to it, as for any entry
+   already in your books. The bank feed's add call (`POST
+   /api/banking/transactions/{id}/add`) also takes the same `splits`, each
+   with its own `customer_id` and `class_id`, for an import that books rows
+   itself.
+3. **A plain deposit with one donor** — the **Donor** box on the entry
+   names that one gift, no split needed.
+
+The lines must add up to the deposit. Each donor's year-end giving
+statement lists their line as a gift on the deposit's date, and the donor
+counts are the same everywhere the gifts are read. Voiding the deposit
+takes every donor's line out. The register shows the donor's name for a
+one-donor deposit and "Split (2 names)" for several, unless you typed a
+payee.
+
+To add a donor to an entry you already booked, open it in the register and
+choose the donor on its line, then **Save**. This works on a reconciled
+deposit too: the donor is a label, so the amounts, the date and the
+reconciliation do not change.
+
+Each donor line gets the same thank-you letter a donation does: open the
+deposit in the register to edit it and use **Acknowledgment (PDF)** or
+**Email** beside the donor's name.
+
+Check images on a deposit are not stored yet.
+
 A payment recorded with nothing to apply to is a donor credit on the
 receivable until it meets a pledge; enter a gift with no pledge as a
 Donation so it is revenue the day it arrives.

@@ -110,6 +110,41 @@ def _run_signing(*args: str) -> subprocess.CompletedProcess[str]:
     raise AssertionError("unreachable")
 
 
+# hdiutil create fails with "Resource busy" now and then on GitHub's macOS
+# runners right after a large copy (the build job's unsigned DMG, run
+# 40800371868, 2026-10-28; a known runner flake). The candidate DMG here is
+# made the same way, straight after ditto, so it gets a few tries too.
+HDIUTIL_BUSY = "Resource busy"
+HDIUTIL_ATTEMPTS = 5
+HDIUTIL_BACKOFF_SECONDS = (5, 10, 15, 20)
+
+
+def _is_hdiutil_busy(exc: subprocess.CalledProcessError) -> bool:
+    said = f"{getattr(exc, 'stdout', '') or ''}{getattr(exc, 'stderr', '') or ''}"
+    return HDIUTIL_BUSY in said
+
+
+def _run_hdiutil_create(*args: str) -> subprocess.CompletedProcess[str]:
+    """hdiutil create with bounded retries on "Resource busy" only; any
+    other failure raises on the first try, as before."""
+    for attempt in range(1, HDIUTIL_ATTEMPTS + 1):
+        try:
+            return _run("hdiutil", "create", *args)
+        except subprocess.CalledProcessError as exc:
+            if not _is_hdiutil_busy(exc) or attempt == HDIUTIL_ATTEMPTS:
+                raise
+            delay = HDIUTIL_BACKOFF_SECONDS[
+                min(attempt, len(HDIUTIL_BACKOFF_SECONDS)) - 1
+            ]
+            print(
+                f"! hdiutil create: resource busy (attempt {attempt} of "
+                f"{HDIUTIL_ATTEMPTS}); retrying in {delay}s",
+                flush=True,
+            )
+            _sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def _record_run(
     report_path: Path,
     *args: str,
@@ -549,13 +584,35 @@ def _verify_dmg_contents_stapled(
             raise RuntimeError(
                 f"{bundle_name} is not inside {dmg.name}; see {evidence}"
             )
-        result = _record_run(
-            evidence, "xcrun", "stapler", "validate", "-v", str(inner), check=False
-        )
-        if result.returncode:
-            raise RuntimeError(
-                f"the app inside {dmg.name} is not stapled; see {evidence}"
+        # `stapler validate` reads the ticket in the bundle and checks it
+        # with Apple's ticket-delivery service, so it fails when that call
+        # fails: on 2026-10-28 four sign jobs in a row died here or at the
+        # staple above with a CloudKit lookup error from the runner, every
+        # staple having exited 0 (#634). The staple's own retry covers the
+        # earlier stapling; this last look gets the same bounded retries.
+        for attempt in range(1, STAPLE_ATTEMPTS + 1):
+            result = _record_run(
+                evidence, "xcrun", "stapler", "validate", "-v", str(inner), check=False
             )
+            if not result.returncode:
+                break
+            said = f"{result.stdout or ''}{result.stderr or ''}".strip()
+            if attempt == STAPLE_ATTEMPTS:
+                raise RuntimeError(
+                    f"the app inside {dmg.name} is not stapled, after "
+                    f"{STAPLE_ATTEMPTS} looks; the last: validate failed (exit "
+                    f"{result.returncode}): {said[-400:]}; see {evidence}"
+                )
+            delay = STAPLE_BACKOFF_SECONDS[
+                min(attempt, len(STAPLE_BACKOFF_SECONDS)) - 1
+            ]
+            print(
+                f"! the app inside {dmg.name}: validate failed (exit "
+                f"{result.returncode}) (look {attempt} of {STAPLE_ATTEMPTS}); "
+                f"retrying in {delay}s",
+                flush=True,
+            )
+            _sleep(delay)
     finally:
         _record_run(evidence, "hdiutil", "detach", str(mount), "-quiet", check=False)
 
@@ -664,9 +721,7 @@ def build_release(
         )
 
         candidate_dmg = report_dir / f"{basename}-candidate.dmg"
-        _run(
-            "hdiutil",
-            "create",
+        _run_hdiutil_create(
             "-volname",
             "SlowBooks Pro",
             "-srcfolder",

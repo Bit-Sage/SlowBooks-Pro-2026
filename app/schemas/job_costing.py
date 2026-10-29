@@ -2,7 +2,7 @@ from datetime import date as dt_date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.common import StrictModel
 
 from app.models.job_costing import ALLOCATION_METHODS
@@ -243,6 +243,19 @@ class JobBudgetRow(StrictModel):
 
 class JobBudgetSave(StrictModel):
     rows: list[JobBudgetRow]
+
+
+class CostToCompleteEntry(StrictModel):
+    """One forecast cell: a section (cost_code_id; None with cost_type "" is the
+    Unassigned cell), a cost type, and the amount — None clears the entry."""
+
+    cost_code_id: Optional[int] = None
+    cost_type: str = ""
+    amount: Optional[Decimal] = Field(default=None, ge=0)
+
+
+class CostToCompleteSave(StrictModel):
+    entries: list[CostToCompleteEntry]
 
 
 class JobBudgetResponse(BaseModel):

@@ -92,6 +92,12 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
         from app.services.undeposited_funds import deposit_holding
 
         resp.deposited_in = deposit_holding(db, payment)
+        provider = payment.method if payment.method in PROVIDER_NAMES else None
+        if provider:
+            resp.has_provider_fee = any(
+                is_fee_line(ln.description, provider)
+                for ln in all_lines(db, payment.transaction_id)
+            )
     return resp
 
 
@@ -510,7 +516,37 @@ def void_payment(
     what the provider holds (#584). The processing fee the provider kept
     stays booked as an expense unless `fee_refunded` says the provider gave it
     back. A payment already paid out can't be told apart per payment yet, so
-    the void goes through and the response carries a warning."""
+    the void goes through and the response carries a warning.
+
+    A deposit a payment application applied is voided with that application."""
+    from app.models.pay_applications import PayApplication
+
+    applied = (
+        db.query(PayApplication)
+        .filter(
+            PayApplication.deposit_payment_id == payment_id,
+            PayApplication.status == "approved",
+        )
+        .first()
+    )
+    if applied is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This payment applies a deposit to payment application "
+                f"{applied.number}; void the application to undo it."
+            ),
+        )
+    return void_payment_unchecked(payment_id, db, fee_refunded)
+
+
+def void_payment_unchecked(
+    payment_id: int, db: Session, fee_refunded: bool = False, commit: bool = True
+):
+    """The void itself, without the payment-application guard (a payment
+    application voiding its own deposit payment calls this). With
+    `commit=False` the work is flushed and left for the caller to commit, so
+    it can be undone with the caller's."""
     # Row-lock the payment so two concurrent voids can't both pass the
     # is_voided guard and post duplicate reversing JEs.
     payment = (
@@ -626,7 +662,10 @@ def void_payment(
                 invoice.status = InvoiceStatus.SENT
 
     payment.is_voided = True
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     if receipt is not None:
         from app.routes.invoices.lifecycle import void_invoice
 

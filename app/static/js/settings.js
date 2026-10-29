@@ -458,7 +458,7 @@ const SettingsPage = {
                                 <option value="a4" ${s.pdf_paper_size === 'a4' ? 'selected' : ''}>A4</option>
                             </select></div>
                         <div class="form-group"><label>Report Basis</label>
-                            <select name="report_basis" title="${escapeHtml(`The basis the ${T('Profit & Loss')} and ${T('Balance Sheet')} run on unless the report says otherwise`)}">
+                            <select name="report_basis" title="${escapeHtml(`The basis the ${T('Profit & Loss')}, ${T('Balance Sheet')}, Trial Balance, General Ledger and related reports run on unless the report says otherwise`)}">
                                 <option value="accrual" ${s.report_basis !== 'cash' ? 'selected' : ''}>Accrual (income when billed)</option>
                                 <option value="cash" ${s.report_basis === 'cash' ? 'selected' : ''}>Cash (income when paid)</option>
                             </select></div>
@@ -557,6 +557,10 @@ const SettingsPage = {
                                 <option value="true" ${s.smtp_use_tls !== 'false' ? 'selected' : ''}>Yes</option>
                                 <option value="false" ${s.smtp_use_tls === 'false' ? 'selected' : ''}>No</option>
                             </select></div>
+                        <div class="form-group"><label>Always CC <span class="form-hint">Copied on every email sent. Separate addresses with commas.</span></label>
+                            <input name="smtp_always_cc" value="${escapeHtml(s.smtp_always_cc || '')}" placeholder="office@example.com"></div>
+                        <div class="form-group"><label>Always BCC <span class="form-hint">Blind-copied on every email sent; recipients don't see it.</span></label>
+                            <input name="smtp_always_bcc" value="${escapeHtml(s.smtp_always_bcc || '')}" placeholder="books@example.com"></div>
                     </div>
                     <button type="button" class="btn btn-sm btn-secondary" data-admin data-write onclick="SettingsPage.testEmail()" style="margin-top:8px;">
                         Send Test Email</button>
@@ -1083,7 +1087,7 @@ const SettingsPage = {
                 }
                 return `<tr>
                     <td style="white-space:nowrap;">${escapeHtml(SettingsPage._emailLogWhen(r.sent_at))}</td>
-                    <td>${escapeHtml(r.recipient || '—')}</td>
+                    <td>${escapeHtml(r.recipient || '—')}${r.cc ? `<div style="color:var(--text-muted);">cc ${escapeHtml(r.cc)}</div>` : ''}${r.bcc ? `<div style="color:var(--text-muted);">bcc ${escapeHtml(r.bcc)}</div>` : ''}</td>
                     <td>${escapeHtml(r.subject || '—')}</td>
                     <td>${escapeHtml(SettingsPage._emailSourceLabel(r.entity_type))}</td>
                     <td>${statusCell}${detail}</td>

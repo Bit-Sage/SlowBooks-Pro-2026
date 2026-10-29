@@ -33,6 +33,7 @@ from app.models.items import (
     MovementType,
 )
 from app.models.accounts import Account, AccountType
+from app.models.transactions import TransactionLine
 from app.services.accounting import _q, create_journal_entry, quantize_to
 
 COST_Q = Decimal("0.0001")
@@ -49,8 +50,20 @@ def get_inventory_asset_account_id(db: Session, item: Item) -> Optional[int]:
     return acc.id if acc else None
 
 
-def get_cogs_account_id(db: Session) -> Optional[int]:
-    """Resolve the COGS account. First COGS-typed account wins; fallback to #5000."""
+def get_cogs_account_id(db: Session, item: Optional[Item] = None) -> Optional[int]:
+    """Resolve the COGS account for an item's sale.
+
+    Priority: the item's own Expense or COGS Account when it is COGS-typed
+    (#622: it used to be ignored, so every sale landed on the first COGS
+    account, 5000, and the P&L showed "Direct postings to Cost of Goods Sold"
+    instead of the sub-account) → the first COGS-typed account → #5000.
+    An item pointed at an expense-typed account keeps the fallback: a sale's
+    cost side belongs in cost of goods, not operating expense.
+    """
+    if item is not None and item.expense_account_id:
+        own = db.get(Account, item.expense_account_id)
+        if own is not None and own.account_type == AccountType.COGS:
+            return own.id
     acc = (
         db.query(Account)
         .filter(Account.account_type == AccountType.COGS)
@@ -61,6 +74,33 @@ def get_cogs_account_id(db: Session) -> Optional[int]:
         return acc.id
     acc = db.query(Account).filter(Account.account_number == "5000").first()
     return acc.id if acc else None
+
+
+def _sale_entry_accounts(
+    db: Session, transaction_id: Optional[int]
+) -> tuple[Optional[int], Optional[int]]:
+    """The (inventory asset, COGS) accounts a sale's cost entry actually
+    posted to, read back from its lines: DR COGS / CR Inventory Asset.
+
+    A reversal must credit the account the sale debited. The item's COGS
+    (or asset) account can change between the sale and the void, and
+    resolving it afresh would credit the new account, leaving the old one
+    overstated and the new one negative. Returns (None, None) when there is
+    no entry to read (legacy rows, cost carried elsewhere) or it is not the
+    simple two-line shape a sale writes.
+    """
+    if not transaction_id:
+        return None, None
+    lines = (
+        db.query(TransactionLine)
+        .filter(TransactionLine.transaction_id == transaction_id)
+        .all()
+    )
+    debits = [ln for ln in lines if Decimal(str(ln.debit or 0)) > 0]
+    credits = [ln for ln in lines if Decimal(str(ln.credit or 0)) > 0]
+    if len(debits) != 1 or len(credits) != 1:
+        return None, None
+    return credits[0].account_id, debits[0].account_id
 
 
 def _append_movement(
@@ -299,7 +339,7 @@ def record_sale(
     txn_id = None
     if cogs_amount > 0 and post_journal:
         asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = get_cogs_account_id(db)
+        cogs_id = get_cogs_account_id(db, item)
         if asset_id and cogs_id:
             from datetime import date as _date
 
@@ -373,7 +413,7 @@ def record_adjustment(
     if post_journal and amount > 0:
         asset_id = get_inventory_asset_account_id(db, item)
         adj_acc = db.query(Account).filter(Account.account_number == "5900").first()
-        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db)
+        offset_id = adj_acc.id if adj_acc else get_cogs_account_id(db, item)
         if asset_id and offset_id:
             from datetime import date as _date
 
@@ -468,6 +508,7 @@ def reverse_sale(
     # Look up the original sale's unit_cost so the reversal matches.
     # For invoice-void we know the original source is ("invoice", invoice_id).
     unit_cost = None
+    original_txn_id = None
     if original_source_type and original_source_id:
         original = (
             db.query(InventoryMovement)
@@ -482,6 +523,7 @@ def reverse_sale(
         )
         if original:
             unit_cost = Decimal(str(original.unit_cost or 0))
+            original_txn_id = original.transaction_id
 
     if unit_cost is None:
         # Fallback: use current avg_cost. This is the legacy behavior and
@@ -492,8 +534,13 @@ def reverse_sale(
 
     txn_id = None
     if amount > 0 and post_journal:
-        asset_id = get_inventory_asset_account_id(db, item)
-        cogs_id = get_cogs_account_id(db)
+        # Reverse onto the accounts the sale's entry used, not the item's
+        # current ones (#622 follow-up): the same reasoning as unit_cost.
+        asset_id, cogs_id = _sale_entry_accounts(db, original_txn_id)
+        if asset_id is None:
+            asset_id = get_inventory_asset_account_id(db, item)
+        if cogs_id is None:
+            cogs_id = get_cogs_account_id(db, item)
         if asset_id and cogs_id:
             from datetime import date as _date
 

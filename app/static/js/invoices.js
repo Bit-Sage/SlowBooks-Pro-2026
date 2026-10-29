@@ -291,6 +291,9 @@ const InvoicesPage = {
                 <div class="total-row"><span class="label">Subtotal</span><span class="value">${money(inv.subtotal)}</span></div>
                 <div class="total-row"><span class="label">Tax</span><span class="value">${money(inv.tax_amount)}</span></div>
                 <div class="total-row grand-total"><span class="label">Total</span><span class="value">${money(inv.total)}</span></div>
+                ${Number(inv.retainage_held) ? `<div class="total-row"><span class="label">Retainage withheld this period</span><span class="value">-${money(inv.retainage_held)}</span></div>` : ''}
+                ${Number(inv.retainage_released) ? `<div class="total-row"><span class="label">Retainage released</span><span class="value">${money(inv.retainage_released)}</span></div>` : ''}
+                ${(Number(inv.retainage_held) || Number(inv.retainage_released)) ? `<div class="total-row"><span class="label">Current payment due</span><span class="value">${money((Number(inv.total) - Number(inv.retainage_held) + Number(inv.retainage_released)).toFixed(2))}</span></div>` : ''}
                 <div class="total-row"><span class="label">Paid</span><span class="value">${money(inv.amount_paid)}</span></div>
                 <div class="total-row grand-total"><span class="label">Balance Due</span><span class="value">${money(inv.balance_due)}</span></div>
             </div>
@@ -549,6 +552,10 @@ const InvoicesPage = {
                 <div class="form-grid">
                     <div class="form-group full-width"><label>Recipient Email *</label>
                         <input name="recipient" type="email" required value="${escapeHtml(email)}"></div>
+                    <div class="form-group"><label>CC <span class="form-hint">Optional. Separate addresses with commas.</span></label>
+                        <input name="cc" placeholder="office@example.com"></div>
+                    <div class="form-group"><label>BCC <span class="form-hint">Optional. Hidden from the recipient.</span></label>
+                        <input name="bcc" placeholder="books@example.com"></div>
                     <div class="form-group full-width"><label>Subject</label>
                         <input name="subject" placeholder="Loading from your template…"></div>
                     <div class="form-group full-width"><label>Message <span class="form-hint">Appears at the top of the email. Leave it blank to send your template as it is.</span></label>
@@ -602,6 +609,8 @@ const InvoicesPage = {
         try {
             await API.post(`/invoices/${id}/email`, {
                 recipient: form.recipient.value,
+                cc: form.cc.value.trim() || null,
+                bcc: form.bcc.value.trim() || null,
                 subject: form.subject.value,
                 message: form.message.value,
             });
@@ -761,6 +770,16 @@ const InvoicesPage = {
         InvoicesPage.recalc();
         // Populate due_date for fresh invoices that don't already have one.
         if (!inv.due_date) InvoicesPage._recomputeDueDate();
+        // A pay application's invoice is changed on the application, not here:
+        // only the notes are editable (the server refuses the rest, #576).
+        InvoicesPage._payAppInvoice = !!inv.pay_application_id;
+        if (InvoicesPage._payAppInvoice) {
+            $$('#invoice-form input, #invoice-form select, #invoice-form textarea, #invoice-form button[type="button"]').forEach(el => {
+                if (el.name !== 'notes' && !/Cancel/.test(el.textContent || '')) el.disabled = true;
+            });
+            $('#invoice-form .form-actions').insertAdjacentHTML('beforebegin',
+                '<div class="form-hint">This invoice comes from a payment application. Change the application to change the amounts; only the notes can be edited here.</div>');
+        }
     },
 
     customerSelected(customerId) {
@@ -910,6 +929,15 @@ const InvoicesPage = {
     async save(e, id) {
         e.preventDefault();
         const form = e.target;
+        if (id && InvoicesPage._payAppInvoice) {
+            try {
+                // Notes only: nothing reposts, so no closed-period question here.
+                await API.put('/invoices/' + id, { notes: form.notes.value || null });
+                toastPosted(Terms.text('Invoice updated'));
+                App.refresh();
+            } catch (err) { toast(err.message, 'error'); }
+            return;
+        }
         const lines = [];
         $$('#inv-lines tr').forEach((row, i) => {
             lines.push({

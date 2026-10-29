@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Application for Payment</title>
+<style>
+    @page { size: letter; margin: 0.6in 0.75in; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 10pt; color: #1a1a2e; line-height: 1.4; }
+    .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    .company-info { font-size: 9pt; color: #4a4a6a; }
+    .company-name { font-size: 16pt; font-weight: 700; color: #003366; margin-bottom: 4px; }
+    .company-logo { display: block; max-height: 60px; max-width: 200px; margin-bottom: 6px; }
+    .doc-title { text-align: right; }
+    .doc-title h1 { font-size: 20pt; font-weight: 700; color: #003366; margin: 0; letter-spacing: 0.03em; }
+    .doc-number { font-size: 12pt; color: #666; margin-top: 4px; }
+    .meta-table { width: 100%; margin-bottom: 16px; }
+    .meta-table td { padding: 3px 8px; font-size: 9pt; vertical-align: top; }
+    .meta-label { font-weight: 700; color: #4a4a6a; width: 120px; }
+    .cert { float: right; width: 300px; margin-bottom: 16px; }
+    .cert table { width: 100%; }
+    .cert td { padding: 3px 8px; font-size: 9pt; }
+    .cert td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .cert .label { font-weight: 700; color: #4a4a6a; }
+    .cert .grand { font-size: 12pt; font-weight: 700; color: #003366; border-top: 2px solid #003366; padding-top: 4px; }
+    h2.sheet { clear: both; font-size: 11pt; color: #003366; margin: 22px 0 8px 0; text-transform: uppercase; letter-spacing: 0.03em; }
+    table.cont { width: 100%; border-collapse: collapse; }
+    table.cont th { background: #003366; color: white; padding: 5px 6px; font-size: 7.5pt; text-transform: uppercase; text-align: left; letter-spacing: 0.02em; }
+    table.cont th.r { text-align: right; }
+    table.cont td { padding: 4px 6px; font-size: 8.5pt; border-bottom: 1px solid #e0e0e0; }
+    table.cont td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    table.cont tfoot td { font-weight: 700; border-top: 2px solid #003366; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 7pt; color: #999; padding: 8px 0; }
+</style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            {% if company_logo_data_uri %}<img class="company-logo" src="{{ company_logo_data_uri }}" alt="">{% endif %}
+            <div class="company-name">{{ company.company_name }}</div>
+            <div class="company-info">
+                {% if company.company_address1 %}{{ company.company_address1 }}<br>{% endif %}
+                {% set company_city = city_line(company.company_city, company.company_state, company.company_zip) %}
+                {% if company_city %}{{ company_city }}<br>{% endif %}
+                {% if company.company_phone %}{{ company.company_phone }}<br>{% endif %}
+                {% if company.company_email %}{{ company.company_email }}{% endif %}
+            </div>
+        </div>
+        <div class="doc-title">
+            <h1>APPLICATION FOR PAYMENT</h1>
+            <div class="doc-number">{{ app.number }}</div>
+        </div>
+    </div>
+
+    <table class="meta-table"><tr>
+        <td class="meta-label">Owner:</td><td>{{ header.owner }}</td>
+        <td class="meta-label">Application no:</td><td>{{ app.application_no }}</td>
+    </tr><tr>
+        <td class="meta-label">Project:</td><td>{{ header.job_name }}</td>
+        <td class="meta-label">Period to:</td><td>{{ app.period_to | fdate }}</td>
+    </tr><tr>
+        <td class="meta-label">Date:</td><td>{{ app.date | fdate }}</td>
+        <td class="meta-label">Status:</td><td>{{ app.status | title }}</td>
+    </tr></table>
+
+    {# The summary of the payment application. #}
+    <div class="cert"><table>
+        <tr><td class="label">Original contract sum</td><td class="r">{{ header.contract_sum_original | currency }}</td></tr>
+        <tr><td class="label">Net change by change orders</td><td class="r">{{ header.net_change | currency }}</td></tr>
+        <tr><td class="label">Contract sum to date</td><td class="r">{{ header.contract_sum_to_date | currency }}</td></tr>
+        <tr><td class="label">Completed and stored to date</td><td class="r">{{ totals.completed_to_date | currency }}</td></tr>
+        <tr><td class="label">Retainage to date</td><td class="r">{{ totals.retainage_to_date | currency }}</td></tr>
+        <tr><td class="label">Total earned less retainage</td><td class="r">{{ totals.total_earned_less_retainage | currency }}</td></tr>
+        <tr><td class="label">Less previous payment applications</td><td class="r">{{ totals.previous_applications | currency }}</td></tr>
+        {% if totals.release_retainage %}<tr><td class="label">Retainage released</td><td class="r">{{ totals.release_retainage | currency }}</td></tr>{% endif %}
+        <tr><td class="label grand">Current payment due</td><td class="r grand">{{ totals.current_due | currency }}</td></tr>
+        {% if totals.deposit_applied %}<tr><td class="label">Less deposit applied</td><td class="r">{{ totals.deposit_applied | currency }}</td></tr>
+        <tr><td class="label grand">Net due</td><td class="r grand">{{ totals.net_due | currency }}</td></tr>{% endif %}
+        <tr><td class="label">Balance to finish</td><td class="r">{{ totals.balance_to_finish_total | currency }}</td></tr>
+    </table></div>
+
+    <h2 class="sheet">Line detail</h2>
+    <table class="cont">
+        <thead><tr>
+            <th style="width:36px;">Item</th>
+            <th>Description</th>
+            <th class="r">Scheduled value</th>
+            <th class="r">Previous</th>
+            <th class="r">This period</th>
+            <th class="r">Stored</th>
+            <th class="r">Completed</th>
+            <th class="r">%</th>
+            <th class="r">Balance to finish</th>
+            <th class="r">Retainage</th>
+        </tr></thead>
+        <tbody>
+        {% for line in pa.lines %}
+            <tr>
+                <td>{{ line.item_no or '' }}</td>
+                <td>{{ line.description or '' }}</td>
+                <td class="r">{{ line.scheduled_value | currency }}</td>
+                <td class="r">{{ line.previous | currency }}</td>
+                <td class="r">{{ line.this_period | currency }}</td>
+                <td class="r">{{ line.stored | currency }}</td>
+                <td class="r">{{ line.completed_to_date | currency }}</td>
+                <td class="r">{{ '%.1f' | format(line.pct_complete) }}%</td>
+                <td class="r">{{ line.balance_to_finish | currency }}</td>
+                <td class="r">{{ line.retainage | currency }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr>
+            <td></td><td>Totals</td>
+            <td class="r">{{ totals.scheduled_total | currency }}</td>
+            <td class="r">{{ totals.previous_total | currency }}</td>
+            <td class="r">{{ totals.this_period_total | currency }}</td>
+            <td class="r">{{ totals.stored_total | currency }}</td>
+            <td class="r">{{ totals.completed_to_date | currency }}</td>
+            <td class="r"></td>
+            <td class="r">{{ totals.balance_to_finish_total | currency }}</td>
+            <td class="r">{{ totals.retainage_to_date | currency }}</td>
+        </tr></tfoot>
+    </table>
+
+    <div class="footer">{{ app.number }} · {{ header.job_name }}</div>
+</body>
+</html>

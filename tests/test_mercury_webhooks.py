@@ -121,7 +121,12 @@ def test_duplicate_and_out_of_order_partial_events(configured, unauthed_client):
     assert account["available_balance"] == "8000"
 
 
-@pytest.mark.parametrize("offset", [-301, 301])
+# A minute past the five-minute window on either side, not a second past
+# it: the stamp is a whole second and the check compares a fractional
+# clock, so at 301 the future side read as inside the window whenever the
+# rest of that second ran out between stamping and checking (CI, 2.30.0
+# gate on 964da28f: 200 instead of 401). The window itself is the check's.
+@pytest.mark.parametrize("offset", [-360, 360])
 def test_expired_and_future_signatures_are_rejected(
     configured, unauthed_client, offset
 ):

@@ -114,6 +114,8 @@ def general_ledger_csv(data: dict, company: str, words=None) -> str:
             f" running balance counts this {say('class').lower()}'s lines alone,"
             " not the account's whole balance)"
         )
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     _preamble(w, company, "General Ledger" + (f" — {cls}" if cls else ""), period)
     w.writerow(
         [
@@ -195,6 +197,8 @@ def account_transactions_csv(data: dict, company: str, words) -> str:
         period += f" ({words('Class')}: {data['class_name']} only)"
     if data.get("job_name"):
         period += f" ({words('Job')}: {data['job_name']})"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     _preamble(w, company, f"Account detail — {head}", period)
     w.writerow(
         [
@@ -268,6 +272,8 @@ def _account_set_csv(data: dict, company: str, words, out, w) -> str:
         period += f" ({words('Job')}: {data['job_name']})"
     if data.get("exclude_adjusting"):
         period += " (adjusting entries left out)"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     _preamble(w, company, f"Account detail — {data['set']['label']}", period)
     w.writerow(
         [
@@ -518,6 +524,8 @@ def profit_loss_by_class_csv(
     period = f"{data['start_date']} to {data['end_date']}"
     if data.get("filtered"):
         period += f" ({filtered_phrase(data, columns)})"
+    if data.get("basis") == "cash":
+        period += " (cash basis)"
     _preamble(w, company, data.get("report_name") or words("P&L by Class"), period)
     from app.routes.reports.financial import _grid_layout
 

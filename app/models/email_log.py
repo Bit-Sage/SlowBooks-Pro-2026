@@ -15,6 +15,13 @@ class EmailLog(Base):
     entity_type = Column(String(50), nullable=False)  # invoice, estimate, statement
     entity_id = Column(Integer, nullable=False)
     recipient = Column(String(200), nullable=False)
+    # Copies on the send (#611): the Cc addresses as sent, and the Bcc
+    # addresses so the log says who was blind-copied even though the mail
+    # itself never does. Comma-separated, null when none. Text, not a sized
+    # String: the mail has already gone out by the time the row is written,
+    # so a list the column cannot hold would error a send that succeeded.
+    cc = Column(Text, nullable=True)
+    bcc = Column(Text, nullable=True)
     subject = Column(String(500), nullable=True)
     status = Column(String(20), nullable=False)  # sent, failed
     error_message = Column(Text, nullable=True)

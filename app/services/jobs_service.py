@@ -15,6 +15,7 @@ from app.models.accounts import Account, AccountType
 from app.models.contacts import Customer
 from app.models.jobs import Job
 from app.models.transactions import Transaction, TransactionLine
+from app.services import cash_basis
 from app.services.terminology import Terms, terms_from_db
 
 NO_JOB_LABEL = "No job"
@@ -332,8 +333,10 @@ def job_profitability(
     job_ids: Optional[list[int]] = None,
     customer_id: Optional[int] = None,
     include_no_job: bool = True,
+    basis: str = "accrual",
 ) -> list[dict]:
-    """Income / COGS / expenses per job from posted lines.
+    """Income / COGS / expenses per job from posted lines (`basis`: accrual
+    or cash, #483).
 
     Untagged activity lands in the "No job" bucket (job_id None) so the
     report's totals equal the plain P&L for the same period.
@@ -363,7 +366,11 @@ def job_profitability(
         q = q.filter(Transaction.date <= end_date)
     if job_ids is not None:
         q = q.filter(job_attribution().in_(job_ids))
-    rows = q.group_by("job", Account.account_type).all()
+    rows = (
+        q.group_by("job", Account.account_type)
+        .execution_options(**cash_basis.reading(basis))
+        .all()
+    )
 
     jobs = {j.id: j for j in db.query(Job).all()}
     customers = {c.id: c.name for c in db.query(Customer).all()}

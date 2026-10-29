@@ -1,11 +1,15 @@
 # Reports on a cash basis — design (#483)
 
-Status: DESIGN + step 1 built on this branch (#483, 2026-10-26). The
+Status: DESIGN + steps 1, 2a, 2b and 4 built (#483, 2026-10-26 / 28): the
+reports take a basis, edits of a paid document rewrite its payments' cash
+lines, the journal form chooses a basis, the Sales Tax Liability report
+reads on a basis, retainage on bills is handled, and payroll stays on both
+(see "Step 4" below). The
 architecture — a basis on every ledger line, written when the document
 posts, never recomputed when a report is read — was decided by Keith on
-2026-10-26. Step 1 (below) is built here; "Decisions" at the end records
-what the build settled that this text had not, and "Steps 2+" what is
-left. Issue #483, from Trent: every statement is accrual only, nothing in
+2026-10-26. Steps 1 and 2a (below) are built; "Decisions" at the end records
+what the builds settled that this text had not, and "Rollout in PRs" what
+is left. Issue #483, from Trent: every statement is accrual only, nothing in
 `app/` knows a basis, and the CPAs who file most small-business returns
 file them on the cash basis, so the bookkeeper switches the P&L at year
 end. QuickBooks has a company default and a per-report toggle.
@@ -244,28 +248,40 @@ has no apply-later route yet, so it stays there until step 2.
 payment's entry, so voiding the payment reverses them (the void reads
 every line, `all_lines`, and `reversing_lines` carries each line's
 basis), and the invoice or bill can then be voided as an accrual entry.
-A paid or partly paid invoice or bill whose lines are edited keeps the
-cash lines its earlier payments wrote: cash was recognized on the lines
-as they stood when it arrived, A/R and A/P still net to zero in the cash
-view, and the accrual entry is reposted as today. To move recognized
-income to another account, void the payment, edit, receive it again.
-(The step-2 cleanup: recompute a payment's cash lines when its document
-is edited, unless the payment's period is closed.)
+A paid or partly paid invoice or bill whose lines are edited has its
+payments' cash lines rewritten (step 2b): each cash line names the invoice
+or bill it recognizes (`recognizes_invoice_id` / `recognizes_bill_id` on
+`transaction_lines`), so after the entry is reposted every non-void
+payment's lines for that document are removed from the payment's entry and
+written again from the document's new lines, prorated by the same applied
+amount (from the allocation rows), on the payment's date. The unapplied
+remainder's lines (4950 / 6990) are not touched, and the control A/R or A/P
+cash line stays (it is rebalanced if the amounts differ). A payment on or
+before the closing date keeps the lines it has, and the server log says so;
+to change those, void the payment, edit, receive it again. Lines written
+before the link existed name nothing: an edit rewrites them only when the
+payment paid that one document in full (every cash line but the control's is
+then the document's); a payment on several documents with unnamed lines is
+left alone and logged, since its lines cannot be told apart. A payment that
+has no cash lines for the document yet gets them (an invoice the QuickBooks
+Online ledger import posted, adopted by the edit).
 
 **Sales tax payable.** Prorated with the invoice's lines, so on the cash
 basis 2200 carries the tax *collected* and not yet remitted, and the
-sales-tax payment (Dr 2200 / Cr bank, `both`) takes it down. The Sales
-Tax Liability report stays accrual in step 1.
+sales-tax payment (Dr 2200 / Cr bank, `both`) takes it down. Step 4 puts the
+Sales Tax Liability report on a basis (below).
 
 **Payroll.** A pay run posts wages and employer taxes as expense against
 net pay (bank) and the withholdings and employer taxes (payroll
-liabilities), all `both` in step 1. Under a strict cash basis the
-liability half is an expense when the tax deposit is made, not when the
-run posts; QuickBooks treats payroll liabilities the same way it treats
-other current liabilities on a cash-basis report (they stay). Step 3
-tags a pay run's liability-side expense lines `accrual` and writes cash
-lines on the liability payment; the invariant above already names
-payroll liabilities among the non-cash movements.
+liabilities), all `both`. Decided in step 4: payroll stays `both` under
+either basis. QuickBooks' cash-basis reports do the same (payroll
+liabilities stay, like other current liabilities), and the invariant above
+already names payroll liabilities among the non-cash movements. The earlier
+plan, tagging the liability-side expense `accrual` and writing cash lines on
+the liability payment, has nothing to hang on: payroll liabilities are paid
+with ordinary checks or journal entries (`_paid_liability_cautions` only
+warns), there is no liability-payment document. An accountant who wants
+the tax expense on the deposit date adjusts it by journal entry.
 
 **Journal entries that hit A/R or A/P directly.** `both`, as every
 journal entry: a hand-posted A/R line counts on both bases and is not
@@ -273,20 +289,44 @@ relieved by a payment's cash pair (a payment cannot be applied to a
 journal entry). QuickBooks' rule — such a line follows the document it
 is "linked" to — needs a customer on the line, which the journal form
 does not have. Opening A/R and A/P balances entered as journal entries
-sit on the cash Balance Sheet until step 2 gives the journal form a
-basis choice. So nobody reads that history as cash, a cash-basis report
+sit on the cash Balance Sheet unless the entry says **Accrual only** (step
+2b: the journal form's Basis choice and `basis` on `POST/PUT /api/journal`,
+`both` | `accrual` | `cash`, applied to every line of the entry, shown on the
+entry, kept by an edit that leaves it out and by the void). So nobody reads that history as cash, a cash-basis report
 whose A/R or A/P is not zero at its end date carries a short note
 (`basis_note` on the data; under the period line on screen, under the
 table on the PDF).
 
-**Retainage and progress billing.** #552 (retainage) and #555 (pay
-applications) are not on `main`. When they land, an invoice's A/R debit
-splits between 1100 and 1150 Retainage Receivable and a payment can
-release held retainage long after the work was billed; the recognition
-pair must then prorate across the retainage held and the retainage
-released, and a bill's over 2050 Retainage Payable. Left for the
-follow-up, with the rule already in place: a release is a payment, and a
-payment writes the cash lines for what it collected.
+**Retainage and progress billing.** A release is a payment, and a payment
+writes the cash lines for what it paid or collected.
+
+*Bills (step 4).* A bill holding retainage posts Dr expense lines / Cr A/P
+(total less retainage) / Cr 2050 Retainage Payable. Its cash lines leave 2050
+out: a payment applied to the bill spreads the amount over the bill's
+expense, cost and inventory lines (`applied / sum of those lines`), so the
+cash lines balance on A/P as before and, once the net is paid, each line is
+recognized in the proportion `net / total`; the held part is not yet an
+expense and 2050 reads zero on the cash Balance Sheet (the accrual view shows
+it as a liability). When the held amount is released,
+`retainage_release_cash_lines` gives the cash lines for the release's own
+entry: Dr the bill's expense shares for the released amount / Cr 2050 (cash),
+beside the release's Dr 2050 / Cr bank (`both`), which then nets 2050 to zero
+in the cash view. The app has no release path on `main` yet (#555 / #576: the
+buyout flow only holds retainage; a plain check or journal entry against 2050
+cannot be linked to a bill), so nothing calls that function in the product
+today; the release test writes the entry the way a release route will. A
+release route must call it, and a void of the release reverses the cash
+lines with the rest (the void copies every line with its basis, as a bill
+payment's does). The backfill handles retainage bills with no change: it
+writes the cash lines of each bill payment by the rule above, idempotently.
+
+*Invoices (follows #576).* Pay applications and invoice retainage are not on
+`main`. When they land, the invoice's A/R debit splits between 1100 and 1150
+Retainage Receivable, and the same rule applies mirrored: a customer payment
+prorates the income lines over the invoice total less the retainage held
+(1150 left out, so the cash lines still balance on A/R), and a release
+writes Dr 1150 (cash) / Cr the income shares for the released amount on the
+release's entry.
 
 **Inventory and cost of goods.** The stock movement an invoice posts (Dr
 cost of goods / Cr inventory, under the invoice's own source) is among
@@ -317,9 +357,9 @@ branch, byte for byte. `_pl_section` / `_bs_section` and the two CSVs add
 "(cash basis)" to the period line only when the basis is cash. The
 accountant's package follows the company's report basis: its Profit &
 Loss and Balance Sheet (the statements pack) are cash when the default is
-cash, and its README and manifest say which. Its General Ledger, Trial
-Balance and agings are the books as posted until step 2, and the README
-says so.
+cash, and its README and manifest say which. Its General Ledger and Trial
+Balance follow the company basis from step 2a; the agings stay the books as
+posted, and the README says so.
 
 The screen: a Basis select (Company default / Accrual / Cash) in the two
 statements' toolbar, riding on the address, the saved report and the
@@ -353,14 +393,31 @@ payments (receive, batch, online, apply, void) and bill payments (pay,
 void); `report_basis`; `basis` on the P&L and Balance Sheet, their PDF
 and CSV, and the screen toggle; `tests/test_cash_basis.py`.
 
-**Step 2.** The Trial Balance, General Ledger, P&L Detail, account
-drill-down, the grids (by Class, by Job, by month) and the nonprofit
-statements take `basis`; edits of a paid document recompute its
-payments' cash lines; the journal form's basis choice.
+**Step 2a (built).** The Trial Balance, General Ledger, P&L Detail, account
+drill-down (an account's and a P&L total's), the grids (by Class, by Job, by
+month), Job Profitability and the nonprofit statements (Activities,
+Financial Position, Functional Expenses) take `basis`; the accountant's
+package's General Ledger and Trial Balance follow the company default.
+Each reads the ledger through the same execution option the P&L does, the
+balance brought forward on the same basis (so a General Ledger on the cash
+basis foots: opening plus activity equals closing, account by account), and
+carries `basis` and `basis_note` in its data, "(cash basis)" in its PDF and
+CSV period line, and the Basis select on its screen. A drill-down opened
+from a statement takes that statement's basis, so its lines add up to the
+figure that was clicked. On the cash basis a P&L Detail or drill-down line
+is the payment's recognition line: its type, number and name are the
+payment's; the invoice it recognizes is not on the line (the open item
+below).
 
-**Step 3.** Payroll liabilities and the Sales Tax Liability report on the
-cash basis; the retainage follow-up (#552, #555); the accountant's
-package's Trial Balance on the company default.
+**Step 2b.** Edits of a paid document recompute its payments' cash lines;
+the journal form's basis choice.
+
+**Step 3.** Edits of a paid document recompute its payments' cash lines;
+the journal form's basis choice (see the step 3 PR).
+
+**Step 4.** The Sales Tax Liability report on a basis; retainage on bills
+(release cash lines); the payroll decision; invoice-side retainage waits for
+#576.
 
 ## Decisions (2026-10-26, this branch)
 
@@ -384,7 +441,10 @@ package's Trial Balance on the company default.
    income is unchanged either way, and the void then has one entry to
    reverse. (The text above first had it dated the later of payment and
    invoice, today when closed; dropped for that reason.)
-7. **Edits of a paid document leave earlier cash lines alone** (v1).
+7. **Edits of a paid document rewrite its payments' cash lines** (step 2b;
+   v1 left them alone): the recognition follows the document as it now
+   stands, still prorated per payment by the amount applied, except for
+   payments on or before the closing date.
 8. **Independent proration per payment**; a cent may stay on a line.
 9. **Payroll and journal entries are `both`** in step 1.
 10. **Review calls (Trent, #572):** 4950 / 6990 show up on any
@@ -395,34 +455,67 @@ package's Trial Balance on the company default.
 11. **Screen toggle built** in step 1: the toolbar pattern (`_adjOpts`)
     made it a few lines.
 
+12. **Step 2a calls.** Fund Balances and the one-class P&L page keep
+    their step-1 behaviour (accrual; the class P&L page through the
+    P&L's own `class_id`); a nonprofit's Fund Balances tracks restricted
+    gifts as posted. The other job reports (a job's own page, Job Budget vs
+    Actual) stay accrual. `job_profitability` takes `basis` for the report;
+    its other callers pass none.
+13. **Payroll stays `both` on both bases** (step 4), the QuickBooks rule:
+    no liability-payment document exists to carry cash lines, and the
+    invariant already counts payroll liabilities as non-cash movements.
+14. **Retainage on a bill is left out of the cash recognition** (step 4): the
+    net paid is spread over the expense lines, so the cash lines still
+    balance on A/P, and the release recognizes the held remainder (above).
+    The expense recognized equals the money paid at every step.
+15. **The Sales Tax Liability report's cash reading lists the payments**, not
+    the invoices: each allocation in the dates takes the invoice's sales,
+    taxable amount and tax by `applied / invoice total` (home currency).
+    The ledger block (tax posted, paid, balance) reads 2200 on the basis, so
+    the two are checked against each other; a cent can differ from the
+    ledger (each payment's own lines are rounded to the largest share).
+
 ## Known limits of step 1
 
-- **Proration drifts when a document's lines change between partial
-  payments.** Each payment prorates over the document's recognition lines
-  as they stand that day. A late fee or an edit between two partial
-  payments shifts the split between accounts for the later one; the
-  totals stay exact (each payment recognizes exactly what it applied).
-  The link from a cash line to its document (open items) is what would
-  true this up.
+- **Proration drifts when a late fee is added between partial payments.**
+  Each payment prorates over the document's recognition lines as they
+  stand that day; an edit now rewrites every payment's lines, but a late
+  fee posted on the invoice is not an edit and shifts the split for the
+  later payment only. The totals stay exact. The link from a cash line to
+  its document could now true this up.
 - **A payment that produces no cash lines, such as a $0 payment, is
   looked at again on every boot.** The backfill finds payments by "has no
   cash line", and nothing marks one that legitimately has none.
 - **An invoice the QuickBooks Online ledger import posted counts once, on
-  the posting's date.** Its `qbo_ledger` lines are `both`, so its income
-  is already in the cash view; a payment on it writes no recognition
-  lines (its `both` bank/A-R pair already takes A/R to zero), and
-  applying an unapplied remainder to it only moves Unapplied Cash Payment
-  Income back to A/R. Its income lands on the invoice date, not the
-  payment date, until the posting is adopted by an edit.
+  the posting's date, until it is edited.** Its `qbo_ledger` lines are
+  `both`, so its income is already in the cash view; a payment on it writes
+  no recognition lines (its `both` bank/A-R pair already takes A/R to
+  zero), and applying an unapplied remainder to it only moves Unapplied Cash
+  Payment Income back to A/R. An edit adopts the posting: the invoice then
+  posts as accrual and every payment on it is given its recognition lines
+  (step 2b), so its income lands on the payment dates.
+
+- **Sales Tax report, cash basis:** credit memos are not counted, and an
+  invoice the QuickBooks Online ledger import posted shows its tax on its
+  own date in the ledger block but not in the list (the difference line
+  names it). The report has no PDF or CSV, so there is no period line to
+  mark; the screen says "cash basis".
+- **A release of bill retainage with no link to the bill** (a plain check
+  or journal entry against 2050) leaves a debit on 2050 and no expense on
+  the cash basis until a release route exists; the cash Balance Sheet then
+  shows 2050 as an asset-like debit. Record the release through the bill's
+  release flow (#555 / #576) once it lands.
 
 ## Open items (not settled; conservative choice taken)
 
-- **A link from a cash line to its document** (`recognizes_invoice_id` /
-  `recognizes_bill_id`) would let the final payment true up rounding,
-  let an edit find the lines to recompute, and give the cash-basis P&L
-  Detail a Name column. Not added: step 1 needs none of it.
-- **The accountant's Trial Balance** stays as posted in the package even
-  when the statements are cash, until step 2 reads it on a basis.
+- **A link from a cash line to its document** is built (step 2b:
+  `recognizes_invoice_id` / `recognizes_bill_id`, nullable, no foreign key,
+  written by every new cash line; older lines stay NULL). Still open: using
+  it to true up the final payment's rounding and to give the cash-basis P&L
+  Detail a Name column.
+- **The accountant's Trial Balance** (settled in step 2a): the package's
+  Trial Balance and General Ledger follow the company basis with the
+  statements; the agings stay as posted.
 - **Opening balances through the wizard** post A/R and A/P as `both`; a
   company that starts on the cash basis with open invoices should enter
   them as invoices, which the wizard already suggests.

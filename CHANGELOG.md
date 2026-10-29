@@ -5,7 +5,192 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.30.0 — Construction from estimate to pay application, and reports on a cash basis
+
+**Stripe payments record again.** On the current Stripe library a paid
+checkout's webhook was answered with an error and the payment was never
+recorded, and Check payment status failed the same way; the library's
+objects are no longer dictionaries, and the provider read them as one. Both
+work again, and with the clearing account on the processing fee is booked
+from the payment as #583 intends.
+
+**Sales Tax on the cash basis ties to Sales Tax Payable on a pay
+application's invoice.** Such an invoice holds retainage back, so its amount
+due is less than its total; the report prorated each payment's tax on the
+total while the payment's own cash lines prorated on the amount due, and the
+two disagreed. The report now prorates the way the cash lines do, to the
+cent.
+
+**The desktop window's zoom level comes back after a relaunch, and Ctrl +
+wheel zooms on a Mac.** On Windows the level was kept but not applied again
+at the next start; on a Mac only the keys zoomed. Ctrl + wheel (Cmd on a
+Mac) now steps the same remembered level on both.
+
+**Contact support's Send opens the mail program on a Mac.** The desktop
+window on macOS dropped the mailto link; it now hands it to the launcher,
+which opens the default mail program with the message written.
+
+**A wide report's scrollbar stays in view.** A report wider than its window
+(the WIP Schedule) scrolled sideways only from a bar at the table's foot; a
+bar at the bottom of the window now scrolls it while the table is in view.
+
+**Smaller:** the note that lists an entity type's equity accounts names them
+the way the company does (no numbers when account numbers are off); the
+Commitment Status report as of a date shows a commitment's status on that
+date, not today's "closed" on a row that was still open then; the refusal to
+edit a locked contract sum says an *approved* change order locks it; at 1280
+wide the top bar keeps the company name beside Contact support (the clock
+and the brand's year give way below 1366).
+
+**A lien waiver per payment and job** (#576). A payment applied to two jobs'
+invoices used to get one waiver, for whichever invoice came first, and a
+payment whose first invoice carried no job waived the whole payment. A waiver
+is now for one payment and one job: its amount is what the payment applied to
+that job's invoices, `POST /api/lien-waivers` takes a `job_id` (needed only
+when the payment pays more than one job; refused with 400 `job_required`
+naming the jobs otherwise), the Waivers screen makes the waiver for its own
+job, and one of each type is allowed per payment and job.
+
+**Voiding a pay application is all or nothing** (#576). The application's
+deposit payment, its invoice and the application itself are now voided in one
+transaction. Before, the deposit was voided and saved first, so when the
+invoice's void was refused (a payment still applied, the closing date) the
+deposit stayed voided under an application and invoice that still stood. A
+refusal now leaves all three as they were.
+
+**Sales Tax report on the cash basis; retainage on bills; payroll stays on
+both** (#483, step 4). Reports > Sales Tax takes a Basis (Company default /
+Accrual / Cash), like the Profit & Loss does. On the cash basis it lists the
+tax collected on the money received in the dates, each payment taking its
+invoice's sales, taxable amount and tax in the proportion paid, and checks
+that against Sales Tax Payable on the cash basis; credit memos are not
+counted (no cash came for them). The accrual report is unchanged, and
+paying the tax is the same either way. A bill that holds retainage is
+expensed on the cash basis only as it is paid: paying the net recognizes
+that much of each expense line, and the held part is recognized when it is
+released (so the Balance Sheet carries no Retainage Payable on the cash
+basis until then). Pay runs read the same on both bases: payroll
+liabilities stay on the cash Balance Sheet, as other current liabilities do.
+
+**Cash basis: editing a paid invoice or bill, and a basis for journal
+entries** (#483). Changing the lines of an invoice or bill that has been paid
+now moves what its payments counted on the cash basis to match: if half of an
+invoice was paid and you move its amount from one income account to another,
+the cash Profit & Loss moves the paid half too, on the day of each payment.
+(A payment on or before the closing date keeps what it has; void and re-enter
+the payment to change that.) An invoice brought in from QuickBooks Online and
+then edited now shows its income on its payments' dates on the cash basis
+instead of dropping out of it. The journal entry form has a new Basis choice,
+Both (as before), Accrual only or Cash only: enter an opening Accounts
+Receivable or Accounts Payable balance as Accrual only and it stays on the
+accrual reports without sitting on the cash Balance Sheet. Editing or voiding
+the entry keeps its basis.
+
+**Reports on a cash basis, step 2** (#483, @ContractorKeith). The Trial Balance,
+General Ledger, Profit & Loss Detail, an account's drill-down (and a P&L
+total's), P&L by Class, by Job and by month, Job Profitability and the
+nonprofit Statement of Activities, Statement of Financial Position and
+Statement of Functional Expenses now take the same Basis choice the Profit &
+Loss and Balance Sheet have (Company default / Accrual / Cash, beside the
+dates; `?basis=cash` on their API, PDF and CSV, which say "cash basis" when they
+are). On the cash basis a ledger line is the payment's: income on the day the
+money came in, in the paid proportion, and the balance brought forward is
+read the same way, so each account still foots. A drill-down opened from a
+cash-basis statement stays on the cash basis, so its lines add up to the
+figure clicked. Without a choice they follow Settings → Company → Report
+Basis, and on the accrual basis they print what they always did. The
+Accountant's Package now sends its General Ledger and Trial Balance on the
+company's basis too, and its README says so.
+
+**Trial Balance: balance-sheet accounts at their balance as of the end date**
+(#597). For a date range the Trial Balance showed only that range's activity
+on every account, bank and card accounts included, so it never matched a
+QuickBooks Trial Balance side by side. Asset, liability and equity accounts
+now show their balance as of the end date, on the debit or credit side; income,
+cost and expense accounts still show their activity from the start date. The
+earlier periods' net income, which the balance-sheet rows carry and the
+income and expense rows leave out, prints as one "Net Income (prior periods)"
+row so the debit and credit totals still agree. The screen, the PDF and the CSV
+(the accountant's package included) all read the same way.
+
+**A retainage set by hand on a converted bill survives a re-post.** Editing
+the lines, tax or date of a bill converted from a commitment re-computed the
+retainage held at the commitment's rate, wiping an amount that had been set
+by hand through the API. A hand-set retainage now stays; one that was just the
+commitment's rate on the old lines still follows the rate to the new lines.
+The bill records which it is (`retainage_manual`), so a derived retainage
+keeps following the commitment's rate after that rate is changed, instead
+of being mistaken for a hand-set figure and frozen at the old percent.
+
+**The desktop window zooms.** Ctrl +, Ctrl - and Ctrl 0 (Cmd on a Mac) now
+make the desktop app's window larger, smaller or normal again, and the level
+holds across pages and launches; Ctrl + wheel zooms the window and its document
+windows. They did nothing before. (#597)
+
+**Void can record a refunded processing fee.** Voiding an online payment
+leaves the fee its provider kept booked as an expense, and the Void button
+gave no way to say the provider had given the fee back. The Void confirm on
+an online payment with a booked fee now has a "The provider refunded its
+processing fee" checkbox, unticked by default; tick it and the fee is
+reversed with the payment. Other payments' Void confirm is unchanged.
+
+**An inventory sale's cost posts to the item's COGS account** (#622, from
+Discussion #621, @Financials911). Selling a stocked item posted the cost side
+to the first cost-of-goods account in the chart (5000, the parent) whatever
+the item's *Expense or COGS Account* said, so the Profit & Loss showed it as
+"Direct postings to Cost of Goods Sold" instead of under the sub-account. The
+sale, its void, and a QuickBooks Online document that becomes ours now post to
+the item's account when it is a cost-of-goods account; an item with no account
+or an expense-typed one posts to 5000 as before. Entries already posted stay
+where they are: one journal entry moving them from 5000 to the right
+sub-account cleans up history.
+
+**CC and BCC on email** (#611, from Discussion #607, @PeterRichardsonGolf).
+The Email Invoice dialog now has CC and BCC boxes, comma-separated. Settings →
+Email (SMTP) gains *Always CC* and *Always BCC*: addresses copied on every email
+the program sends, so statements, collection letters and acknowledgments carry
+them too, with no dialog. Bcc is never written into the message, only the
+envelope. Recent sends shows the copies under the recipient. API: `POST
+/api/invoices/{id}/email` accepts `cc` and `bcc`.
+
+**One bank deposit, several donors** (#606). A deposit that is really two
+gifts, $750 each from two donors, can now be booked as one entry with a line
+per donor. In the register's + Entry (and in the bank feed's add call, which takes
+the same lines), every line has a Customer (Donor in a nonprofit) and, when you use
+classes or funds, its own Class or Fund; "+ New Customer" in the list adds
+one on the spot. The deposit matches the bank statement, and each donor's
+year-end giving statement and gift count include their own line; voiding the
+deposit takes them all back out. The register shows the donor's name on a
+one-donor deposit and "Split (2 names)" on several. An entry you booked
+earlier can have a donor added from its Edit form, a reconciled one included,
+since a name changes no amount, and each donor line can print or email the
+same thank-you letter a donation gets. Check images on a deposit are not part of
+this.
+
+**Print the checks Pay Bills wrote in one go** (#603, from Discussion #594).
+Each check used to print on its own from its payment. Pay Bills by check with
+Check # left blank now leaves the checks waiting, and **Bills → Print Checks**
+(offered right after Pay Bills, too) lists them for a bank account with a tick
+box on each. The starting check number is filled from the next number on the
+account and numbers the ticked checks in order; any row's number can be
+adjusted. Print Checks makes one PDF with a check to a page on the usual
+voucher stock, gives each check the number it printed with, and takes it off
+the list. A number the account already has, a void payment and a payment
+dated in a closed period are refused. For API users:
+`GET /api/checks/unprinted` and `POST /api/checks/print-batch`. The list
+opened after Pay Bills ticks only the checks it just wrote, opened from the
+Bills page it ticks none (Select all is there), a payment dated on or before
+the closing date is not listed at all, and a number the account already has
+asks the same keep-or-edit question a single check does, under the same
+warning setting (`?allow_duplicate_check_number=true` keeps it).
+
+**A bill's memo prints on the check that pays it** (#602, from Discussion
+#594). A check printed from a bill payment had a blank memo line, though the
+bill carried the account or invoice number the vendor wants on it. Paying
+one bill now carries that bill's memo onto the payment and its check; paying
+several bills leaves the memo for you to type, and a memo you enter yourself
+is never replaced. The payment's view has a **Check memo** field you can edit,
+and Print Check saves it before the check opens.
 
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
@@ -259,16 +444,15 @@ type (#431) keeps its contractor accounts, its Sub vendor type with the
 1099-NEC transition rule, its light vocabulary (Subcontractor → Sub) and its
 Report Center ordering (Job Profitability, Job Budget vs Actual, P&L by Job).
 What changes is the cost-code chart. Codes now use the two-level
-division/section numbering common in commercial construction specifications —
-a **division** ("03") and a **section** ("03 30 00", with an optional ".16"
+division/section numbering — a **division** ("03") and a **section** ("03 30 00", with an optional ".16"
 extension) — and a section sits under its division automatically. What you
 type is normalized on save and import (`033000`, `03-3000`, `03.30.00` all
 become `03 30 00`); a code that numbers its own way (`L-100`, `EQ`, a numeric
 `1000`/`2000` chart) is left exactly as typed and never rewritten on
 re-import. The switch (and the Cost Codes page's **Load standard divisions
 and common sections** button) seeds the standard division titles plus a
-modest set of common sections — the full numbered section catalog is a
-licensed product, so you import your own through **Import CSV** (a few hundred
+modest set of common sections — the full numbered section list is far too
+large to ship, so you import your own through **Import CSV** (a few hundred
 sections with just `code,name` land normalized and auto-parented in one
 call). The accounts, cost types and the standard catalog still seed only into
 a company that has no cost codes of its own yet, so a custom chart is left
@@ -341,7 +525,7 @@ company's estimate form and PDF are exactly as they were. See
 
 **The contract on the job** (#552, @ContractorKeith). Review fixes: the
 contract sum and contingency edit freely until the job has billing on the
-schedule of values or a change order, then lock (409 `contract_sum_locked` /
+schedule of values or an approved owner change order, then lock (409 `contract_sum_locked` /
 `contingency_locked`; a change order moves them from there), so a sum typed
 before the bid is just corrected; the original follows the sum until then;
 building from an estimate stamps the original even when the job form set the
@@ -411,6 +595,188 @@ Nonprofit company sees none of it. One behaviour change for everyone: a $0
 (description-only) PO line is no longer copied onto the bill a PO becomes —
 the converted bill carries only the lines with money on them. See
 [docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Change orders** (#554, @ContractorKeith). A change order is how a locked
+construction budget, its contract and its commitments move, with an audit
+trail. It comes in three kinds: a **potential change order** prices a change
+the owner hasn't approved yet (and **promotes** to an owner change order,
+copying its lines, when they say yes); an **owner change order** revises the
+contract; a **sub change order** appends scope to a commitment. Material and
+labor are priced separately, each line carrying its own markup — the line's,
+else the change order's, else the job's new **Markup on change orders**
+contract term (kept between -100% and 1000%) — and allowance- and
+contingency-funded work carries **none by default**, with an **Apply markup**
+flag on the change order to turn it on (the record, form and PDF show whether
+markup was applied). An owner change order's **funding** decides the
+effect on approve: *contract* adds its sell total to the contract amount,
+appends a read-only `change_order` line to the schedule of values and writes
+locked `source=change` budget rows with the sell as revenue (the job-cost
+tree's Changes column); *contingency* draws the owner's contingency down (409
+`contingency_exceeded`), and *allowance* spends an allowance line at its sell price, markup included, as contingency does (409
+`allowance_exceeded`), both writing the cost with no revenue (the contract
+already carries that money). A sub change order appends cost-only lines to an
+open commitment (a sub change order linked to an owner change order approves only while the cost of the approved ones under it, this one included, stays within the owner change order's cost: 409 `owner_co_budget_exceeded`; the lines a change order added keep their job, cost code, type, quantity and rate on a plain purchase-order edit) on the same job (409 when it is on another job or not open),
+and the Buyout tab's *bought* grows. The CO's figures freeze at approve, so
+changing a contract term afterward never moves an approved CO. Every effect
+reverses on **void** — except a commitment line already billed against, which
+refuses the void (409 `co_billed`). **Numbers run per job**: the job number,
+then `CO-001`, `PCO-001`, `SCO-001` (a job with no number uses `J<id>`; older
+company-wide numbers keep theirs). A **PCO can be revised** (`POST
+/api/change-orders/{id}/revise`): the new revision (`…-R2`) supersedes the
+prior one, which stays as history, the list shows the latest, and only the
+latest promotes. **Several PCOs roll up into one owner CO** (`POST
+/{id}/promote` with `pco_ids`): the owner CO carries all their lines and each
+PCO links to it. The commitment and budget can no longer drift apart: a sub CO
+made from an owner CO approves only once that owner CO is approved, an owner CO
+with an approved sub CO under it cannot be rejected or voided (void the sub CO
+first), the allowance line must be an allowance on the same job, and a plain
+purchase-order edit cannot drop or reprice the lines a sub CO added (409
+`commitment_co_line`). A sub CO on a fully billed commitment is still refused
+(409 `commitment_not_open`). The budget key widens to include
+`source` so a change row sits beside an estimate-locked one. A **Change
+orders** tab (construction only, after Buyout) holds the log, the line form
+with live cost and sell per cost type, and Submit / Approve / Reject / Void /
+Promote / Make sub order / PDF; the Contract tab's Changes tile goes live, its
+terms gain **Markup on change orders**, and the schedule of values shows
+change-order lines read-only with each allowance's used and remaining. An
+owner CO / PCO prints as a document showing the price per line and cost type
+(`GET /api/change-orders/{id}/pdf`; cost and markup stay in the app). Progress
+billing against the
+revised schedule (#555) and the change-order log report (#556) build on this;
+a Business or Nonprofit company sees none of it. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Progress billing and retainage** (#555, @ContractorKeith). A construction job
+now bills its owner from the schedule of values with a **pay application**:
+each SOV line carries previous, this period, materials presently stored,
+completed-to-date, percent complete, balance to finish and retainage, and the
+application totals the way the owner's payment application reads — completed and stored
+to date, retainage to date, total earned less retainage, less previous
+payment applications, the current payment due, and the balance to finish. A new
+application pre-fills every SOV line (change-order, allowance and contingency
+lines bill like work); only one may be open per job (409). **Approve** creates
+the invoice for the job's customer — one line per SOV line billed this period
+(this period plus the change in stored materials, so stored is billed when
+stored and reversed when it is installed) — and posts a retainage journal: DR
+A/R net of retainage, DR **Retainage Receivable** (1150) for retainage held
+this period, CR 1150 for any retainage released, CR income per line, CR sales
+tax (charged on the billed work at the application's tax rate, defaulted from
+the job's accepted estimate). A dropped retainage percent makes the retainage
+this period negative and the 1150 leg a credit, and the entry still balances.
+The invoice carries `retainage_held`, `retainage_released` and its
+`pay_application_id`, and its balance due is the net of retainage. **Owner
+deposits** (`POST /api/jobs/{id}/deposits`) hold money on **Customer Deposits**
+(2210); a pay application's *deposit applied* draws one down as a payment to
+2210 on approve. **Void** reverses the invoice (and 1150), restores an applied
+deposit, and leaves later applications' figures correct (they read history
+live). On the **sub** side, a commitment's schedule drives a **Sub pay app**
+(the existing partial convert) and **Release retainage** writes a bill DR
+**Retainage Payable** (2050) / CR A/P, payable through Pay Bills; 422 over what
+is held, and voiding it restores the figure. Lien waivers ride on both sides:
+an application warns about sub bills still missing a waiver for the period. The
+first pay application locks the contract sum and contingency (409
+`contract_sum_locked` / `contingency_locked` until it is voided). The
+schedule can no longer be rebuilt once billed (409 `sov_has_billings`), a line
+cannot shrink below what it has billed (422), and an owner change order whose
+SOV line has been billed cannot be voided (409 `co_billed`). A **Pay apps** tab
+(construction only, after Change orders) holds the application grid, the totals
+block, the deposits block and Save / Submit / Approve / Void / PDF
+(`GET /api/pay-applications/{id}/pdf` prints the pay application and its
+line detail); the invoice view and PDF show the retainage lines. The
+WIP schedule, cost-to-complete, the change-order log, the buyout report and job
+cost by vendor (#556) build on this; a Business or Nonprofit company sees none
+of it. Retainage to date is net of releases, so the application, its invoice and
+account 1150 agree after a release, and it cannot go below zero (422): dropping
+the retainage percent and releasing on the same application is refused when the
+release is more than what is held. An invoice made from a pay application only
+takes note edits (409 otherwise) and is voided with the application, not from
+the invoice screen (409 `invoice_belongs_to_pay_application`); only the latest
+approved application can be voided (409 `later_application`). Sales tax is on
+by default with a per-application *Charge tax* switch, taxes at the estimate's
+rate to six decimals (8.875% stays 8.875%), shows on the application so its
+current due matches the invoice, and is saved on edit. Stored materials move
+into the work on a later application, and an application that only moves stored
+material is approved with no invoice. The PDF is titled "Application for
+Payment" with a "Line detail" sheet and prints the contract sums as of approval.
+Each payment can carry conditional or unconditional, progress or final lien
+waivers for the part applied to the job (`POST /api/lien-waivers`, PDF per
+waiver). A deposit payment applied to an application can't be voided from
+Payments (409), and a negative this-period or stored that would take completed
+to date below zero is refused (422). See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Construction job reports** (#556, @ContractorKeith). Five reports lead the
+Report Center in a Construction group — the three that always existed (Job
+Profitability, Job Budget vs Actual, P&L by Job) and then these five, which show
+in construction mode only. Each is a plain grid with a JSON route, a PDF and a
+CSV like P&L by Job, and takes an `as_of` date (or `start_date`/`end_date` where
+a period applies) with optional `job_id`, `customer_id`, `status` and
+`include_closed`; closed and not-awarded jobs are left out by default. The **WIP
+Schedule** (`/reports/wip-schedule`) lists each job with a contract — contract
+sum, approved changes, revised contract, estimated cost and gross profit, cost to
+date, percent complete, earned revenue, billed to date, over and under billing,
+retainage outstanding, cost to complete and projected gross profit — on the
+**cost-to-cost** method: percent complete is cost ÷ estimated cost (capped at
+100%), earned is the revised contract times that percent, over billing (billed −
+earned) is a liability and under billing (earned − billed) an asset. Every figure
+reads **as of the date** — cost and posted revenue to that day, billing and
+retainage from the applications approved by then, the revised contract with the
+change orders approved by then. Billing reads
+from the approved pay applications' completed-to-date when the job has one by the
+date, else the posted revenue carrying the job (`billed_basis` says which). The
+report **posts nothing** (see the WIP additions below for the adjusting entry
+it computes). **Cost to Complete**
+(`/reports/cost-to-complete`) is per job and cost code (division › section) —
+budget, committed, actual, cost to complete (remaining budget plus open
+commitments), projected final, variance and percent — a tree in JSON, flattened
+with the code path in PDF/CSV, the totals footing the clamped rows. **Change
+Order Log** (`/reports/change-order-log`) lists every change order per job with
+the running approved total (as of the date) and the contract it builds, the
+pending total and counts by status. **Buyout Report** (`/reports/buyout`) foots
+the per-job buyout across jobs (bid vs bought, variance, committed-remaining,
+billed, Unassigned kept), as of the date. **Job Cost by Vendor**
+(`/reports/job-cost-by-vendor`) groups posted job cost by the transaction's
+vendor (a No vendor bucket for journals and job cost entries) with bills, paid to
+date, retainage held outstanding and open A/P; cost is period-filtered, the bill
+figures job-to-date and prorated by the job's share of each bill's line amounts
+(a split bill splits). Job Profitability and Job Budget vs Actual gained the PDF
+and CSV routes they lacked (honouring `customer_id` / `include_inactive`). A
+Business or Nonprofit company sees none of these reports. See
+[docs/contractor-mode.md](docs/contractor-mode.md).
+
+**Job reports, WIP additions** (#556). The WIP schedule now shows
+the **adjusting entry with amounts**, per job and net: under-billings (asset),
+over-billings (liability), the revenue offset and any loss provision, balanced,
+in the JSON, a second PDF grid, a CSV block and on screen (computed, never
+posted). A **cost-to-complete forecast** per job, section and cost type
+(`job_cost_to_complete`, migration `b4d6f8a0c2e3`; `GET`/`PUT
+/api/jobs/{id}/cost-to-complete-forecast`; report `cost-to-complete-forecast`
+with PDF and CSV) defaults to budget − actual floored at zero, and the WIP
+schedule's estimated cost is now actual + cost to complete, so a job past budget
+with work left reads under 100% instead of 100%. A **projected loss** is booked in
+full when projected cost passes the contract: the provision is loss × (1 −
+percent complete), added to the entry. A **commitment status** report
+(`commitment-status`, PDF and CSV) lists each PO and subcontract with committed,
+billed, retainage held and remaining, totals per job, read as of the date
+(sub change orders approved later are left out; a closed commitment is open on
+a date only if a bill against it is dated after that date). A job with no budget
+and no forecast earns nothing: it is listed with a warning and left out of the
+totals and the adjusting entry until its cost reaches the contract, when it
+reads 100% complete and the loss is recognised once, not twice. The WIP
+warnings print under the report on screen, in the PDF and in the CSV.
+
+### v2.29.2 — A register line opens over the register
+
+**A register line opens over the register.** Clicking a line in a bank or
+card register used to go to the posting's own address, which drew that
+document's whole list first: for a journal entry, every journal entry in the
+company, which took minutes on a file with years of imported history. Closing
+it then left you on Journal Entries instead of the register. The line's
+posting now opens over the register, with nothing else loaded, and Close
+comes back to the register where you were; voiding or saving it there brings
+you back to the register too. Opening a document by its address
+(a bookmark, a report's drill-down) is unchanged; Ctrl-click still opens it
+in a new tab.
 
 ### v2.29.1 — Profit & Loss Detail, Bill Quick Entry, and pre-printed checks
 
@@ -5519,7 +5885,7 @@ edge-case costs onto them. Now:
 gained a **Cost Codes** chart — which part of a job a cost belongs to ("03
 Concrete", "26 Electrical"), each with a cost type (labor, material,
 subcontract, equipment, other) and an optional default account — with a
-one-click load of the CSI MasterFormat divisions. Bill lines, journal
+one-click load of the standard divisions. Bill lines, journal
 lines, purchase-order lines and expenses take a cost code, and bill lines
 and expenses can be marked **billable** to the job's customer (the
 unbilled-costs-to-invoice step arrives with progress billing). The job

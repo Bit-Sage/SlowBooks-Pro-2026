@@ -11,6 +11,8 @@ says what to rename instead.
 from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
+from app.services.account_label import account_label
+from app.services.settings_service import use_account_numbers
 from app.models.transactions import Transaction
 from app.seed.chart_of_accounts import EQUITY_SEEDS, equity_family
 
@@ -65,7 +67,10 @@ def apply_entity_equity(db: Session, info: dict) -> dict:
     if not family or info.get("nonprofit"):
         return out
     want = [(n, name) for n, name in EQUITY_SEEDS[family]]
-    out["accounts"] = [f"{n} {name}" for n, name in want]
+    # Named the way the company names its accounts: "3000 Common Stock", or
+    # "Common Stock" with account numbers off (#567; 2.30.0 gate W-47).
+    numbered = use_account_numbers(db)
+    out["accounts"] = [account_label(n, name, numbered, " ") for n, name in want]
     have = current_family(db)
     if have == family:
         return out

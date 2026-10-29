@@ -6,6 +6,7 @@
     @page { size: letter; margin: 0.25in 0.5in; }
     body { font-family: 'Courier New', Courier, monospace; font-size: 10pt; color: #000; }
     .check-page { height: 10in; display: flex; flex-direction: column; }
+    .check-page + .check-page { break-before: page; }
     .stub { height: 3.33in; border-bottom: 1px dashed #999; padding: 0.25in 0.25in; box-sizing: border-box; }
     .check-area { height: 3.33in; padding: 0.25in 0.25in; box-sizing: border-box; position: relative; }
     .stub-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 9pt; }
@@ -45,6 +46,7 @@
 {%- endif %}
 </head>
 <body>
+{%- for check in checks %}
     <div class="check-page">
         <!-- Top Stub -->
         <div class="stub">
@@ -119,5 +121,6 @@
             <div class="signature-line"></div>
         </div>
     </div>
+{%- endfor %}
 </body>
 </html>

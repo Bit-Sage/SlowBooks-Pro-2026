@@ -50,6 +50,8 @@ def list_email_log(
                 "id": r.id,
                 "sent_at": _utc_iso(r.sent_at),
                 "recipient": r.recipient,
+                "cc": r.cc,
+                "bcc": r.bcc,
                 "subject": r.subject,
                 "entity_type": r.entity_type,
                 "status": r.status,

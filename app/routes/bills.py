@@ -17,7 +17,7 @@ from app.routes.invoices.helpers import _due_date_from_terms
 from app.models.bills import Bill, BillLine, BillStatus
 from app.models.contacts import Vendor
 from app.models.items import Item
-from app.models.purchase_orders import PurchaseOrderLine
+from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
 from app.schemas.bills import (
     BillCreate,
     BillLineCreate,
@@ -513,6 +513,7 @@ def create_bill(data: BillCreate, db: Session = Depends(get_db)):
         tax_amount=tax_amount,
         total=total,
         retainage_held=retainage_held,
+        retainage_manual="retainage_held" in data.model_fields_set,
         lien_waiver_status=data.lien_waiver_status,
         balance_due=_q(total - retainage_held),
         class_id=data.class_id,
@@ -583,6 +584,10 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         data.model_dump(exclude_unset=True, exclude={"lines"}),
         allow_null=("bill_number",),
     )
+    # A retainage the request names is set by hand from here on: later edits
+    # of the lines, tax or date keep it instead of re-deriving it (#597).
+    if "retainage_held" in update_data:
+        update_data["retainage_manual"] = True
 
     vendor = bill.vendor
     if "vendor_id" in update_data and update_data["vendor_id"] != bill.vendor_id:
@@ -708,16 +713,22 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         # nothing.
         retainage_held = _q(update_data.get("retainage_held", bill.retainage_held) or 0)
         # A bill converted from a commitment with a retainage rate follows its
-        # lines: held is the rate on the new subtotal unless the request
-        # names an amount.
-        if "retainage_held" not in update_data and bill.po_id:
+        # lines: held is the rate on the new subtotal, unless the request names
+        # an amount or one was set by hand earlier (retainage_manual, #597).
+        # The flag, not a comparison with the old figure, decides: after the
+        # commitment's rate changes, the stored figure is no longer the rate
+        # on the old subtotal, yet it was never set by hand.
+        if (
+            "retainage_held" not in update_data
+            and bill.po_id
+            and not bill.retainage_manual
+        ):
             from app.models.purchase_orders import PurchaseOrder
 
             po = db.get(PurchaseOrder, bill.po_id)
             if po and po.retainage_pct:
-                retainage_held = _q(
-                    subtotal * Decimal(str(po.retainage_pct)) / Decimal("100")
-                )
+                rate = Decimal(str(po.retainage_pct)) / Decimal("100")
+                retainage_held = _q(subtotal * rate)
         if retainage_held > subtotal:
             raise HTTPException(
                 status_code=422,
@@ -856,6 +867,12 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         db.flush()
         db.refresh(bill)
 
+        # Its payments recognized the expense as the lines stood; rewrite that
+        # from the lines as they now stand (#483).
+        from app.services import cash_basis
+
+        cash_basis.recompute_bill_cash_lines(db, bill)
+
         touched_pos = set()
         for link, billed in retally.items():
             poline = db.get(PurchaseOrderLine, link)
@@ -968,6 +985,20 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         )
         touched_pos.add(poline.purchase_order_id)
     _resync_po_status(db, touched_pos)
+
+    # A retainage-release bill (#555) gave the figure back to its commitment;
+    # voiding it (the reversing JE above already backed out the 2050/A-P split)
+    # restores the outstanding retainage on the commitment.
+    if (bill.retainage_released or Decimal("0")) > 0 and bill.po_id:
+        po = db.get(PurchaseOrder, bill.po_id)
+        if po is not None:
+            po.retainage_released = _q(
+                max(
+                    Decimal("0"),
+                    Decimal(str(po.retainage_released or 0))
+                    - Decimal(str(bill.retainage_released or 0)),
+                )
+            )
 
     bill.status = BillStatus.VOID
     bill.balance_due = Decimal("0")

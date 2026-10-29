@@ -210,7 +210,24 @@ jobs:
           # 182 with the register date's browser test
           # (test_browser_register_date.py, no Playwright here — one module,
           # skipped like its siblings without the runner's Chromium).
-          MAX_SKIPS: "182"
+          # 183 with the lien waiver PDF route test (#576,
+          # test_pay_applications::test_lien_waiver_pdf_route, WeasyPrint's
+          # native stack is not on the runner).
+          # 185 with the job-report PDF tests (#577,
+          # test_job_reports::test_report_routes_pdf and
+          # ::test_existing_reports_export_pdf, WeasyPrint again).
+          # 186 with the Trial Balance PDF test (#614,
+          # test_trial_balance_balances::test_the_pdf_and_csv_carry_the_same_figures,
+          # WeasyPrint again).
+          # 188 with the deposit-line donor tests, 189 with the batch check
+          # PDF test (#628, test_check_batch_print, WeasyPrint); 192 for 2.30.0:
+          # the integrated tree's own Windows run measured 189 plus the three
+          # widths of tests/test_browser_topbar_width.py, which needs Playwright
+          # and so skips here like the other browser tests)
+          # (test_deposit_split_names.py::test_one_deposit_of_two_gifts_counts_for_each_donor_and_a_void_drops_out
+          # and ::test_a_split_deposit_line_gets_an_acknowledgment_letter, which
+          # render the giving statement and the letter PDF, so WeasyPrint-skipped here).
+          MAX_SKIPS: "192"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account, AccountType
 from app.models.transactions import Transaction, TransactionLine
+from app.services import cash_basis
 from app.services.bank_register import (
     DEBIT_NORMAL,
     line_scope,
@@ -38,7 +39,7 @@ ZERO = Decimal("0")
 _CHUNK = 500
 
 
-def _splits(db: Session, txn_ids, chart: dict):
+def _splits(db: Session, txn_ids, chart: dict, basis: str = "accrual"):
     """{(transaction id, account id): the Split column}: the one other
     account on the transaction, by its number and path, or -SPLIT- when
     there are several, as QuickBooks writes it."""
@@ -47,9 +48,11 @@ def _splits(db: Session, txn_ids, chart: dict):
     ids = sorted(txn_ids)
     on: dict[int, set] = defaultdict(set)
     for i in range(0, len(ids), _CHUNK):
-        for txn_id, acct_id in db.query(
-            TransactionLine.transaction_id, TransactionLine.account_id
-        ).filter(TransactionLine.transaction_id.in_(ids[i : i + _CHUNK])):
+        for txn_id, acct_id in (
+            db.query(TransactionLine.transaction_id, TransactionLine.account_id)
+            .filter(TransactionLine.transaction_id.in_(ids[i : i + _CHUNK]))
+            .execution_options(**cash_basis.reading(basis))
+        ):
             on[txn_id].add(acct_id)
 
     def split(txn_id, acct_id):
@@ -75,6 +78,7 @@ def pl_detail_lines(
     account_ids: set | None = None,
     chart: dict | None = None,
     words=None,
+    basis: str = "accrual",
 ) -> dict:
     """{account id: block} for every P&L account with a line in the period
     (or only those in `account_ids`), each block {account_id, number,
@@ -82,7 +86,8 @@ def pl_detail_lines(
     is {line_id, transaction_id, date, type, source_type, num, name, memo,
     split, debit, credit, amount, balance, source_link, voided}; `amount`
     is in the account's natural sign, as the P&L adds it, and `balance` the
-    running total from the period's start."""
+    running total from the period's start. `basis` (#483) reads the ledger
+    as accrual or cash; on cash an entry is the payment's recognition line."""
     from app.routes.reports.financial import (
         _account_words,
         _chart_index,
@@ -109,13 +114,17 @@ def pl_detail_lines(
         if not account_ids:
             return {}
         q = q.filter(TransactionLine.account_id.in_(sorted(account_ids)))
-    rows = q.order_by(Transaction.date, Transaction.id, TransactionLine.id).all()
+    rows = (
+        q.order_by(Transaction.date, Transaction.id, TransactionLine.id)
+        .execution_options(**cash_basis.reading(basis))
+        .all()
+    )
 
     txns = {txn.id: txn for _, txn, _ in rows}
     voided = voided_transaction_ids(db, txns.keys())
     payees = payees_for(db, txns.values())
     refs = references_for(db, list(txns.values()))
-    split = _splits(db, txns.keys(), chart)
+    split = _splits(db, txns.keys(), chart, basis)
 
     blocks: dict[int, dict] = {}
     for tl, txn, acct_type in rows:
@@ -240,6 +249,7 @@ def account_set_lines(
     job_id: int | None = None,
     exclude_adjusting: bool = False,
     words=None,
+    basis: str = "accrual",
 ) -> dict:
     """The drill-down for a set of accounts (#479): a P&L total (`section`,
     a SET_SECTIONS key) or a sub-account family (`family`, its parent's
@@ -265,6 +275,7 @@ def account_set_lines(
         account_ids=ids,
         chart=chart,
         words=words,
+        basis=basis,
     )
     lines = []
     for block in blocks.values():

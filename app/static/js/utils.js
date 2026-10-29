@@ -2082,6 +2082,50 @@ function nameFields(root = document) {
 // Whatever a page or a dialog draws, as it is drawn. Setting attributes
 // doesn't wake the observer; wrapping a label's "*" does, once, and finds
 // nothing left to do.
+// A wide table's horizontal scrollbar sits at the table's foot, out of
+// sight while its top is read (the WIP Schedule's sixteen columns; the
+// owner at the Mac, 2.30.0 gate: "sticky is the way"). This puts a second
+// bar under each `.table-container--sticky` in `root` that is wider than
+// its box, stuck to the bottom of the scrolling dialog while the table is
+// in view, driving the same scroll; the table's own bar is hidden so there
+// is one. Opt-in by class: a box that scrolls both ways (the P&L by Class
+// grid) keeps its own bars. A table that fits gets nothing, and a second
+// call (a redraw, a resize) starts over.
+function stickyScrollbars(root) {
+    if (!root || !root.querySelectorAll) return 0;
+    let made = 0;
+    root.querySelectorAll('.table-container--sticky').forEach(box => {
+        const old = box.nextElementSibling;
+        if (old && old.classList && old.classList.contains('table-scroll-sticky')) old.remove();
+        box.classList.remove('has-sticky-scroll');
+        if (box.scrollWidth <= box.clientWidth + 1) return;
+        const bar = document.createElement('div');
+        bar.className = 'table-scroll-sticky';
+        bar.setAttribute('aria-hidden', 'true');
+        // a scrollable box is a Tab stop in Chromium; this one is the
+        // mouse's, the keyboard scrolls the table itself
+        bar.tabIndex = -1;
+        const spacer = document.createElement('div');
+        spacer.className = 'table-scroll-sticky-spacer';
+        spacer.style.width = box.scrollWidth + 'px';
+        bar.appendChild(spacer);
+        box.classList.add('has-sticky-scroll');
+        box.insertAdjacentElement('afterend', bar);
+        let syncing = false;
+        const follow = (from, to) => {
+            if (syncing) return;
+            syncing = true;
+            to.scrollLeft = from.scrollLeft;
+            syncing = false;
+        };
+        bar.addEventListener('scroll', () => follow(bar, box));
+        box.addEventListener('scroll', () => follow(box, bar));
+        bar.scrollLeft = box.scrollLeft;
+        made += 1;
+    });
+    return made;
+}
+
 // (The node tests that load this file have no MutationObserver or body.)
 if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.body) {
     new MutationObserver(() => nameFields(document)).observe(document.body, { childList: true, subtree: true });

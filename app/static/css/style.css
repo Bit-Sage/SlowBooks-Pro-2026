@@ -286,6 +286,11 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 260px;
+    /* The one item in the bar that could shrink: at 1280 wide, with Contact
+       support in the bar, it shrank to an "N" (2.30.0 gate, macbase1). It
+       keeps room for a word, the search box gives next, and below 1366 the
+       clock goes. */
+    min-width: 110px;
 }
 .topbar-company:empty { display: none; }
 .topbar-company:empty + .tb-sep { display: none; }
@@ -319,6 +324,7 @@ body {
 
 .tb-sep {
     width: 1px;
+    flex-shrink: 0;
     height: 22px;
     background: #b0b8c4;
     margin: 0 4px;
@@ -430,6 +436,12 @@ body {
     font-size: 10px;
     font-family: var(--font-mono);
     color: var(--text-secondary);
+}
+/* Below 1366 the clock and the brand's year go, so Contact support, About
+   and the company name all keep their words (2.30.0 gate, macbase1) */
+@media (max-width: 1365px) {
+    #topbar-clock { display: none; }
+    .topbar-brand span { display: none; }
 }
 
 /* ========================================================================
@@ -846,6 +858,31 @@ body {
 .table-container:not(.table-container--scroll) {
     padding-bottom: 8px;
 }
+
+/* The sticky scrollbar stickyScrollbars() (utils.js) puts under a
+   .table-container--sticky wider than its box (the WIP Schedule): it stays
+   at the bottom of the scrolling dialog while
+   the table is in view and scrolls the table; the table's own bar is hidden
+   so there is one bar, not two. Tall enough for a classic 17px bar; an
+   overlay bar (macOS) draws inside it. */
+.table-container.has-sticky-scroll {
+    scrollbar-width: none;
+    padding-bottom: 0;
+}
+.table-container.has-sticky-scroll::-webkit-scrollbar { display: none; }
+.table-scroll-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 18px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-top: 0;
+    margin-bottom: 8px;
+}
+.table-scroll-sticky-spacer { height: 1px; }
 
 table {
     width: 100%;
@@ -1847,6 +1884,8 @@ tr.clickable { cursor: pointer; }
 
 .tb-search {
     width: 180px;
+    min-width: 84px;
+    flex-shrink: 1;
     padding: 3px 8px;
     font-size: 11px;
     font-family: var(--font);

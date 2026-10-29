@@ -420,11 +420,55 @@ def test_stripe_fee_from_balance_transaction(monkeypatch):
     def fake_retrieve(pi_id, expand=None):
         assert pi_id == "pi_123"
         assert expand == ["latest_charge.balance_transaction"]
-        return {"latest_charge": {"balance_transaction": {"fee": 630}}}
+        return _stripe_object(
+            st.stripe.PaymentIntent,
+            {"latest_charge": {"balance_transaction": {"fee": 630}}},
+        )
 
     monkeypatch.setattr(st.stripe.PaymentIntent, "retrieve", fake_retrieve)
     fee = st.StripeProvider()._maybe_fee({"payment_intent": "pi_123"}, settings)
     assert fee == Decimal("6.30")
+
+
+def _stripe_object(cls, payload: dict):
+    """What the SDK really returns: a StripeObject, which since stripe-python
+    8 indexes like a dict but is not one (no ``.get``; 2.30.0 gate W-45). A
+    dict here would hide that, as it did for the webhook's 500."""
+    obj = cls.construct_from(payload, "sk_test")
+    return obj
+
+
+def test_stripe_objects_are_read_as_plain_dicts():
+    import stripe
+
+    from app.services.payments.stripe import _plain
+
+    event = _stripe_object(
+        stripe.Event,
+        {
+            "id": "evt_1",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "object": "checkout.session",
+                    "amount_total": 25000,
+                    "metadata": {"invoice_id": "7"},
+                    "payment_intent": "pi_1",
+                    "line_items": [{"amount": 1}],
+                }
+            },
+        },
+    )
+    plain = _plain(event)
+    session = plain["data"]["object"]
+    assert type(session) is dict and type(session["metadata"]) is dict
+    assert session.get("amount_total") == 25000
+    assert session["metadata"].get("invoice_id") == "7"
+    assert session["line_items"] == [{"amount": 1}]
+    # a dict (the tests' stubs, an older SDK) comes back as it is
+    assert _plain({"a": [1, {"b": None}]}) == {"a": [1, {"b": None}]}
 
 
 def test_stripe_fee_none_when_clearing_off(monkeypatch):
@@ -720,14 +764,17 @@ def test_stripe_webhook_route_posts_fee(client, db_session, seed_accounts, monke
         },
     }
     monkeypatch.setattr(
-        st.stripe.Webhook, "construct_event", lambda payload, sig, secret: event
+        st.stripe.Webhook,
+        "construct_event",
+        lambda payload, sig, secret: _stripe_object(st.stripe.Event, event),
     )
     monkeypatch.setattr(
         st.stripe.PaymentIntent,
         "retrieve",
-        lambda pi, expand=None: {
-            "latest_charge": {"balance_transaction": {"fee": 630}}
-        },
+        lambda pi, expand=None: _stripe_object(
+            st.stripe.PaymentIntent,
+            {"latest_charge": {"balance_transaction": {"fee": 630}}},
+        ),
     )
     resp = client.post(
         "/api/payments/stripe/webhook",
@@ -761,20 +808,26 @@ def test_stripe_check_status_route_posts_fee(
     monkeypatch.setattr(
         st.stripe.checkout.Session,
         "retrieve",
-        lambda ext: {
-            "payment_status": "paid",
-            "status": "complete",
-            "amount_total": 20000,
-            "metadata": {"invoice_id": str(inv.id)},
-            "payment_intent": "pi_poll_1",
-        },
+        lambda ext: _stripe_object(
+            st.stripe.checkout.Session,
+            {
+                "id": "cs_poll_1",
+                "object": "checkout.session",
+                "payment_status": "paid",
+                "status": "complete",
+                "amount_total": 20000,
+                "metadata": {"invoice_id": str(inv.id)},
+                "payment_intent": "pi_poll_1",
+            },
+        ),
     )
     monkeypatch.setattr(
         st.stripe.PaymentIntent,
         "retrieve",
-        lambda pi, expand=None: {
-            "latest_charge": {"balance_transaction": {"fee": 630}}
-        },
+        lambda pi, expand=None: _stripe_object(
+            st.stripe.PaymentIntent,
+            {"latest_charge": {"balance_transaction": {"fee": 630}}},
+        ),
     )
     resp = client.post(f"/api/payments/stripe/check-status/{inv.id}")
     assert resp.status_code == 200

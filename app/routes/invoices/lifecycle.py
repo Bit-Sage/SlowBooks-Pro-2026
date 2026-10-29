@@ -38,7 +38,29 @@ from app.services.terminology import document_reference, terms_from_db
 
 @router.post("/{invoice_id}/void", response_model=InvoiceResponse)
 def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    """Void — creates a reversing journal entry."""
+    """Void — creates a reversing journal entry. A pay application's invoice
+    is voided with the application."""
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.pay_application_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "invoice_belongs_to_pay_application",
+                "message": (
+                    "This invoice was created by a pay application; void the "
+                    "pay application to void it."
+                ),
+            },
+        )
+    return void_invoice_unchecked(invoice_id, db)
+
+
+def void_invoice_unchecked(invoice_id: int, db: Session, commit: bool = True):
+    """The void itself, without the pay-application guard (the application's
+    own void calls this). With `commit=False` the work is flushed and left
+    for the caller to commit, so it can be undone with the caller's."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -175,7 +197,10 @@ def void_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
     invoice.status = InvoiceStatus.VOID
     invoice.balance_due = Decimal("0")
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:

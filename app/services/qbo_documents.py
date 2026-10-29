@@ -203,7 +203,7 @@ def restore_local_cost(db: Session, invoice) -> None:
             abs(Decimal(str(movement.quantity))) * Decimal(str(movement.unit_cost or 0))
         )
         asset_id = get_inventory_asset_account_id(db, item) if item else None
-        cogs_id = get_cogs_account_id(db)
+        cogs_id = get_cogs_account_id(db, item)
         if amount <= 0 or not (asset_id and cogs_id):
             continue
         txn = create_journal_entry(
@@ -413,6 +413,9 @@ def post_adopted_cash_lines(db: Session, invoice) -> None:
         payment = alloc.payment
         if payment and not payment.is_voided and payment.transaction_id is not None:
             cash_basis.add_payment_cash_lines(db, payment)
+    # a payment that already had cash lines for other documents has none for
+    # this one yet: its income was on the ledger posting (both), now accrual
+    cash_basis.recompute_invoice_cash_lines(db, invoice, adopted=True)
 
 
 def adopt_unposted_payments(db: Session, invoice) -> None:

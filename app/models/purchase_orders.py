@@ -51,6 +51,9 @@ class PurchaseOrder(Base):
         Integer, ForeignKey("trade_packages.id", ondelete="SET NULL"), nullable=True
     )
     retainage_pct = Column(Numeric(5, 2), nullable=True)
+    # Retainage released on this commitment so far (#555): held − released is
+    # the retainage still outstanding to the sub.
+    retainage_released = Column(Numeric(15, 2), nullable=False, default=0)
     scope_notes = Column(Text, nullable=True)
 
     subtotal = Column(Numeric(15, 2), default=0)
@@ -100,6 +103,11 @@ class PurchaseOrderLine(Base):
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
     # Per-line cost type; NULL falls back to the cost code's default.
     cost_type = Column(String(20), nullable=True)
+    # The sub change order that appended this line (#554), so a void removes
+    # exactly the lines it added. NULL on an original commitment line.
+    change_order_id = Column(
+        Integer, ForeignKey("change_orders.id", ondelete="SET NULL"), nullable=True
+    )
     line_order = Column(Integer, default=0)
 
     purchase_order = relationship("PurchaseOrder", back_populates="lines")

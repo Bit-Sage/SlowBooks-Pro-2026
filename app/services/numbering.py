@@ -158,6 +158,38 @@ def next_po_number(db: Session) -> str:
     )
 
 
+def next_change_order_number(db: Session, job, kind: str) -> str:
+    """The next change-order number for a job and kind (#554): the job number,
+    then PCO-001 / CO-001 / SCO-001 — each job counts its own. A job with no
+    job number uses J<id>. Rows numbered the old company-wide way (CO-0001)
+    keep their numbers and simply don't match this job's series. The
+    candidate is still checked against every number, since two jobs can share
+    a job number."""
+    import re
+
+    from app.models.change_orders import ChangeOrder
+
+    stem = f"{job.job_number or 'J' + str(job.id)}-{_CO_PREFIX.get(kind, 'CO')}-"
+    pattern = re.compile(re.escape(stem) + r"(\d+)(?:-R\d+)?$")
+    n = 0
+    for (number,) in db.query(ChangeOrder.number).filter(ChangeOrder.job_id == job.id):
+        m = pattern.match(number or "")
+        if m:
+            n = max(n, int(m.group(1)))
+    n += 1
+    while True:
+        candidate = f"{stem}{n:03d}"
+        if (
+            db.query(ChangeOrder.id).filter(ChangeOrder.number == candidate).first()
+            is None
+        ):
+            return candidate
+        n += 1
+
+
+_CO_PREFIX = {"pco": "PCO", "owner": "CO", "sub": "SCO"}
+
+
 def next_estimate_number(db: Session) -> str:
     """Estimates seed from the user-configurable settings counter."""
     settings = get_all_settings(db)

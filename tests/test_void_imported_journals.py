@@ -53,7 +53,9 @@ def test_the_lists_imports_opening_balances_can_be_voided_from_the_page(
     assert reversal["voidable"] is False  # a reversal is never voided
     after = client.get(f"/api/journal/{opening.id}").json()
     assert after["voided"] is True and after["voidable"] is False
-    assert _tb(client)["total_debit"] == 5000.0  # the entry and its reversal
+    # the entry and its reversal cancel in each balance-sheet account (#597:
+    # the Trial Balance reads balances as of the end date, not activity)
+    assert _tb(client)["total_debit"] == 0.0
     assert {i["net_balance"] for i in _tb(client)["items"]} == {0.0}
 
 

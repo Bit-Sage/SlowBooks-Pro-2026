@@ -262,10 +262,21 @@ def _count_selects(engine):
 
 
 def test_the_balance_costs_a_fixed_number_of_queries_per_page(
-    client, db_session, db_engine, seed_accounts
+    client, db_session, db_engine, seed_accounts, monkeypatch
 ):
     """One grouped read per document kind for the whole list, never one per
-    row — the Customer Center loads every customer at once."""
+    row — the Customer Center loads every customer at once.
+
+    What is counted is the page's own cost. The request gate's read of the
+    accountant's-copy mode (app/main.py, accountants_copy.mode) is not: it
+    is one SELECT on settings at most every five seconds, on whichever
+    request happens to fall after the cache expires. CI's slower runs put it
+    inside one of the two measured reads and not the other, so the counts
+    differed by exactly one (2.30.0 gate, CI on 9d8546ef); it is kept out
+    of the measurement here."""
+    from app.services import accountants_copy
+
+    monkeypatch.setattr(accountants_copy, "mode", lambda: None)
 
     def count(n):
         for i in range(n):

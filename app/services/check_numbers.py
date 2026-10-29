@@ -16,7 +16,7 @@
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.services.account_label import label_for
@@ -165,3 +165,63 @@ def refuse_duplicate(
             "uses": uses,
         },
     )
+
+
+def _paying_account_id(db: Session, bp: BillPayment) -> int | None:
+    from app.services.accounting import get_checking_account_id
+
+    if bp.pay_from_account_id:
+        return bp.pay_from_account_id
+    try:
+        return get_checking_account_id(db)
+    except Exception:  # no 1000 Checking: no default account
+        return None
+
+
+def unprinted_payments(db: Session, account_id: int) -> list[BillPayment]:
+    """The checks Pay Bills wrote on `account_id` that have no check number
+    yet (#603): a live payment by check that nobody has numbered. Numbering
+    a payment is what prints it, so this is the "to be printed" list; a
+    payment typed in with its number was written by hand and is not on it.
+    A payment dated on or before the closing date is left off: numbering it
+    would change a closed period, and a company that paid by check for
+    years without typing numbers is not offered all of them to renumber."""
+    from app.services.closing_date import get_closing_date
+
+    q = (
+        db.query(BillPayment)
+        .filter(BillPayment.is_voided.is_(False))
+        .filter(func.coalesce(func.trim(BillPayment.check_number), "") == "")
+        .filter(or_(BillPayment.method.is_(None), BillPayment.method == "check"))
+    )
+    closing = get_closing_date(db)
+    if closing is not None:
+        q = q.filter(BillPayment.date > closing)
+    rows = q.order_by(BillPayment.date, BillPayment.id).all()
+    return [bp for bp in rows if _paying_account_id(db, bp) == account_id]
+
+
+def next_check_number(db: Session, account_id: int) -> str:
+    """One past the highest numeric check number on `account_id` (registers,
+    expenses and bill payments alike); "1001" for an account with none."""
+    from app.services.bank_register import voided_transaction_ids
+
+    highest = 0
+    refs = (
+        db.query(Transaction)
+        .join(TransactionLine, TransactionLine.transaction_id == Transaction.id)
+        .filter(TransactionLine.account_id == account_id)
+        .filter(TransactionLine.credit > 0)
+        .filter(Transaction.reference.isnot(None))
+        .all()
+    )
+    voided = voided_transaction_ids(db, [t.id for t in refs])
+    for t in refs:
+        n = _number(t.reference)
+        if n and t.id not in voided and not (t.source_type or "").endswith("_void"):
+            highest = max(highest, int(n))
+    for bp in db.query(BillPayment).filter(BillPayment.is_voided.is_(False)):
+        n = _number(bp.check_number)
+        if n and _paying_account_id(db, bp) == account_id:
+            highest = max(highest, int(n))
+    return str(highest + 1) if highest else "1001"

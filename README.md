@@ -55,20 +55,28 @@ Details, known gaps and how to report a barrier:
 
 ## What's New
 
-**v2.29 — A mid-year payroll switch, the fiscal year, and reports by item.** Payroll
-takes a mid-year switch: each employee's opening year-to-date, entered quarter
-by quarter and read by every form, wage base and stub (#433), and a processed
-pay run can be voided (#432). Settings sets the first month of the fiscal year;
-the reports' presets and default period, the dashboard and the nonprofit year
-to date follow it (#444). New reports: Past Customers, a mailing list by service
-address and last job date (#436), and Sales by Item and Purchases by Item
-(#435). An item can be added from any line as it is typed, and found by a code
-as well as its name (#445). API tokens are never administrators and can be
-allowed backups (#434), a Mercury bank feed joins SimpleFIN (#356), the
-sidebar's Open list is a Recent dropdown (#462), and the chart import preview
-shows the detail type and parent each row will get (#461).
+**v2.30 — Construction from estimate to pay application, and reports on a
+cash basis.** A construction company runs a job from the estimate (packages
+and sections, allowances, alternates, unit prices, markups) through the
+contract and its schedule of values, buyout and commitments with retainage,
+change orders (owner, sub and potential, numbered per job), progress billing
+with retainage held and released, lien waivers, and the job reports: WIP with
+its adjusting entry, cost to complete, the change-order log and commitment
+status (#550–#556). Reports run on a cash basis: a basis on every ledger
+line, cash recognised at payment, and the P&L, Balance Sheet, Trial Balance,
+General Ledger, P&L Detail and Sales Tax switch between the company default,
+accrual and cash (#483). The Trial Balance shows balance-sheet accounts at
+their balance as of the end date (#597). Online payments post to a clearing
+account per provider with the fee, and a payout is recorded and matched to
+the bank feed (#583, #584). Account numbers are optional on the chart (#567),
+vendors search and show a payment history (#569), the register keeps the last
+entry's date and links the payee to a vendor (#566, #590), one deposit can
+carry several donors (#606), email takes Cc and Bcc (#611), the company
+records its legal entity type with the equity accounts and returns to match
+(#488), a bill's memo prints on the check and Pay Bills prints its checks
+in one go (#602, #603), and the desktop window zooms (#597).
 
-Patch releases and everything before 2.29 are in [CHANGELOG.md](CHANGELOG.md).
+Patch releases and everything before 2.30 are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Wait — it does *that*?
 
@@ -83,7 +91,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (641 operations in v2.29.1) — built for Claude
+self-documenting local REST API (719 operations in v2.30.0) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed

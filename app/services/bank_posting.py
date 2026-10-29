@@ -17,9 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.models.accounts import Account
 from app.models.banking import BankTransaction, Reconciliation
-from app.models.transactions import Transaction
+from app.models.transactions import LEDGER_BASIS_OPTION, READ_ALL, Transaction
 from app.services.accounting import (
     _q,
+    all_lines,
     create_journal_entry,
     get_opening_balance_equity_id,
     reversing_lines,
@@ -180,12 +181,14 @@ def bank_entry_lines(
     payee: str | None = None,
     memo: str | None = None,
     splits: list | None = None,
+    customer_id: int | None = None,
 ) -> tuple[str, list[dict]]:
     """A register entry's description and journal lines, for posting one
     and for rewriting one in place (#388). amount < 0: DR category / CR
     account (money out, or a card charge). amount > 0: DR account / CR
     category (money in, or a card payment). With `splits` ([(account,
-    amount, memo[, {"class_id", "job_id"}]), …] adding up to `amount`),
+    amount, memo[, {"class_id", "job_id", "customer_id"}]), …] adding up to
+    `amount`),
     the other side is several lines (#330). Each part's own sign says which way it posts: a negative
     part debits its account, a positive part credits it, whichever way the
     entry goes. So a card processor's deposit is the gross as income
@@ -193,7 +196,10 @@ def bank_entry_lines(
     97.00 (#387); and a check with a refund netted against it (−620.00 and
     +120.00) is a −500.00 check. A part of zero is refused. A bank or card
     category is a transfer, which is not an entry of this shape: the caller
-    decides that first."""
+    decides that first. `customer_id` (#606) is the name on the category line
+    of a plain entry; a split line carries its own in its dict. Every line
+    says its customer (None for the bank side), so an edit never carries a
+    name onto the wrong line."""
     amount = _q(amount)
     if amount == 0:
         raise HTTPException(status_code=400, detail="Amount must not be zero")
@@ -227,6 +233,7 @@ def bank_entry_lines(
             for key, value in (dims[0] if dims else {}).items():
                 if value is not None:
                     line[key] = value
+            line["customer_id"] = (dims[0] if dims else {}).get("customer_id")
             lines.append(line)
         lines.append(
             {
@@ -234,6 +241,7 @@ def bank_entry_lines(
                 "debit": amount if amount > 0 else Decimal("0"),
                 "credit": -amount if amount < 0 else Decimal("0"),
                 "description": line_desc,
+                "customer_id": None,
             }
         )
         return description, lines
@@ -244,12 +252,14 @@ def bank_entry_lines(
                 "debit": -amount,
                 "credit": Decimal("0"),
                 "description": line_desc,
+                "customer_id": customer_id,
             },
             {
                 "account_id": account.id,
                 "debit": Decimal("0"),
                 "credit": -amount,
                 "description": line_desc,
+                "customer_id": None,
             },
         ]
     else:
@@ -259,12 +269,14 @@ def bank_entry_lines(
                 "debit": amount,
                 "credit": Decimal("0"),
                 "description": line_desc,
+                "customer_id": None,
             },
             {
                 "account_id": category.id,
                 "debit": Decimal("0"),
                 "credit": amount,
                 "description": line_desc,
+                "customer_id": customer_id,
             },
         ]
     return description, lines
@@ -283,6 +295,7 @@ def post_bank_entry(
     job_id: int | None = None,
     source_id: int | None = None,
     splits: list | None = None,
+    customer_id: int | None = None,
 ) -> Transaction:
     """A register entry (the lines: `bank_entry_lines`). A category that is
     itself a bank/card account is a transfer."""
@@ -300,7 +313,7 @@ def post_bank_entry(
             )
         return post_transfer(db, txn_date, category, account, amount, memo, reference)
     description, lines = bank_entry_lines(
-        account, amount, category, payee, memo, splits
+        account, amount, category, payee, memo, splits, customer_id
     )
     return create_journal_entry(
         db,
@@ -378,6 +391,7 @@ def replace_bank_entry(
     class_id: int | None = None,
     job_id: int | None = None,
     splits: list | None = None,
+    customer_id: int | None = None,
 ) -> list[dict]:
     """Rewrite a register entry in place (#388): the Transaction keeps its
     id (so its links, attachments, statement matches and audit trail stay
@@ -406,9 +420,9 @@ def replace_bank_entry(
     from app.services.classes_service import default_function_of
 
     description, lines = bank_entry_lines(
-        account, amount, category, payee, memo, splits
+        account, amount, category, payee, memo, splits, customer_id
     )
-    old_lines = list(txn.lines)
+    old_lines = all_lines(db, txn.id)
     pairs = _pair_lines(old_lines, lines)
     for n, o in zip(lines, pairs):
         for key, header_old, header_new in (
@@ -420,8 +434,11 @@ def replace_bank_entry(
             own = getattr(o, key) if o is not None else None
             n[key] = own if own is not None and own != header_old else header_new
 
-    if all(_same_money(o, n) for o, n in zip(pairs, lines)) and len(lines) == len(
-        old_lines
+    if (
+        all(_same_money(o, n) for o, n in zip(pairs, lines))
+        and len(lines) == len(old_lines)
+        # a new basis (#483) rewrites the lines, so it is not "nothing moves"
+        and all(o.basis == n.get("basis", o.basis) for o, n in zip(pairs, lines))
     ):
         # nothing moves: update the header and the lines where they are
         check_closing_date(db, txn_date)
@@ -437,6 +454,7 @@ def replace_bank_entry(
                 o.class_id = n["class_id"]
                 o.function = default_function_of(db, n["class_id"], fn_cache)
             o.job_id = n["job_id"]
+            o.customer_id = n["customer_id"]  # a label: no money moves
         db.flush()
         return []
 
@@ -489,6 +507,7 @@ def replace_bank_entry(
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == txn.id)
         .order_by(TransactionLine.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .all()
     )
     for i, same in keep.items():
@@ -545,7 +564,7 @@ def replace_journal_lines(
     from app.routes.invoices.helpers import _reverse_and_delete_journal
     from app.services.classes_service import default_function_of
 
-    old_lines = list(txn.lines)
+    old_lines = all_lines(db, txn.id)
     pairs = _pair_lines(old_lines, lines)
     # A dimension the caller left off a line keeps what the paired old line
     # had (its counterpart by account, else by order): a class or job of its
@@ -564,11 +583,16 @@ def replace_journal_lines(
             n["is_billable"] = bool(o.is_billable) if o is not None else False
         if "cost_code_id" not in n:
             n["cost_code_id"] = o.cost_code_id if o is not None else None
+        if "customer_id" not in n:  # the name on a line (#606)
+            n["customer_id"] = o.customer_id if o is not None else None
         if "function" not in n and o is not None:
             n["function"] = o.function
 
-    if all(_same_money(o, n) for o, n in zip(pairs, lines)) and len(lines) == len(
-        old_lines
+    if (
+        all(_same_money(o, n) for o, n in zip(pairs, lines))
+        and len(lines) == len(old_lines)
+        # a new basis (#483) rewrites the lines, so it is not "nothing moves"
+        and all(o.basis == n.get("basis", o.basis) for o, n in zip(pairs, lines))
     ):
         # nothing moves: update the header and the lines where they are, so
         # a save that changes nothing writes nothing and the reconciled
@@ -587,6 +611,7 @@ def replace_journal_lines(
             o.description = n.get("description") or ""
             o.is_billable = bool(n.get("is_billable"))
             o.cost_code_id = n.get("cost_code_id")
+            o.customer_id = n.get("customer_id")
             o.job_id = n.get("job_id")
             if o.class_id != n.get("class_id"):
                 o.class_id = n.get("class_id")
@@ -645,6 +670,7 @@ def replace_journal_lines(
         db.query(TransactionLine)
         .filter(TransactionLine.transaction_id == txn.id)
         .order_by(TransactionLine.id)
+        .execution_options(**{LEDGER_BASIS_OPTION: READ_ALL})
         .all()
     )
     for i, same in keep.items():

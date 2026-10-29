@@ -22,8 +22,8 @@ const ReportsPage = {
         'profit-loss-unclassified': { label: () => `${T('P&L')} Unclassified`, open: (p) => ReportsPage.profitLossUnclassified(p) },
         'profit-loss-by-job':   { label: () => `${T('P&L')} by ${T('Job')}`, open: (p) => ReportsPage.profitLossByJob(p) },
         'account-transactions': { label: 'Drill-down',         open: (p) => (p.section || p.family)
-            ? ReportsPage.openSetDrillDown({ section: p.section, family: p.family }, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null, exclude_adjusting: p.exclude_adjusting })
-            : ReportsPage.openDrillDown(p.account_id, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null }) },
+            ? ReportsPage.openSetDrillDown({ section: p.section, family: p.family }, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null, exclude_adjusting: p.exclude_adjusting, basis: p.basis || '' })
+            : (ReportsPage._addrBasis = p.basis || '', ReportsPage.openDrillDown(p.account_id, null, p.start_date, p.end_date, p.class_id || null, null, p.from || null, { job_id: p.job_id, period: p.period || null })) },
         'ar-aging':             { label: () => T('Accounts Receivable Aging'), open: (p) => ReportsPage.arAging(p), asOf: true },
         'ap-aging':             { label: 'Accounts Payable Aging',    open: (p) => ReportsPage.apAging(p), asOf: true },
         'sales-tax':            { label: 'Sales Tax Report',   open: (p) => ReportsPage.salesTax(p) },
@@ -41,6 +41,13 @@ const ReportsPage = {
         'cash-flow':            { label: 'Cash Flow Statement', open: (p) => ReportsPage.cashFlow(p) },
         'job-profitability':    { label: () => T('Job Profitability'),  open: (p) => ReportsPage.jobProfitability(p) },
         'job-budget-vs-actual': { label: () => T('Job Budget vs Actual'), open: (p) => ReportsPage.jobBudgetVsActual(p) },
+        'wip-schedule':         { label: 'WIP Schedule',       open: (p) => ReportsPage.wipSchedule(p), asOf: true },
+        'cost-to-complete':     { label: 'Cost to Complete',   open: (p) => ReportsPage.costToComplete(p), asOf: true },
+        'change-order-log':     { label: 'Change Order Log',   open: (p) => ReportsPage.changeOrderLog(p), asOf: true },
+        'buyout':               { label: 'Buyout Report',      open: (p) => ReportsPage.buyoutReport(p), asOf: true },
+        'job-cost-by-vendor':   { label: () => `${T('Job')} Cost by Vendor`, open: (p) => ReportsPage.jobCostByVendor(p) },
+        'cost-to-complete-forecast': { label: 'Cost-to-Complete Forecast', open: (p) => ReportsPage.costToCompleteForecast(p), asOf: true },
+        'commitment-status':    { label: 'Commitment Status',  open: (p) => ReportsPage.commitmentStatus(p), asOf: true },
         'budget-vs-actual':     { label: 'Budget vs Actual',   open: (p) => { if (/^\d{4}$/.test(p.year || '')) BudgetsPage._year = parseInt(p.year, 10); return BudgetsPage.showVariance(p); } },
         'financial-statements': { label: 'Financial Statements Pack', open: (p) => ReportsPage.financialStatementsPdf(p) },
         'fixed-asset-reconciliation': { label: 'Fixed Asset Reconciliation', open: () => ReportsPage.fixedAssetReconciliation() },
@@ -399,13 +406,24 @@ const ReportsPage = {
             card('1099-summary', '1099 Summary', 'Vendor payments for 1099 filing'),
             card('budget-vs-actual', 'Budget vs Actual', 'Monthly budget variance analysis'),
         ];
-        // Construction leads with the contractor reports (the job views the
-        // trade lives in), pulled to the front in their issue order; the
-        // rest keep their fixed order. Committed Costs and Job Cost by
-        // Vendor aren't standalone cards yet, so only the three that exist
-        // lead. Mirrors the nonprofit swap above.
+        // Construction leads with a Construction group: the three contractor
+        // reports that always existed, then the five job reports added in #556.
+        // The job reports are construction-only cards (a Business or Nonprofit
+        // company never sees them); the rest keep their fixed order. Mirrors
+        // the nonprofit swap above.
         if (Terms.isConstruction()) {
-            const lead = ['job-profitability', 'job-budget-vs-actual', 'profit-loss-by-job'];
+            cards.push(
+                card('wip-schedule', 'WIP Schedule', Terms.text('Work in progress: revised contract, cost to date, percent complete, earned vs billed and over/under billing per job')),
+                card('cost-to-complete', 'Cost to Complete', Terms.text('Per job and cost code: budget, committed, actual, cost to complete, projected final and variance')),
+                card('change-order-log', 'Change Order Log', Terms.text('Every change order per job — kind, status, funding, cost, markup, sell — with the running approved total')),
+                card('buyout', 'Buyout Report', Terms.text('Each job\'s trade packages: bid vs bought, variance, committed-remaining and billed to date')),
+                card('job-cost-by-vendor', `${T('Job')} Cost by Vendor`, Terms.text('Posted job cost grouped by vendor, with bills, paid to date, retainage held and open A/P')),
+                card('cost-to-complete-forecast', 'Cost-to-Complete Forecast', Terms.text('Enter the cost still to come per section and cost type; the WIP schedule uses it for estimated cost')),
+                card('commitment-status', 'Commitment Status', Terms.text('Each PO and subcontract: committed, billed to date, retainage held and remaining')),
+            );
+            const lead = ['job-profitability', 'job-budget-vs-actual', 'profit-loss-by-job',
+                'wip-schedule', 'cost-to-complete', 'change-order-log', 'buyout', 'job-cost-by-vendor',
+                'cost-to-complete-forecast', 'commitment-status'];
             const front = lead.map(v => cards.find(c => c.view === v)).filter(Boolean);
             return [...front, ...cards.filter(c => !lead.includes(c.view))];
         }
@@ -604,6 +622,16 @@ const ReportsPage = {
     // `extra` carries a job (#242): { job_id, job_name }, job_id 0 being
     // the lines with no job; the server names the job when only the id
     // is known; `extra.period` is the address's period preset (#241).
+    // The basis a drill-down opens on: the one the caller names (the
+    // address, a saved report), else the one the view it came from was on,
+    // so the lines add up to the figure that was clicked (#483).
+    // (An address or a saved report names it in _addrBasis, read once.)
+    _drillBasis(extra, from) {
+        let given = extra && extra.basis !== undefined ? extra.basis : ReportsPage._addrBasis;
+        ReportsPage._addrBasis = undefined;
+        if (given === undefined) given = (ReportsPage._viewReturn[from] || {}).basis;
+        return ['cash', 'accrual'].includes(given) ? given : '';
+    },
     async openDrillDown(accountId, accountName, startDate, endDate, classId = null, className = null, from = null, extra = {}) {
         accountId = parseInt(accountId, 10);
         if (!accountId) { toast('No account_id on this row', 'error'); return; }
@@ -635,7 +663,7 @@ const ReportsPage = {
         // three with its period (#241).
         // (The period and dates fill their places, so the address reads
         // account, dates, class, from — as a link to it is written.)
-        const params = { account_id: accountId, period: undefined, start_date: undefined, end_date: undefined, class_id: classId, job_id: jobOn ? String(jobId) : undefined, from: back || (backPage ? 'classes' : undefined) };
+        const params = { account_id: accountId, period: undefined, start_date: undefined, end_date: undefined, class_id: classId, job_id: jobOn ? String(jobId) : undefined, basis: ReportsPage._drillBasis(extra, back) || undefined, from: back || (backPage ? 'classes' : undefined) };
         ReportsPage._leaveFrom();
         // The account and class lists are asked for afresh each time the
         // drill-down opens: a class made, or an account first posted to,
@@ -677,6 +705,7 @@ const ReportsPage = {
                 <select id="drill-account" data-no-search onchange="ReportsPage.setParam('account_id', this.value)">
                     <option value="${accountId}" selected>${escapeHtml(accountName || `account ${accountId}`)}</option>
                 </select></div>
+            ${ReportsPage._basisSelect('drill-basis', params.basis || '', "ReportsPage.setParam('basis', this.value)", true)}
             <div style="grid-column:1 / -1; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" id="drill-prev" aria-label="Previous account" onclick="ReportsPage._drillStep(-1)">‹ Previous</button>
                 <button type="button" class="btn btn-sm btn-secondary" id="drill-next" aria-label="Next account" onclick="ReportsPage._drillStep(1)">Next ›</button>
@@ -687,10 +716,11 @@ const ReportsPage = {
             const q = new URLSearchParams({ account_id: params.account_id, start_date: range.start, end_date: range.end });
             if (params.class_id) q.set('class_id', params.class_id);
             if (params.job_id !== undefined && params.job_id !== null && params.job_id !== '') q.set('job_id', params.job_id);
+            if (params.basis) q.set('basis', params.basis);
             // The report's account list first (kept per dates and class, so
             // once), then the transactions: the one request a watcher of
             // this view sees last is the view's own.
-            const accounts = await ReportsPage._drillAccounts(back, range, params.class_id);
+            const accounts = await ReportsPage._drillAccounts(back, range, params.class_id, params.basis);
             const data = await API.get(`/reports/account-transactions?${q.toString()}`);
             if (jobOn && !jobName) jobName = data.job_name;
             // the title reads as the row that opened it (a statement's row
@@ -750,10 +780,10 @@ const ReportsPage = {
                     ${accountLabel({ account_number: data.account.number, name: data.account.name }, null, ' · ')}
                     ${data.class_name ? `&middot; ${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong>` : ''}
                     ${jobOn && data.job_name ? `&middot; ${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong>` : ''}
-                    &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}
+                    &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}${ReportsPage._basisWords(data)}
                     &middot; Opening: <strong>${formatCurrency(data.opening_balance)}</strong>
                     &middot; Net: <strong>${formatCurrency(data.period_net)}</strong>
-                </p>
+                </p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr>
                         <th scope="col">Date</th><th scope="col">Payee</th><th scope="col">Ref</th><th scope="col">Description</th><th scope="col">Source</th>
@@ -836,7 +866,7 @@ const ReportsPage = {
             section: section || undefined, family: family || undefined,
             period: undefined, start_date: undefined, end_date: undefined,
             class_id: classId, job_id: jobOn ? String(jobId) : undefined,
-            exclude_adjusting: adj ? 'true' : undefined, from: back || undefined,
+            exclude_adjusting: adj ? 'true' : undefined, basis: ReportsPage._drillBasis(extra, back) || undefined, from: back || undefined,
         };
         ReportsPage._leaveFrom();
         let backBtn = '';
@@ -856,6 +886,7 @@ const ReportsPage = {
             if (p.class_id) q.set('class_id', p.class_id);
             if (p.job_id !== undefined && p.job_id !== null && p.job_id !== '') q.set('job_id', p.job_id);
             if (p.exclude_adjusting) q.set('exclude_adjusting', 'true');
+            if (p.basis) q.set('basis', p.basis);
             const data = await API.get(`/reports/account-transactions?${q.toString()}`);
             name = data.set.label;
             $('#modal-title').textContent = title(name, data.class_name, data.job_name);
@@ -881,6 +912,7 @@ const ReportsPage = {
                 data.class_name ? `${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong>` : '',
                 data.job_name ? `${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong>` : '',
                 data.exclude_adjusting ? 'adjusting entries left out' : '',
+                data.basis === 'cash' ? 'cash basis' : '',
             ].filter(Boolean).join(' &middot; ');
             const signed = ['gross_profit', 'net_operating_income', 'net_other_income', 'net_income'].includes(data.set.section);
             return `<div id="drilldown-body" style="font-size:11px; color:var(--gray-500);">
@@ -891,7 +923,7 @@ const ReportsPage = {
                     &middot; ${formatDate(data.start_date)} → ${formatDate(data.end_date)}
                     &middot; Total: <strong>${formatCurrency(data.period_net)}</strong>
                     ${signed ? `<br>${T('Income')} adds and costs subtract, so the running total ends on the statement's figure.` : ''}
-                </p>
+                </p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <caption class="visually-hidden">${escapeHtml(data.set.label)}, ${escapeHtml(data.start_date)} to ${escapeHtml(data.end_date)}</caption>
                     <thead><tr>
@@ -914,8 +946,9 @@ const ReportsPage = {
     // came from no report (a vendor's page, a saved report). Kept for the
     // same key so a render asks once.
     _drillList: null,
-    async _drillAccounts(from, range, classId) {
-        const key = `${from}|${range.start}|${range.end}|${classId || ''}`;
+    async _drillAccounts(from, range, classId, basis) {
+        const key = `${from}|${range.start}|${range.end}|${classId || ''}|${basis || ''}`;
+        const bq = ReportsPage._basisQs({ basis });
         if (ReportsPage._drillList && ReportsPage._drillList.key === key) return ReportsPage._drillList.list;
         const dates = `start_date=${range.start}&end_date=${range.end}`;
         const label = (a) => accountWords(a, a.account_name || a.name);
@@ -925,19 +958,19 @@ const ReportsPage = {
             let d;
             switch (from) {
                 case 'profit-loss': case 'profit-loss-class': case 'profit-loss-by-class':
-                    d = await API.get(`/reports/profit-loss?${dates}${classId ? `&class_id=${classId}` : ''}`);
+                    d = await API.get(`/reports/profit-loss?${dates}${classId ? `&class_id=${classId}` : ''}${bq}`);
                     list = pick([d.income, d.cogs, d.expenses]); break;
                 case 'balance-sheet':
-                    d = await API.get(`/reports/balance-sheet?as_of_date=${range.end}`);
+                    d = await API.get(`/reports/balance-sheet?as_of_date=${range.end}${bq}`);
                     list = pick([d.assets, d.liabilities, d.equity]); break;
                 case 'statement-of-financial-position':
-                    d = await API.get(`/reports/statement-of-financial-position?as_of_date=${range.end}`);
+                    d = await API.get(`/reports/statement-of-financial-position?as_of_date=${range.end}${bq}`);
                     list = pick([d.assets, d.liabilities, d.net_assets]); break;
                 case 'general-ledger':
-                    d = await API.get(`/reports/general-ledger?${dates}`);
+                    d = await API.get(`/reports/general-ledger?${dates}${bq}`);
                     list = pick([d.accounts]); break;
                 case 'trial-balance':
-                    d = await API.get(`/reports/trial-balance?${dates}`);
+                    d = await API.get(`/reports/trial-balance?${dates}${bq}`);
                     list = pick([d.items]); break;
                 case 'cash-flow':
                     d = await API.get(`/reports/cash-flow?${dates}`);
@@ -1212,6 +1245,14 @@ const ReportsPage = {
         row.style.display = select.value === "custom" ? "flex" : "none";
     },
 
+    // A wide report's sticky scrollbar (stickyScrollbars, utils.js) is
+    // sized to the table; the window's size changes it, so it is redone
+    // (wired when the app starts, App.init, like _gridFit).
+    _resizeSticky() {
+        const content = document.getElementById('report-content');
+        if (content) stickyScrollbars(content);
+    },
+
     async openPeriodModal(title, initialPeriod, loadContent, label = "Dates", useAsOfOnly = false, opts = {}) {
         // opts.reportType (string) — when set, adds an "Add to Saved Reports" button
         // that captures the current period/range as parameters.
@@ -1345,6 +1386,7 @@ const ReportsPage = {
                     currentParams = { period: select.value, as_of_date: asOfDate };
                     if (view) ReportsPage.setAddress(view, { ...params(), ...currentParams });
                     content.innerHTML = await loadContent(select.value, { as_of_date: asOfDate }, params());
+                    stickyScrollbars(content);
                 } else {
                     const range = ReportsPage.getDateRange(select.value, startInput.value, endInput.value);
                     // the boxes show the dates the report runs on: a date the
@@ -1355,6 +1397,7 @@ const ReportsPage = {
                     currentParams = { period: select.value, start_date: range.start, end_date: range.end };
                     if (view) ReportsPage.setAddress(view, { ...params(), ...currentParams });
                     content.innerHTML = await loadContent(select.value, range, params());
+                    stickyScrollbars(content);
                 }
                 const restored = ReportsPage._refocusRow(content);
                 if (opts.spotlight !== false && !again) ReportsPage._spotlight(content, params(), first && !restored);
@@ -1692,7 +1735,7 @@ const ReportsPage = {
             data.exclude_adjusting ? 'adjusting entries left out' : '',
         ].filter(Boolean).join(' &middot; ');
         return `${ReportsPage._exportButtons('profit-loss-detail', qs)}
-            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${scope ? ` &middot; ${scope}` : ''} &middot; ${data.line_count} ${data.line_count === 1 ? 'line' : 'lines'}. A line's type opens its document.</p>
+            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${scope ? ` &middot; ${scope}` : ''}${ReportsPage._basisWords(data)} &middot; ${data.line_count} ${data.line_count === 1 ? 'line' : 'lines'}. A line's type opens its document.</p>${ReportsPage._basisNote(data)}
             <div class="table-container"><table class="pl-detail">
                 <caption class="visually-hidden">${escapeHtml(`${T('Profit & Loss')} Detail`)}, ${escapeHtml(data.start_date)} to ${escapeHtml(data.end_date)}</caption>
                 <thead><tr><th scope="col">Type</th><th scope="col">Date</th><th scope="col">Num</th><th scope="col">Name</th><th scope="col">Memo</th><th scope="col">Split</th><th scope="col" class="amount">Amount</th><th scope="col" class="amount">Balance</th></tr></thead>
@@ -1772,18 +1815,33 @@ const ReportsPage = {
         const b = params && params.basis;
         return b === 'cash' || b === 'accrual' ? `&basis=${b}` : '';
     },
-    _basisOpts(prefill) {
-        const basis = prefill && ['cash', 'accrual'].includes(prefill.basis) ? prefill.basis : '';
-        const params = basis ? { basis } : {};
-        const toolbar = `<div class="form-group">
-                    <label for="report-basis-select">Basis</label>
-                    <select id="report-basis-select" data-no-search onchange="ReportsPage.setParam('basis', this.value)">
+    // The Basis select itself: a toolbar group, or (id, current value,
+    // change handler) wherever a view draws its own pickers.
+    _basisSelect(id, basis, onchange, group = false) {
+        const select = `<label for="${id}" style="font-size:11px;">Basis</label>
+                    <select id="${id}" data-no-search onchange="${onchange}">
                         <option value="" ${basis ? '' : 'selected'}>Company default</option>
                         <option value="accrual" ${basis === 'accrual' ? 'selected' : ''}>Accrual</option>
                         <option value="cash" ${basis === 'cash' ? 'selected' : ''}>Cash</option>
-                    </select>
-                </div>`;
+                    </select>`;
+        return group ? `<div class="form-group">${select}</div>` : select;
+    },
+    _basisOpts(prefill) {
+        const basis = prefill && ['cash', 'accrual'].includes(prefill.basis) ? prefill.basis : '';
+        const params = basis ? { basis } : {};
+        const toolbar = ReportsPage._basisSelect('report-basis-select', basis, "ReportsPage.setParam('basis', this.value)", true);
         return { params, toolbar };
+    },
+    // What a drill-down opened from a view takes from it: the basis the
+    // view was on, so the lines behind a figure are the figure's own.
+    _basisKeep(params) {
+        const b = params && params.basis;
+        return b === 'cash' || b === 'accrual' ? { basis: b } : {};
+    },
+    glBasis(value) {
+        ReportsPage._gl.basis = value === 'cash' || value === 'accrual' ? value : '';
+        const select = $('#report-period-select');
+        if (select) select.dispatchEvent(new Event('change'));
     },
     // Cash basis with A/R or A/P left over from journal-entry history (#483)
     _basisNote(data) {
@@ -1889,8 +1947,9 @@ const ReportsPage = {
     },
 
     async salesTax(prefill) {
-        await ReportsPage.openPeriodModal("Sales Tax Report", ReportsPage.defaultPeriod(), async (_period, range) => {
-            const data = await API.get(`/reports/sales-tax?start_date=${range.start}&end_date=${range.end}`);
+        const basisOpts = ReportsPage._basisOpts(prefill);
+        await ReportsPage.openPeriodModal("Sales Tax Report", ReportsPage.defaultPeriod(), async (_period, range, params) => {
+            const data = await API.get(`/reports/sales-tax?start_date=${range.start}&end_date=${range.end}${ReportsPage._basisQs(params)}`);
             // Credit memos come back as negative rows; a document with
             // nothing taxable shows no rate rather than "8.25%, $0.00".
             const rows = data.items.map(i =>
@@ -1917,7 +1976,7 @@ const ReportsPage = {
                             Sales tax paid to suppliers on bills entered before SlowBooks Pro 2.18 was posted to ${escapeHtml(ledger.account_name)}, lowering that balance by <strong>${formatCurrency(ledger.purchase_tax)}</strong> this period; since 2.18 that tax is part of what the purchase cost. To correct it, post one journal entry: debit the expense or cost-of-goods account those purchases used, and credit ${accountLabel(ledger, ledger.account_name, ' ')} <strong>${formatCurrency(ledger.purchase_tax_to_date)}</strong> (the total to ${formatDate(data.end_date)}).</div>` : ''}
                     </div>` : '';
             return `
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}</p>
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Date</th><th scope="col">${T('Invoice')} / Credit Memo</th><th scope="col">${T('Customer')}</th><th scope="col" class="amount">Sales</th><th scope="col" class="amount">Taxable</th><th scope="col" class="amount">Rate</th><th scope="col" class="amount">Tax</th></tr></thead>
                     <tbody>${rows || '<tr><td colspan="7" style="text-align:center; color:var(--gray-400);">No taxable sales</td></tr>'}</tbody>
@@ -1932,7 +1991,7 @@ const ReportsPage = {
                     <div style="font-size:14px; font-weight:700; color:var(--qb-navy);">Tax Collected: ${formatCurrency(data.total_tax)}</div>
                     ${reconcile}
                 </div>`;
-        }, "Dates", false, { reportType: 'sales_tax', view: 'sales-tax', prefill });
+        }, "Dates", false, { reportType: 'sales_tax', view: 'sales-tax', prefill, ...basisOpts });
     },
 
     // The General Ledger's filters (#236): one account, one class, or both,
@@ -1940,7 +1999,7 @@ const ReportsPage = {
     // saved report. The class test is P&L by Class's (a line's own class,
     // else its transaction's, else Uncategorized), applied to the balance
     // brought forward as well, so the running balances are that class's.
-    _gl: { account_id: '', class_id: '' },
+    _gl: { account_id: '', class_id: '', basis: '' },
     _glLists: null,
 
     async generalLedger(prefill) {
@@ -1948,6 +2007,7 @@ const ReportsPage = {
         ReportsPage._gl = {
             account_id: /^\d+$/.test(p.account_id || '') ? p.account_id : '',
             class_id: /^\d+$/.test(p.class_id || '') ? p.class_id : '',
+            basis: ['cash', 'accrual'].includes(p.basis) ? p.basis : '',
         };
         ReportsPage._glLists = null;
         await ReportsPage.openPeriodModal("General Ledger", ReportsPage.defaultPeriod(), async (_period, range) => {
@@ -1959,7 +2019,8 @@ const ReportsPage = {
                 ReportsPage._glLists = { accounts, classes };
             }
             const f = ReportsPage._gl;
-            const qs = `start_date=${range.start}&end_date=${range.end}${f.account_id ? `&account_id=${f.account_id}` : ''}${f.class_id ? `&class_id=${f.class_id}` : ''}`;
+            const qs = `start_date=${range.start}&end_date=${range.end}${f.account_id ? `&account_id=${f.account_id}` : ''}${f.class_id ? `&class_id=${f.class_id}` : ''}${ReportsPage._basisQs(f)}`;
+            ReportsPage._viewReturn['general-ledger'] = ReportsPage._basisKeep(f);
             const data = await API.get(`/reports/general-ledger?${qs}`);
             const { accounts, classes } = ReportsPage._glLists;
             const acctOpts = accounts.map(a => `<option value="${a.id}"${String(a.id) === f.account_id ? ' selected' : ''}>${accountLabel(a, null, ' ')}${a.is_active === false ? ' (inactive)' : ''}</option>`).join('');
@@ -1971,9 +2032,10 @@ const ReportsPage = {
                     <select id="gl-account" data-no-search style="max-width:220px;" onchange="ReportsPage.glFilter('account_id', this.value)"><option value="">All accounts</option>${acctOpts}</select>
                     <label for="gl-class" style="font-size:11px;">${T('Class')}</label>
                     <select id="gl-class" data-no-search style="max-width:200px;" onchange="ReportsPage.glFilter('class_id', this.value)"><option value="">All ${T('classes').toLowerCase()}</option>${classOpts}</select>
+                    ${ReportsPage._basisSelect('gl-basis', f.basis, "ReportsPage.glBasis(this.value)")}
                     ${ReportsPage._exportButtons('general-ledger', qs)}
                 </div>
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${cls ? ` &middot; ${T('Class')}: <strong>${escapeHtml(cls)}</strong> &mdash; <span id="gl-class-note">this ${T('class').toLowerCase()}'s lines only; each balance brought forward and running balance counts them alone, not the account's whole balance</span>` : ''}</p>`;
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${ReportsPage._basisWords(data)}${cls ? ` &middot; ${T('Class')}: <strong>${escapeHtml(cls)}</strong> &mdash; <span id="gl-class-note">this ${T('class').toLowerCase()}'s lines only; each balance brought forward and running balance counts them alone, not the account's whole balance</span>` : ''}</p>${ReportsPage._basisNote(data)}`;
             if (data.accounts.length === 0) {
                 html += `<div class="empty-state"><p>No journal entries found</p></div>`;
             } else {
@@ -2440,8 +2502,14 @@ const ReportsPage = {
     },
 
     async trialBalance(prefill) {
+        // the adjusting box, with the Basis select ahead of it
+        const tbOpts = { ...ReportsPage._adjOpts(prefill) };
+        const tbBasis = ReportsPage._basisOpts(prefill);
+        tbOpts.params = { ...tbBasis.params, ...tbOpts.params };
+        tbOpts.toolbar = tbBasis.toolbar + tbOpts.toolbar;
         await ReportsPage.openPeriodModal("Trial Balance", ReportsPage.defaultPeriod(), async (_period, range, live) => {
-            const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}`);
+            ReportsPage._viewReturn['trial-balance'] = ReportsPage._basisKeep(live);
+            const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}`);
             // An account's name opens its register for the report's dates
             // (R9), with "Back to Trial Balance"
             const drill = (i) => i.account_id
@@ -2466,13 +2534,13 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(data.total_credit)}</td>
                 <td class="amount" style="color:${diffColor}">${formatCurrency(data.difference)}</td>
             </tr>`;
-            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}`)}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}</p>
+            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}`)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr>${numbers ? '<th scope="col">Number</th>' : ''}<th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>`;
-        }, "Dates", false, { view: 'trial-balance', prefill, ...ReportsPage._adjOpts(prefill) });
+        }, "Dates", false, { view: 'trial-balance', prefill, ...tbOpts });
     },
 
     // The accountant's adjusting entries for a period (#341): each with its
@@ -3223,6 +3291,7 @@ ReportsPage._columnParams = function (prefill, key) {
     if (p.show === 'active') params.show = 'active';
     if (p.include_empty === true || p.include_empty === 'true') params.include_empty = 'true';
     if (p[key]) params[key] = String(p[key]);
+    if (['cash', 'accrual'].includes(p.basis)) params.basis = p.basis;
     return params;
 };
 
@@ -3231,7 +3300,7 @@ ReportsPage._columnQs = function (params, key) {
     if (params.show === 'active') qs += '&show=active';
     if (params.include_empty) qs += '&include_empty=true';
     if (params[key]) qs += `&${key}=${encodeURIComponent(params[key])}`;
-    return qs;
+    return qs + ReportsPage._basisQs(params);
 };
 
 // Said above a grid that shows part of the company (R3): which part, and
@@ -3281,10 +3350,11 @@ ReportsPage.profitLossByClass = async function (prefill) {
     const toolbar = ReportsPage._columnChooser({
         kind: 'class', key: 'class_ids', noun: T('class'), nouns: T('classes'), Nouns: T('Classes'), inactiveWord: 'archived',
         items: classes.map(c => ({ id: c.id, name: c.name, inactive: !!c.is_archived })), params,
-    });
+    }) + ReportsPage._basisSelect('report-basis-select', params.basis || '', "ReportsPage.setParam('basis', this.value)", true);
     await ReportsPage.openPeriodModal(T("P&L by Class"), ReportsPage.defaultPeriod(), async (period, range, p) => {
         const qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._columnQs(p, 'class_ids')}`;
         const data = await API.get(`/reports/profit-loss-by-class?${qs}`);
+        ReportsPage._viewReturn['profit-loss-by-class'] = ReportsPage._basisKeep(p);
         const columns = data.classes;
         if (!columns.length) {
             return ReportsPage._emptyGrid(data, 'class_ids', T('class'), T('classes'));
@@ -3296,8 +3366,8 @@ ReportsPage.profitLossByClass = async function (prefill) {
         const dates = { period, start_date: range.start, end_date: range.end };
         return `${ReportsPage._exportButtons('profit-loss-by-class', qs)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}. Click an amount for the transactions behind it, or a heading for that column's own report.
-            </div>
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}${data.basis === 'cash' ? ', cash basis' : ''}. Click an amount for the transactions behind it, or a heading for that column's own report.
+            </div>${ReportsPage._basisNote(data)}
             ${ReportsPage._pivotGrid({
                 title: T('P&L by Class'),
                 noun: T('class'),
@@ -3338,10 +3408,11 @@ ReportsPage.profitLossByJob = async function (prefill) {
     const toolbar = ReportsPage._columnChooser({
         kind: 'job', key: 'job_ids', noun: T('job'), nouns: T('jobs'), Nouns: T('Jobs'), inactiveWord: 'inactive',
         items, params,
-    });
+    }) + ReportsPage._basisSelect('report-basis-select', params.basis || '', "ReportsPage.setParam('basis', this.value)", true);
     await ReportsPage.openPeriodModal(`${T('P&L')} by ${T('Job')}`, ReportsPage.defaultPeriod(), async (period, range, p) => {
         const qs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._columnQs(p, 'job_ids')}`;
         const data = await API.get(`/reports/profit-loss-by-job?${qs}`);
+        ReportsPage._viewReturn['profit-loss-by-job'] = ReportsPage._basisKeep(p);
         const columns = data.jobs;
         if (!columns.length) {
             return ReportsPage._emptyGrid(data, 'job_ids', T('job'), T('jobs'));
@@ -3351,9 +3422,9 @@ ReportsPage.profitLossByJob = async function (prefill) {
         const jobUrl = (c) => `#/jobs/${c.job_id}?start_date=${range.start}&end_date=${range.end}&from=profit-loss-by-job`;
         return `${ReportsPage._exportButtons('profit-loss-by-job', qs)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}. Click an amount for the transactions behind it, or a heading for the ${escapeHtml(T('job'))}'s page on these dates.
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}${data.basis === 'cash' ? ', cash basis' : ''}. Click an amount for the transactions behind it, or a heading for the ${escapeHtml(T('job'))}'s page on these dates.
                 ${Terms.text('"No job" holds untagged activity')} <em>and</em> ${Terms.text('the applied-cost credits behind Job Cost Entries, so its costs can be negative and the totals still match the P&L')}.
-            </div>
+            </div>${ReportsPage._basisNote(data)}
             ${ReportsPage._pivotGrid({
                 title: `${T('P&L')} by ${T('Job')}`,
                 noun: T('job'),
@@ -3610,9 +3681,10 @@ ReportsPage.financialStatementsPdf = async function (prefill) {
 // customer's jobs only: the report says so, its total is labelled as that
 // customer's, and "all jobs" drops the filter in place (address replaced).
 ReportsPage.jobProfitability = async function (prefill) {
-    const params = { customer_id: parseInt((prefill || {}).customer_id, 10) || null };
+    const basisOpts = ReportsPage._basisOpts(prefill);
+    const params = { customer_id: parseInt((prefill || {}).customer_id, 10) || null, ...basisOpts.params };
     await ReportsPage.openPeriodModal(T("Job Profitability"), ReportsPage.defaultPeriod(), async (_period, range) => {
-        const filter = params.customer_id ? `&customer_id=${params.customer_id}` : '';
+        const filter = (params.customer_id ? `&customer_id=${params.customer_id}` : '') + ReportsPage._basisQs(params);
         const [data, customer] = await Promise.all([
             API.get(`/reports/job-profitability?start_date=${range.start}&end_date=${range.end}${filter}`),
             params.customer_id ? API.get(`/customers/${params.customer_id}`).catch(() => null) : null,
@@ -3649,10 +3721,11 @@ ReportsPage.jobProfitability = async function (prefill) {
             <td class="amount" style="font-weight:700;">${formatCurrency(j.net_income)}</td>
             <td class="amount">${pct(j.margin_pct)}</td>
         </tr>`).join('');
-        return `${filtered}
+        const exportQs = `start_date=${data.start_date}&end_date=${data.end_date}${filter}`;
+        return `${ReportsPage._exportButtons('job-profitability', exportQs)}${filtered}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}${params.customer_id ? '' : ` · ${Terms.text('"No job" holds untagged activity')} <em>and</em> ${Terms.text('the applied-cost credits behind Job Cost Entries (labor, equipment, overhead applied to jobs), so its costs can be negative and the totals still match the P&L')}`}
-            </div>
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}${ReportsPage._basisWords(data)}${params.customer_id ? '' : ` · ${Terms.text('"No job" holds untagged activity')} <em>and</em> ${Terms.text('the applied-cost credits behind Job Cost Entries (labor, equipment, overhead applied to jobs), so its costs can be negative and the totals still match the P&L')}`}
+            </div>${ReportsPage._basisNote(data)}
             <div class="table-container"><table>
                 <thead><tr><th scope="col">${T('Customer')}</th><th scope="col">${T('Job')}</th><th scope="col" class="amount">Contract</th><th scope="col" class="amount">${T('Income')}</th>
                 <th scope="col" class="amount">Costs</th><th scope="col" class="amount">Net</th><th scope="col" class="amount">Margin</th></tr></thead>
@@ -3668,7 +3741,7 @@ ReportsPage.jobProfitability = async function (prefill) {
     // No row is spotlighted: with customer_id the server already filters
     // the rows to the customer's jobs, and the first of several would be
     // "current" for no reason (R8 review).
-    }, "Dates", false, { view: 'job-profitability', params, prefill, spotlight: false });
+    }, "Dates", false, { view: 'job-profitability', params, prefill, spotlight: false, toolbar: basisOpts.toolbar });
 };
 
 ReportsPage.jobBudgetVsActual = async function (prefill) {
@@ -3689,7 +3762,7 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
             <td class="amount">${pct(j.pct_used)}</td>
             <td class="amount">${formatCurrency(j.act_revenue)}</td>
         </tr>`; }).join('');
-        return `
+        return `${ReportsPage._exportButtons('job-budget-vs-actual', `start_date=${range.start}&end_date=${range.end}`)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
                 Actuals for ${escapeHtml(range.start)} — ${escapeHtml(range.end)}; budgets and committed cost are job-to-date. Click a job to drill down.
             </div>
@@ -3705,6 +3778,272 @@ ReportsPage.jobBudgetVsActual = async function (prefill) {
                 </tr></tfoot>
             </table></div>`;
     }, "Dates", false, { view: 'job-budget-vs-actual', prefill });
+};
+
+// ---------------------------------------------------------------------------
+// Construction job reports (#556) — the WIP schedule with over/under billing,
+// cost-to-complete, the change-order log, the buyout report and job cost by
+// vendor. Each is a plain grid with a totals row, rows that open the job, and
+// Save PDF / Save CSV on the shared renderer. Cards show in construction mode
+// only.
+// ---------------------------------------------------------------------------
+ReportsPage._money = (v) => (v === null || v === undefined) ? '' : formatCurrency(v);
+ReportsPage._pctCell = (v) => (v === null || v === undefined) ? '' : `${v.toFixed(1)}%`;
+ReportsPage._jobRowOpen = (id) => id ? `style="cursor:pointer" onclick="App.navigate('#/jobs/${id}')"` : '';
+
+ReportsPage.wipSchedule = async function (prefill) {
+    await ReportsPage.openPeriodModal('WIP Schedule', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/wip-schedule?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money, pct = ReportsPage._pctCell;
+        // billed_basis: "apps" when billing comes from approved pay
+        // applications, "posted" when it falls back to posted revenue.
+        const basis = (b) => b === 'pay_applications' ? 'apps' : (b === 'posted_revenue' ? 'posted' : '');
+        const rows = data.rows.map(r => `<tr ${ReportsPage._jobRowOpen(r.job_id)}>
+            <td>${escapeHtml(r.customer_name || '')}</td>
+            <td>${escapeHtml(r.job_name)}</td>
+            <td class="amount">${m(r.revised_contract)}</td>
+            <td class="amount">${m(r.estimated_total_cost)}</td>
+            <td class="amount">${pct(r.margin_pct)}</td>
+            <td class="amount">${m(r.cost_to_date)}</td>
+            <td class="amount">${pct(r.percent_complete)}</td>
+            <td class="amount">${m(r.earned_revenue)}</td>
+            <td class="amount">${m(r.billed_to_date)}</td>
+            <td style="font-size:10px; color:var(--gray-500);">${escapeHtml(basis(r.billed_basis))}</td>
+            <td class="amount">${m(r.over_billing)}</td>
+            <td class="amount">${m(r.under_billing)}</td>
+            <td class="amount">${m(r.retainage_outstanding)}</td>
+            <td class="amount">${m(r.cost_to_complete)}</td>
+            <td class="amount">${m(r.projected_loss)}</td>
+            <td class="amount">${m(r.loss_provision)}</td>
+        </tr>`).join('');
+        const t = data.totals;
+        // The adjusting entry with amounts: each job's lines, then the net entry.
+        // Computed only — nothing here posts it.
+        const entry = data.adjusting_entry;
+        const lineRows = (lines, label, bold) => lines.map((ln, i) => `<tr style="${bold ? 'font-weight:600;' : ''}">
+            <td>${i === 0 ? escapeHtml(label) : ''}</td><td>${escapeHtml(ln.account)}</td>
+            <td class="amount">${ln.debit ? m(ln.debit) : ''}</td><td class="amount">${ln.credit ? m(ln.credit) : ''}</td></tr>`).join('');
+        const entryBody = entry.jobs.map(j => lineRows(j.lines, j.job_name, false)).join('')
+            + lineRows(entry.lines, 'Net entry', true);
+        const entryHtml = entry.lines.length ? `
+            <h4 style="margin:16px 0 4px;">Adjusting entry as of ${escapeHtml(entry.as_of)}</h4>
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
+                Under-billings ${m(entry.totals.under_billing)}, over-billings ${m(entry.totals.over_billing)}, net ${m(entry.totals.net_under_over)}, loss provision ${m(entry.totals.loss_provision)}.
+                These are the balances to carry as of this date; if an earlier entry was posted, reverse it or post the difference. Nothing here posts.
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">${T('Job')}</th><th scope="col">Account</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th></tr></thead>
+                <tbody>${entryBody}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td></td><td>Total</td><td class="amount">${m(entry.total_debits)}</td><td class="amount">${m(entry.total_credits)}</td></tr></tfoot>
+            </table></div>` : '<div style="font-size:11px; color:var(--gray-500); margin-top:12px;">No WIP adjustment to book as of this date.</div>';
+        // Warnings (jobs left out, forecast dating) sit under the table.
+        const warningsHtml = (data.warnings || []).map(w => `<p class="report-warning" style="margin:8px 0 0; font-size:12px; color:var(--gray-600);">${escapeHtml(w)}</p>`).join('');
+        return `${ReportsPage._exportButtons('wip-schedule', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
+                As of ${escapeHtml(data.as_of)} · cost-to-cost (percent complete = cost ÷ estimated cost). Estimated cost is actual plus the cost-to-complete forecast. A projected loss is booked in full. Billings over earned are a liability; under earned are an asset. Basis shows whether billing is from approved pay applications or posted revenue. This report posts nothing.
+            </div>
+            <div class="table-container table-container--sticky"><table>
+                <thead><tr><th scope="col">${T('Customer')}</th><th scope="col">${T('Job')}</th>
+                <th scope="col" class="amount">Revised</th><th scope="col" class="amount">Est. cost</th><th scope="col" class="amount">Margin</th><th scope="col" class="amount">Cost to date</th>
+                <th scope="col" class="amount">% complete</th><th scope="col" class="amount">Earned</th><th scope="col" class="amount">Billed</th><th scope="col">Basis</th>
+                <th scope="col" class="amount">Over billed</th><th scope="col" class="amount">Under billed</th><th scope="col" class="amount">Retainage</th><th scope="col" class="amount">To complete</th>
+                <th scope="col" class="amount">Proj. loss</th><th scope="col" class="amount">Loss provision</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="16">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);">
+                    <td colspan="2">Total</td>
+                    <td class="amount">${m(t.revised_contract)}</td><td class="amount">${m(t.estimated_total_cost)}</td><td class="amount">${pct(t.margin_pct)}</td><td class="amount">${m(t.cost_to_date)}</td>
+                    <td></td><td class="amount">${m(t.earned_revenue)}</td><td class="amount">${m(t.billed_to_date)}</td><td></td>
+                    <td class="amount">${m(t.over_billing)}</td><td class="amount">${m(t.under_billing)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.cost_to_complete)}</td>
+                    <td class="amount">${m(t.projected_loss)}</td><td class="amount">${m(t.loss_provision)}</td>
+                </tr></tfoot>
+            </table></div>${warningsHtml}${entryHtml}`;
+    }, "As Of", true, { view: 'wip-schedule', prefill, spotlight: false });
+};
+
+ReportsPage.costToComplete = async function (prefill) {
+    await ReportsPage.openPeriodModal('Cost to Complete', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/cost-to-complete?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money, pct = ReportsPage._pctCell;
+        const figRow = (label, f, depth, style) => `<tr style="${style || ''}">
+            <td style="padding-left:${6 + 14 * depth}px">${escapeHtml(label)}</td>
+            <td class="amount">${m(f.budget_revised)}</td><td class="amount">${m(f.committed)}</td><td class="amount">${m(f.actual)}</td>
+            <td class="amount">${m(f.cost_to_complete)}</td><td class="amount">${m(f.projected_final)}</td><td class="amount">${m(f.variance)}</td>
+            <td class="amount">${pct(f.pct_complete)}</td></tr>`;
+        const walk = (node, depth) => figRow(node.label, node.figures, depth) + (node.children || []).map(c => walk(c, depth + 1)).join('');
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="8">${escapeHtml(job.job_name)}</td></tr>`;
+            const tree = job.tree.map(n => walk(n, 1)).join('');
+            const uncoded = job.uncoded ? figRow('Uncoded', job.uncoded, 1) : '';
+            const total = figRow(`Total ${job.job_name}`, job.totals, 0, 'font-weight:600;');
+            return head + tree + uncoded + total;
+        }).join('');
+        return `${ReportsPage._exportButtons('cost-to-complete', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Cost to complete is the remaining budget plus open commitments; projected final is actual + cost to complete.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Cost code</th><th scope="col" class="amount">Budget</th><th scope="col" class="amount">Committed</th>
+                <th scope="col" class="amount">Actual</th><th scope="col" class="amount">To complete</th><th scope="col" class="amount">Projected final</th>
+                <th scope="col" class="amount">Variance</th><th scope="col" class="amount">% complete</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="8">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);">
+                    <td>Grand total</td><td class="amount">${m(data.totals.budget_revised)}</td><td class="amount">${m(data.totals.committed)}</td>
+                    <td class="amount">${m(data.totals.actual)}</td><td class="amount">${m(data.totals.cost_to_complete)}</td><td class="amount">${m(data.totals.projected_final)}</td>
+                    <td class="amount">${m(data.totals.variance)}</td><td></td></tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'cost-to-complete', prefill, spotlight: false });
+};
+
+ReportsPage.changeOrderLog = async function (prefill) {
+    await ReportsPage.openPeriodModal('Change Order Log', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/change-order-log?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const c = job.contract;
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;">
+                <td colspan="6">${escapeHtml(job.job_name)}</td>
+                <td class="amount" colspan="2">contract ${m(c.original)} + ${m(c.approved_changes)} = ${m(c.revised)}</td></tr>`;
+            const cos = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.number)}</td><td>${escapeHtml(r.kind)}</td><td>${escapeHtml(r.status)}</td>
+                <td>${escapeHtml(r.title || '')}</td><td>${escapeHtml(r.funding || '')}</td>
+                <td class="amount">${m(r.cost)}</td><td class="amount">${m(r.sell)}</td><td class="amount">${m(r.running_approved)}</td></tr>`).join('');
+            return head + (cos || '<tr><td colspan="8" style="color:var(--gray-400);">No change orders</td></tr>');
+        }).join('');
+        const counts = Object.entries(data.totals.counts).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none';
+        return `${ReportsPage._exportButtons('change-order-log', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)} · pending total ${m(data.totals.pending_total)} · ${escapeHtml(counts)}</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Number</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Title</th>
+                <th scope="col">Funding</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Sell</th><th scope="col" class="amount">Approved to date</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="8">No jobs</td></tr>'}</tbody>
+            </table></div>`;
+    }, "As Of", true, { view: 'change-order-log', prefill, spotlight: false });
+};
+
+ReportsPage.buyoutReport = async function (prefill) {
+    await ReportsPage.openPeriodModal('Buyout Report', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/buyout?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="6">${escapeHtml(job.job_name)}</td></tr>`;
+            const pkgs = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.package_name)}</td><td class="amount">${m(r.bid_cost)}</td><td class="amount">${m(r.bought)}</td>
+                <td class="amount">${m(r.variance)}</td><td class="amount">${m(r.committed_remaining)}</td><td class="amount">${m(r.billed_to_date)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td>Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.bid_cost)}</td><td class="amount">${m(t.bought)}</td>
+                <td class="amount">${m(t.variance)}</td><td class="amount">${m(t.committed_remaining)}</td><td class="amount">${m(t.billed_to_date)}</td></tr>`;
+            return head + pkgs + total;
+        }).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('buyout', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Package</th><th scope="col" class="amount">Bid</th><th scope="col" class="amount">Bought</th>
+                <th scope="col" class="amount">Variance</th><th scope="col" class="amount">Remaining</th><th scope="col" class="amount">Billed</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="6">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td>Grand total</td><td class="amount">${m(t.bid_cost)}</td><td class="amount">${m(t.bought)}</td>
+                <td class="amount">${m(t.variance)}</td><td class="amount">${m(t.committed_remaining)}</td><td class="amount">${m(t.billed_to_date)}</td></tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'buyout', prefill, spotlight: false });
+};
+
+ReportsPage.jobCostByVendor = async function (prefill) {
+    await ReportsPage.openPeriodModal(`${T('Job')} Cost by Vendor`, ReportsPage.defaultPeriod(), async (_period, range) => {
+        const data = await API.get(`/reports/job-cost-by-vendor?start_date=${range.start}&end_date=${range.end}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="6">${escapeHtml(job.job_name)}</td></tr>`;
+            const vendors = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.vendor_name)}</td><td class="amount">${m(r.cost)}</td><td class="amount">${r.bills_count}</td>
+                <td class="amount">${m(r.paid_to_date)}</td><td class="amount">${m(r.retainage_outstanding)}</td><td class="amount">${m(r.open_ap)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td>Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.cost)}</td><td></td>
+                <td class="amount">${m(t.paid_to_date)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.open_ap)}</td></tr>`;
+            return head + vendors + total;
+        }).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('job-cost-by-vendor', `start_date=${range.start}&end_date=${range.end}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">Cost is for ${escapeHtml(range.start)} — ${escapeHtml(range.end)}; bills, paid, retainage and open A/P are job-to-date.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Vendor</th><th scope="col" class="amount">Cost</th><th scope="col" class="amount">Bills</th>
+                <th scope="col" class="amount">Paid</th><th scope="col" class="amount">Retainage held</th><th scope="col" class="amount">Open A/P</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="6">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td>Grand total</td><td class="amount">${m(t.cost)}</td><td></td>
+                <td class="amount">${m(t.paid_to_date)}</td><td class="amount">${m(t.retainage_outstanding)}</td><td class="amount">${m(t.open_ap)}</td></tr></tfoot>
+            </table></div>`;
+    }, "Dates", false, { view: 'job-cost-by-vendor', prefill, spotlight: false });
+};
+
+ReportsPage.costToCompleteForecast = async function (prefill) {
+    await ReportsPage.openPeriodModal('Cost-to-Complete Forecast', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/cost-to-complete-forecast?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr style="font-weight:600; background:var(--gray-50);"><td colspan="7">${escapeHtml(job.job_name)}
+                <button class="btn btn-sm btn-primary" style="float:right;" onclick="ReportsPage._saveForecast(${job.job_id})">Save</button></td></tr>`;
+            const rows = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.cost_type_name)}</td>
+                <td class="amount">${m(r.budget)}</td><td class="amount">${m(r.actual)}</td>
+                <td class="amount">${m(r.default_cost_to_complete)}</td>
+                <td class="amount"><input type="number" min="0" step="0.01" class="ctcf-input" style="width:110px; text-align:right;"
+                    data-job="${job.job_id}" data-code="${r.cost_code_id === null ? '' : r.cost_code_id}" data-type="${escapeHtml(r.cost_type)}"
+                    value="${r.entered === null ? '' : r.entered}" placeholder="${r.default_cost_to_complete}"></td>
+                <td class="amount">${m(r.projected_final)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td colspan="2">Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.budget)}</td><td class="amount">${m(t.actual)}</td>
+                <td></td><td class="amount">${m(t.cost_to_complete)}</td><td class="amount">${m(t.projected_final)}</td></tr>`;
+            return head + (rows || '<tr><td colspan="7" style="color:var(--gray-400);">No budget or cost</td></tr>') + total;
+        }).join('');
+        return `${ReportsPage._exportButtons('cost-to-complete-forecast', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Leave an amount blank to use the default (budget less actual, never below zero). The WIP schedule uses actual plus this cost to complete as the job's estimated cost.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Section</th><th scope="col">Cost type</th><th scope="col" class="amount">Budget</th><th scope="col" class="amount">Actual</th>
+                <th scope="col" class="amount">Default</th><th scope="col" class="amount">Cost to complete</th><th scope="col" class="amount">Projected final</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="7">No jobs</td></tr>'}</tbody>
+            </table></div>`;
+    }, "As Of", true, { view: 'cost-to-complete-forecast', prefill, spotlight: false });
+};
+
+// Save one job's typed cost-to-complete amounts; a blank puts the cell back to
+// its default.
+ReportsPage._saveForecast = async function (jobId) {
+    const entries = [...document.querySelectorAll(`.ctcf-input[data-job="${jobId}"]`)].map(el => ({
+        cost_code_id: el.dataset.code === '' ? null : parseInt(el.dataset.code, 10),
+        cost_type: el.dataset.type,
+        amount: el.value === '' ? null : el.value,
+    }));
+    try {
+        await API.put(`/jobs/${jobId}/cost-to-complete-forecast`, { entries });
+        toast('Cost-to-complete forecast saved', 'success');
+    } catch (err) {
+        toast(err.message, 'error');
+    }
+};
+
+ReportsPage.commitmentStatus = async function (prefill) {
+    await ReportsPage.openPeriodModal('Commitment Status', ReportsPage.defaultPeriod(), async (_period, params) => {
+        const data = await API.get(`/reports/commitment-status?as_of=${params.as_of_date}`);
+        const m = ReportsPage._money;
+        const body = data.jobs.map(job => {
+            const head = `<tr ${ReportsPage._jobRowOpen(job.job_id)} style="font-weight:600; background:var(--gray-50); cursor:pointer;"><td colspan="8">${escapeHtml(job.job_name)}</td></tr>`;
+            const rows = job.rows.map(r => `<tr>
+                <td>${escapeHtml(r.number)}</td><td>${escapeHtml(r.vendor_name)}</td><td>${escapeHtml(r.type)}</td><td>${escapeHtml(r.status)}</td>
+                <td class="amount">${m(r.committed)}</td><td class="amount">${m(r.billed)}</td>
+                <td class="amount">${m(r.retainage_held)}</td><td class="amount">${m(r.remaining)}</td></tr>`).join('');
+            const t = job.totals;
+            const total = `<tr style="font-weight:600;"><td colspan="4">Total ${escapeHtml(job.job_name)}</td><td class="amount">${m(t.committed)}</td><td class="amount">${m(t.billed)}</td>
+                <td class="amount">${m(t.retainage_held)}</td><td class="amount">${m(t.remaining)}</td></tr>`;
+            return head + (rows || '<tr><td colspan="8" style="color:var(--gray-400);">No commitments</td></tr>') + total;
+        }).join('');
+        const t = data.totals;
+        return `${ReportsPage._exportButtons('commitment-status', `as_of=${params.as_of_date}`)}
+            <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">As of ${escapeHtml(data.as_of)}. Committed is the pre-tax value; retainage held is held less released; remaining counts open commitments only; a closed commitment shows nothing remaining unless a bill is dated after this date.</div>
+            <div class="table-container"><table>
+                <thead><tr><th scope="col">Commitment</th><th scope="col">Vendor</th><th scope="col">Type</th><th scope="col">Status</th>
+                <th scope="col" class="amount">Committed</th><th scope="col" class="amount">Billed to date</th><th scope="col" class="amount">Retainage held</th><th scope="col" class="amount">Remaining</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="8">No jobs</td></tr>'}</tbody>
+                <tfoot><tr style="font-weight:700; background:var(--gray-50);"><td colspan="4">Grand total</td><td class="amount">${m(t.committed)}</td><td class="amount">${m(t.billed)}</td>
+                <td class="amount">${m(t.retainage_held)}</td><td class="amount">${m(t.remaining)}</td></tr></tfoot>
+            </table></div>`;
+    }, "As Of", true, { view: 'commitment-status', prefill, spotlight: false });
 };
 
 
@@ -3963,9 +4302,10 @@ ReportsPage.compareToggleHtml = function (key) {
 };
 
 ReportsPage.statementOfActivities = async function (prefill) {
-    await ReportsPage.openPeriodModal("Statement of Activities", ReportsPage.defaultPeriod(), async (_period, range) => {
+    const basisOpts = ReportsPage._basisOpts(prefill);
+    await ReportsPage.openPeriodModal("Statement of Activities", ReportsPage.defaultPeriod(), async (_period, range, live) => {
         const cmp = ReportsPage._compare.statement_of_activities;
-        const qs = `start_date=${range.start}&end_date=${range.end}${cmp ? '&compare=prior_year' : ''}`;
+        const qs = `start_date=${range.start}&end_date=${range.end}${cmp ? '&compare=prior_year' : ''}${ReportsPage._basisQs(live)}`;
         const d = await API.get(`/reports/statement-of-activities?${qs}`);
         const t = d.totals;
         const pt = cmp && d.prior ? d.prior.totals : {};
@@ -3985,7 +4325,7 @@ ReportsPage.statementOfActivities = async function (prefill) {
         };
         const head = (label) => `<tr><td><strong>${label}</strong></td>${'<td></td>'.repeat(cols - 1)}</tr>`;
         return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">${ReportsPage.compareToggleHtml('statement_of_activities')}${ReportsPage._exportButtons('statement-of-activities', qs)}</div>
-            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}</p>
+            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}${ReportsPage._basisWords(d)}</p>${ReportsPage._basisNote(d)}
             <div class="table-container"><table>
                 <thead><tr><th scope="col"></th><th scope="col" class="amount">Without Donor Restrictions</th><th scope="col" class="amount">With Donor Restrictions</th><th scope="col" class="amount">Total</th>${cmp ? '<th scope="col" class="amount">Prior year</th><th scope="col" class="amount">Change</th>' : ''}</tr></thead>
                 <tbody>
@@ -3999,12 +4339,14 @@ ReportsPage.statementOfActivities = async function (prefill) {
                     ${line('Change in Net Assets', t.change_without, t.change_with, t.change_total, pt.change_total, 'font-weight:700; font-size:15px; background:var(--primary-light);')}
                 </tbody>
             </table></div>`;
-    }, "Dates", false, { reportType: 'statement_of_activities', view: 'statement-of-activities', prefill });
+    }, "Dates", false, { reportType: 'statement_of_activities', view: 'statement-of-activities', prefill, params: basisOpts.params, toolbar: basisOpts.toolbar });
 };
 
 ReportsPage.statementOfFinancialPosition = async function (prefill) {
-    await ReportsPage.openPeriodModal("Statement of Financial Position", ReportsPage.defaultPeriod(), async (_period, params) => {
-        const qs = `as_of_date=${params.as_of_date}`;
+    const basisOpts = ReportsPage._basisOpts(prefill);
+    await ReportsPage.openPeriodModal("Statement of Financial Position", ReportsPage.defaultPeriod(), async (_period, params, live) => {
+        const qs = `as_of_date=${params.as_of_date}${ReportsPage._basisQs(live)}`;
+        ReportsPage._viewReturn['statement-of-financial-position'] = { ...ReportsPage._basisKeep(live), as_of_date: params.as_of_date };
         const d = await API.get(`/reports/statement-of-financial-position?${qs}`);
         const drillCall = (i) => escapeHtml(`ReportsPage.openDrillDown(${i.account_id},${JSON.stringify(i.account_name)},null,${JSON.stringify(params.as_of_date)},null,null,'statement-of-financial-position')`);
         const section = (items, pad = 24) => items.map(i => `<tr><td style="padding-left:${pad}px;">
@@ -4020,7 +4362,7 @@ ReportsPage.statementOfFinancialPosition = async function (prefill) {
                 + `<tr style="font-weight:600;"><td style="padding-left:16px;">Total ${escapeHtml(g.heading)}</td><td class="amount">${formatCurrency(d[g.total_key])}</td></tr>`).join('');
         };
         return `${ReportsPage._exportButtons('statement-of-financial-position', qs)}
-            <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(d.as_of_date)}</p>
+            <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(d.as_of_date)}${ReportsPage._basisWords(d)}</p>${ReportsPage._basisNote(d)}
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Account</th><th scope="col" class="amount">Amount</th></tr></thead>
                 <tbody>
@@ -4033,7 +4375,7 @@ ReportsPage.statementOfFinancialPosition = async function (prefill) {
                     <tr style="font-weight:700; font-size:15px; background:var(--primary-light);"><td>Liabilities + Net Assets</td><td class="amount">${formatCurrency(d.total_liabilities_and_net_assets)}</td></tr>
                 </tbody>
             </table></div>`;
-    }, "As of", true, { reportType: 'statement_of_financial_position', view: 'statement-of-financial-position', prefill });
+    }, "As of", true, { reportType: 'statement_of_financial_position', view: 'statement-of-financial-position', prefill, params: basisOpts.params, toolbar: basisOpts.toolbar });
 };
 
 ReportsPage.fundBalances = async function (prefill) {
@@ -4059,9 +4401,10 @@ ReportsPage.fundBalances = async function (prefill) {
 };
 
 ReportsPage.functionalExpenses = async function (prefill) {
-    await ReportsPage.openPeriodModal("Statement of Functional Expenses", ReportsPage.defaultPeriod(), async (_period, range) => {
+    const basisOpts = ReportsPage._basisOpts(prefill);
+    await ReportsPage.openPeriodModal("Statement of Functional Expenses", ReportsPage.defaultPeriod(), async (_period, range, live) => {
         const cmp = ReportsPage._compare.functional_expenses;
-        const qs = `start_date=${range.start}&end_date=${range.end}${cmp ? '&compare=prior_year' : ''}`;
+        const qs = `start_date=${range.start}&end_date=${range.end}${cmp ? '&compare=prior_year' : ''}${ReportsPage._basisQs(live)}`;
         const d = await API.get(`/reports/functional-expenses?${qs}`);
         const keys = ['total', 'program', 'management', 'fundraising', 'unassigned'];
         const pt = cmp && d.prior ? d.prior.totals : {};
@@ -4071,13 +4414,13 @@ ReportsPage.functionalExpenses = async function (prefill) {
             <div class="table-container"><table><thead><tr><th scope="col">Program</th><th scope="col" class="amount">Amount</th></tr></thead>
             <tbody>${d.programs.map(p => `<tr><td>${escapeHtml(p.class_name)}</td><td class="amount">${formatCurrency(p.amount)}</td></tr>`).join('')}</tbody></table></div>` : '';
         return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">${ReportsPage.compareToggleHtml('functional_expenses')}${ReportsPage._exportButtons('functional-expenses', qs)}</div>
-            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}${d.totals.unassigned ? ` · <span style="color:var(--danger)">${formatCurrency(d.totals.unassigned)} still unassigned — run an allocation rule</span>` : ''}</p>
+            <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(d.start_date)} &mdash; ${formatDate(d.end_date)}${cmp && d.prior ? ` · prior year ${formatDate(d.prior.start_date)} &mdash; ${formatDate(d.prior.end_date)}` : ''}${d.totals.unassigned ? ` · <span style="color:var(--danger)">${formatCurrency(d.totals.unassigned)} still unassigned — run an allocation rule</span>` : ''}${ReportsPage._basisWords(d)}</p>${ReportsPage._basisNote(d)}
             <div class="table-container"><table>
                 <thead><tr><th scope="col">Expense</th><th scope="col" class="amount">Total</th><th scope="col" class="amount">Program</th><th scope="col" class="amount">Management</th><th scope="col" class="amount">Fundraising</th><th scope="col" class="amount">Unassigned</th>${cmp ? '<th scope="col" class="amount">Prior year</th><th scope="col" class="amount">Change</th>' : ''}</tr></thead>
                 <tbody>${rows || `<tr><td colspan="${cmp ? 8 : 6}" style="color:var(--gray-400);">No expenses in this period</td></tr>`}</tbody>
                 <tfoot>${row('Total', d.totals, 'font-weight:700; background:var(--gray-50);', pt.total || 0)}</tfoot>
             </table></div>${programs}`;
-    }, "Dates", false, { reportType: 'functional_expenses', view: 'functional-expenses', prefill });
+    }, "Dates", false, { reportType: 'functional_expenses', view: 'functional-expenses', prefill, params: basisOpts.params, toolbar: basisOpts.toolbar });
 };
 
 // Refresh reports automatically (#482): the open report runs again after a

@@ -116,6 +116,9 @@ class TransactionLine(Base):
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True)
     cost_code_id = Column(Integer, ForeignKey("cost_codes.id"), nullable=True)
+    # The name on a register line (#606): the donor or customer a line of a
+    # bank entry came from. A label, not money.
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     cost_type = Column(String(20), nullable=True)  # for roll-ups when no code
     # Nonprofit function (program | management | fundraising); defaulted
     # from the class at posting time, NULL = not yet allocated
@@ -144,6 +147,11 @@ class TransactionLine(Base):
     basis = Column(
         String(10), nullable=False, default=BASIS_BOTH, server_default=BASIS_BOTH
     )
+    # On a cash recognition line: the invoice or bill it recognizes, so an
+    # edit of that document can find and rewrite it (#483). Plain integers,
+    # no foreign key: a line is history and must outlive its document.
+    recognizes_invoice_id = Column(Integer, nullable=True, index=True)
+    recognizes_bill_id = Column(Integer, nullable=True, index=True)
 
     transaction = relationship(
         "Transaction", back_populates="lines", foreign_keys=[transaction_id]
