@@ -8,7 +8,7 @@
 const CustomersPage = {
     async render() {
         const qs = ActiveLists.query('customers');
-        const customers = await API.get(`/customers${qs ? qs + '&' : '?'}tree=1`);
+        const customers = await API.get(`/customers?tree=1` + (qs ? '&' + qs.slice(1) : ''));
         ActiveLists.remember('customers', customers);
         let html = `
             <div class="page-header">
@@ -50,7 +50,7 @@ const CustomersPage = {
                 const label = sub && prevId !== c.parent_customer_id ? customerLabel(c) : c.name;
                 prevId = c.id;
                 html += `<tr class="clickable customer-row${inactive ? ' row--dim' : ''}" data-name="${escapeHtml(customerLabel(c)).toLowerCase()}" onclick="CustomersPage.showDetails(${c.id})">
-                    <td${sub ? ' style="padding-left:28px"' : ''}>${sub ? '<span aria-hidden="true" style="color:var(--text-muted)">&#8627; </span>' : ''}<strong>${escapeHtml(label)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}${sub && c.bill_with_parent ? ' <span class="badge badge-draft" title="Invoices to this sub-customer are billed to its parent">billed with parent</span>' : ''}</td>
+                    <td${sub ? ' style="padding-left:28px"' : ''}>${sub ? '<span aria-hidden="true" style="color:var(--text-muted)">&#8627; </span>' : ''}<strong>${escapeHtml(label)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}${sub && c.bill_with_parent ? ` <span class="badge badge-draft" title="${Terms.text('Invoices to this sub-customer are billed to its parent')}">billed with parent</span>` : ''}</td>
                     <td>${escapeHtml(c.company) || ''}</td>
                     <td>${escapeHtml(c.phone) || ''}</td>
                     <td>${escapeHtml(c.email) || ''}</td>
@@ -115,7 +115,7 @@ const CustomersPage = {
                 </table>
             </div>`;
         const parentLine = customer.parent_customer_id
-            ? `<div style="font-size:13px;margin-top:2px">Sub-customer of <a href="#/customers/${customer.parent_customer_id}" style="color:var(--text-link)" onclick="event.preventDefault();closeModal({ keepAddress: true });CustomersPage.showDetails(${customer.parent_customer_id})">${escapeHtml(customer.parent_name || '')}</a>${customer.bill_with_parent ? ' <span class="badge badge-draft" title="Invoices to this sub-customer are billed to its parent: on the parent\'s statement and A/R Aging row, paid by the parent\'s payments">billed with parent</span>' : ''}</div>`
+            ? `<div style="font-size:13px;margin-top:2px">Sub-customer of <a href="#/customers/${customer.parent_customer_id}" style="color:var(--text-link)" onclick="event.preventDefault();closeModal({ keepAddress: true });CustomersPage.showDetails(${customer.parent_customer_id})">${escapeHtml(customer.parent_name || '')}</a>${customer.bill_with_parent ? ` <span class="badge badge-draft" title="${Terms.text("Invoices to this sub-customer are billed to its parent: on the parent's statement and A/R Aging row, paid by the parent's payments")}">billed with parent</span>` : ''}</div>`
             : '';
 
         const fullAddr = (a1, a2, city, state, zip) => {
@@ -414,7 +414,7 @@ const CustomersPage = {
                         ${hasSubs ? `<div class="form-hint">This customer has ${c.sub_count} sub-customer${c.sub_count === 1 ? '' : 's'} of its own, so it cannot sit under another.</div>` : '<div class="form-hint">A tenant under a property, say: the sub-customer is invoiced and paid on its own, can be made inactive on its own, and rolls up to its parent.</div>'}</div>
                     <div class="form-group"><label>Billing</label>
                         <label style="font-weight:normal;"><input type="checkbox" name="bill_with_parent" id="cust-bill-with-parent" ${c.bill_with_parent ? 'checked' : ''} ${c.parent_customer_id && !hasSubs ? '' : 'disabled'}>
-                            Bill with parent: invoices to this sub-customer are billed to the parent, go on the parent's statement and A/R Aging row, and are paid by the parent's payments</label></div>
+                            ${Terms.text("Bill with parent: invoices to this sub-customer are billed to the parent, go on the parent's statement and A/R Aging row, and are paid by the parent's payments")}</label></div>
                 </div>`;
 
         const title = id ? `Edit ${T('Customer')}` : T('New Customer');

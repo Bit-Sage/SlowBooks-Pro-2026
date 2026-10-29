@@ -150,7 +150,7 @@ const MemorizedPage = {
         const dated = e.target.dated.value || null;
         try {
             if (kind === 'invoice') {
-                const result = await API.post(`/recurring/${id}/generate${dated ? `?dated=${dated}` : ''}`);
+                const result = await API.post(`/recurring/${id}/generate` + (dated ? `?dated=${dated}` : ''));
                 toastPosted(`${T('Invoice')} created; next on ${formatDate(result.next_due)}`);
             } else {
                 const result = await API.post(`/memorized/${id}/enter`, dated ? { date: dated } : {});

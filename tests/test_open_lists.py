@@ -107,7 +107,7 @@ def test_every_screen_that_applies_money_reads_every_open_page():
         "batch_payments.js": ["fetchAllPages('/invoices?open_only=true')"],
         "bills.js": ["fetchAllPages('/bills?open_only=true')"],
         "payments.js": [
-            "fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true`)"
+            "fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true&billed_to=true`)"
         ],
         "credit_memos.js": ["&open_only=true`)"],
         "vendor_credits.js": [
