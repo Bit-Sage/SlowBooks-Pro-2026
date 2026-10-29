@@ -6,7 +6,7 @@
 #
 # Callers: invoices.create/update/void/duplicate, estimates.convert_to_invoice,
 # credit_memos.create/void, recurring_service.generate_due_invoices, iif_import,
-# bills.create/void.
+# bills.create/update/void.
 #
 # Design rule: all helpers are NO-OPS if track_inventory=False on the item,
 # so they're safe to call unconditionally for every line.
@@ -22,8 +22,10 @@ from app.models.items import InventoryMovement, Item, MovementType
 from app.models.transactions import Transaction
 from app.services.accounting import _q, create_journal_entry, reversing_lines
 from app.services.inventory_service import (
+    receipts_left,
     record_sale,
     return_cost_accounts,
+    reverse_at_cost,
     reverse_sale,
     sale_pieces,
     _append_movement,
@@ -217,8 +219,11 @@ def reverse_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> N
     same cost naming it (so the ledger nets to zero at the return's cost,
     as a sale's void does), and the entry the returns link to is reversed
     line for line under "credit_memo_void". A memo from before the entry
-    existed only has its stock taken back out. An item no longer tracked
-    is left alone, as a sale's reversal leaves it.
+    existed only has its stock taken back out. What the pool cannot absorb
+    of a return's cost (its void landing the count on zero, or worth more
+    than the stock holds) is posted to the item's COGS account under the
+    void (reverse_at_cost, #647). An item no longer tracked is left alone,
+    as a sale's reversal leaves it.
     """
     date_to_use = txn_date or credit_memo.date
     ref = _memo_ref(credit_memo)
@@ -253,17 +258,59 @@ def reverse_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> N
         quantity = Decimal(str(mv.quantity or 0))
         if not (item and item.track_inventory) or quantity <= 0:
             continue
-        _append_movement(
+        reverse_at_cost(
             db,
             item,
-            MovementType.VOID,
-            quantity=-quantity,
-            unit_cost=Decimal(str(mv.unit_cost or 0)),
+            mv,
+            quantity,
             source_type="credit_memo_void",
             source_id=credit_memo.id,
+            txn_date=date_to_use,
             transaction_id=reversal_of.get(mv.transaction_id),
             memo=f"VOID Credit Memo {ref}",
-            reverses_movement_id=mv.id,
+        )
+
+
+def reverse_receipts_for_bill(
+    db: Session,
+    bill,
+    source_type: str,
+    txn_date=None,
+    memo: Optional[str] = None,
+    transaction_id: Optional[int] = None,
+) -> None:
+    """Take a bill's receipts back out of stock (#646): each PURCHASE
+    movement the bill recorded, for what it still has in stock, at the cost
+    it was received at (the line's rate with its share of the tax,
+    purchase_posting.unit_cost_with_tax), one VOID movement per receipt
+    naming it, the way a sale's void walks its postings (reverse_sale) and
+    a memo's void its returns. Used by the void ("bill_void", with the
+    reversing entry to link) and by an edit that re-posts the lines
+    ("bill_edit"; the new quantities are received again after it).
+
+    The journal side is the caller's: the void's reversing entry and the
+    edit's re-post both reverse the bill's own Inventory lines, the very
+    amounts the receipts were costed from, so Inventory in the ledger and
+    quantity x average cost come out one figure. What the pool cannot absorb
+    is posted to the item's COGS account under the same source
+    (reverse_at_cost, #647). A receipt of an item no longer tracked is left
+    alone, as a sale's reversal leaves it.
+    """
+    date_to_use = txn_date or bill.date
+    for receipt, left in receipts_left(db, "bill", bill.id):
+        item = receipt.item
+        if not (item and item.track_inventory) or left <= 0:
+            continue
+        reverse_at_cost(
+            db,
+            item,
+            receipt,
+            left,
+            source_type=source_type,
+            source_id=bill.id,
+            txn_date=date_to_use,
+            transaction_id=transaction_id,
+            memo=memo,
         )
 
 

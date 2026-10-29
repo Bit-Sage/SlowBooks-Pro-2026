@@ -7,6 +7,24 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A bill's void or edit takes its stock back out at the cost it came in at**
+(#646, #647, from the 2.31.0 gate). A stock line on a taxed bill is received
+at the line's rate with its share of the tax, the figure the bill puts on
+Inventory, but voiding the bill took the stock out at the rate alone, and an
+edit of a bill with the same item on two lines took the whole quantity out at
+the last line's rate; either way the ledger's Inventory no longer equalled
+quantity x average cost, and selling out left a figure in Inventory with
+nothing on hand. Each receipt now comes back out by itself at the cost it
+carried, one reversal movement per receipt naming it, the way a sale's void
+walks its postings; a bill edited on an earlier release and voided now
+reverses only the receipt the edit left standing. Two edges of the
+re-averaging that came with 2.31.0 are closed as well (#647): a reversal that
+lands the count on zero, or is worth more than the stock holds, left the
+difference sitting in Inventory. That difference is now posted to the item's
+cost of goods account (its own, else the chart's) under the void or edit that
+caused it, so Inventory reads quantity x average cost afterwards, 0.00 with
+nothing on hand.
+
 **Sub-customers with parent billing** (#638, from Discussion #633). A customer
 can now sit under another, one level deep, the way QuickBooks spells
 "Parent:Sub": a property manager keeps each property as a customer and each
