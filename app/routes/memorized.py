@@ -262,6 +262,10 @@ def update_memorized(mem_id: int, data: MemorizedUpdate, db: Session = Depends(g
         ]
     else:
         whole["lines"] = [ln.model_dump(exclude_unset=True) for ln in data.lines]
+    # A new cadence word without a count resets the count: "biweekly" is
+    # weekly every 2, not weekly every 2 x the stored interval.
+    if "frequency" in changes and "interval" not in changes:
+        whole["interval"] = 1
     for key, value in changes.items():
         if key == "next_date":
             continue
@@ -280,7 +284,10 @@ def update_memorized(mem_id: int, data: MemorizedUpdate, db: Session = Depends(g
         mem.bill_number = (checked.bill_number or "").strip() or None
     if "occurrences" in changes:
         mem.occurrences_limit = checked.occurrences
-    if "next_date" in changes:
+    # The page always sends the date it shows, which is the clamped one
+    # (Feb 28 for a schedule anchored on the 31st); only a date the person
+    # actually changed re-anchors the schedule.
+    if "next_date" in changes and changes["next_date"] != mem.next_date:
         mem.next_date = changes["next_date"]
         mem.anchor_day = mem.next_date.day
     if data.lines is not None:
@@ -308,6 +315,14 @@ def enter_now(
     move the schedule on. Works for a remind schedule, and for an
     auto-enter one ahead of the scheduler."""
     mem = _get(db, mem_id)
+    if not mem.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This schedule is paused. Resume it to enter the document, "
+                "or enter one by hand."
+            ),
+        )
     on = data.date if data and data.date else mem.next_date
     kind, document_id = enter_memorized(db, mem, on)
     db.commit()

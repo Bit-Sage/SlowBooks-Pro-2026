@@ -108,7 +108,7 @@ const MemorizedPage = {
             <td>${MemorizedPage.statusHtml(r)}</td>
             <td class="amount" style="font-family:var(--font-mono);">${formatCurrency(r.amount)}</td>
             <td class="actions">
-                ${ended ? '' : `<button class="btn btn-sm btn-primary" onclick="MemorizedPage.enter(${args})">Enter now</button>`}
+                ${ended || r.status === 'paused' ? '' : `<button class="btn btn-sm btn-primary" onclick="MemorizedPage.enter(${args})">Enter now</button>`}
                 ${ended ? '' : (r.status === 'paused'
                     ? `<button class="btn btn-sm btn-secondary" onclick="MemorizedPage.resume(${args})">Resume</button>`
                     : `<button class="btn btn-sm btn-secondary" onclick="MemorizedPage.pause(${args})">Pause</button>`)}
@@ -367,6 +367,8 @@ const MemorizedPage = {
             const body = {
                 ...MemorizedPage.scheduleFromForm(form, !id),
                 vendor_id: vendorId,
+                // the rate the totals were shown with (a bill memorized from one that carried a rate)
+                tax_rate: BillsPage._taxRate || 0,
                 bill_number: form.bill_number.value.trim() || null,
                 terms: form.terms.value || null,
                 notes: form.notes.value || null,

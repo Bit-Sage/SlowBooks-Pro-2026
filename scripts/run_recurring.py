@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Standalone cron script to generate due recurring invoices and to enter the
 memorized bills and journal entries set to auto-enter (#605); a remind
@@ -9,6 +10,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.database import SessionLocal
 from app.services.recurring_service import generate_due_invoices
@@ -32,7 +35,18 @@ if __name__ == "__main__":
                 print(f"  - {item['message']}")
 
         held: list = []
-        entered = memorized_service.enter_due_memorized(db, skipped=held)
+        try:
+            entered = memorized_service.enter_due_memorized(db, skipped=held)
+        except (OperationalError, ProgrammingError) as e:
+            # a self-managed database that has not run the 2.31.1 migration:
+            # the invoices above are posted; say what is missing and stop
+            db.rollback()
+            print(
+                "Memorized transactions were not entered: the database needs "
+                f"`alembic upgrade head` first ({e.__class__.__name__}).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if entered:
             print(f"Entered {len(entered)} memorized transaction(s):")
             for item in entered:

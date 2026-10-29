@@ -224,6 +224,14 @@ def generate_one(
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    if not rec.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This schedule is paused. Resume it to enter the invoice, "
+                "or enter one by hand."
+            ),
+        )
     skipped: list = []
     created_ids = generate_due_invoices(
         db, rec.next_due, skipped=skipped, only_id=rec.id, dated=dated

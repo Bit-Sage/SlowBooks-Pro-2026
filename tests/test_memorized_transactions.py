@@ -952,3 +952,95 @@ def test_the_migration_creates_the_tables_and_walks_back(tmp_path):
     assert "memorized_transactions" not in names
     assert "memorized_transaction_lines" not in names
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# from the review of #605
+# ---------------------------------------------------------------------------
+
+
+def test_an_edit_that_keeps_the_date_keeps_the_anchor(
+    client, db_session, seed_accounts
+):
+    """The form sends the date it shows on every save, which is the clamped
+    one (Feb 28 for a schedule on the 31st); a rename must not re-anchor the
+    schedule to the 28th. A date the person changed still does."""
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(client, vendor_id, seed_accounts)
+    enter_due_memorized(db_session, as_of=date(2026, 1, 31))
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-02-28"
+
+    r = client.put(
+        f"/api/memorized/{mem['id']}",
+        json={"name": "Renamed", "next_date": "2026-02-28"},
+    )
+    assert r.status_code == 200, r.text
+    enter_due_memorized(db_session, as_of=date(2026, 2, 28))
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-03-31"
+
+    r = client.put(f"/api/memorized/{mem['id']}", json={"next_date": "2026-04-15"})
+    assert r.status_code == 200, r.text
+    enter_due_memorized(db_session, as_of=date(2026, 4, 15))
+    assert client.get(f"/api/memorized/{mem['id']}").json()["next_date"] == "2026-05-15"
+
+
+def test_a_cadence_word_without_a_count_resets_the_count(client, seed_accounts):
+    """PUT {"frequency": "biweekly"} on a schedule stored weekly every 2 is
+    still every two weeks, not every four."""
+    vendor_id = _vendor(client)
+    r = client.post(
+        "/api/memorized",
+        json={
+            "kind": "bill",
+            "name": "Every two weeks",
+            "frequency": "biweekly",
+            "start_date": "2026-01-05",
+            "vendor_id": vendor_id,
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    mem = r.json()
+    assert (mem["frequency"], mem["interval"]) == ("weekly", 2)
+    r = client.put(f"/api/memorized/{mem['id']}", json={"frequency": "biweekly"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["frequency"], r.json()["interval"]) == ("weekly", 2)
+    # a count sent with the word is taken as sent
+    r = client.put(
+        f"/api/memorized/{mem['id']}", json={"frequency": "weekly", "interval": 3}
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["frequency"], r.json()["interval"]) == ("weekly", 3)
+
+
+def test_enter_now_refuses_a_paused_schedule(
+    client, db_session, seed_accounts, seed_customer
+):
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(client, vendor_id, seed_accounts)
+    assert client.post(f"/api/memorized/{mem['id']}/pause").status_code == 200
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409, r.text
+    assert "paused" in r.json()["detail"]
+    assert _bills(db_session) == []
+    # a recurring invoice the same way
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2099-01-01")
+    assert (
+        client.put(f"/api/recurring/{rec_id}", json={"is_active": False}).status_code
+        == 200
+    )
+    r = client.post(f"/api/recurring/{rec_id}/generate")
+    assert r.status_code == 409, r.text
+    assert "paused" in r.json()["detail"]
+
+
+def test_the_page_hides_enter_now_on_a_paused_row_and_keeps_the_bills_tax_rate():
+    root = Path(__file__).resolve().parent.parent
+    js = (root / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "ended || r.status === 'paused' ? '' : `<button" in js
+    assert "tax_rate: BillsPage._taxRate || 0" in js
+    script = (root / "scripts/run_recurring.py").read_text(encoding="utf-8")
+    assert script.startswith("#!/usr/bin/env python3")
+    assert "except (OperationalError, ProgrammingError)" in script

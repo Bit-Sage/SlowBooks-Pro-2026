@@ -169,8 +169,12 @@ def test_the_form_takes_an_amount_alone():
     assert 'class="line-qty" type="number" step="0.0001" value="${qty}"' in row
     assert 'class="line-amt money" type="number" step="0.01" value="${amount}"' in row
     assert "Number(l.quantity) === 1 && Number(l.rate) === Number(l.amount)" in row
-    save = js[js.index("    async save(e, id = null) {") :]
+    # the line code lives in collectLines() since #605 (save() calls it)
+    save = js[js.index("    collectLines() {") :]
     save = save[: save.index("\n    },")]
     assert "BillsPage.priced(row)" in save
     assert "{ amount: parseFloat(row.querySelector('.line-amt')?.value) || 0 }" in save
-    assert "an amount, or a quantity and rate" in save
+    # the refusal itself is still save()'s
+    saving = js[js.index("    async save(e, id = null) {") :]
+    saving = saving[: saving.index("\n    },")]
+    assert "an amount, or a quantity and rate" in saving
