@@ -236,8 +236,12 @@ class MemorizedUpdate(StrictModel):
 
 
 class EnterRequest(StrictModel):
-    """Enter now: dated the scheduled date unless a date is given."""
+    """Enter now: the occurrence the page showed (its scheduled date), dated
+    that date unless a date is given. An occurrence that is no longer the
+    schedule's next one is refused (409) and nothing is posted; left out
+    (an API caller), the schedule's next date is entered."""
 
+    occurrence: Optional[dt_date] = None
     date: Optional[dt_date] = None
 
 
@@ -328,6 +332,8 @@ class MemorizedResponse(BaseModel):
 class EnterResponse(BaseModel):
     kind: str
     document_id: int
+    # the scheduled date entered, and the date the document carries
+    occurrence: dt_date
     date: dt_date
     next_date: dt_date
     status: str

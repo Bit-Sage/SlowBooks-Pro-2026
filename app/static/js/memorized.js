@@ -168,12 +168,16 @@ const MemorizedPage = {
 
     // ----------------------------------------------------------- actions
 
-    // Enter now: dated the scheduled date, or today.
+    // Enter now: the occurrence this row shows, dated its scheduled date or
+    // today. The request names that occurrence, so one entered meanwhile
+    // (another window, Enter All Due, the scheduler) is refused, not the
+    // next one posted early.
     enter(kind, id) {
         const r = MemorizedPage.row(kind, id);
         const scheduled = r ? r.next_date : todayISO();
         openModal(`Enter ${r ? escapeHtml(r.name) : 'now'}`, `
             <form onsubmit="MemorizedPage.doEnter(event, '${kind}', ${Number(id)})">
+                <input type="hidden" name="occurrence" value="${r ? escapeHtml(r.next_date) : ''}">
                 <p style="margin-bottom:8px;">Enter the ${kind === 'invoice' ? T('invoice') : kind === 'bill' ? 'bill' : 'journal entry'} dated:</p>
                 <div class="form-group">
                     <label style="font-weight:normal;"><input type="radio" name="dated" value="" checked> The scheduled date, ${formatDate(scheduled)}</label>
@@ -198,12 +202,16 @@ const MemorizedPage = {
         if (button && button.disabled) return;
         if (button) button.disabled = true;
         const dated = form.dated.value || null;
+        const occurrence = form.occurrence.value || null;
         try {
             if (kind === 'invoice') {
                 const result = await API.post(`/recurring/${id}/generate` + (dated ? `?dated=${dated}` : ''));
                 toastPosted(`${T('Invoice')} created; next on ${formatDate(result.next_due)}`);
             } else {
-                const result = await API.post(`/memorized/${id}/enter`, dated ? { date: dated } : {});
+                const body = {};
+                if (occurrence) body.occurrence = occurrence;
+                if (dated) body.date = dated;
+                const result = await API.post(`/memorized/${id}/enter`, body);
                 toastPosted(result.message);
             }
             closeModal();

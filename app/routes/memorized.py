@@ -36,6 +36,7 @@ from app.schemas.memorized import (
 from app.services import scheduler
 from app.services.accounting import compute_line_totals
 from app.services.memorized_service import (
+    OccurrenceTaken,
     amount_of,
     ended_sentence,
     enter_memorized,
@@ -322,10 +323,17 @@ def delete_memorized(mem_id: int, db: Session = Depends(get_db)):
 def enter_now(
     mem_id: int, data: EnterRequest | None = None, db: Session = Depends(get_db)
 ):
-    """Enter the document now, dated its scheduled date (or `date`), and
-    move the schedule on. Works for a remind schedule, and for an
-    auto-enter one ahead of the scheduler."""
+    """Enter the occurrence the page showed (`occurrence`, its scheduled
+    date; the schedule's next date when not sent) now, dated that date (or
+    `date`), and move the schedule on past it. Works for a remind schedule,
+    and for an auto-enter one ahead of the scheduler. An occurrence that is
+    no longer the next one (entered meanwhile by another window, Enter All
+    Due or the scheduler, or the schedule edited) is a 409 naming it and the
+    schedule's next date, and nothing is posted (2.31.1 gate W-75)."""
     mem = _get(db, mem_id)
+    occurrence = data.occurrence if data and data.occurrence else mem.next_date
+    if occurrence != mem.next_date:
+        raise OccurrenceTaken(mem, occurrence)
     # ended before paused (2.31.1 gate W-64): the page shows Ended, and a
     # resume would not bring an ended schedule back
     if has_ended(mem):
@@ -338,19 +346,26 @@ def enter_now(
                 "or enter one by hand."
             ),
         )
-    on = data.date if data and data.date else mem.next_date
-    kind, document_id = enter_memorized(db, mem, on)
+    on = data.date if data and data.date else occurrence
+    kind, document_id = enter_memorized(db, mem, on, occurrence)
     db.commit()
     db.refresh(mem)
     word = _DOC_WORD.get(kind, kind)
     return EnterResponse(
         kind=kind,
         document_id=document_id,
+        occurrence=occurrence,
         date=on,
         next_date=mem.next_date,
         status=status_of(mem),
         message=(
-            f"Entered the {word} dated {on.isoformat()}; "
+            f"Entered the {word} dated {on.isoformat()}"
+            + (
+                f" for the {occurrence.isoformat()} occurrence"
+                if on != occurrence
+                else ""
+            )
+            + "; "
             + (
                 f"next on {mem.next_date.isoformat()}."
                 if status_of(mem) != "ended"

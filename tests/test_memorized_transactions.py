@@ -1141,11 +1141,11 @@ def _claim_after_both_read(monkeypatch):
     real = memorized_service.claim_occurrence
     passed = threading.local()
 
-    def claim(db, mem):
+    def claim(db, mem, *args, **kw):
         if not getattr(passed, "done", False):
             passed.done = True
             both_read.wait(WAIT)
-        return real(db, mem)
+        return real(db, mem, *args, **kw)
 
     monkeypatch.setattr(memorized_service, "claim_occurrence", claim)
 
@@ -1194,7 +1194,10 @@ def test_two_enter_nows_at_once_post_one_document(file_company, monkeypatch):
     assert outcomes == ["409", "ok"], (a, b)
     refused = a if isinstance(a, HTTPException) else b
     assert refused.detail.startswith("That occurrence was just entered")
-    assert "has 1 entered and its next date is 2026-02-28" in refused.detail
+    assert (
+        "was due 2026-01-31 and its next date is now 2026-02-28, with 1 entered"
+        in refused.detail
+    )
     won = b if refused is a else a
     assert won.next_date == date(2026, 2, 28) and "next on 2026-02-28" in won.message
     _one_bill_entered_once(Session, mem["id"])
@@ -1672,3 +1675,119 @@ def test_the_automatic_runs_leave_recurring_invoices_to_generate(
     assert r.status_code == 200, r.text
     assert r.json()["invoices_created"] == 3  # Jan 1, Feb 1, Mar 1
     assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 3
+
+
+# ---------------------------------------------------------------------------
+# from the 2.31.1 Windows gate, round 3 (W-70, W-71, W-75 to W-78, W-81)
+# ---------------------------------------------------------------------------
+
+
+def _outcome(x):
+    """A route function's answer as the status the page would see."""
+    if isinstance(x, HTTPException):
+        return str(x.status_code)
+    if isinstance(x, EnterResponse) or isinstance(x, dict):
+        return "200"
+    return repr(x)
+
+
+def test_two_clicks_for_the_same_occurrence_post_one_document(
+    file_company, monkeypatch
+):
+    """W-75: Enter now carries the occurrence the page showed. Two windows
+    asking for the same occurrence at once: one 200, one 409 naming the
+    occurrence and the next date, and one bill, the second click never
+    posting the next occurrence early."""
+    from app.routes import memorized as memorized_routes
+    from app.schemas.memorized import EnterRequest
+
+    client, Session, ids = file_company
+    mem = _bill_schedule(client, _vendor(client), ids, mode="remind")
+    _claim_after_both_read(monkeypatch)
+
+    def click():
+        with Session() as db:
+            return memorized_routes.enter_now(
+                mem["id"], EnterRequest(occurrence=date(2026, 1, 31)), db
+            )
+
+    a, b = _race(click, click)
+    assert sorted(_outcome(x) for x in (a, b)) == ["200", "409"], (a, b)
+    refused = a if isinstance(a, HTTPException) else b
+    assert "'Electric bill' was due 2026-01-31" in refused.detail
+    assert "its next date is now 2026-02-28, with 1 entered" in refused.detail
+    won = b if refused is a else a
+    assert won.occurrence == won.date == date(2026, 1, 31)
+    _one_bill_entered_once(Session, mem["id"])
+
+
+def test_a_page_left_open_is_refused_rather_than_posting_the_next_one(
+    client, db_session, seed_accounts
+):
+    """W-75: a page left open after the scheduler entered January asked to
+    enter January and got February, early; with Today it posted a second
+    January-period bill and February was silently used up. The request
+    names its occurrence: one already entered is a 409 naming it and the
+    schedule's next date, nothing posted, the schedule untouched. Dated
+    today still enters THAT occurrence; without one (an API caller) the
+    next date is entered, as before."""
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)  # auto, Jan 31
+    page_showed = client.get("/api/memorized").json()[0]["next_date"]
+    assert page_showed == "2026-01-31"
+    assert len(enter_due_memorized(db_session, as_of=date(2026, 1, 31))) == 1
+
+    for body in (
+        {"occurrence": page_showed},
+        {"occurrence": page_showed, "date": "2026-02-05"},  # "Today"
+    ):
+        r = client.post(f"/api/memorized/{mem['id']}/enter", json=body)
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert "nothing was posted" in detail
+        assert "'Electric bill' was due 2026-01-31" in detail
+        assert "its next date is now 2026-02-28, with 1 entered" in detail
+        assert len(_bills(db_session)) == 1
+        got = client.get(f"/api/memorized/{mem['id']}").json()
+        assert got["next_date"] == "2026-02-28" and got["entered_count"] == 1
+
+    # the occurrence the page shows now, dated today: that one, not the next
+    r = client.post(
+        f"/api/memorized/{mem['id']}/enter",
+        json={"occurrence": "2026-02-28", "date": "2026-02-05"},
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["occurrence"] == "2026-02-28" and out["date"] == "2026-02-05"
+    assert out["next_date"] == "2026-03-31"
+    assert out["message"] == (
+        "Entered the bill dated 2026-02-05 for the 2026-02-28 occurrence; "
+        "next on 2026-03-31."
+    )
+    assert _bills(db_session)[-1].date == date(2026, 2, 5)
+    # an API caller that names no occurrence enters the next date
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 200, r.text
+    assert r.json()["occurrence"] == r.json()["date"] == "2026-03-31"
+    assert (
+        r.json()["message"] == "Entered the bill dated 2026-03-31; next on 2026-04-30."
+    )
+    assert len(_bills(db_session)) == 3
+
+
+def test_the_enter_modal_sends_the_occurrence_it_was_opened_for():
+    """W-75: the modal keeps the row's next date and sends it; a 409 shows
+    the sentence and reloads the list."""
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    enter = js[js.index("    enter(kind, id) {") : js.index("    async pause(")]
+    assert (
+        '<input type="hidden" name="occurrence" value="${r ? escapeHtml(r.next_date) : \'\'}">'
+        in enter
+    )
+    assert "const occurrence = form.occurrence.value || null;" in enter
+    assert "if (occurrence) body.occurrence = occurrence;" in enter
+    assert "API.post(`/memorized/${id}/enter`, body)" in enter
+    assert "toast(err.message, 'error');" in enter
+    assert (
+        "if (err.status === 409) { closeModal(); App.navigate('#/memorized'); }"
+        in enter
+    )

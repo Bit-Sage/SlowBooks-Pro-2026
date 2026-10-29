@@ -131,11 +131,14 @@ the server's cron, so a company upgrading with an overdue schedule finds no
 invoices it did not ask for. Enter All Due, pressed by you, enters every due
 schedule of both kinds, every missed date in order. In remind mode it waits on the
 due list until Enter now posts it, dated the scheduled date or today, and
-moves the schedule on. Two windows pressing Enter now on the same
-occurrence post one document: the schedule is moved on in one guarded
-statement before anything posts, so the second is told it was just entered
-and posts nothing; Enter now on an ended schedule says it has ended, paused
-or not. A memorized bill's number follows one rule: left blank, each bill is
+moves the schedule on. Enter now names the occurrence the page showed: two
+windows pressing it for the same occurrence post one document, and a page
+left open after that occurrence was entered elsewhere (another window, Enter
+All Due or the app's own run) is told so, with the schedule's next date, and
+posts nothing, rather than entering the next one early; dated today, it
+still enters that occurrence. The schedule is moved on in one guarded
+statement before anything posts. Enter now on an ended schedule says it has
+ended, paused or not. A memorized bill's number follows one rule: left blank, each bill is
 numbered the date and the vendor's initials, as Enter Bill numbers one; a
 number on the template is used as it is on the first bill and -2, -3 after
 that, since a vendor's bill number cannot repeat, which is why Memorize from

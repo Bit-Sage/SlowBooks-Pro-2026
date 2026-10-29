@@ -155,18 +155,28 @@ def amount_of(mem: MemorizedTransaction) -> Decimal:
 
 
 class OccurrenceTaken(HTTPException):
-    """The occurrence was entered between the read and the claim: another
-    window's Enter now, Enter All Due, or the scheduler. 409, nothing
-    posted, the schedule as it now stands in the sentence."""
+    """The occurrence asked for is no longer the schedule's next one: it was
+    entered between the read and the claim (another window's Enter now,
+    Enter All Due, the scheduler), or the page that asked was showing a date
+    the schedule has since moved on from (2.31.1 gate W-75). 409, nothing
+    posted; the sentence names the occurrence and the schedule as it now
+    stands."""
 
-    def __init__(self, mem: MemorizedTransaction):
+    def __init__(self, mem: MemorizedTransaction, occurrence: date):
+        entered = mem.entered_count or 0
+        now = (
+            f"it has ended, with {entered} entered"
+            if has_ended(mem)
+            else f"its next date is now {mem.next_date.isoformat()}, with "
+            f"{entered} entered"
+        )
         super().__init__(
             status_code=409,
             detail=(
                 "That occurrence was just entered (by another window, Enter All "
-                f"Due or the scheduler), so nothing more was posted: {mem.name!r} "
-                f"has {mem.entered_count or 0} entered and its next date is "
-                f"{mem.next_date.isoformat()}."
+                "Due or the scheduler) or the schedule was changed, so nothing "
+                f"was posted: {mem.name!r} was due {occurrence.isoformat()} and "
+                f"{now}."
             ),
         )
 
@@ -185,17 +195,21 @@ class ScheduleBusy(HTTPException):
         )
 
 
-def claim_occurrence(db: Session, mem: MemorizedTransaction) -> date:
-    """Move the schedule past its next date in one statement that succeeds
-    only while that date is still the one read (2.31.1 gate W-57: two
-    requests that had both read the same next date each posted a document,
-    then each wrote the same next date and count back). The database does
-    the check: the second UPDATE waits for the first to commit and then
-    matches no row, on SQLite and PostgreSQL alike. Returns the date
-    claimed; the ORM copy of the schedule is expired so it reads the row.
-    Raises OccurrenceTaken when the row had already moved on and
+def claim_occurrence(
+    db: Session, mem: MemorizedTransaction, occurrence: date | None = None
+) -> date:
+    """Move the schedule past `occurrence` (its next date as read, when not
+    given) in one statement that succeeds only while that date is still the
+    schedule's next one (2.31.1 gate W-57: two requests that had both read
+    the same next date each posted a document, then each wrote the same next
+    date and count back; W-75: a page left open asked for an occurrence the
+    schedule had moved on from, and the one after it was posted early). The
+    database does the check: the second UPDATE waits for the first to commit
+    and then matches no row, on SQLite and PostgreSQL alike. Returns the
+    date claimed; the ORM copy of the schedule is expired so it reads the
+    row. Raises OccurrenceTaken when the row had already moved on and
     ScheduleBusy when SQLite would not give the write lock in time."""
-    expected = mem.next_date
+    expected = occurrence or mem.next_date
     following = advance_date(expected, mem.frequency, mem.interval or 1, mem.anchor_day)
     try:
         moved = (
@@ -221,7 +235,7 @@ def claim_occurrence(db: Session, mem: MemorizedTransaction) -> date:
     db.expire(mem, ["next_date", "entered_count"])
     if moved != 1:
         db.refresh(mem)
-        raise OccurrenceTaken(mem)
+        raise OccurrenceTaken(mem, expected)
     return expected
 
 
@@ -337,17 +351,23 @@ def _enter_journal(db: Session, mem: MemorizedTransaction, on: date):
 
 
 def enter_memorized(
-    db: Session, mem: MemorizedTransaction, on: date | None = None
+    db: Session,
+    mem: MemorizedTransaction,
+    on: date | None = None,
+    occurrence: date | None = None,
 ) -> tuple[str, int]:
-    """Post the document dated `on` (the scheduled date when not given) and
-    advance the schedule. Returns (kind, the bill's or transaction's id).
-    A closed period, a missing vendor or a $0.00 template is an
-    HTTPException, as the document's own route would answer; nothing is
-    written when one is raised."""
+    """Enter `occurrence` (the schedule's next date when not given): post
+    the document dated `on` (the occurrence's own date when not given) and
+    advance the schedule past the occurrence. Returns (kind, the bill's or
+    transaction's id). An occurrence that is no longer the next one is
+    OccurrenceTaken; a closed period, a missing vendor or a $0.00 template
+    is an HTTPException, as the document's own route would answer; nothing
+    is written when one is raised."""
     from app.services.accountants_copy import check_entry_date
     from app.services.closing_date import check_closing_date
 
-    on = on or mem.next_date
+    occurrence = occurrence or mem.next_date
+    on = on or occurrence
     if has_ended(mem):
         raise HTTPException(status_code=409, detail=ended_sentence(mem))
     # The claim first (W-57), before any read in this transaction: the
@@ -357,7 +377,7 @@ def enter_memorized(
     # a read (the closing date's settings row) the wait was an immediate
     # "database is locked", since the read's snapshot could not be upgraded.
     # A refusal below unwinds the claim with the rest of the transaction.
-    claim_occurrence(db, mem)
+    claim_occurrence(db, mem, occurrence)
     check_closing_date(db, on)
     check_entry_date(db, on)
 
@@ -423,7 +443,7 @@ def enter_due_memorized(
         # one's rows, and the rest of the run still goes through.
         nested = db.begin_nested()
         try:
-            kind, document_id = enter_memorized(db, mem, on)
+            kind, document_id = enter_memorized(db, mem, on, on)
             nested.commit()
         except OccurrenceTaken:
             # entered by another window or run between the read and the
