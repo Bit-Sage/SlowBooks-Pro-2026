@@ -305,7 +305,7 @@ def test_a_void_worth_more_than_the_stock_holds_posts_the_difference_to_cost_of_
     db_session.expire_all()
     reversal, residue = _entries(db_session, "bill_void", dear["id"])
     assert residue.description == (
-        "VOID Bill B-2 - Inventory set to quantity x average cost: Widget"
+        "VOID Bill B-2 line 1 - Inventory set to quantity x average cost: Widget"
     )
     debits, credits = _sides(residue)
     assert debits == {seed_accounts["1300"].id: Decimal("20.00")}
@@ -322,3 +322,68 @@ def test_a_void_worth_more_than_the_stock_holds_posts_the_difference_to_cost_of_
         "-96.00"
     )
     assert _balances(db_session, seed_accounts["5000"])["5000"] == Decimal("196.00")
+
+
+def test_the_movements_api_names_the_receipt_each_void_reverses(
+    client, db_session, seed_accounts
+):
+    """W-68 (2.31.1 gate): both reversals of a two-line bill carried the
+    same memo and the API did not say which receipt each one reverses.
+    Each receipt is "Bill B-2 line N", its reversal "VOID Bill B-2 line N",
+    and every movement carries reverses_movement_id."""
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)
+    two = _bill(
+        client,
+        vendor.id,
+        [_stock(item.id, 10, "5.00"), _stock(item.id, 10, "10.00")],
+        bill_number="B-2",
+    )
+
+    assert client.post(f"/api/bills/{two['id']}/void").status_code == 200
+
+    rows = client.get(f"/api/items/{item.id}/movements").json()
+    rows.reverse()  # the API lists newest first
+    cheap, dear, void_cheap, void_dear = rows
+    assert [r["memo"] for r in rows] == [
+        "Bill B-2 line 1",
+        "Bill B-2 line 2",
+        "VOID Bill B-2 line 1",
+        "VOID Bill B-2 line 2",
+    ]
+    assert [r["reverses_movement_id"] for r in rows] == [
+        None,
+        None,
+        cheap["id"],
+        dear["id"],
+    ]
+    assert [(r["movement_type"], Decimal(r["quantity"])) for r in rows] == [
+        ("purchase", Decimal("10")),
+        ("purchase", Decimal("10")),
+        ("void", Decimal("-10")),
+        ("void", Decimal("-10")),
+    ]
+
+
+def test_an_edits_reversal_names_the_receipt_it_reverses_too(
+    client, db_session, seed_accounts
+):
+    vendor = _seed_vendor(db_session)
+    item = _item(db_session, seed_accounts, None)
+    two = _bill(
+        client,
+        vendor.id,
+        [_stock(item.id, 10, "5.00"), _stock(item.id, 10, "10.00")],
+        bill_number="B-2",
+    )
+    _edit_lines(client, two["id"], [_stock(item.id, 4, "10.00")])
+    db_session.expire_all()
+    cheap, dear, again = _movements(db_session, item.id, MovementType.PURCHASE)
+    assert again.memo == "Bill B-2 line 1"
+    assert [
+        (v.memo, v.reverses_movement_id)
+        for v in _movements(db_session, item.id, MovementType.VOID)
+    ] == [
+        ("Edit Bill B-2 line 1: previous receipt reversed", cheap.id),
+        ("Edit Bill B-2 line 2: previous receipt reversed", dear.id),
+    ]

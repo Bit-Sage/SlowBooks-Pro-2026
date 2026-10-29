@@ -853,8 +853,10 @@ const BillsPage = {
                 lines,
             };
             if (id) {
-                await API.put(`/bills/${id}`, body);
+                const saved = await API.put(`/bills/${id}`, body);
                 toastPosted('Bill updated');
+                // stock already sold that the edit took below zero (W-67): posted, and said
+                for (const w of (saved && saved.warnings) || []) toast(w, 'warning');
             } else {
                 const result = await API.post('/bills', body);
                 await ScanHelper.attachAfterSave('bill', result.id);
@@ -868,8 +870,10 @@ const BillsPage = {
     async void(id) {
         if (!confirm('Void this bill?')) return;
         try {
-            await API.post(`/bills/${id}/void`);
+            const voided = await API.post(`/bills/${id}/void`);
             toast('Bill voided');
+            // stock already sold that the void took below zero (W-67): posted, and said
+            for (const w of (voided && voided.warnings) || []) toast(w, 'warning');
             App.navigate('#/bills');
         } catch (err) { toast(err.message, 'error'); }
     },

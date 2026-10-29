@@ -14,6 +14,7 @@
 
 import logging
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -28,7 +29,7 @@ from app.services.inventory_service import (
     reverse_at_cost,
     reverse_sale,
     sale_pieces,
-    _append_movement,
+    _append_at_cost,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,10 @@ def post_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> None
     naming no invoice, is at the item's current avg_cost onto the item's
     (else the chart's) accounts, the cost the return already used for the
     quantity. The same item on two lines returns their total. A line whose
-    item is not tracked, or of zero quantity, moves and posts nothing.
+    item is not tracked, or of zero quantity, moves and posts nothing. A
+    return into a count below zero fills the hole first; what the units
+    sold ahead were costed at beyond the return's cost comes back out of
+    the item's cost of goods account under the memo (W-60).
     """
     date_to_use = txn_date or credit_memo.date
     ref = _memo_ref(credit_memo)
@@ -198,7 +202,7 @@ def post_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> None
         txn_id = txn.id
 
     for item, (quantity, unit_cost, _cogs, _asset, sale) in returns:
-        _append_movement(
+        _append_at_cost(
             db,
             item,
             MovementType.RETURN_IN,
@@ -206,6 +210,7 @@ def post_return_for_credit_memo(db: Session, credit_memo, txn_date=None) -> None
             unit_cost=unit_cost,
             source_type="credit_memo",
             source_id=credit_memo.id,
+            txn_date=date_to_use,
             transaction_id=txn_id,
             memo=f"Return: {ref}",
             reverses_movement_id=sale.id if sale is not None else None,
@@ -295,12 +300,18 @@ def reverse_receipts_for_bill(
     is posted to the item's COGS account under the same source
     (reverse_at_cost, #647). A receipt of an item no longer tracked is left
     alone, as a sale's reversal leaves it.
+
+    `memo` names each reversal with the receipt it reverses in place of
+    "{receipt}": the receipt's own memo ("Bill B-2 line 2" since W-68), else
+    the bill's number, so "VOID {receipt}" reads "VOID Bill B-2 line 2" and
+    the two reversals of a two-line bill no longer read the same.
     """
     date_to_use = txn_date or bill.date
     for receipt, left in receipts_left(db, "bill", bill.id):
         item = receipt.item
         if not (item and item.track_inventory) or left <= 0:
             continue
+        label = receipt.memo or f"Bill {bill.bill_number}"
         reverse_at_cost(
             db,
             item,
@@ -310,8 +321,30 @@ def reverse_receipts_for_bill(
             source_id=bill.id,
             txn_date=date_to_use,
             transaction_id=transaction_id,
-            memo=memo,
+            memo=memo.format(receipt=label) if memo else None,
         )
+
+
+def oversold_by_reversal(db: Session, bill, lines=()) -> list[dict[str, Any]]:
+    """The stock items a bill's void or edit takes past what is on hand
+    (W-67, 2.31.1 gate), in oversold_items' shape. What the bill's receipts
+    still have in stock comes out (reverse_receipts_for_bill); on an edit
+    the new `lines` are received again, so only the net take per item is
+    measured against the count, and a void or edit that lands exactly on
+    zero is not past the stock. Reads the books and writes nothing, so the
+    route can ask before anything is saved."""
+    taking = [
+        SimpleNamespace(item_id=receipt.item_id, quantity=left)
+        for receipt, left in receipts_left(db, "bill", bill.id)
+        if left > 0
+    ]
+    receiving = [
+        line
+        for line in lines or ()
+        if getattr(line, "item_id", None)
+        and Decimal(str(getattr(line, "quantity", 0) or 0)) > 0
+    ]
+    return oversold_items(db, taking, receiving)
 
 
 # ---------------------------------------------------------------------------
@@ -447,28 +480,45 @@ def oversold_items(db: Session, lines, before=()) -> list[dict[str, Any]]:
     return out
 
 
-def oversell_warning(short: dict[str, Any]) -> str:
+def oversell_warning(short: dict[str, Any], action: str = "sale") -> str:
     """One sentence for a sale past the stock, as the response carries it:
-    'Widget: 2 on hand; this sale takes it to -4.'"""
+    'Widget: 2 on hand; this sale takes it to -4.' A bill's void or edit
+    that takes stock already sold below zero says "this void" or "this
+    edit" (W-67)."""
     return (
         f"{short['item'].name}: {plain_quantity(short['on_hand'])} on hand; "
-        f"this sale takes it to {plain_quantity(short['after'])}."
+        f"this {action} takes it to {plain_quantity(short['after'])}."
     )
 
 
-def oversell_refusal(shorts: list[dict[str, Any]]) -> str:
-    """The sentence a refused sale answers with when Settings says to
-    refuse: each item, its count and how many short, and what to do."""
+# What to do about a refused sale, void or edit, by what was refused.
+_OVERSELL_WAY_OUT = {
+    "sale": (
+        "Enter the receiving bill first, or turn off Refuse a sale of more "
+        "than is on hand under Settings."
+    ),
+    "void": (
+        "Void the sale that took the stock first, or turn off Refuse a sale "
+        "of more than is on hand under Settings."
+    ),
+    "edit": (
+        "Keep at least what has sold on the bill, void the sale that took it, "
+        "or turn off Refuse a sale of more than is on hand under Settings."
+    ),
+}
+
+
+def oversell_refusal(shorts: list[dict[str, Any]], action: str = "sale") -> str:
+    """The sentence a refused sale (or a bill's refused void or edit, W-67)
+    answers with when Settings says to refuse: each item, its count and how
+    many short, and what to do."""
     parts = [
-        f"{s['item'].name}: {plain_quantity(s['on_hand'])} on hand; this sale "
+        f"{s['item'].name}: {plain_quantity(s['on_hand'])} on hand; this {action} "
         f"takes it to {plain_quantity(s['after'])}, "
         f"{plain_quantity(-s['after'])} short."
         for s in shorts
     ]
-    return " ".join(parts) + (
-        " Enter the receiving bill first, or turn off Refuse a sale of more "
-        "than is on hand under Settings."
-    )
+    return " ".join(parts) + " " + _OVERSELL_WAY_OUT[action]
 
 
 def snapshot_invoice_lines(invoice) -> list[dict[str, Any]]:
