@@ -219,7 +219,7 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
                 quantity=line_data.quantity,
                 rate=line_data.rate,
                 amount=amt,
-                line_order=line_data.line_order or i,
+                line_order=i,
             )
         )
         if amt > 0:

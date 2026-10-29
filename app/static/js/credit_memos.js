@@ -140,6 +140,7 @@ const CreditMemosPage = {
                     <button type="submit" class="btn btn-primary">Create Credit Memo</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#cm-lines', { add: () => CreditMemosPage.addLine(), changed: () => CreditMemosPage.recalc() });
         CreditMemosPage.recalc();
     },
 

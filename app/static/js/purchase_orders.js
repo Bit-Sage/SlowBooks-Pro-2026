@@ -164,6 +164,7 @@ const PurchaseOrdersPage = {
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} PO</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#po-lines', { add: () => PurchaseOrdersPage.addLine(), changed: () => PurchaseOrdersPage.recalc() });
         PurchaseOrdersPage.recalc();
     },
 

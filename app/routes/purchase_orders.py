@@ -189,7 +189,7 @@ def create_po(data: POCreate, db: Session = Depends(get_db)):
             job_id=line_data.job_id,
             cost_code_id=line_data.cost_code_id,
             cost_type=line_cost_type(db, line_data.cost_code_id, line_data.cost_type),
-            line_order=line_data.line_order or i,
+            line_order=i,
         )
         db.add(line)
 
@@ -302,7 +302,7 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                     ln.job_id = line_data.job_id
                     ln.cost_code_id = line_data.cost_code_id
                     ln.cost_type = ct
-                ln.line_order = line_data.line_order or i
+                ln.line_order = i
             else:
                 db.add(
                     PurchaseOrderLine(
@@ -315,7 +315,7 @@ def update_po(po_id: int, data: POUpdate, db: Session = Depends(get_db)):
                         job_id=line_data.job_id,
                         cost_code_id=line_data.cost_code_id,
                         cost_type=ct,
-                        line_order=line_data.line_order or i,
+                        line_order=i,
                     )
                 )
         tax_rate = data.tax_rate if data.tax_rate is not None else po.tax_rate

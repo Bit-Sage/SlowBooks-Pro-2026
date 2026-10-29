@@ -236,7 +236,7 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                 class_id=line_data.class_id,
                 cost_code_id=line_data.cost_code_id,
                 cost_type=eff_cost_type,
-                line_order=line_data.line_order or i,
+                line_order=i,
             )
         )
 

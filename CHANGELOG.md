@@ -7,6 +7,18 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Move lines and insert one in the middle of a document** (#604, from
+Discussion #595). On an invoice a line could only be added at the end or
+removed, so a missed line meant removing and re-keying everything below it.
+Every line form (invoices, estimates, sales receipts, credit memos, recurring
+invoices, bills, purchase orders and vendor credits) now has Move line up and
+Move line down buttons on each line, a handle to drag a line with the mouse,
+and an Insert line below button that opens a blank line right under that one.
+The totals follow, and the order is saved with the document and used on the
+screen, the PDF and the print view. Saving a document whose lines only
+changed order now keeps the new order, and the order is always the order the
+lines were sent in.
+
 **Enter Bill shows the vendor beside the form** (#601, from Discussion #593).
 Pick a vendor on Enter Bill (or open a bill to edit it) and a panel beside the
 form shows what you owe them, their last five bills and payments, and their
@@ -223,7 +235,6 @@ one bill now carries that bill's memo onto the payment and its check; paying
 several bills leaves the memo for you to type, and a memo you enter yourself
 is never replaced. The payment's view has a **Check memo** field you can edit,
 and Print Check saves it before the check opens.
-
 **A register line opens over the register.** Clicking a line in a bank or
 card register used to go to the posting's own address, which drew that
 document's whole list first: for a journal entry, every journal entry in the
@@ -1584,7 +1595,6 @@ Three schema changes, run in every company file one after the other: the
 payroll opening balances (`a4330b1c2d3e`), `api_tokens.allow_backups`
 (`c5e8a1d47b20`) and `items.code` (`c4e5d6f7a8b9`); the head is
 `c4e5d6f7a8b9`. 632 API operations.
-
 
 ### v2.28.0 — Account types and sub-accounts
 
@@ -4727,7 +4737,6 @@ was closed as released, while docs/features.md claimed a chart CSV import
 that did not exist. The reporter came back on the 16th. The docs line is
 now true, and the CSV page's result line no longer says "Imported undefined"
 (it read a field the import never returned).
-
 
 ### v2.14.0 — In and out of a company, and the terms once
 

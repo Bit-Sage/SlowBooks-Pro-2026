@@ -270,6 +270,7 @@ const EstimatesPage = {
                     <button type="submit" class="btn btn-primary">${id ? 'Update' : 'Create'} Estimate</button>
                 </div>
             </form>`, { wide: true });
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#est-lines', { add: () => EstimatesPage.addLine(), changed: () => EstimatesPage.recalc() });
         EstimatesPage.recalc();
     },
 

@@ -767,6 +767,7 @@ const InvoicesPage = {
         if (!id && inv.customer_id) InvoicesPage.customerSelected(inv.customer_id);
         // the totals carry the document's currency; follow a change of it
         $('#invoice-form [name="currency"]')?.addEventListener('change', () => InvoicesPage.recalc());
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#inv-lines', { add: () => InvoicesPage.addLine(), changed: () => InvoicesPage.recalc() });
         InvoicesPage.recalc();
         // Populate due_date for fresh invoices that don't already have one.
         if (!inv.due_date) InvoicesPage._recomputeDueDate();

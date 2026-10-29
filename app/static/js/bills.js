@@ -483,6 +483,7 @@ const BillsPage = {
             </form></div>
             <aside id="bill-vendor-summary" class="bill-vendor-summary" aria-label="Vendor summary" aria-live="polite" hidden></aside></div>`, { wide: true });
         BillsPage._summaryFor = null;
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#bill-lines', { add: () => BillsPage.addLine(), changed: () => BillsPage.recalc() });
         if (bill) {
             const vendorSel = document.getElementById('bill-vendor');
             if (vendorSel) vendorSel.value = bill.vendor_id;

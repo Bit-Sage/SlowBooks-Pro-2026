@@ -208,6 +208,7 @@ const SalesReceiptsPage = {
                     <button type="submit" class="btn btn-primary">Record ${T('Sales Receipt')}</button>
                 </div>
             </form>`);
+        typeof LineOrder !== 'undefined' && LineOrder.attach('#sr-lines', { add: () => SalesReceiptsPage.addLine(), changed: () => SalesReceiptsPage.recalc() });
         // the totals carry the receipt's currency; follow a change of it
         $('#sales-receipt-form [name="currency"]')?.addEventListener('change', () => SalesReceiptsPage.recalc());
         SalesReceiptsPage.recalc();

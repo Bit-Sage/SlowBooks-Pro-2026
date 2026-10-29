@@ -229,7 +229,7 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
             is_taxable=(
                 line_data.is_taxable if line_data.is_taxable is not None else True
             ),
-            line_order=line_data.line_order or i,
+            line_order=i,
         )
         db.add(line)
 
@@ -496,7 +496,7 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
                             if line_data.is_taxable is not None
                             else True
                         ),
-                        line_order=line_data.line_order or i,
+                        line_order=i,
                     )
                 )
             db.flush()
