@@ -21,6 +21,7 @@ from app.services.jobs_service import (
 )
 from app.services.recurring_service import (
     InstallmentTaken,
+    anchor_day_of,
     generate_due_invoices,
     roll_next_due_forward,
 )
@@ -158,8 +159,11 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
     # closing date made generate refuse every schedule). When Active goes
     # from off to on, roll next_due forward by whole periods to the first
     # occurrence on or after today; missed periods are skipped, not billed.
+    # The roll holds to the schedule's start day (2.31.1 gate W-85).
     if changes.get("is_active") and not was_active:
-        rec.next_due = roll_next_due_forward(rec.next_due, rec.frequency, date.today())
+        rec.next_due = roll_next_due_forward(
+            rec.next_due, rec.frequency, date.today(), 1, anchor_day_of(rec)
+        )
         # Ticking Active on a schedule past its end date did nothing but
         # answer 200 (2.31.1 gate W-81): it can never bill again until the
         # end date moves, so say so. An end date cleared or moved past the

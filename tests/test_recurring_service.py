@@ -8,13 +8,16 @@ debits != credits and the invoice's stored subtotal disagrees with the sum
 of its stored line amounts.
 """
 
-from datetime import date
+import calendar
+from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
 
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
 from app.models.invoices import Invoice, InvoiceLine
 from app.models.transactions import TransactionLine
+from app.services import scheduler
 from app.services.recurring_service import generate_due_invoices
 
 
@@ -164,3 +167,155 @@ def test_next_due_advances_by_frequency(db_session, seed_accounts, seed_customer
     db_session.expire_all()
     rec = db_session.query(RecurringInvoice).filter_by(id=rec.id).first()
     assert rec.next_due == date(2026, 4, 1)
+
+
+# ---------------------------------------------------------------------------
+# 2.31.1 gate W-85: a schedule on the 29th to the 31st keeps its day
+# ---------------------------------------------------------------------------
+
+
+def _schedule_from(db_session, customer_id, start, frequency, next_due=None):
+    rec = RecurringInvoice(
+        customer_id=customer_id,
+        frequency=frequency,
+        start_date=start,
+        next_due=next_due or start,
+        is_active=True,
+        terms="Net 30",
+        tax_rate=Decimal("0"),
+    )
+    db_session.add(rec)
+    db_session.flush()
+    db_session.add(
+        RecurringInvoiceLine(
+            recurring_invoice_id=rec.id,
+            quantity=Decimal("1"),
+            rate=Decimal("100.00"),
+            description="Service",
+            line_order=0,
+        )
+    )
+    db_session.commit()
+    return rec
+
+
+def _dates_made(db_session, rec_id):
+    return [
+        inv.date
+        for inv in db_session.query(Invoice)
+        .filter_by(recurring_invoice_id=rec_id)
+        .order_by(Invoice.date)
+        .all()
+    ]
+
+
+def _by_hand(start: date, months: int) -> date:
+    """The installment `months` after `start`, worked out without the
+    generator: the start day, cut back to the last day of a shorter month."""
+    year, month0 = divmod(start.month - 1 + months, 12)
+    year += start.year
+    last = calendar.monthrange(year, month0 + 1)[1]
+    return date(year, month0 + 1, min(start.day, last))
+
+
+def test_a_schedule_on_the_31st_keeps_its_day(db_session, seed_accounts, seed_customer):
+    """W-85: monthly from January 31 went 01-31, 02-28 and then the 28th of
+    every month for good. It lands on the last day of a shorter month and on
+    the 31st again after it."""
+    rec = _schedule_from(db_session, seed_customer.id, date(2026, 1, 31), "monthly")
+    ids, skipped = scheduler.catch_up_recurring(db_session, date(2026, 5, 31))
+    assert len(ids) == 5 and skipped == []
+    assert _dates_made(db_session, rec.id) == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+        date(2026, 3, 31),
+        date(2026, 4, 30),
+        date(2026, 5, 31),
+    ]
+    db_session.expire_all()
+    rec = db_session.get(RecurringInvoice, rec.id)
+    assert rec.next_due == date(2026, 6, 30) and rec.invoices_created == 5
+
+
+@pytest.mark.parametrize(
+    "start, frequency, months, as_of",
+    [
+        # the run on 10-29 made October's on the 28th: 10 where 9 are due
+        (date(2026, 1, 31), "monthly", 1, date(2026, 10, 29)),
+        (date(2026, 1, 30), "monthly", 1, date(2026, 12, 29)),
+        (date(2026, 1, 29), "monthly", 1, date(2027, 3, 28)),
+        (date(2025, 11, 30), "quarterly", 3, date(2026, 11, 29)),
+        (date(2024, 2, 29), "yearly", 12, date(2028, 2, 28)),
+    ],
+)
+def test_a_catch_up_makes_the_installments_a_count_by_hand_says(
+    db_session, seed_accounts, seed_customer, start, frequency, months, as_of
+):
+    """W-85: a catch-up over a range makes exactly the installments worked
+    out by hand from the start day, each dated its day (the 28th of
+    February, the 31st again in March), and leaves the next one due; the
+    pledge report counts the same installments the generator makes."""
+    from app.services.pledge_report import scheduled_installments
+
+    expected = []
+    k = 0
+    while _by_hand(start, k * months) <= as_of:
+        expected.append(_by_hand(start, k * months))
+        k += 1
+    rec = _schedule_from(db_session, seed_customer.id, start, frequency)
+    ids, _ = scheduler.catch_up_recurring(db_session, as_of)
+    assert _dates_made(db_session, rec.id) == expected
+    assert len(ids) == len(expected)
+    db_session.expire_all()
+    rec = db_session.get(RecurringInvoice, rec.id)
+    assert rec.next_due == _by_hand(start, k * months) > as_of
+    assert scheduled_installments(rec, start, as_of) == len(expected)
+
+
+def test_a_schedule_that_slipped_returns_to_its_day(
+    db_session, seed_accounts, seed_customer
+):
+    """W-85: a schedule an earlier release left on the 28th (begun on the
+    31st) is generated for the date it shows, then goes back to its day."""
+    rec = _schedule_from(
+        db_session,
+        seed_customer.id,
+        date(2026, 1, 31),
+        "monthly",
+        next_due=date(2026, 3, 28),
+    )
+    scheduler.catch_up_recurring(db_session, date(2026, 5, 31))
+    assert _dates_made(db_session, rec.id) == [
+        date(2026, 3, 28),
+        date(2026, 4, 30),
+        date(2026, 5, 31),
+    ]
+    db_session.expire_all()
+    assert db_session.get(RecurringInvoice, rec.id).next_due == date(2026, 6, 30)
+
+
+def test_twice_a_month_weekly_and_daily_keep_their_steps(
+    db_session, seed_accounts, seed_customer
+):
+    """W-85: twice a month (which the API takes) holds to the start day and
+    fifteen days before it, where it used to drift to the 1st and the 16th;
+    weekly and daily steps take no day of the month and are unchanged."""
+    half = _schedule_from(
+        db_session, seed_customer.id, date(2026, 1, 31), "semimonthly"
+    )
+    week = _schedule_from(db_session, seed_customer.id, date(2026, 1, 31), "weekly")
+    day = _schedule_from(db_session, seed_customer.id, date(2026, 2, 27), "daily")
+    scheduler.catch_up_recurring(db_session, date(2026, 3, 31))
+    assert _dates_made(db_session, half.id) == [
+        date(2026, 1, 31),
+        date(2026, 2, 16),
+        date(2026, 2, 28),
+        date(2026, 3, 16),
+        date(2026, 3, 31),
+    ]
+    assert _dates_made(db_session, week.id) == [
+        date(2026, 1, 31) + timedelta(weeks=n) for n in range(9)
+    ]
+    assert _dates_made(db_session, day.id) == [
+        date(2026, 2, 27) + timedelta(days=n) for n in range(33)
+    ]

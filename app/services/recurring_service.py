@@ -167,10 +167,12 @@ def advance_date(
     current: date, frequency: str, interval: int = 1, anchor_day=None
 ) -> date:
     """The occurrence after `current`. With an anchor day (a memorized
-    transaction's), a monthly, quarterly or yearly step holds to that day
-    of the month: begun on the 31st it lands on the 28th of February and
-    the 31st of March. Without one (a recurring invoice), a step from the
-    28th of February stays on the 28th, as it always has."""
+    transaction's anchor_day, a recurring invoice's start day: anchor_day_of),
+    a monthly, quarterly or yearly step, or every N months, holds to that
+    day of the month: begun on the 31st it lands on the 28th of February and
+    the 31st of March, and twice a month keeps that day and fifteen days
+    after it. Without one, a step from the 28th of February stays on the
+    28th. Daily and weekly steps take no anchor."""
     n = max(1, int(interval or 1))
     if frequency == "daily":
         return current + timedelta(days=n)
@@ -181,8 +183,24 @@ def advance_date(
     return _add_months(current, _MONTHS_PER.get(frequency, 1) * n, anchor_day)
 
 
-def _advance_next_due(current: date, frequency: str) -> date:
-    return advance_date(current, frequency)
+def anchor_day_of(rec: RecurringInvoice) -> int | None:
+    """The day of the month a recurring invoice holds to: its start date's.
+    The next due date used to be stepped from the date before it with no
+    anchor, so a schedule begun on the 31st went 01-31, 02-28 and then the
+    28th of every month for good, and a catch-up made one installment too
+    many in the month it ran (2.31.1 gate W-85). Held to the start day, it
+    lands on the last day of a shorter month and on its own day again
+    after it, as a memorized transaction does with its anchor_day; one that
+    already slipped returns to its day at its next step. The start date is
+    set when the schedule is made and no edit changes it, so the day needs
+    no column of its own."""
+    return rec.start_date.day if rec.start_date else None
+
+
+def _advance_next_due(current: date, frequency: str, anchor_day=None) -> date:
+    """A recurring invoice's next due date after `current` (it has no
+    interval); pass anchor_day_of(rec) so it holds to its start day."""
+    return advance_date(current, frequency, 1, anchor_day)
 
 
 def roll_next_due_forward(
@@ -266,8 +284,11 @@ def claim_installment(db: Session, rec: RecurringInvoice, expected: date) -> dat
     when the row had already moved on and InstallmentBusy when SQLite would
     not give the write lock in time. It has to be the first statement of its
     transaction (or SAVEPOINT): after a read there, SQLite cannot wait for
-    the lock and answers "database is locked" at once."""
-    following = _advance_next_due(expected, rec.frequency)
+    the lock and answers "database is locked" at once. The date it moves
+    to holds to the schedule's start day (anchor_day_of, W-85); the start
+    date was loaded with the row before the SAVEPOINT, so reading it here
+    sends nothing to the database."""
+    following = _advance_next_due(expected, rec.frequency, anchor_day_of(rec))
     try:
         moved = (
             db.query(RecurringInvoice)

@@ -32,6 +32,7 @@ from app.services.memorized_service import enter_due_memorized
 from app.services.recurring_service import (
     _advance_next_due,
     advance_date,
+    anchor_day_of,
     frequency_label,
     normalize_frequency,
     roll_next_due_forward,
@@ -359,14 +360,28 @@ def test_each_frequency_advances_across_month_ends_and_february(
     assert got == expected
 
 
-def test_recurring_invoices_step_as_they_always_have():
-    # no anchor day: the clamped date is what the next step starts from
-    assert _advance_next_due(date(2026, 1, 31), "monthly") == date(2026, 2, 28)
+def test_recurring_invoices_hold_to_their_start_day():
+    """2.31.1 gate W-85: a recurring invoice stepped from the clamped date
+    with no anchor, so one begun on the 31st stayed on the 28th after
+    February. Its start date's day is its anchor, as a memorized schedule's
+    anchor_day is; a step with no anchor still starts from the date given."""
+    anchor = anchor_day_of(types.SimpleNamespace(start_date=date(2026, 1, 31)))
+    assert anchor == 31
+    assert _advance_next_due(date(2026, 1, 31), "monthly", anchor) == date(2026, 2, 28)
+    assert _advance_next_due(date(2026, 2, 28), "monthly", anchor) == date(2026, 3, 31)
     assert _advance_next_due(date(2026, 2, 28), "monthly") == date(2026, 3, 28)
-    assert _advance_next_due(date(2026, 1, 1), "weekly") == date(2026, 1, 8)
-    assert _advance_next_due(date(2026, 1, 1), "quarterly") == date(2026, 4, 1)
-    assert _advance_next_due(date(2028, 2, 29), "yearly") == date(2029, 2, 28)
-    assert _advance_next_due(date(2026, 1, 1), "whatever") == date(2026, 2, 1)
+    assert _advance_next_due(date(2026, 1, 31), "quarterly", anchor) == date(
+        2026, 4, 30
+    )
+    assert _advance_next_due(date(2026, 4, 30), "quarterly", anchor) == date(
+        2026, 7, 31
+    )
+    leap = anchor_day_of(types.SimpleNamespace(start_date=date(2028, 2, 29)))
+    assert _advance_next_due(date(2028, 2, 29), "yearly", leap) == date(2029, 2, 28)
+    assert _advance_next_due(date(2031, 2, 28), "yearly", leap) == date(2032, 2, 29)
+    # weekly takes no day of the month; an unknown word steps a month
+    assert _advance_next_due(date(2026, 1, 1), "weekly", 1) == date(2026, 1, 8)
+    assert _advance_next_due(date(2026, 1, 1), "whatever", 1) == date(2026, 2, 1)
     assert roll_next_due_forward(
         date(2026, 1, 1), "monthly", date(2026, 7, 15)
     ) == date(2026, 8, 1)

@@ -161,3 +161,43 @@ def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
     assert "Skipped 1 schedule(s):" in out
     assert "The schedule for Acme LLC is due 2026-09-01" in out
     assert "re-tick Active" in out
+
+
+def _today_is(frozen: date):
+    """A date class whose today() is `frozen`, for the route module's `date`
+    (the pattern tests/test_fiscal_year.py uses)."""
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return cls(frozen.year, frozen.month, frozen.day)
+
+    return _Frozen
+
+
+def test_reactivating_lands_on_the_start_day(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    """2.31.1 gate W-85: the roll forward on re-activation stepped with no
+    anchor, so a schedule begun on the 31st resumed on the 28th. It resumes
+    on its own day (the last day of a shorter month), and so does one an
+    earlier release had left on the 28th."""
+    import app.routes.recurring as recurring_routes
+    from app.services.recurring_service import anchor_day_of
+
+    monkeypatch.setattr(recurring_routes, "date", _today_is(date(2026, 4, 15)))
+    rec_id = _schedule(client, seed_customer.id, start="2026-01-31")
+    for stale in (date(2026, 1, 31), date(2026, 2, 28)):
+        db_session.expire_all()  # the PUT wrote through the client's session
+        rec = db_session.get(RecurringInvoice, rec_id)
+        rec.next_due, rec.is_active = stale, False
+        db_session.commit()
+        r = client.put(f"/api/recurring/{rec_id}", json={"is_active": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["next_due"] == "2026-04-30", stale
+    db_session.expire_all()
+    rec = db_session.get(RecurringInvoice, rec_id)
+    assert anchor_day_of(rec) == 31
+    assert roll_next_due_forward(
+        date(2026, 2, 28), "monthly", date(2026, 5, 1), 1, anchor_day_of(rec)
+    ) == date(2026, 5, 31)

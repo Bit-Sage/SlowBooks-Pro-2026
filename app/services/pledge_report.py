@@ -25,21 +25,25 @@ from app.models.invoices import Invoice, InvoiceStatus
 from app.models.payments import Payment, PaymentAllocation
 from app.models.recurring import RecurringInvoice
 from app.services.accounting import _q, compute_line_totals
-from app.services.recurring_service import _advance_next_due
+from app.services.recurring_service import _advance_next_due, anchor_day_of
 
 ZERO = Decimal("0")
 
 
 def scheduled_installments(rec: RecurringInvoice, start: date, end: date) -> int:
-    """How many installments the template promises inside [start, end]."""
+    """How many installments the template promises inside [start, end],
+    stepped as the generator steps them: held to the start day, so a pledge
+    begun on the 31st counts the 31st again after a shorter month (2.31.1
+    gate W-85)."""
     n = 0
     d = rec.start_date
     stop = min(end, rec.end_date) if rec.end_date else end
+    anchor = anchor_day_of(rec)
     guard = 0
     while d <= stop and guard < 5000:
         if d >= start:
             n += 1
-        nxt = _advance_next_due(d, rec.frequency)
+        nxt = _advance_next_due(d, rec.frequency, anchor)
         if nxt <= d:
             break
         d = nxt
