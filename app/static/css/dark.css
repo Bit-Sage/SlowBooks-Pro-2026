@@ -389,6 +389,14 @@
     color: #e0e4ec;
 }
 [data-theme="dark"] .splash-whatsnew-title { color: #ffffff; }
+/* The artists' panel (#635): the same dark panel as the two above it. */
+[data-theme="dark"] .splash-artists {
+    background: #1e2632;
+    border-color: #3a4656;
+    color: #e0e4ec;
+}
+[data-theme="dark"] .splash-artists-title { color: #ffffff; }
+[data-theme="dark"] .splash-artists a { color: #8ab4f8; }
 
 /* Line items table */
 [data-theme="dark"] .line-items-table { border-color: var(--panel-border); }

@@ -438,6 +438,7 @@ Canonical list of security measures lives in [SECURITY.md](../SECURITY.md); engi
 - **Sidebar you can trim** (v2.23.5) — Settings → Sidebar hides the sections and links a company doesn't use; a hidden page still opens by its address
 - Authentic QB2003 "Default Blue" skin with navy/gold color palette (+ dark mode)
 - Splash screen with build info, what's new, and the license notice
+- **Artists on About** (#635). The About dialog credits every artist whose work ships in the app: name, pieces and where each is used, with a link when they gave one. The list is `app/static/artists.json`, one entry per artist and no code change; while it is empty the dialog says the turtle is waiting for its first artist and points at the [art repo](https://github.com/VonHoltenCodes/Slowbooks-Pro-Art)
 - Windows XP-era toolbar, sidebar navigator with icons, status bar
 - **Type-ahead pickers** (v2.19.0) — customer, vendor, item, account, employee, job and class pickers, and any list of 15 or more, search as you type; "+ New Customer" opens its quick add with the typed name
 - Keyboard shortcuts: `Alt+N` (new invoice), `Alt+P` (payment), `Alt+B` (enter a bill), `Alt+E` (enter an expense), `Alt+Q` (quick entry), `Alt+H` (home), `Alt+D` (dark mode), `Ctrl+S` (save modal form), `Ctrl+K` (search), `Escape` (close modal). In the desktop app, `Ctrl`+`+` / `Ctrl`+`-` / `Ctrl`+`0` (`Cmd` on a Mac) zoom the window, and `Ctrl`+wheel zooms it and its document windows. The toolbar button each entry shortcut stands for announces it (title + `aria-keyshortcuts`)

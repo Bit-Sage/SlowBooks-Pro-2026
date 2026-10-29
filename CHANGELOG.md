@@ -29,6 +29,16 @@ date before the comparison. Also, a commitment that is partly billed now reads
 as sent on an as-of day before its first bill, the way a commitment closed by
 a later bill already read as open before that bill.
 
+**The About dialog credits the artists** (#635). The community art repo,
+github.com/VonHoltenCodes/Slowbooks-Pro-Art, promises everyone whose art
+ships in the app a credit in About, and About now keeps it: an Artists
+section with each artist by name, the pieces they made and where the app
+uses them, and a link to them when they gave one. The credits are a small
+file shipped with the app, app/static/artists.json, so adding an artist is
+one line in that file and not a code change. Until the first piece lands the
+section says the turtle is waiting for its first artist and links to the art
+repo.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
