@@ -78,6 +78,16 @@ class Invoice(Base):
     ship_city = Column(String(100), nullable=True)
     ship_state = Column(String(50), nullable=True)
     ship_zip = Column(String(20), nullable=True)
+    # The Ship To's country, frozen with the ship-to street when the
+    # invoice is made (2.31.1 gate, round 3): the printed Ship To read it
+    # off the customer at print time, so an old invoice printed its frozen
+    # Austin street over the country the customer moved to since. The
+    # customer's own ship country, never the payer's (the Ship To is the
+    # customer's). Set with the ship-to by the paths that make an invoice
+    # or move it (sub_customers.invoice_addresses), else on insert
+    # (_freeze_bill_to below); a request may give it as it gives the ship
+    # street. Rows from before are backfilled from each invoice's customer.
+    ship_to_country = Column(String(100), nullable=True)
 
     subtotal = Column(Numeric(15, 2), default=0)
     tax_rate = Column(Numeric(7, 6), default=0)  # a fraction: 8.875% is 0.08875
@@ -159,27 +169,32 @@ class Invoice(Base):
 
 @event.listens_for(Invoice, "before_insert")
 def _freeze_bill_to(_mapper, connection, target):
-    """Freeze whom a new invoice is billed to (W-59) unless the maker set
-    it: create, Duplicate, Convert and the QuickBooks Online carry-over set
-    the whole Bill To with the street, through
+    """Freeze whom a new invoice is billed to (W-59), and its Ship To's
+    country, unless the maker set them: create, Duplicate, Convert and the
+    QuickBooks Online carry-over set the whole Bill To with the street, and
+    the Ship To's country with the ship-to, through
     sub_customers.invoice_addresses, as an edit to another customer does.
     The scheduler's recurring invoices and a pay application's invoice
-    take it the same way. One query on the customer and its parent, so
+    take them the same way. One query on the customer and its parent, so
     every other path that makes an invoice (the IIF and QuickBooks report
     importers, which write no street) freezes the same thing without each
     saying so."""
-    if target.bill_to_name is not None or target.customer_id is None:
+    if target.customer_id is None:
+        return
+    if target.bill_to_name is not None and target.ship_to_country is not None:
         return
     freeze_bill_to(connection, target)
 
 
 def freeze_bill_to(connection, target) -> None:
-    """Set the invoice's frozen Bill To from its customer as it is now: the
-    parent of a sub-customer billed with it, else the customer. Called on
-    insert for an invoice made without one (see _freeze_bill_to); the
-    paths that make an invoice or move it to another customer set the
-    whole Bill To, the street with the name and country, through
-    app.services.sub_customers.invoice_addresses (2.31.1 gate, W-72)."""
+    """Fill what a new invoice was made without from its customer as it is
+    now: the frozen Bill To when ``bill_to_name`` is unset (the parent of a
+    sub-customer billed with it, else the customer), and the Ship To's
+    country when ``ship_to_country`` is (the customer's own ship country,
+    whoever is billed). What the maker set stays. Called on insert (see
+    _freeze_bill_to); the paths that make an invoice or move it to another
+    customer set both through app.services.sub_customers.invoice_addresses
+    (2.31.1 gate, W-72)."""
     if target.customer_id is None:
         return
     from app.models.contacts import Customer
@@ -192,6 +207,7 @@ def freeze_bill_to(connection, target) -> None:
             c.c.name,
             c.c.bill_country,
             c.c.bill_with_parent,
+            c.c.ship_country,
             parent.c.id,
             parent.c.name,
             parent.c.bill_country,
@@ -201,7 +217,11 @@ def freeze_bill_to(connection, target) -> None:
     ).first()
     if row is None:
         return
-    cid, name, country, billed_with_parent, pid, pname, pcountry = row
+    cid, name, country, billed_with_parent, ship_country, pid, pname, pcountry = row
+    if target.ship_to_country is None:
+        target.ship_to_country = ship_country
+    if target.bill_to_name is not None:
+        return
     if billed_with_parent and pid is not None:
         target.bill_to_customer_id = pid
         target.bill_to_name = pname

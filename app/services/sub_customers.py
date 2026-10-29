@@ -110,10 +110,11 @@ def payer_for(db: Session, customer: Customer) -> Customer:
 
 
 ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
-# The address fields an invoice takes, the Bill To street and the Ship To.
+# The address fields an invoice takes, the Bill To street and the Ship To,
+# its country with it (2.31.1 gate, round 3).
 INVOICE_ADDRESS_FIELDS = tuple(
     f"{side}_{part}" for side in ("bill", "ship") for part in ADDRESS_PARTS
-)
+) + ("ship_to_country",)
 
 
 def invoice_addresses(
@@ -124,8 +125,11 @@ def invoice_addresses(
     Bill To whole, the street, name and country of the payer (the parent
     of a sub-customer billed with it, else the customer) with
     ``bill_to_customer_id`` naming it, and the Ship To of the customer
-    itself. An address field in ``sent`` (what the request gave) wins over
-    the one copied, as it always did on create.
+    itself, its country frozen with it in ``ship_to_country`` (the
+    customer's own, never the payer's; the printed Ship To used to read it
+    off the customer at print time, under the frozen street). An address
+    field in ``sent`` (what the request gave) wins over the one copied, as
+    it always did on create.
 
     One helper for every way an invoice is made or moved to another
     customer: create, an edit to another customer, Duplicate, an
@@ -135,6 +139,7 @@ def invoice_addresses(
     printed Bill To could put one customer's name over another's street."""
     payer = payer_for(db, customer)
     sent = sent or {}
+
     fields = {
         f"bill_{part}": sent.get(f"bill_{part}") or getattr(payer, f"bill_{part}")
         for part in ADDRESS_PARTS
@@ -146,6 +151,7 @@ def invoice_addresses(
             for part in ADDRESS_PARTS
         }
     )
+    fields["ship_to_country"] = sent.get("ship_to_country") or customer.ship_country
     fields.update(
         bill_to_customer_id=payer.id,
         bill_to_name=payer.name,

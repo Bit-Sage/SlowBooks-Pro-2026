@@ -159,7 +159,8 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     cust_name = customer.full_name
     # The Bill To whole is the payer's (#638; the parent of a sub-customer
     # billed with it), its street with its name and country, and the
-    # ship-to the customer's; an address part the request gives wins.
+    # ship-to the customer's, its country with it; an address part the
+    # request gives wins.
     cust_fields = invoice_addresses(
         db, customer, {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
     )
@@ -476,10 +477,11 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         setattr(invoice, key, val)
     # Moved to another customer: the Bill To whole is the new customer's
     # payer's as of now, as create makes it, the street with the name and
-    # country, and the ship-to the new customer's; an address sent with the
-    # move wins over the one copied (2.31.1 gate, W-59, W-72). An edit that
-    # keeps the customer keeps the Bill To the invoice was made with, but
-    # for the address parts it sends (set above).
+    # country, and the ship-to the new customer's with its country; an
+    # address sent with the move wins over the one copied (2.31.1 gate,
+    # W-59, W-72; round 3). An edit that keeps the customer keeps the Bill
+    # To the invoice was made with, but for the address parts it sends (set
+    # above).
     if invoice.customer_id != previous_customer_id:
         sent = {k: v for k, v in update_data.items() if k in INVOICE_ADDRESS_FIELDS}
         moved_to = db.get(Customer, invoice.customer_id)

@@ -114,7 +114,10 @@
                 {% if inv.ship_address2 %}{{ inv.ship_address2 }}<br>{% endif %}
                 {% set ship_city = city_line(inv.ship_city, inv.ship_state, inv.ship_zip) %}
                 {% if ship_city %}{{ ship_city }}<br>{% endif %}
-                {% set ship_country = country_line(inv.customer.ship_country if inv.customer else None) %}{% if ship_country %}{{ ship_country }}{% endif %}
+                {# The country frozen on the invoice with the ship-to street
+                   (ship_to_country from invoice_pdf_context: the customer's own when
+                   the invoice was made or moved to it), never the customer's today. #}
+                {% set ship_country = country_line(ship_to_country if ship_to_country is defined else (inv.customer.ship_country if inv.customer else None)) %}{% if ship_country %}{{ ship_country }}{% endif %}
             </div>
         </div>
         {% endif %}
