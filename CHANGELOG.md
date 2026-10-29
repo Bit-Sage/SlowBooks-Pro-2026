@@ -122,7 +122,12 @@ date's day and fifteen days later. A frequency that carries its own count
 sent with none, or 1, it is that count, and with another it is refused,
 naming the word; daily, weekly, monthly and yearly take one. In auto-enter mode the app posts the document on its date: it
 enters every due auto-enter memorized bill and journal entry when it opens
-and once a day while it runs, every missed date in order; the Memorized
+and once a day while it runs, every missed date in order. When the company
+has a password, those runs wait until someone has signed in since the app
+started (a sign-in the app remembers counts, an API token does not), so
+nothing is entered behind the sign-in screen; the audit log names the person
+signed in for what a run enters, or "scheduled run" when nobody signs in (a
+company with no password yet, the cron script). The Memorized
 Transactions page says what was entered while you were away (or, when a run
 entered nothing and had to skip something, what could not be entered and
 why), and a box under

@@ -12,6 +12,15 @@
 # pressed by a person, runs both. The setting auto_enter_on_open turns the
 # automatic runs off; the cron script (scripts/run_recurring.py) stays for a
 # server install.
+#
+# Nothing is entered before a person could have signed in (2.31.1 gate
+# W-70): when the company has a password, so the app shows its sign-in
+# screen, the startup run waits for the first sign-in to it since this
+# process started (a password typed, or a sign-in the app still remembers
+# reaching the server), then runs; the daily run, likewise, only once
+# someone has. A company with no password yet runs at open, as before. The
+# documents a run enters carry, in the audit log, the username of the person
+# signed in (the latest sign-in), or "scheduled run" when nobody signs in.
 # ============================================================================
 
 import asyncio
@@ -48,6 +57,51 @@ POLL_SECONDS = 15 * 60
 # SLOWBOOKS_AUTO_ENTER=0 keeps the task from starting at all: a server
 # install that runs the cron script instead, and the test suite.
 ENV_SWITCH = "SLOWBOOKS_AUTO_ENTER"
+# Who the audit log names for what a run enters when nobody signs in (a
+# company with no password, the cron script).
+SCHEDULED_RUN = "scheduled run"
+# What run_in_this_process answers while the company needs a sign-in and
+# nobody has signed in since the process started: the task tries again.
+WAITING_FOR_SIGN_IN = "waiting for a sign-in"
+
+# The latest person signed in to the company this server was started for,
+# since the process started (note_sign_in); None until somebody has.
+_signed_in_as: str | None = None
+# The task's wake-up: a sign-in sets it, so the waiting run goes at once.
+_wake: asyncio.Event | None = None
+_wake_loop: asyncio.AbstractEventLoop | None = None
+
+
+def note_sign_in(username: str | None) -> None:
+    """A person is signed in to the company this server was started for:
+    called by the sign-in, first-run setup and company switch routes, and
+    by the gate for each request of a signed-in session it lets through
+    (a sign-in the app remembers, ask_password_on_start off). The first one
+    wakes the task, whose startup run was waiting for it."""
+    global _signed_in_as
+    first = _signed_in_as is None
+    _signed_in_as = username or "operator"
+    if first:
+        _wake_the_task()
+
+
+def _wake_the_task() -> None:
+    loop, event = _wake_loop, _wake
+    if loop is None or event is None:
+        return
+    try:
+        loop.call_soon_threadsafe(event.set)
+    except RuntimeError:  # the task's loop has closed
+        pass
+
+
+def needs_sign_in(db: Session) -> bool:
+    """The company shows a sign-in screen before anything can be done in
+    it: it has a password (set at first-run setup). Without one, nobody
+    signs in, and the app runs the schedules at open, as it always has."""
+    from app.services.auth import password_is_set
+
+    return password_is_set(db)
 
 
 def catch_up_recurring(
@@ -124,11 +178,13 @@ def enabled(db: Session) -> bool:
     return auto_enter_on_open(db)
 
 
-def run_in_this_process(origin: str = "startup", today=date.today) -> dict | None:
+def run_in_this_process(origin: str = "startup", today=date.today):
     """One run for the company this server was started for, on a session of
     its own. Nothing when the setting is off, or when the run fails (logged,
-    never raised: the task has to outlive a bad day). What it did is kept
-    for the page (last_run)."""
+    never raised: the task has to outlive a bad day); WAITING_FOR_SIGN_IN,
+    entering nothing, while the company has a password and nobody has
+    signed in since the process started (W-70). What it did is kept for the
+    page (last_run)."""
     global _last_run
 
     # looked up at call time: the test harness and the desktop launcher
@@ -140,6 +196,11 @@ def run_in_this_process(origin: str = "startup", today=date.today) -> dict | Non
         try:
             if not enabled(db):
                 return None
+            signed_in = _signed_in_as
+            if signed_in is None and needs_sign_in(db):
+                return WAITING_FOR_SIGN_IN
+            # the audit log names who was signed in for what this run enters
+            db.info["acting_username"] = signed_in or SCHEDULED_RUN
             # memorized auto-enter schedules only (see the module note)
             result = run_due_schedules(db, today(), include_recurring=False)
         except Exception:
@@ -171,24 +232,50 @@ def last_run() -> dict | None:
     return _last_run
 
 
+async def _nap(seconds: float) -> None:
+    """poll_seconds, or less: the first sign-in wakes the task at once."""
+    event = _wake
+    if event is None:
+        await asyncio.sleep(seconds)
+        return
+    try:
+        await asyncio.wait_for(event.wait(), seconds)
+    except asyncio.TimeoutError:
+        pass
+    event.clear()
+
+
 async def keep_entering(
     today=date.today,
-    sleep=asyncio.sleep,
+    sleep=_nap,
     to_thread=asyncio.to_thread,
     poll_seconds: float = POLL_SECONDS,
 ) -> None:
     """The task: a run at startup, then one each time the calendar day
     changes, checked every poll_seconds (so a laptop asleep over midnight
-    runs on waking). The run itself is blocking database work and goes to
+    runs on waking). A run that has to wait for a sign-in is tried again
+    when the first sign-in wakes the task (or at the next look), still as
+    the startup run. The run itself is blocking database work and goes to
     a thread. Cancelled by the lifespan on shutdown."""
+    global _wake, _wake_loop
+    _wake, _wake_loop = asyncio.Event(), asyncio.get_running_loop()
     last_day = None
     origin = "startup"
+    told = False
     while True:
         day = today()
         if day != last_day:
-            await to_thread(run_in_this_process, origin, today)
-            last_day = day
-            origin = "daily"
+            ran = await to_thread(run_in_this_process, origin, today)
+            if ran == WAITING_FOR_SIGN_IN:
+                if not told:
+                    logger.info(
+                        "the %s run of the schedules waits for someone to sign in",
+                        origin,
+                    )
+                    told = True
+            else:
+                last_day = day
+                origin = "daily"
         await sleep(poll_seconds)
 
 

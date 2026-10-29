@@ -119,6 +119,9 @@ def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
     # a closed period keeps its date and is skipped on every later run, so the
     # script has to name each skipped schedule and the reason, not swallow it.
     class _DummySession:
+        def __init__(self):
+            self.info = {}  # the script names the run for the audit log
+
         def close(self):
             pass
 

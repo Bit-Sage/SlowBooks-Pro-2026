@@ -32,6 +32,8 @@ from app.services import memorized_service, scheduler
 
 if __name__ == "__main__":
     db = SessionLocal()
+    # nobody signs in to a cron run: the audit log names it
+    db.info["acting_username"] = scheduler.SCHEDULED_RUN
     try:
         # Collect the skipped templates too: a schedule skipped for a closed
         # period or a $0.00 total keeps its due date and is skipped again on

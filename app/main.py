@@ -1276,6 +1276,20 @@ async def _require_session(request: Request, call_next):
             )
         request.session["last_activity"] = now
 
+    # A person is signed in to this server's own company: the app's own run
+    # of the schedules, which waits for one when the company has a password,
+    # may go (2.31.1 gate W-70). A sign-in the app remembers counts as much
+    # as one typed; an API token, and a one-time password not yet replaced,
+    # do not.
+    if (
+        token_principal is None
+        and not request.session.get("must_change_password")
+        and _served_company.get() is None
+    ):
+        from app.services import scheduler as _scheduler
+
+        _scheduler.note_sign_in(request.session.get("username") or "operator")
+
     return await call_next(request)
 
 

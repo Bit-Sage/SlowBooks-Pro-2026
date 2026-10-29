@@ -681,6 +681,9 @@ def test_enter_due_endpoint_and_the_scheduler_script(
 
     # the cron script runs both generators and prints what each did
     class _DummySession:
+        def __init__(self):
+            self.info = {}  # the script names the run for the audit log
+
         def close(self):
             pass
 
@@ -2206,6 +2209,10 @@ def test_the_cron_script_catches_up_both_kinds_as_enter_all_due_does(
     ]
     assert len(_bills(db_session)) == 3
     assert client.get(f"/api/memorized/{mem['id']}").json()["entered_count"] == 3
+    # nobody signs in to a cron run (W-70): the audit log names it
+    assert {n for b in _bills(db_session) for n in _who_entered(db_session, b)} == {
+        "scheduled run"
+    }
     # Enter All Due finds nothing left: the two did the same catch-up
     again = client.post("/api/memorized/enter-due").json()
     assert again["invoices_created"] == 0 and again["entered_count"] == 0
@@ -2324,3 +2331,227 @@ def test_the_ended_sentence_reads_for_any_number_of_times(
         "it again."
     )
     assert "1 occurrences" not in r.json()["detail"]
+
+
+# The `client` fixture's password (conftest), a module constant.
+FIXTURE_PW = "test-password-123"
+
+
+def _who_entered(db_session, bill):
+    from app.models.audit import AuditLog
+
+    rows = (
+        db_session.query(AuditLog)
+        .filter_by(table_name="bills", record_id=bill.id, action="INSERT")
+        .all()
+    )
+    return [r.username for r in rows]
+
+
+def test_with_a_password_the_startup_run_waits_for_a_sign_in(
+    client, db_session, seed_accounts, monkeypatch, legacy_admin_token
+):
+    """W-70: the run at server start entered a memorized schedule before
+    the company's password was entered. With a password set, the startup
+    run enters nothing until someone signs in (a request that is not
+    signed in, or an API token's, is not a sign-in), then enters, and the
+    audit log names the person signed in."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    _bill_schedule(client, _vendor(client), seed_accounts)  # auto, due Jan 31
+    assert client.post("/api/auth/logout").status_code == 200
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)  # the server starts
+
+    def startup():
+        return scheduler.run_in_this_process("startup", today=lambda: date(2026, 2, 10))
+
+    assert startup() == scheduler.WAITING_FOR_SIGN_IN
+    assert client.get("/api/accounts").status_code == 401
+    token = legacy_admin_token()
+    r = client.get("/api/accounts", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert startup() == scheduler.WAITING_FOR_SIGN_IN
+    assert _bills(db_session) == [] and scheduler.last_run() is None
+    assert client.get("/api/memorized/entered-recently").status_code == 401
+
+    assert client.post("/api/auth/login", json={"password": FIXTURE_PW}).is_success
+    out = startup()
+    assert out["origin"] == "startup" and out["entered_count"] == 1
+    (bill,) = _bills(db_session)
+    assert bill.date == date(2026, 1, 31)
+    assert _who_entered(db_session, bill) == ["admin"]
+    assert client.get("/api/memorized/entered-recently").json()["entered_count"] == 1
+    # the daily run goes too, now someone has signed in since the start
+    daily = scheduler.run_in_this_process("daily", today=lambda: date(2026, 2, 28))
+    assert daily["entered_count"] == 1
+
+
+def test_the_task_runs_as_soon_as_someone_signs_in(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """W-70: the task's startup run waits, as the startup run still, and
+    goes once a person signs in; the daily runs follow."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    _bill_schedule(client, _vendor(client), seed_accounts)
+    client.post("/api/auth/logout")
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    clock = {"today": date(2026, 2, 10)}
+    naps: list = []
+
+    class Done(Exception):
+        pass
+
+    async def nap(seconds):
+        naps.append(seconds)
+        if len(naps) == 1:
+            assert _bills(db_session) == []  # waited: nobody signed in
+            assert client.post("/api/auth/login", json={"password": FIXTURE_PW})
+        elif len(naps) == 2:
+            clock["today"] = date(2026, 3, 1)  # the next day's run
+        else:
+            raise Done
+
+    async def inline(fn, *args):
+        return fn(*args)
+
+    with pytest.raises(Done):
+        asyncio.run(
+            scheduler.keep_entering(
+                today=lambda: clock["today"], sleep=nap, to_thread=inline
+            )
+        )
+    assert [b.date for b in _bills(db_session)] == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+    ]
+    assert scheduler.last_run()["origin"] == "daily"
+
+
+def test_a_sign_in_wakes_the_waiting_task_at_once(monkeypatch):
+    """W-70: the task does not sit out its fifteen-minute look while the
+    startup run waits: the first sign-in wakes it, from any thread."""
+    import time
+
+    calls: list = []
+    # a person signs in on another thread, a moment after the run waited
+    signer = threading.Timer(0.2, scheduler.note_sign_in, args=("admin",))
+
+    class Done(Exception):
+        pass
+
+    def run(origin, today):
+        calls.append(origin)
+        if len(calls) == 1:
+            signer.start()
+            return scheduler.WAITING_FOR_SIGN_IN
+        raise Done
+
+    async def inline(fn, *args):
+        return fn(*args)
+
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    monkeypatch.setattr(scheduler, "run_in_this_process", run)
+    started = time.monotonic()
+    try:
+        with pytest.raises(Done):
+            asyncio.run(scheduler.keep_entering(to_thread=inline, poll_seconds=60))
+    finally:
+        signer.cancel()
+    assert calls == ["startup", "startup"]
+    assert time.monotonic() - started < 10  # not the sixty-second look
+    assert scheduler._signed_in_as == "admin"
+
+
+def test_a_remembered_sign_in_counts_one_from_before_a_restart_does_not(
+    client, seed_accounts, monkeypatch
+):
+    """W-70: the desktop window that opens signed in (ask_password_on_start
+    off, the default) has a person in it: its first request lets the run
+    go. With the setting on, a session from before the restart is signed
+    out, and only the sign-in that follows counts."""
+    from app.routes import auth as auth_routes
+    from app.services import auth as auth_service
+
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    assert client.get("/api/accounts").status_code == 200
+    assert scheduler._signed_in_as == "admin"
+
+    monkeypatch.setenv("SLOWBOOKS_DESKTOP", "1")
+    assert client.put(
+        "/api/settings", json={"ask_password_on_start": "true"}
+    ).is_success
+    monkeypatch.setattr(auth_service, "BOOT_ID", "a-later-start")
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    assert client.get("/api/accounts").status_code == 401
+    assert scheduler._signed_in_as is None
+    assert client.post("/api/auth/login", json={"password": FIXTURE_PW}).is_success
+    assert scheduler._signed_in_as == "admin"
+
+    # a sign-in to another company this server serves is not one to this one
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    user = types.SimpleNamespace(username="bookkeeper")
+    auth_routes._note_sign_in({}, "another-company.db", user)
+    assert scheduler._signed_in_as is None
+    # nor is a one-time password not yet replaced
+    auth_routes._note_sign_in({"must_change_password": True}, None, user)
+    assert scheduler._signed_in_as is None
+    auth_routes._note_sign_in({}, None, user)
+    assert scheduler._signed_in_as == "bookkeeper"
+
+
+def test_without_a_password_the_startup_run_enters_at_open(
+    unauthed_client, db_session, seed_accounts, monkeypatch
+):
+    """W-70: a company with no password yet shows no sign-in screen, so
+    the startup run enters at open, as it always has, and the audit log
+    names it "scheduled run"."""
+    from app.models.contacts import Vendor
+    from app.models.memorized import MemorizedTransactionLine
+
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)
+    assert unauthed_client.get("/api/auth/status").json()["setup_needed"] is True
+    vendor = Vendor(name="Harbor Power & Light")
+    db_session.add(vendor)
+    db_session.flush()
+    mem = MemorizedTransaction(
+        kind="bill",
+        name="Electric bill",
+        mode="auto",
+        frequency="monthly",
+        interval=1,
+        start_date=date(2026, 1, 31),
+        next_date=date(2026, 1, 31),
+        anchor_day=31,
+        vendor_id=vendor.id,
+        terms="Net 15",
+    )
+    db_session.add(mem)
+    db_session.flush()
+    db_session.add(
+        MemorizedTransactionLine(
+            memorized_id=mem.id,
+            account_id=seed_accounts["6500"].id,
+            description="Sanctuary",
+            quantity=1,
+            rate=400,
+        )
+    )
+    db_session.commit()
+    out = scheduler.run_in_this_process("startup", today=lambda: date(2026, 2, 10))
+    assert out["entered_count"] == 1
+    (bill,) = _bills(db_session)
+    assert _who_entered(db_session, bill) == [scheduler.SCHEDULED_RUN]
+    assert scheduler.SCHEDULED_RUN == "scheduled run"
+
+
+def test_the_page_and_the_docs_say_the_runs_wait_for_a_sign_in():
+    """W-70: the hint under the list, the changelog and the features doc
+    say the app's own runs wait for someone to sign in, and who the audit
+    log names."""
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "every missed date in order, once someone has signed in." in js
+    for doc in ("docs/features.md", "CHANGELOG.md"):
+        text = _words(doc)
+        assert "those runs wait until someone has signed in since the app" in text
+        assert "nothing is entered behind the sign-in screen" in text, doc
+        assert "scheduled run" in text, doc
