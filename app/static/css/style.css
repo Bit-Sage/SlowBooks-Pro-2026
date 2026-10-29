@@ -3161,6 +3161,9 @@ tbody tr.row--dim > td.amount { color: var(--text-muted); }
 .bill-vendor-summary__none { margin: 0; color: var(--text-muted); }
 .bill-vendor-summary__notes { white-space: pre-wrap; margin: 0; }
 @media (max-width: 900px) {
-    .bill-with-summary { flex-direction: column; }
+    /* stacked, the form takes the dialog's width (stretch), not its lines'
+       table's: at flex-start it grew to the table and the whole dialog
+       scrolled sideways, where the table alone should */
+    .bill-with-summary { flex-direction: column; align-items: stretch; }
     .bill-vendor-summary { flex-basis: auto; width: 100%; border-left: 0; border-top: 1px solid var(--border, #ccc); padding: 8px 0 0; }
 }

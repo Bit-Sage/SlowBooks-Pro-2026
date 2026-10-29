@@ -56,7 +56,10 @@ def test_connect_map_sync_review_and_disconnect_in_browser(
             page.get_by_label("Mercury read-only API token").fill(TOKEN)
             page.get_by_role("button", name="Connect Mercury", exact=True).click()
             mapping = page.get_by_role("combobox", name="Import My LLC into")
-            mapping.select_option(label="Mercury LLC")
+            # the chart account the feed imports into, the feed's name after
+            # it (2.31.1: the list offers the chart's bank accounts)
+            choice = mapping.locator("option", has_text="(Mercury LLC)")
+            mapping.select_option(label=choice.inner_text().strip())
             page.get_by_label("Import transactions posted since").fill("2026-08-01")
             page.get_by_role("button", name="Sync Mercury", exact=True).click()
             page.get_by_text(
@@ -85,7 +88,10 @@ def test_connect_map_sync_review_and_disconnect_in_browser(
                 page.get_by_label("Import transactions posted since").input_value()
                 == "2026-07-01"
             )
-            assert page.locator(".mercury-map").input_value() == str(bank.id)
+            # the saved mapping shows the feed's chart account chosen
+            assert (
+                page.locator(".mercury-map").input_value() == f"acct:{bank.account_id}"
+            )
             page.screenshot(path=str(tmp_path / "mercury-banking.png"), full_page=True)
             assert TOKEN not in page.content()
             assert SECRET not in page.content()
