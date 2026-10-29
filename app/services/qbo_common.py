@@ -91,8 +91,9 @@ def discount_item_ids(db: Session) -> set[int]:
 
 def is_discount_item(db: Session, item_id) -> bool:
     """Whether a local item is one a QuickBooks Online discount came in on:
-    a line on it may carry a negative price (routes/invoices/helpers.py,
-    refuse_negative_lines)."""
+    a line on it may carry a negative price, as on an item marked as a
+    discount or concession (services/discount_items.py, which
+    routes/invoices/helpers.py's refuse_negative_lines asks)."""
     return discount_mapping(db, item_id) is not None
 
 

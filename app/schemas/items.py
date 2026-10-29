@@ -30,6 +30,9 @@ class ItemCreate(StrictModel):
     # Left out, the company's "New lines and items are taxable" setting
     # decides (#486; on by default).
     is_taxable: Optional[bool] = None
+    # A discount or concession item (#639): a line on it may carry a
+    # negative price, taken off its income account.
+    allows_negative_price: bool = False
     # Phase 11: inventory fields
     track_inventory: bool = False
     quantity_on_hand: Decimal = Decimal("0")
@@ -52,6 +55,7 @@ class ItemUpdate(StrictModel):
     expense_account_id: Optional[int] = None
     is_taxable: Optional[bool] = None
     is_active: Optional[bool] = None
+    allows_negative_price: Optional[bool] = None
     track_inventory: Optional[bool] = None
     reorder_point: Optional[Decimal] = None
     asset_account_id: Optional[int] = None
@@ -76,8 +80,11 @@ class ItemResponse(BaseModel):
     asset_account_id: Optional[int]
     created_at: datetime
     updated_at: datetime
-    # A Discount item (a QuickBooks Online discount came in on it): a line
-    # on it takes a negative price.
+    # The item's own "Discount or concession" flag (#639).
+    allows_negative_price: bool = False
+    # Whether a line on this item may carry a negative price: the flag
+    # above, or a QuickBooks Online discount came in on the item. The sales
+    # forms read this to let the line's price box go negative.
     is_discount: bool = False
 
     model_config = {"from_attributes": True}

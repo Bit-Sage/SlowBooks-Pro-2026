@@ -209,6 +209,10 @@ def import_items(db: Session, csv_text: str) -> dict:
         "material": ItemType.MATERIAL,
         "labor": ItemType.LABOR,
     }
+    # An optional Negative Price column (#639), as the export writes it
+    # (True/False) or as a spreadsheet says yes: the item is a discount or
+    # concession, and a line on it may carry a negative price.
+    yes = {"true", "yes", "y", "1", "x"}
 
     for i, row in enumerate(reader, start=2):
         try:
@@ -251,6 +255,10 @@ def import_items(db: Session, csv_text: str) -> dict:
                     description=row.get("Description", ""),
                     rate=rate,
                     cost=cost,
+                    allows_negative_price=(row.get("Negative Price") or "")
+                    .strip()
+                    .lower()
+                    in yes,
                 )
             )
             taken.add(item_name_key(name))

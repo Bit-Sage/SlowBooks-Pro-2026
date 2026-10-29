@@ -951,6 +951,8 @@ def import_items(db: Session, rows: list) -> dict:
                 income_account_id=income_account_id,
                 is_taxable=(taxable == "Y"),
                 is_active=True,
+                # QuickBooks' discount item takes a negative price (#639)
+                allows_negative_price=(iif_type == "DISC"),
             )
             db.add(item)
             db.flush()

@@ -239,14 +239,15 @@ def resolve_line_taxable(db: Session, lines_data, customer=None) -> None:
 
 
 def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
-    """A negative price is a discount. A line may carry one on a discount
-    item (the one a QuickBooks Online discount came in on:
-    qbo_common.is_discount_item), or on an item (or no item) the invoice
-    being edited already has a negative line on: a QuickBooks Online
-    document keeps the negative lines it came with, and an edit saves them
-    back. Any other is refused as it always was, in the same words: a
-    refund belongs on a credit memo."""
-    from app.services.qbo_common import is_discount_item
+    """A negative price is a discount. A line may carry one on an item that
+    takes a negative price (services/discount_items.py: one marked as a
+    discount or concession, #639, or the one a QuickBooks Online discount
+    came in on), or on an item (or no item) the invoice being edited
+    already has a negative line on: a QuickBooks Online document keeps the
+    negative lines it came with, and an edit saves them back. Any other is
+    refused as it always was, in the same words: a refund belongs on a
+    credit memo."""
+    from app.services.discount_items import takes_negative_price
 
     had = {
         line.item_id
@@ -256,7 +257,7 @@ def refuse_negative_lines(db: Session, lines, invoice=None) -> None:
     for index, line in enumerate(lines):
         if Decimal(str(line.rate or 0)) >= 0:
             continue
-        if line.item_id in had or is_discount_item(db, line.item_id):
+        if line.item_id in had or takes_negative_price(db, line.item_id):
             continue
         raise RequestValidationError(
             [
