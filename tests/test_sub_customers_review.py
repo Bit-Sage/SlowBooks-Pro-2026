@@ -1579,3 +1579,46 @@ def test_a_duplicate_is_billed_as_of_now(client, db_session, seed_accounts):
         "Bill To": ["Maple St", "12 Maple St", "Springfield, IL 62704", "For: Unit 7"],
         "Ship To": ["12 Maple St, Unit 7"],
     }
+
+
+def test_a_duplicate_is_checked_against_the_payers_credit_limit(
+    client, db_session, seed_accounts
+):
+    """W-79: Duplicate asks about the credit limit as a new invoice does
+    (its schema always said so): past the payer's limit it is refused with
+    the same 409, nothing written, and made with allow_over_credit_limit,
+    the say-so create takes. A tenant billed with its property is checked
+    against the property's limit; within it nothing is asked."""
+    maple = _customer(client, "Maple St", credit_limit="1000")
+    unit = _customer(
+        client,
+        "Unit 4B",
+        parent_customer_id=maple["id"],
+        bill_with_parent=True,
+        credit_limit="9000",
+    )
+    rent = _invoice(client, unit["id"], 600, 2)
+    db_session.expire_all()
+    before = db_session.query(Invoice).count()
+    r = client.post(f"/api/invoices/{rent['id']}/duplicate")
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert d["code"] == "credit_limit"
+    assert d["message"] == (
+        "Maple St's credit limit is $1,000.00. "
+        "With this invoice they would owe $1,200.00."
+    )
+    assert d["question"] == d["message"] + " Duplicate it anyway?"
+    assert (d["limit"], d["would_owe"]) == ("1000.00", "1200.00")
+    db_session.expire_all()
+    assert db_session.query(Invoice).count() == before  # nothing written
+    r = client.post(
+        f"/api/invoices/{rent['id']}/duplicate",
+        json={"allow_over_credit_limit": True},
+    )
+    assert r.status_code == 201, r.text
+    # within the limit nothing is asked
+    small = _invoice(client, maple["id"], 100, 3, allow_over_credit_limit=True)
+    r = client.put(f"/api/customers/{maple['id']}", json={"credit_limit": "5000"})
+    assert r.status_code == 200, r.text
+    assert client.post(f"/api/invoices/{small['id']}/duplicate").status_code == 201

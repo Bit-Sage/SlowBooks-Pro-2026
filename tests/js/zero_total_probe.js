@@ -8,6 +8,8 @@ let answer = true;
 const toasts = [];
 const bodies = [];
 let refuseFirst = true;
+// Duplicate past the payer's credit limit (2.31.1 gate, W-79)
+let refuseOverLimit = false;
 
 function zeroTotal(question) {
   const err = new Error('This invoice adds up to $0.00. Enter a rate on at least one line before saving it.');
@@ -17,10 +19,10 @@ function zeroTotal(question) {
 }
 
 // the server's other question (#256): past the customer's credit limit
-function creditLimit() {
+function creditLimit(ask = 'Save it anyway?') {
   const err = new Error("Salt & Pine's credit limit is $500.00. With this invoice they would owe $550.00.");
   err.status = 409;
-  err.detail = { code: 'credit_limit', message: err.message, question: err.message + ' Save it anyway?' };
+  err.detail = { code: 'credit_limit', message: err.message, question: err.message + ' ' + ask };
   return err;
 }
 
@@ -37,6 +39,9 @@ const ctx = {
   API: {
     post: async (path, body) => {
       bodies.push(body === undefined ? null : body);
+      if (refuseOverLimit && !(body && body.allow_over_credit_limit)) {
+        throw creditLimit('Duplicate it anyway?');
+      }
       if (refuseFirst && !(body && body.allow_zero_total)) {
         throw zeroTotal('This invoice adds up to $0.00. Duplicate it anyway?');
       }
@@ -121,6 +126,17 @@ const S = ctx.SalesLines, P = ctx.InvoicesPage;
   answer = true;
   await P.duplicate(1);
   out.duplicate = { bodies: bodies.splice(0), toasts: toasts.splice(0) };
+
+  // Duplicate past the credit limit: the server's question, then the
+  // request again with the flag it named; no, and nothing is sent again
+  refuseFirst = false;
+  refuseOverLimit = true;
+  asked.splice(0);
+  await P.duplicate(1);
+  out.duplicateOverLimit = { asked: asked.splice(0), bodies: bodies.splice(0), toasts: toasts.splice(0) };
+  answer = false;
+  await P.duplicate(1);
+  out.duplicateOverLimitNo = { asked: asked.splice(0).length, bodies: bodies.splice(0), toasts: toasts.splice(0) };
 
   console.log(JSON.stringify(out));
 })();

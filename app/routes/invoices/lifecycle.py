@@ -30,6 +30,7 @@ from app.routes.invoices.helpers import (
     invoice_customer_name,
     _due_date_from_terms,
     _post_invoice_journal,
+    confirm_credit_limit,
     confirm_zero_total,
     opening_status,
 )
@@ -638,6 +639,20 @@ def duplicate_invoice(
         noun,
         "duplicating it",
         question=f"This {noun} adds up to $0.00. Duplicate it anyway?",
+    )
+    # Past the payer's credit limit? Asked as a new invoice is (2.31.1
+    # gate, W-79): the same 409 "credit_limit", and the copy is made with
+    # allow_over_credit_limit, as create takes it. The copy owes its whole
+    # total, at the rate it carries.
+    from app.services.contact_balances import home_amount
+
+    confirm_credit_limit(
+        db,
+        original.customer,
+        home_amount(total, original.exchange_rate),
+        bool(data and data.allow_over_credit_limit),
+        noun,
+        ask="Duplicate it anyway?",
     )
 
     left_off: list[str] = []

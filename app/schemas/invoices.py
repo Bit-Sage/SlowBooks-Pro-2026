@@ -164,8 +164,9 @@ class InvoiceUpdate(StrictModel):
 class ZeroTotalConfirmation(StrictModel):
     """The optional body of Duplicate and of an estimate's Convert: a copy
     that adds up to $0.00 is made only with ``allow_zero_total: true``, and
-    one that takes the customer past their credit limit only with
-    ``allow_over_credit_limit: true`` (#256)."""
+    one that takes the payer past their credit limit only with
+    ``allow_over_credit_limit: true`` (#256; Duplicate since the 2.31.1
+    gate, W-79)."""
 
     allow_zero_total: bool = False
     allow_over_credit_limit: bool = False
