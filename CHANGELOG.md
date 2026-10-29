@@ -155,7 +155,20 @@ moment: the whole Bill To, street, name and country, is the payer's then
 customer's. Recurring invoices and a pay application's invoice, which used
 to carry no street and printed a name alone, are billed the same way. An
 edit can correct the invoice's addresses, and a duplicate is checked against
-the credit limit as a new invoice is. Every customer now
+the credit limit as a new invoice is. The printed Ship To keeps its country
+the same way: the country is kept on the invoice with the ship-to street,
+the customer's own, so an old invoice no longer prints the country a
+customer has moved to since under the street it was sent to (books from
+before take each invoice's customer's ship country at the upgrade), and an
+edit can correct it as it corrects the street (`ship_to_country`). An
+address part an edit sends empty is now left empty, also when the edit moves
+the invoice to another customer, where it used to take the new customer's
+anyway; a new invoice still fills a part left empty from the customer. An
+invoice with a payment or credit memo applied to it stays with its customer:
+moving it to another customer is refused with a sentence naming each payment
+and credit, whose it is and for how much, and saying to void it and enter it
+again where it belongs first (409 `money_applied`), since the moved invoice
+put the payment on both customers' statements. Every customer now
 answers `billed_balance`, what sits on its A/R, its own open documents plus
 those of the tenants billed with it, the figure its A/R Aging row shows; the
 Customer Center shows it as what a property owes, beside its own balance and
