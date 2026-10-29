@@ -5,7 +5,7 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
-### Unreleased
+### v2.31.1 — Sub-customers, memorized transactions, and stock that comes back out at its own cost
 
 **An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
 expense's memo was read back off its bank line, which holds the memo or,

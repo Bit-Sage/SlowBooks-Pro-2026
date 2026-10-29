@@ -1,4 +1,13 @@
 {
+  "2.31.1": {
+    "title": "Sub-customers, memorized transactions, and stock that comes back out at its own cost",
+    "items": [
+      "Sub-customers: a customer under another, one level deep, shown as \"Parent: Sub\"; a sub billed with its parent posts to the parent's receivable, shows on the parent's statement and aging, and is paid by the parent's payments; the QuickBooks importers keep Parent:Sub.",
+      "Memorized bills and journal entries beside recurring invoices: every QuickBooks frequency, auto-enter or remind, a Due list with Enter now, pause and resume, and one Memorized transactions page for all of them.",
+      "A bill's void or edit takes its stock back out at the cost it came in at, and a reversal's leftover goes to Cost of Goods Sold, so Inventory always reads quantity times average cost.",
+      "An expense keeps the memo it was given."
+    ]
+  },
   "2.31.0": {
     "title": "Split expenses, lines that move, and stock that comes back",
     "items": [
