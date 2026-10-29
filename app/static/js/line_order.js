@@ -94,6 +94,18 @@ const LineOrder = {
         return fresh;
     },
 
+    // The keyboard goes to the new row's first control. A picker's <select>
+    // becomes a type-ahead box a moment after the row lands (combobox.js
+    // re-parents it, which drops any focus it had), so the focus is placed
+    // once that pass is over, on the box when there is one (W-53).
+    focusFirst(row) {
+        if (!row) return;
+        setTimeout(() => {
+            const first = row.querySelector('input:not([type=hidden]), select:not(.cbx-select), textarea');
+            if (first && !first.disabled) first.focus();
+        }, 0);
+    },
+
     _changed(tbody) {
         LineOrder.refresh(tbody);
         const opts = LineOrder._opts.get(tbody) || {};
@@ -108,7 +120,7 @@ const LineOrder = {
         if (what === 'insert') {
             const fresh = LineOrder.insertBelow(tbody, row);
             LineOrder._changed(tbody);
-            fresh?.querySelector('input:not([type=hidden]), select, textarea')?.focus();
+            LineOrder.focusFirst(fresh);
         } else if (what === 'up' || what === 'down') {
             if (!LineOrder.moveRow(row, what === 'up' ? -1 : 1)) return;
             LineOrder._changed(tbody);

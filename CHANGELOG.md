@@ -7,6 +7,19 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.31.0 — Split expenses, lines that move, and stock that comes back
 
+**From the release gate.** Voiding a credit memo's return took the stock out at
+the return's own cost without re-averaging what was left, so once a dearer
+receipt had come in the ledger's Inventory and the stock valuation (quantity
+times average cost) parted ways, and a residue stayed in Inventory with
+nothing on hand; the average now follows the value that leaves, and the two
+figures stay one figure. An expense's `memo` over the API read as its first
+line's memo once lines carried their own; it is the memo typed on the expense
+again. Typed Cc addresses plus the always-copy settings over fifty together
+were refused as a failed send blamed on the SMTP settings; the limit's own
+sentence answers (400) before anything is rendered. Insert line below left
+the keyboard on the page, because the new line's item picker becomes a
+type-ahead box a moment after the line lands; the focus now goes to that box.
+
 **A sale's reversal comes off each posting's own accounts at its own cost**
 (#622, @ContractorKeith). Voiding a sale, or editing its quantity down,
 reversed the cost at the item's current average cost against the item's

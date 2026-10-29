@@ -137,9 +137,13 @@ def _append_movement(
     old_avg = Decimal(str(item.avg_cost or 0))
     new_qty = old_qty + quantity
 
-    # Weighted average cost only changes on positive movements (receipts).
-    # Sales, returns-out, and adjustments-out leave avg_cost unchanged —
-    # you don't revalue remaining stock when you ship it.
+    # Weighted average cost changes on positive movements (receipts). Sales
+    # and adjustments-out go at the average and leave it unchanged — you
+    # don't revalue remaining stock when you ship it. A reversal that takes
+    # stock out at a cost of its own (a return's void at the return's cost,
+    # #641) takes that much value out of the pool, so what remains
+    # re-averages: the ledger's Inventory and quantity × average stay the
+    # same figure (W-50, 2.31.0 gate).
     if quantity > 0 and new_qty > 0:
         new_avg = quantize_to(
             ((old_qty * old_avg) + (quantity * unit_cost)) / new_qty,
@@ -147,6 +151,9 @@ def _append_movement(
         )
     elif new_qty == 0:
         new_avg = Decimal("0")
+    elif quantity < 0 and new_qty > 0 and old_qty > 0 and unit_cost != old_avg:
+        value_left = (old_qty * old_avg) - (abs(quantity) * unit_cost)
+        new_avg = quantize_to(max(value_left, Decimal("0")) / new_qty, COST_Q)
     else:
         new_avg = old_avg
 

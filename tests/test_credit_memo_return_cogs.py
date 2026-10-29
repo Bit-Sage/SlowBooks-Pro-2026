@@ -433,3 +433,49 @@ def test_a_memo_with_nothing_tracked_posts_no_return_entry(
     db_session.expire_all()
     assert len(_entries(db_session, "credit_memo", memo["id"])) == 1
     assert _returns(db_session, memo["id"]) == []
+
+
+def test_voiding_a_return_keeps_the_ledger_and_the_valuation_together(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-50 (2.31.0 gate): a return's void takes the stock out at the return's
+    own cost, which is not the average once a dearer receipt came in. The
+    pool's average follows the value that left, so Inventory in the ledger
+    equals quantity × average cost, and selling everything leaves nothing in
+    Inventory with nothing on hand."""
+    vendor, item, inv = _sold_three_at_ten(
+        client, db_session, seed_accounts, seed_customer
+    )
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=7, unit_cost="14.00", bill_number="B-2"
+    )
+    db_session.expire_all()
+    assert Decimal(str(db_session.get(Item, item.id).avg_cost)) == Decimal("12.0000")
+
+    memo1 = _credit_memo(client, seed_customer.id, [(item.id, 1)], invoice_id=inv["id"])
+    memo2 = _credit_memo(client, seed_customer.id, [(item.id, 1)])
+    db_session.expire_all()
+    it = db_session.get(Item, item.id)
+    assert _on_hand(db_session, item.id) == Decimal("16")
+    assert Decimal(str(it.avg_cost)) == Decimal(
+        "11.8667"
+    )  # (14 x 12 + 10 + 11.8667) / 16
+
+    assert client.post(f"/api/credit-memos/{memo1['id']}/void").status_code == 200
+    db_session.expire_all()
+    it = db_session.get(Item, item.id)
+    ledger = _balances(db_session, seed_accounts["1300"])["1300"]
+    assert _on_hand(db_session, item.id) == Decimal("15")
+    assert ledger == Decimal("179.87")  # 100 - 30 + 98 + 10 + 11.87 - 10
+    assert _q(Decimal("15") * Decimal(str(it.avg_cost))) == ledger
+    assert client.get("/api/items/valuation").json()["total_value"] == 179.87
+
+    # the other return's void and the stock sold out: nothing left anywhere
+    assert client.post(f"/api/credit-memos/{memo2['id']}/void").status_code == 200
+    _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=14, unit_rate="25.00"
+    )
+    db_session.expire_all()
+    assert _on_hand(db_session, item.id) == Decimal("0")
+    assert _balances(db_session, seed_accounts["1300"])["1300"] == Decimal("0.00")
+    assert client.get("/api/items/valuation").json()["total_value"] == 0.0

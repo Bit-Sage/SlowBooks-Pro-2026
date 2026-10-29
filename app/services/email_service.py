@@ -118,6 +118,26 @@ def clean_addresses(value, label: str = "address") -> list:
     return kept
 
 
+def copy_lists(smtp: dict, cc=None, bcc=None) -> tuple:
+    """The Cc and Bcc lists a send carries: the typed copies merged with the
+    always-copy settings, each list cleaned once more so an address both
+    typed and in Settings is copied once (sb-qa, #611) and the caps apply to
+    the merged list, not the typed one alone (W-52, 2.31.0 gate). Raises
+    ValueError in a sentence naming the field and the limit; a route asks
+    before it renders anything and answers 400 with that sentence."""
+    cc_list = clean_addresses(
+        clean_addresses(cc, "Cc")
+        + clean_addresses(smtp.get("smtp_always_cc", ""), "Cc"),
+        "Cc",
+    )
+    bcc_list = clean_addresses(
+        clean_addresses(bcc, "Bcc")
+        + clean_addresses(smtp.get("smtp_always_bcc", ""), "Bcc"),
+        "Bcc",
+    )
+    return cc_list, bcc_list
+
+
 def bad_addresses(value) -> list:
     """The pieces of ``value`` that cannot be sent to, for an error message."""
     return parse_addresses(value)[1]
@@ -172,19 +192,8 @@ def send_email(
     # Routes taking typed copies check them first and answer 400; a list
     # over the cap reaching here (an always-copy setting, a caller that did
     # not check) is a failed send with the reason logged, never a crash.
-    # clean_addresses() de-duplicates, so the always-copies are merged through
-    # it: an address both typed and in Settings is copied once (sb-qa, #611).
     try:
-        cc_list = clean_addresses(
-            clean_addresses(cc, "Cc")
-            + clean_addresses(smtp.get("smtp_always_cc", ""), "Cc"),
-            "Cc",
-        )
-        bcc_list = clean_addresses(
-            clean_addresses(bcc, "Bcc")
-            + clean_addresses(smtp.get("smtp_always_bcc", ""), "Bcc"),
-            "Bcc",
-        )
+        cc_list, bcc_list = copy_lists(smtp, cc, bcc)
     except ValueError as e:
         log = EmailLog(
             entity_type=entity_type or "",

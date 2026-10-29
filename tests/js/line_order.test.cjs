@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const vm = require('node:vm');
 
 function module_() {
-    const context = { document: {} };
+    const context = { document: {}, setTimeout };
     vm.createContext(context);
     const src = fs.readFileSync(path.join(__dirname, '../../app/static/js/line_order.js'), 'utf8');
     return vm.runInContext(src + '\n;LineOrder', context);
@@ -67,4 +67,16 @@ test('a new line is slotted in below the line it was asked for', () => {
     assert.deepEqual(names(t), ['a', 'new', 'b', 'c']);
     LineOrder.insertBelow(t, t.children[3]);
     assert.deepEqual(names(t), ['a', 'new', 'b', 'c', 'new']);
+});
+
+test('insert: the focus lands on the new row\'s first control after the picker pass (W-53)', async () => {
+    const LineOrder = module_();
+    let focused = null;
+    const box = { disabled: false, focus() { focused = this; } };
+    const row = { querySelector: () => box };
+    LineOrder.focusFirst(row);
+    assert.equal(focused, null, 'not before the row has been through the observers');
+    await new Promise(r => setTimeout(r, 5));
+    assert.equal(focused, box);
+    LineOrder.focusFirst(null);  // nothing to focus is fine
 });

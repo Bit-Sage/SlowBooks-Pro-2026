@@ -373,3 +373,30 @@ def test_the_expense_form_has_a_line_grid_with_a_running_total():
     assert (
         "ExpensesPage.amountChanged();  // the scan fills the first line" in JS_EXPENSES
     )
+
+
+def test_the_memo_is_the_one_typed_on_the_expense_not_a_lines(client, seed_accounts):
+    """W-51 (2.31.0 gate): once lines carry their own memos (#599), the
+    expense's memo must still be the one typed on the expense, and with none
+    typed it is empty, not the payee the bank line shows in the register."""
+    r = _split(
+        client,
+        seed_accounts,
+        _three(seed_accounts),
+        memo="Big Box run",
+        payee="Big Box",
+    )
+    assert r.status_code == 201, r.text
+    body = client.get(f"/api/expenses/{r.json()['id']}").json()
+    assert body["memo"] == "Big Box run"
+    assert body["payee"] == "Big Box"
+    assert [ln["description"] for ln in body["lines"]][:2] == ["ads", "paper"]
+
+    r = _split(client, seed_accounts, _three(seed_accounts), payee="Big Box")
+    assert r.status_code == 201, r.text
+    body = client.get(f"/api/expenses/{r.json()['id']}").json()
+    assert body["memo"] == "" and body["payee"] == "Big Box"
+    listed = next(
+        e for e in client.get("/api/expenses").json() if e["id"] == body["id"]
+    )
+    assert listed["memo"] == ""

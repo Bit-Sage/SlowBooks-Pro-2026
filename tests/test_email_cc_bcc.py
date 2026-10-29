@@ -395,3 +395,51 @@ def test_always_copy_settings_are_validated_and_normalised(client):
     assert (
         client.get("/api/settings").json()["smtp_always_bcc"] == "books@b.com, A@B.com"
     )
+
+
+def test_the_route_counts_the_always_copies_toward_the_cap(
+    client, seed_accounts, db_session, monkeypatch
+):
+    """W-52 (2.31.0 gate): two always-cc addresses in Settings plus forty-nine
+    typed is fifty-one; the route refuses it in the limit's own words, not as
+    a failed send blamed on the SMTP settings, and nothing is rendered or
+    sent."""
+    captured = {}
+
+    def fake_send(**kw):
+        captured.update(kw)
+        return True
+
+    monkeypatch.setattr("app.services.email_service.send_email", fake_send)
+    monkeypatch.setattr(
+        documents, "generate_invoice_pdf", lambda *a, **k: b"%PDF-1.4 test"
+    )
+    _set(db_session, "smtp_always_cc", "office@example.com, books@example.com")
+    cust = client.post(
+        "/api/customers", json={"name": "Cap Co", "email": "a@b.com"}
+    ).json()
+    inv = client.post(
+        "/api/invoices",
+        json={
+            "customer_id": cust["id"],
+            "date": "2026-06-01",
+            "due_date": "2026-06-30",
+            "lines": [
+                {"description": "work", "quantity": 1, "rate": 100, "line_order": 0}
+            ],
+        },
+    ).json()
+    typed = ", ".join(f"u{i}@b.com" for i in range(MAX_ADDRESSES - 1))
+    r = client.post(
+        f"/api/invoices/{inv['id']}/email", json={"recipient": "a@b.com", "cc": typed}
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "Too many Cc addresses: at most 50 on one email."
+    assert captured == {}
+    # forty-eight typed and the two from Settings is fifty: it goes
+    r = client.post(
+        f"/api/invoices/{inv['id']}/email",
+        json={"recipient": "a@b.com", "cc": ", ".join(typed.split(", ")[:-1])},
+    )
+    assert r.status_code == 200, r.text
+    assert captured["to_email"] == "a@b.com"
