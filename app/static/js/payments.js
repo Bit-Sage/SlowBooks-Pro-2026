@@ -440,8 +440,9 @@ const PaymentsPage = {
         try {
             [credits, invoices] = await Promise.all([
                 API.get(`/customers/${customerId}/credits`),
-                // a payment's credit may go to a sub-customer billed with the payer (#638)
-                fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true${kind === 'payment' ? '&billed_to=true' : ''}`),
+                // a payment's credit, and a credit memo's, may go to a
+                // sub-customer billed with the customer (#638)
+                fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true&billed_to=true`),
             ]);
         } catch (err) { toast(err.message, 'error'); return; }
         const credit = credits.credits.find(c => c.kind === kind && c.id === creditId);

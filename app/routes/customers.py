@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
@@ -12,7 +13,10 @@ from app.services.contact_balances import ZERO, customer_balances
 from app.services.duplicate_detection import find_duplicates
 from app.services.sub_customers import (
     check_parent,
+    duplicate_candidates,
     refuse_inactivating_a_parent,
+    refuse_inactive_parent,
+    refuse_unbilling_with_parent,
 )
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
@@ -107,11 +111,17 @@ def list_customers(
 
 @router.get("/check-duplicate")
 def check_duplicate(
-    name: str = Query(..., min_length=1), db: Session = Depends(get_db)
+    name: str = Query(..., min_length=1),
+    parent_customer_id: Optional[int] = Query(
+        None,
+        description="Checking a sub-customer's name: against its siblings "
+        "under this parent and the top-level customers (#638).",
+    ),
+    db: Session = Depends(get_db),
 ):
     """Phase 11: standalone duplicate-check endpoint the UI can call BEFORE
     submitting a create form to warn the user proactively."""
-    existing = db.query(Customer).filter(Customer.is_active == True).all()  # noqa
+    existing = duplicate_candidates(db, parent_customer_id)
     return {"duplicates": find_duplicates(name, existing)}
 
 
@@ -247,9 +257,11 @@ def create_customer(
     db: Session = Depends(get_db),
 ):
     # Phase 11: warn on likely duplicate names unless the caller explicitly
-    # passes ?force=true to confirm.
+    # passes ?force=true to confirm. A sub-customer's name is checked
+    # against its siblings and the top-level names (#638): every property
+    # has a Unit 1.
     if not force:
-        existing = db.query(Customer).filter(Customer.is_active == True).all()  # noqa
+        existing = duplicate_candidates(db, data.parent_customer_id)
         dupes = find_duplicates(data.name, existing)
         if dupes:
             raise HTTPException(
@@ -268,9 +280,11 @@ def create_customer(
 
         values["terms"] = get_setting_raw(db, "default_terms") or "Net 30"
     # A sub-customer sits one level under a top-level customer (#638);
-    # "bill with parent" means nothing without a parent.
+    # "bill with parent" means nothing without a parent, and a new
+    # (active) sub-customer needs an active parent.
     check_parent(db, None, values.get("parent_customer_id"))
     _check_bill_with_parent(values.get("parent_customer_id"), values)
+    refuse_inactive_parent(db, values["name"], values.get("parent_customer_id"))
     customer = Customer(**values)
     db.add(customer)
     db.commit()
@@ -310,6 +324,21 @@ def update_customer(
     parent_after = update_data.get("parent_customer_id", customer.parent_customer_id)
     if update_data.get("bill_with_parent"):
         _check_bill_with_parent(parent_after, update_data)
+    # A sub-customer billed with its parent keeps that billing, and that
+    # parent, while the parent's payments or credits are on its open
+    # invoices (#638 review): 409, saying which.
+    if customer.parent_customer_id and customer.bill_with_parent:
+        parent_changes = parent_after != customer.parent_customer_id
+        if parent_changes or update_data.get("bill_with_parent") is False:
+            refuse_unbilling_with_parent(db, customer)
+    # An active sub-customer sits under an active parent: a sub made
+    # active again, or an active one moved, under an inactive parent is
+    # refused (409 parent_inactive).
+    active_after = update_data.get("is_active", customer.is_active)
+    if active_after and parent_after is not None:
+        reactivated = bool(update_data.get("is_active")) and not customer.is_active
+        if reactivated or parent_after != customer.parent_customer_id:
+            refuse_inactive_parent(db, customer.name, parent_after)
     subs_too = []
     if update_data.get("is_active") is False and customer.is_active:
         # A sub alone is fine (a tenant moves out, the property stays); a

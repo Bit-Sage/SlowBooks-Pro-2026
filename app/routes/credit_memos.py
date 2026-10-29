@@ -38,6 +38,7 @@ from app.services.accounting import (
 from app.routes.invoices.helpers import confirm_zero_total, resolve_line_taxable
 from app.services.closing_date import check_closing_date
 from app.services.jobs_service import refuse_other_customers_jobs
+from app.services.sub_customers import refuse_unless_pays_for
 from app.services.numbering import next_credit_memo_number
 from app.services.settings_service import get_all_settings as get_settings
 from app.services.request_utils import content_disposition
@@ -146,14 +147,9 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
         original = db.get(Invoice, data.original_invoice_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Invoice not found")
-        if original.customer_id != data.customer_id:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Invoice {original.invoice_number} belongs to a different "
-                    "customer than this credit memo."
-                ),
-            )
+        # The customer's own invoice, or one of a sub-customer billed with
+        # it (#638): a credit is routed the way a payment is.
+        refuse_unless_pays_for(db, data.customer_id, original, "credit memo")
         if tax_rate is None:
             tax_rate = original.tax_rate
     if tax_rate is None:
@@ -319,15 +315,9 @@ def apply_credit(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     # A credit belongs to one customer: it pays down that customer's invoices
-    # only (the payment-side rule, #189).
-    if invoice.customer_id != cm.customer_id:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Invoice {invoice.invoice_number} belongs to a different "
-                "customer than this credit memo."
-            ),
-        )
+    # only (the payment-side rule, #189), and those of a sub-customer billed
+    # with it (#638), as a payment does.
+    refuse_unless_pays_for(db, cm.customer_id, invoice, "credit memo")
 
     # A credit memo is in the home currency (it has no currency of its
     # own), so it can pay a home-currency invoice only — the payment-side
