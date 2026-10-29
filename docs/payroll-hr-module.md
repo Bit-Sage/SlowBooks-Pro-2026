@@ -235,6 +235,61 @@ rest of payroll.
 
 ---
 
+## Posting accounts (#620)
+
+A pay run posts one journal entry: a debit for gross wages, one for the
+employer's payroll taxes, a credit to each payable for what was withheld or
+accrued, and a credit for the net pay. Each piece has a setting that names
+its account (Settings → Payroll Accounts, administrator only, saved with the
+rest of the company settings by `PUT /api/settings`). Left blank, the piece
+posts to the seeded account it always has, so a company that chooses
+nothing posts exactly as before. The table is
+`app/services/payroll_accounts.py`.
+
+| Piece | Setting | Takes | Default |
+|-------|---------|-------|---------|
+| Net pay | `payroll_net_pay_account_id` | a bank account, or a liability | 1000 Checking |
+| Gross wages | `payroll_wages_account_id` | an expense or cost of goods sold account | 6110 Wages & Salaries (6000 on a chart without it) |
+| Employer payroll taxes | `payroll_employer_tax_account_id` | an expense or cost of goods sold account | 6120 Payroll Tax Expense (6000) |
+| Federal income tax withheld | `payroll_federal_withholding_account_id` | a liability | 2310 (2300) |
+| State income tax withheld | `payroll_state_withholding_account_id` | a liability | 2320 (2300) |
+| Social Security payable (both shares) | `payroll_social_security_account_id` | a liability | 2330 (2300) |
+| Medicare payable (both shares) | `payroll_medicare_account_id` | a liability | 2340 (2300) |
+| FUTA payable | `payroll_futa_account_id` | a liability | 2350 (2300) |
+| SUTA payable | `payroll_suta_account_id` | a liability | 2360 (2300) |
+| Other payroll deductions payable | `payroll_other_deductions_account_id` | a liability | 2370 (2300) |
+
+Reimbursements (6140, else 6950) and benefit codes (each code's own
+accounts, 6150 for the rest) are not settings. The save refuses an account
+of the wrong type, an inactive one, a credit card, or a control liability
+(2000 Accounts Payable, 2200 Sales Tax Payable, whose balances are kept by
+their own documents), in a sentence saying what the piece takes; nothing is
+saved when one choice is refused. `GET /api/settings/payroll-accounts`
+lists the pieces with their chosen and default accounts and, per kind, the
+accounts each may be pointed at; the Settings page draws its pickers from
+it. A chosen account that has since been deleted, made inactive or retyped
+refuses the process (400) naming it and where to fix it, rather than
+posting the piece somewhere else.
+
+**Net pay paid later.** With Net pay set to 2300 Payroll Liabilities (or a
+liability made for it, "Wages Payable"), processing the run credits that
+account instead of the bank: the wages are a liability on the Balance Sheet
+until they are paid, and the bank is untouched. When the pay goes out,
+record it against that account: a check or register entry from the bank
+with 2300 as its category, a bill with a line on 2300 and its bill payment,
+or a journal entry debiting 2300 and crediting the bank. The direct deposit
+file is made the same way as before, from the processed run; it does not
+post. The Process button's overdraft question is for a bank account; a
+liability is not asked about.
+
+**Void.** The void reverses the entry the run posted, line for line, so it
+puts back whatever accounts the run used at the time (2300 for the net pay,
+say), whatever the settings say by then. A payment out of a liability the
+run credited, dated since its pay date, is a caution the void asks about
+first, as a 941 deposit is: net pay paid out of 2300 included.
+
+---
+
 ## Opening YTD balances (#433)
 
 A company that switches to SlowBooks mid-year enters what the old payroll
@@ -364,6 +419,7 @@ app/
 ├── services/
 │   ├── encryption.py          # Fernet with v1: versioning
 │   ├── pto_accrual.py         # Per-period accrual math
+│   ├── payroll_accounts.py    # Where a pay run posts: the pieces and their settings (#620)
 │   └── payroll_service.py     # Withholding, FICA, FUTA, state tax
 ├── schemas/
 │   ├── hr.py

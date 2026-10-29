@@ -94,6 +94,23 @@ import carry a Negative Price column, and an IIF item of type DISC imports
 marked. API: `allows_negative_price` on the item create, update and response,
 with `is_discount` saying whether a line on the item may go negative.
 
+**Choose where each piece of a pay run posts** (#620). Settings → Payroll
+Accounts names the account for net pay, gross wages, employer payroll taxes
+and each payable (federal and state withholding, Social Security, Medicare,
+FUTA, SUTA, other deductions). Each defaults to the seeded account payroll
+always posted to, so a company that chooses nothing posts exactly as before.
+Net pay can go to a bank account or to a liability such as 2300 Payroll
+Liabilities, for wages paid later: the run then credits 2300 instead of the
+bank, the Balance Sheet carries the wages until they are paid, and the
+payment is recorded against 2300 when it goes out (a check or register entry,
+a bill payment, or a journal entry). The save refuses an account of the wrong
+type, an inactive one, a credit card or a control liability, in a sentence
+saying what the piece takes; a chosen account that stops working refuses the
+pay run rather than posting somewhere else; and voiding a run reverses the
+accounts it posted to, whatever the settings say by then.
+`GET /api/settings/payroll-accounts` lists the pieces with their chosen and
+default accounts.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry

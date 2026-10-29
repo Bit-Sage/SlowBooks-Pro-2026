@@ -141,6 +141,55 @@ const SettingsPage = {
         if (box && fields) fields.hidden = !box.checked;
     },
 
+    // Where a pay run posts (#620): one picker per piece, the seeded default
+    // first and named ("Default (1000 Checking)"). The choices come from
+    // GET /settings/payroll-accounts, filtered by the same rule the save
+    // enforces: a bank or a liability for net pay, an expense or cost of
+    // goods sold account for the two expenses, a liability that is not a
+    // credit card or a control account for each payable. String
+    // concatenation, like _clearingHtml: no backtick-returning statement
+    // ahead of render() (the unsaved-changes guard test slices there).
+    _payrollAccountsHtml(data) {
+        if (!data || !Array.isArray(data.pieces)) {
+            return '<div style="font-size:11px; color:var(--text-muted);">The payroll accounts could not be loaded; the pay run posts to its usual accounts.</div>';
+        }
+        const choices = data.choices || {};
+        let h = '<div class="form-grid">';
+        for (const p of data.pieces) {
+            const sel = p.chosen ? String(p.chosen) : '';
+            const defaultLabel = p.default ? 'Default (' + p.default.label + ')' : 'Default (not in the chart)';
+            h += '<div class="form-group"><label>' + escapeHtml(p.label);
+            if (p.hint) h += ' <span class="form-hint">' + escapeHtml(p.hint) + '</span>';
+            h += '</label><select name="' + p.key + '">';
+            h += '<option value=""' + (sel ? '' : ' selected') + '>' + escapeHtml(defaultLabel) + '</option>';
+            let matched = false;
+            const seen = new Set();
+            for (const kind of (p.kinds || [])) {
+                for (const a of (choices[kind] || [])) {
+                    if (seen.has(a.id)) continue;
+                    seen.add(a.id);
+                    const isSel = String(a.id) === sel;
+                    if (isSel) matched = true;
+                    h += '<option value="' + a.id + '"' + (isSel ? ' selected' : '') + '>' + escapeHtml(a.label) + '</option>';
+                }
+            }
+            // A saved id not in the list (the account went inactive or
+            // changed type): keep it selected so Save doesn't silently blank
+            // the setting; the sentence under the picker says what is wrong,
+            // and the pay run is refused until it is fixed here.
+            if (sel && !matched) {
+                h += '<option value="' + escapeHtml(sel) + '" selected>(unavailable) #' + escapeHtml(sel) + '</option>';
+            }
+            h += '</select>';
+            if (p.problem) {
+                h += '<div class="form-hint" style="color:var(--text-warning); margin-top:4px;">' + escapeHtml(p.problem) + '</div>';
+            }
+            h += '</div>';
+        }
+        h += '</div>';
+        return h;
+    },
+
     // Where each encrypted setting is entered again, for the notice below.
     _SECRET_PLACES: {
         smtp_password: 'the email password, under Email (SMTP)',
@@ -293,6 +342,8 @@ const SettingsPage = {
         // The clearing-account pickers (#583) list the chart; a failed load
         // leaves them empty rather than breaking the whole settings page.
         const accounts = await API.get('/accounts').catch(() => []);
+        // the payroll posting pickers (#620); a failed load says so in place
+        const payrollAccounts = await API.get('/settings/payroll-accounts').catch(() => null);
         // what the books hold; the closing date's state line describes this
         SettingsPage._savedClosingDate = s.closing_date || '';
         setTimeout(() => {
@@ -609,6 +660,18 @@ const SettingsPage = {
                         <div class="form-group"><label>Company Identification</label>
                             <input name="ach_company_id" maxlength="10" value="${escapeHtml(s.ach_company_id || '')}" placeholder="1 + EIN unless the bank says otherwise"></div>
                     </div>
+                </div>
+
+                <div class="settings-section" id="settings-payroll-accounts" role="group" aria-labelledby="settings-h-payroll-accounts">
+                    <h3 id="settings-h-payroll-accounts">Payroll Accounts</h3>
+                    <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;">
+                        Where a pay run posts. Each piece goes to its usual account unless another is chosen here.
+                        Net pay leaves the bank account when the run is processed; choose 2300 Payroll Liabilities
+                        (or another liability) to hold the wages until they are paid, then record the payment from
+                        the bank against that account. A run already processed keeps the accounts it posted to,
+                        and voiding it reverses those.
+                    </div>
+                    ${SettingsPage._payrollAccountsHtml(payrollAccounts)}
                 </div>
 
                 <div class="settings-section" role="group" aria-labelledby="settings-h-online-payments">
