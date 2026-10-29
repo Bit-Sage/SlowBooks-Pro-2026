@@ -28,8 +28,11 @@ logger = logging.getLogger(__name__)
 
 # The runs of one process take turns: the startup run, the daily run and
 # Enter All Due never interleave. Across processes (two uvicorn workers, a
-# cron run beside the app) the claim in memorized_service.claim_occurrence
-# keeps an occurrence from being entered twice.
+# cron run beside the app) and against Enter now in another window, the
+# claims keep anything from being entered twice: a memorized occurrence is
+# claimed by memorized_service.claim_occurrence and a recurring invoice's
+# installment by recurring_service.claim_installment, each in one guarded
+# UPDATE before anything posts.
 _RUN_LOCK = threading.RLock()
 _last_run: dict | None = None
 

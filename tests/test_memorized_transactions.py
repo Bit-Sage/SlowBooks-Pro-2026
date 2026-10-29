@@ -1791,3 +1791,175 @@ def test_the_enter_modal_sends_the_occurrence_it_was_opened_for():
         "if (err.status === 409) { closeModal(); App.navigate('#/memorized'); }"
         in enter
     )
+
+
+def _installment_claimed_after_both_read(monkeypatch):
+    """_claim_after_both_read for a recurring invoice's installment: both
+    racers have read the schedule and checked the closing date (the last
+    read before anything is written, then and now) before either writes,
+    once per thread."""
+    import app.services.closing_date as closing_date
+
+    both_read = threading.Barrier(2)
+    real = closing_date.check_closing_date
+    passed = threading.local()
+
+    def checked(db, txn_date, *args, **kw):
+        if not getattr(passed, "done", False):
+            passed.done = True
+            both_read.wait(WAIT)
+        return real(db, txn_date, *args, **kw)
+
+    monkeypatch.setattr(closing_date, "check_closing_date", checked)
+
+
+def _one_invoice_made_once(Session, rec_id):
+    from app.models.recurring import RecurringInvoice
+
+    with Session() as db:
+        made = db.query(Invoice).filter(Invoice.recurring_invoice_id == rec_id).all()
+        assert [i.date for i in made] == [date(2026, 1, 1)]
+        rec = db.get(RecurringInvoice, rec_id)
+        assert rec.next_due == date(2026, 2, 1) and rec.invoices_created == 1
+
+
+def test_two_enter_nows_on_a_recurring_invoice_make_one_invoice(
+    file_company, monkeypatch
+):
+    """W-71: recurring invoices had no claim, so two generations at once
+    each invoiced the same period. Enter now on the same installment from
+    two windows at once: one 200, one 409 "That installment was just
+    generated", and one invoice."""
+    from app.routes import recurring as recurring_routes
+
+    client, Session, ids = file_company
+    r = client.post("/api/customers", json={"name": "Riverbend Dental"})
+    assert r.status_code == 201, r.text
+    rec_id = _recurring_invoice(client, r.json()["id"], start="2026-01-01")
+    _installment_claimed_after_both_read(monkeypatch)
+
+    def click():
+        with Session() as db:
+            return recurring_routes.generate_one(
+                rec_id, dated=None, occurrence=date(2026, 1, 1), db=db
+            )
+
+    a, b = _race(click, click)
+    assert sorted(_outcome(x) for x in (a, b)) == ["200", "409"], (a, b)
+    refused = a if isinstance(a, HTTPException) else b
+    assert refused.detail.startswith("That installment was just generated")
+    assert "the schedule for Riverbend Dental was due 2026-01-01" in refused.detail
+    assert "its next due date is now 2026-02-01" in refused.detail
+    won = b if refused is a else a
+    assert won["invoices_created"] == 1 and won["next_due"] == date(2026, 2, 1)
+    _one_invoice_made_once(Session, rec_id)
+
+
+def test_two_generations_at_once_invoice_a_period_once(file_company, monkeypatch):
+    """W-71: two runs of Generate (or Enter All Due, or the cron script) at
+    once. Whichever claims the installment first makes the invoice; the
+    other finds the schedule moved on and leaves it, without calling it
+    skipped and without an error."""
+    client, Session, ids = file_company
+    r = client.post("/api/customers", json={"name": "Riverbend Dental"})
+    rec_id = _recurring_invoice(client, r.json()["id"], start="2026-01-01")
+    _installment_claimed_after_both_read(monkeypatch)
+    skips: list = [[], []]
+
+    def generate(i):
+        def run():
+            with Session() as db:
+                return recurring_service.generate_due_invoices(
+                    db, date(2026, 1, 15), skipped=skips[i]
+                )
+
+        return run
+
+    a, b = _race(generate(0), generate(1))
+    assert isinstance(a, list) and isinstance(b, list), (a, b)
+    assert sorted([len(a), len(b)]) == [0, 1] and skips == [[], []]
+    _one_invoice_made_once(Session, rec_id)
+
+
+def test_a_stale_recurring_installment_is_refused(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-71 with W-75's occurrence: the page showed January, and January
+    was generated meanwhile. Enter now for January, dated its date or
+    today, is a 409 and makes nothing; the installment the page shows now
+    is made, and an API caller that names none gets the next due date."""
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    r = client.post("/api/recurring/generate?as_of=2026-01-15")
+    assert r.json()["invoices_created"] == 1
+    for query in ("occurrence=2026-01-01", "occurrence=2026-01-01&dated=2026-01-20"):
+        r = client.post(f"/api/recurring/{rec_id}/generate?{query}")
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"].startswith("That installment was just generated")
+        assert "was due 2026-01-01 and its next due date is now 2026-02-01" in (
+            r.json()["detail"]
+        )
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 1
+    r = client.post(
+        f"/api/recurring/{rec_id}/generate?occurrence=2026-02-01&dated=2026-01-20"
+    )
+    assert r.status_code == 200, r.text
+    assert (
+        r.json()["occurrence"] == "2026-02-01" and r.json()["next_due"] == "2026-03-01"
+    )
+    inv = db_session.get(Invoice, r.json()["invoice_ids"][0])
+    assert inv.date == date(2026, 1, 20)
+    r = client.post(f"/api/recurring/{rec_id}/generate")
+    assert r.status_code == 200 and r.json()["occurrence"] == "2026-03-01"
+    row = client.get("/api/memorized?kind=invoice").json()[0]
+    assert row["entered_count"] == 3 and row["next_date"] == "2026-04-01"
+
+
+def test_a_locked_file_while_generating_is_a_409_and_a_skip(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    """W-71: SQLite's "database is locked" at the claim is a clean 409 on
+    Enter now and a named skip in Generate, never a 500, nothing posted and
+    the schedule where it was."""
+    from sqlalchemy.orm import Query
+
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+
+    def locked(self, *args, **kw):
+        raise OperationalError(
+            "UPDATE recurring_invoices ...",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(Query, "update", locked)
+    r = client.post(f"/api/recurring/{rec_id}/generate")
+    assert r.status_code == 409, r.text
+    assert "still being saved" in r.json()["detail"]
+    r = client.post("/api/recurring/generate?as_of=2026-01-15")
+    assert r.status_code == 200, r.text
+    assert r.json()["invoices_created"] == 0
+    (skip,) = r.json()["skipped"]
+    assert skip["recurring_id"] == rec_id and "still being saved" in skip["message"]
+    monkeypatch.undo()
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0
+    got = client.get(f"/api/recurring/{rec_id}").json()
+    assert got["next_due"] == "2026-01-01" and got["invoices_created"] == 0
+
+
+def test_the_comments_and_the_page_say_both_kinds_are_claimed():
+    """W-71: the scheduler's and the cron script's notes said no occurrence
+    could be entered twice, which held for memorized ones only; both name
+    both claims now. The page sends the installment it showed."""
+    note = " ".join(
+        (ROOT / "app/services/scheduler.py").read_text(encoding="utf-8").split()
+    )
+    assert "memorized_service.claim_occurrence" in note
+    assert "recurring_service.claim_installment" in note
+    script = " ".join(RUN_RECURRING.read_text(encoding="utf-8").split())
+    assert (
+        "a memorized occurrence and a recurring invoice's installment are each "
+        "claimed in the database before anything is posted" in script
+    )
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "occurrence ? `occurrence=${occurrence}` : ''" in js
+    assert "API.post(`/recurring/${id}/generate` + (query ? `?${query}` : ''))" in js

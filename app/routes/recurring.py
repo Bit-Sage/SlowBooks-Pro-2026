@@ -20,6 +20,7 @@ from app.services.jobs_service import (
     refuse_other_customers_jobs_on_edit,
 )
 from app.services.recurring_service import (
+    InstallmentTaken,
     generate_due_invoices,
     roll_next_due_forward,
 )
@@ -216,14 +217,25 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{rec_id}/generate")
 def generate_one(
-    rec_id: int, dated: date = Query(default=None), db: Session = Depends(get_db)
+    rec_id: int,
+    dated: date = Query(default=None),
+    occurrence: date = Query(default=None),
+    db: Session = Depends(get_db),
 ):
-    """Enter this one schedule's next installment now (#605, the Memorized
-    transactions page's Enter now), due or not, dated its scheduled date
-    or `dated`; the schedule moves on from the scheduled date."""
+    """Enter this one schedule's installment now (#605, the Memorized
+    transactions page's Enter now), due or not: `occurrence`, the
+    installment the page showed (the next due date when not sent), dated
+    its scheduled date or `dated`; the schedule moves on from the scheduled
+    date. The installment is claimed before anything posts, so one that is
+    no longer the next (generated meanwhile by another window, Generate or
+    Enter All Due, or the schedule edited) is a 409, "That installment was
+    just generated", and nothing is created (2.31.1 gate W-71)."""
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    asked = occurrence or rec.next_due
+    if asked != rec.next_due:
+        raise InstallmentTaken(rec, asked)
     # Ended before paused (2.31.1 gate W-64): the generator marks a schedule
     # past its end date inactive, so the paused sentence fired for one that
     # had ended, and resuming it would not have helped.
@@ -246,7 +258,12 @@ def generate_one(
         )
     skipped: list = []
     created_ids = generate_due_invoices(
-        db, rec.next_due, skipped=skipped, only_id=rec.id, dated=dated
+        db,
+        rec.next_due,
+        skipped=skipped,
+        only_id=rec.id,
+        dated=dated,
+        occurrence=asked,
     )
     if skipped:
         raise HTTPException(status_code=409, detail=skipped[0]["message"])
@@ -262,6 +279,7 @@ def generate_one(
     return {
         "invoices_created": len(created_ids),
         "invoice_ids": created_ids,
+        "occurrence": asked,
         "next_due": rec.next_due,
         "skipped": skipped,
     }
@@ -271,7 +289,10 @@ def generate_one(
 def generate_now(as_of: date = Query(default=None), db: Session = Depends(get_db)):
     """Manually trigger generation of all due recurring invoices — one
     installment per template per call. `as_of` (default today) lets a
-    catch-up or a test run generate a past installment deterministically."""
+    catch-up or a test run generate a past installment deterministically.
+    Each installment is claimed before it posts, so two at once never
+    invoice one period twice; a schedule another generation holds is
+    skipped and named."""
     skipped: list = []
     created_ids = generate_due_invoices(db, as_of, skipped=skipped)
     return {

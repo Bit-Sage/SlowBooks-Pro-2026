@@ -7,8 +7,9 @@ Add to crontab: 0 6 * * * cd /path/to/bookkeeper && python3 scripts/run_recurrin
 
 The app does this by itself when it opens and once a day while it runs
 (app/services/scheduler.py, the auto_enter_on_open setting); this script is
-for a server install, and can run beside the app: an occurrence is claimed
-in the database before it is posted, so neither enters one twice.
+for a server install, and can run beside the app: a memorized occurrence and
+a recurring invoice's installment are each claimed in the database before
+anything is posted, so neither enters one twice.
 """
 
 import sys

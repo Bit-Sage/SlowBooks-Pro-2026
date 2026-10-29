@@ -137,8 +137,12 @@ left open after that occurrence was entered elsewhere (another window, Enter
 All Due or the app's own run) is told so, with the schedule's next date, and
 posts nothing, rather than entering the next one early; dated today, it
 still enters that occurrence. The schedule is moved on in one guarded
-statement before anything posts. Enter now on an ended schedule says it has
-ended, paused or not. A memorized bill's number follows one rule: left blank, each bill is
+statement before anything posts, and a recurring invoice's installment is
+claimed the same way, so two generations at once (two windows, Generate,
+Enter All Due or the cron script) invoice a period once: Enter now on an
+installment just generated says so and makes nothing, and a run leaves it
+to the other. Enter now on an ended schedule says it has ended, paused or
+not. A memorized bill's number follows one rule: left blank, each bill is
 numbered the date and the vendor's initials, as Enter Bill numbers one; a
 number on the template is used as it is on the first bill and -2, -3 after
 that, since a vendor's bill number cannot repeat, which is why Memorize from

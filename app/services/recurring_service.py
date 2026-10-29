@@ -10,8 +10,9 @@ from decimal import Decimal
 from dateutil.relativedelta import relativedelta
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.models.recurring import RecurringInvoice
 from app.models.invoices import Invoice, InvoiceLine
@@ -191,15 +192,115 @@ def roll_next_due_forward(
     return d
 
 
+def _who(rec: RecurringInvoice) -> str:
+    return rec.customer.name if rec.customer else f"schedule {rec.id}"
+
+
+def _locked(exc: OperationalError) -> bool:
+    """SQLite's "database is locked": another write held the file past the
+    busy timeout."""
+    return "locked" in str(getattr(exc, "orig", exc)).lower()
+
+
+class InstallmentTaken(HTTPException):
+    """The installment asked for is no longer the schedule's next one: it
+    was generated between the read and the claim (another window's Enter
+    now, Generate, Enter All Due or the cron script), or the page that asked
+    was showing a date the schedule has since moved on from. 409, nothing
+    created; the sentence names the installment and the schedule as it now
+    stands (2.31.1 gate W-71)."""
+
+    def __init__(self, rec: RecurringInvoice, occurrence: date):
+        ended = bool(rec.end_date and rec.next_due > rec.end_date)
+        now = (
+            "it has ended"
+            if ended
+            else f"its next due date is now {rec.next_due.isoformat()}"
+        )
+        super().__init__(
+            status_code=409,
+            detail=(
+                "That installment was just generated (by another window, "
+                "Generate or Enter All Due) or the schedule was changed, so "
+                f"nothing was created: the schedule for {_who(rec)} was due "
+                f"{occurrence.isoformat()} and {now}."
+            ),
+        )
+
+
+class InstallmentBusy(HTTPException):
+    """SQLite's "database is locked" while claiming an installment: a clean
+    409 that says to try again, never a 500."""
+
+    def __init__(self, rec: RecurringInvoice):
+        super().__init__(
+            status_code=409,
+            detail=(
+                f"Another installment of the schedule for {_who(rec)} is still "
+                "being saved. Wait a moment and try again."
+            ),
+        )
+
+
+def claim_installment(db: Session, rec: RecurringInvoice, expected: date) -> date:
+    """Move the schedule past `expected` in one statement that succeeds only
+    while that date is still its next due date, as memorized_service's
+    claim_occurrence does for a memorized schedule (2.31.1 gate W-71: two
+    generations at once each read the same next due date and each invoiced
+    the period). The database does the check: the second UPDATE waits for
+    the first to commit and then matches no row, on SQLite and PostgreSQL
+    alike. The count of invoices made moves with it. Raises InstallmentTaken
+    when the row had already moved on and InstallmentBusy when SQLite would
+    not give the write lock in time. It has to be the first statement of its
+    transaction (or SAVEPOINT): after a read there, SQLite cannot wait for
+    the lock and answers "database is locked" at once."""
+    following = _advance_next_due(expected, rec.frequency)
+    try:
+        moved = (
+            db.query(RecurringInvoice)
+            .filter(
+                RecurringInvoice.id == rec.id,
+                RecurringInvoice.next_due == expected,
+            )
+            .update(
+                {
+                    RecurringInvoice.next_due: following,
+                    RecurringInvoice.invoices_created: (
+                        func.coalesce(RecurringInvoice.invoices_created, 0) + 1
+                    ),
+                },
+                synchronize_session=False,
+            )
+        )
+    except OperationalError as e:
+        if _locked(e):
+            raise InstallmentBusy(rec) from e
+        raise
+    db.expire(rec, ["next_due", "invoices_created"])
+    if moved != 1:
+        db.refresh(rec)
+        raise InstallmentTaken(rec, expected)
+    return expected
+
+
 def generate_due_invoices(
     db: Session,
     as_of: date = None,
     skipped: list | None = None,
     only_id: int | None = None,
     dated: date | None = None,
+    occurrence: date | None = None,
 ) -> list[int]:
-    """Generate all invoices that are due on or before as_of date.
-    Returns list of created invoice IDs.
+    """Generate the next installment of every schedule due on or before
+    as_of: one installment per schedule per call (a run that catches up
+    calls again until nothing is generated, scheduler.catch_up_recurring).
+    Returns the ids of the invoices created.
+
+    Each installment is claimed before anything is posted (claim_installment)
+    and committed as it is made, so two generations at once never invoice the
+    same period twice: the second finds the schedule moved on and leaves it,
+    and a locked file skips the schedule with a sentence rather than failing
+    the run (2.31.1 gate W-71).
 
     A template whose lines add up to $0.00 (one saved before the routes
     refused them) generates nothing and keeps its date, so it catches up
@@ -209,8 +310,10 @@ def generate_due_invoices(
 
     `only_id` generates that one template's next installment whether or
     not it is due yet (Enter now on the Memorized transactions page, #605),
-    dated its scheduled date, or `dated` when given; the schedule advances
-    from the scheduled date either way."""
+    or `occurrence`, the installment the page showed, dated its scheduled
+    date, or `dated` when given; the schedule advances from the scheduled
+    date either way. For `only_id`, an installment taken meanwhile, a locked
+    file or a refusal is raised (a 409 or the refusal) instead of skipped."""
     from app.services.donor_documents import document_label
     from app.services.terminology import terms_from_db
 
@@ -221,6 +324,8 @@ def generate_due_invoices(
     nonprofit = is_nonprofit(db)
     if as_of is None:
         as_of = date.today()
+    if skipped is None:
+        skipped = []
 
     if only_id is not None:
         recurrings = (
@@ -233,21 +338,37 @@ def generate_due_invoices(
                 RecurringInvoice.is_active,
                 RecurringInvoice.next_due <= as_of,
             )
+            .order_by(RecurringInvoice.next_due, RecurringInvoice.id)
             .all()
         )
 
     created_ids = []
-    ar_id = get_ar_account_id(db)
-    default_income_id = get_default_income_account_id(db)
-    tax_account_id = get_sales_tax_account_id(db)
+    accounts = (
+        get_ar_account_id(db),
+        get_default_income_account_id(db),
+        get_sales_tax_account_id(db),
+    )
 
     for rec in recurrings:
         # Check end date
         if rec.end_date and rec.next_due > rec.end_date:
             rec.is_active = False
+            try:
+                db.commit()
+            except OperationalError as e:
+                # only the Active flag; the next run sets it
+                if not _locked(e):
+                    raise
+                db.rollback()
             continue
+        # The installment: the one the page showed, or the next due date
+        expected = (
+            occurrence
+            if (occurrence is not None and only_id is not None)
+            else rec.next_due
+        )
         # The invoice's date: the scheduled one, or the day Enter now asked for
-        on = dated if (dated is not None and only_id is not None) else rec.next_due
+        on = dated if (dated is not None and only_id is not None) else expected
 
         # Compute totals via the shared helper: each line is rounded to 2dp
         # before summing so the stored subtotal matches the sum of stored
@@ -258,19 +379,17 @@ def generate_due_invoices(
         copied = taxed_copy_lines(rec.lines, rec.customer)
         subtotal, tax_amount, total = compute_line_totals(copied, tax_rate)
         if total <= 0:
-            if skipped is not None:
-                who = rec.customer.name if rec.customer else f"schedule {rec.id}"
-                skipped.append(
-                    {
-                        "recurring_id": rec.id,
-                        "customer_name": rec.customer.name if rec.customer else None,
-                        "message": (
-                            f"The schedule for {who} adds up to $0.00, so "
-                            "nothing was created. Open it and enter a rate "
-                            "on at least one line."
-                        ),
-                    }
-                )
+            skipped.append(
+                {
+                    "recurring_id": rec.id,
+                    "customer_name": rec.customer.name if rec.customer else None,
+                    "message": (
+                        f"The schedule for {_who(rec)} adds up to $0.00, so "
+                        "nothing was created. Open it and enter a rate "
+                        "on at least one line."
+                    ),
+                }
+            )
             continue
 
         # One template whose installment lands in a closed period must not
@@ -285,166 +404,264 @@ def generate_due_invoices(
         except HTTPException as e:
             if e.status_code != 403:
                 raise
-            if skipped is not None:
-                who = rec.customer.name if rec.customer else f"schedule {rec.id}"
-                skipped.append(
-                    {
-                        "recurring_id": rec.id,
-                        "customer_name": rec.customer.name if rec.customer else None,
-                        "message": (
-                            f"The schedule for {who} is due {on}, which "
-                            "is on or before the closing date, so nothing was "
-                            "created. Move the closing date, or clear and re-tick "
-                            "Active to roll the next due date forward past it."
-                        ),
-                    }
-                )
-            continue
-
-        # Parse terms for due date
-        due_date = on + timedelta(days=30)
-        if rec.terms:
-            try:
-                days = int(rec.terms.lower().replace("net ", ""))
-                due_date = on + timedelta(days=days)
-            except ValueError:
-                pass
-
-        # MAX+1 numbering races against concurrent manual creates (same as
-        # the invoices route). Retry under a SAVEPOINT so a collision rolls
-        # back only this attempt — not the other invoices already generated
-        # in this batch — and a template that can't get a number is simply
-        # left for the next run instead of aborting the whole batch.
-        # The invoice carries the schedule's customer's job only: another
-        # customer's job stored on the schedule (books from before the
-        # rule) is left off rather than minted again every period, and the
-        # invoice is still generated (NEW-36).
-        left_off: list[str] = []
-        job_id = own_job(db, rec.customer_id, rec.job_id, left_off)
-        if left_off:
-            logger.warning(
-                "Recurring invoice %s for %s: job %s belongs to a different "
-                "customer and was left off the generated invoice",
-                rec.id,
-                rec.customer.name if rec.customer else rec.customer_id,
-                ", ".join(left_off),
-            )
-
-        invoice = None
-        invoice_number = None
-        for _ in range(10):
-            invoice_number = next_invoice_number(db)
-            candidate = Invoice(
-                invoice_number=invoice_number,
-                customer_id=rec.customer_id,
-                date=on,
-                due_date=due_date,
-                terms=rec.terms,
-                subtotal=subtotal,
-                tax_rate=tax_rate,
-                tax_amount=tax_amount,
-                total=total,
-                balance_due=total,
-                notes=rec.notes,
-                class_id=rec.class_id,
-                job_id=job_id,
-                recurring_invoice_id=rec.id,
-                is_pledge=nonprofit,
-            )
-            nested = db.begin_nested()
-            db.add(candidate)
-            try:
-                db.flush()
-                nested.commit()
-                invoice = candidate
-                break
-            except IntegrityError as e:
-                nested.rollback()
-                if "invoice_number" not in str(e.orig).lower():
-                    raise
-        if invoice is None:
-            continue
-
-        for rline, cline in zip(rec.lines, copied):
-            db.add(
-                InvoiceLine(
-                    invoice_id=invoice.id,
-                    item_id=rline.item_id,
-                    description=rline.description,
-                    quantity=rline.quantity,
-                    rate=rline.rate,
-                    is_taxable=cline.is_taxable,
-                    amount=_q(Decimal(str(rline.quantity)) * Decimal(str(rline.rate))),
-                    line_order=rline.line_order,
-                )
-            )
-
-        # Journal entry
-        if ar_id and default_income_id:
-            journal_lines = [
+            skipped.append(
                 {
-                    "account_id": ar_id,
-                    "debit": total,
-                    "credit": Decimal("0"),
-                    "description": f"Recurring {document_label(candidate, words)} #{invoice_number}",
+                    "recurring_id": rec.id,
+                    "customer_name": rec.customer.name if rec.customer else None,
+                    "message": (
+                        f"The schedule for {_who(rec)} is due {on}, which "
+                        "is on or before the closing date, so nothing was "
+                        "created. Move the closing date, or clear and re-tick "
+                        "Active to roll the next due date forward past it."
+                    ),
                 }
-            ]
-            for rline in rec.lines:
-                # Must round per-line BEFORE summing to match compute_line_totals;
-                # otherwise stored credits drift from the rounded A/R debit.
-                line_amt = _q(Decimal(str(rline.quantity)) * Decimal(str(rline.rate)))
-                if line_amt == 0:
-                    continue
-                income_id = default_income_id
-                if rline.item_id:
-                    item = db.query(Item).filter(Item.id == rline.item_id).first()
-                    if item and item.income_account_id:
-                        income_id = item.income_account_id
-                journal_lines.append(
-                    {
-                        "account_id": income_id,
-                        "debit": Decimal("0"),
-                        "credit": line_amt,
-                        "description": rline.description or "",
-                    }
-                )
-            if tax_amount > 0 and tax_account_id:
-                journal_lines.append(
-                    {
-                        "account_id": tax_account_id,
-                        "debit": Decimal("0"),
-                        "credit": tax_amount,
-                        "description": "Sales tax",
-                    }
-                )
-            txn = create_journal_entry(
-                db,
-                on,
-                f"Recurring {document_label(candidate, words)} #{invoice_number}",
-                journal_lines,
-                source_type="invoice",
-                source_id=invoice.id,
-                reference=invoice_number,
-                class_id=invoice.class_id,
-                job_id=invoice.job_id,
             )
-            invoice.transaction_id = txn.id
+            continue
 
-        # Phase 11 (audit fix): recurring-generated invoices are real sales
-        # and must hit the inventory ledger.
-        db.flush()
-        db.refresh(invoice)
-        from app.services.inventory_hooks import post_sale_for_invoice
-
-        post_sale_for_invoice(db, invoice, txn_date=on)
-
-        # Advance next due date
-        rec.next_due = _advance_next_due(rec.next_due, rec.frequency)
-        rec.invoices_created += 1
-        if rec.end_date and rec.next_due > rec.end_date:
-            rec.is_active = False
-
+        # The claim first, as the SAVEPOINT's first statement (claim_installment
+        # says why), then the posting; a refusal part way unwinds both, and the
+        # installment is committed as it is made.
+        nested = db.begin_nested()
+        try:
+            claim_installment(db, rec, expected)
+            invoice = _post_installment(
+                db,
+                rec,
+                on,
+                copied,
+                (subtotal, tax_amount, total),
+                accounts,
+                words,
+                nonprofit,
+                document_label,
+            )
+        except InstallmentTaken:
+            nested.rollback()
+            db.commit()
+            if only_id is not None:
+                raise
+            # generated by another window or run meanwhile: left to it
+            continue
+        except (InstallmentBusy, OperationalError) as e:
+            nested.rollback()
+            if isinstance(e, OperationalError) and not _locked(e):
+                raise
+            db.commit()
+            if only_id is not None:
+                raise e if isinstance(e, InstallmentBusy) else InstallmentBusy(rec)
+            skipped.append(
+                {
+                    "recurring_id": rec.id,
+                    "customer_name": rec.customer.name if rec.customer else None,
+                    "message": (
+                        f"The schedule for {_who(rec)} (due {on}) was not "
+                        "generated this time: another installment of it was "
+                        "still being saved. Run it again in a moment."
+                    ),
+                }
+            )
+            continue
+        except HTTPException as e:
+            nested.rollback()
+            db.commit()
+            if only_id is not None:
+                raise
+            skipped.append(
+                {
+                    "recurring_id": rec.id,
+                    "customer_name": rec.customer.name if rec.customer else None,
+                    "message": (
+                        f"The schedule for {_who(rec)} (due {on}) was not "
+                        f"generated: {e.detail}"
+                    ),
+                }
+            )
+            continue
+        except Exception:
+            nested.rollback()
+            raise
+        if invoice is None:
+            nested.rollback()
+            db.commit()
+            skipped.append(
+                {
+                    "recurring_id": rec.id,
+                    "customer_name": rec.customer.name if rec.customer else None,
+                    "message": (
+                        f"The schedule for {_who(rec)} (due {on}) was not "
+                        "generated: no invoice number was free after 10 tries, "
+                        "because other invoices were being numbered at the same "
+                        "time. Try again."
+                    ),
+                }
+            )
+            continue
+        nested.commit()
+        db.commit()
         created_ids.append(invoice.id)
 
     db.commit()
     return created_ids
+
+
+def _post_installment(
+    db: Session,
+    rec: RecurringInvoice,
+    on: date,
+    copied,
+    totals,
+    accounts,
+    words,
+    nonprofit: bool,
+    document_label,
+):
+    """The invoice for one claimed installment, dated `on`, with its lines,
+    its journal entry and its stock; None when no invoice number could be
+    had (the caller unwinds the claim). The schedule was already moved on
+    by the claim; a schedule that has now passed its end date is marked
+    inactive."""
+    subtotal, tax_amount, total = totals
+    ar_id, default_income_id, tax_account_id = accounts
+    tax_rate = rec.tax_rate or Decimal("0")
+
+    # Parse terms for due date
+    due_date = on + timedelta(days=30)
+    if rec.terms:
+        try:
+            days = int(rec.terms.lower().replace("net ", ""))
+            due_date = on + timedelta(days=days)
+        except ValueError:
+            pass
+
+    # MAX+1 numbering races against concurrent manual creates (same as
+    # the invoices route). Retry under a SAVEPOINT so a collision rolls
+    # back only this attempt, and a template that can't get a number is
+    # left for the next run instead of aborting the whole batch.
+    # The invoice carries the schedule's customer's job only: another
+    # customer's job stored on the schedule (books from before the
+    # rule) is left off rather than minted again every period, and the
+    # invoice is still generated (NEW-36).
+    left_off: list[str] = []
+    job_id = own_job(db, rec.customer_id, rec.job_id, left_off)
+    if left_off:
+        logger.warning(
+            "Recurring invoice %s for %s: job %s belongs to a different "
+            "customer and was left off the generated invoice",
+            rec.id,
+            rec.customer.name if rec.customer else rec.customer_id,
+            ", ".join(left_off),
+        )
+
+    invoice = None
+    invoice_number = None
+    for _ in range(10):
+        invoice_number = next_invoice_number(db)
+        candidate = Invoice(
+            invoice_number=invoice_number,
+            customer_id=rec.customer_id,
+            date=on,
+            due_date=due_date,
+            terms=rec.terms,
+            subtotal=subtotal,
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
+            total=total,
+            balance_due=total,
+            notes=rec.notes,
+            class_id=rec.class_id,
+            job_id=job_id,
+            recurring_invoice_id=rec.id,
+            is_pledge=nonprofit,
+        )
+        nested = db.begin_nested()
+        db.add(candidate)
+        try:
+            db.flush()
+            nested.commit()
+            invoice = candidate
+            break
+        except IntegrityError as e:
+            nested.rollback()
+            if "invoice_number" not in str(e.orig).lower():
+                raise
+    if invoice is None:
+        return None
+
+    for rline, cline in zip(rec.lines, copied):
+        db.add(
+            InvoiceLine(
+                invoice_id=invoice.id,
+                item_id=rline.item_id,
+                description=rline.description,
+                quantity=rline.quantity,
+                rate=rline.rate,
+                is_taxable=cline.is_taxable,
+                amount=_q(Decimal(str(rline.quantity)) * Decimal(str(rline.rate))),
+                line_order=rline.line_order,
+            )
+        )
+
+    # Journal entry
+    if ar_id and default_income_id:
+        journal_lines = [
+            {
+                "account_id": ar_id,
+                "debit": total,
+                "credit": Decimal("0"),
+                "description": f"Recurring {document_label(invoice, words)} #{invoice_number}",
+            }
+        ]
+        for rline in rec.lines:
+            # Must round per-line BEFORE summing to match compute_line_totals;
+            # otherwise stored credits drift from the rounded A/R debit.
+            line_amt = _q(Decimal(str(rline.quantity)) * Decimal(str(rline.rate)))
+            if line_amt == 0:
+                continue
+            income_id = default_income_id
+            if rline.item_id:
+                item = db.query(Item).filter(Item.id == rline.item_id).first()
+                if item and item.income_account_id:
+                    income_id = item.income_account_id
+            journal_lines.append(
+                {
+                    "account_id": income_id,
+                    "debit": Decimal("0"),
+                    "credit": line_amt,
+                    "description": rline.description or "",
+                }
+            )
+        if tax_amount > 0 and tax_account_id:
+            journal_lines.append(
+                {
+                    "account_id": tax_account_id,
+                    "debit": Decimal("0"),
+                    "credit": tax_amount,
+                    "description": "Sales tax",
+                }
+            )
+        txn = create_journal_entry(
+            db,
+            on,
+            f"Recurring {document_label(invoice, words)} #{invoice_number}",
+            journal_lines,
+            source_type="invoice",
+            source_id=invoice.id,
+            reference=invoice_number,
+            class_id=invoice.class_id,
+            job_id=invoice.job_id,
+        )
+        invoice.transaction_id = txn.id
+
+    # Phase 11 (audit fix): recurring-generated invoices are real sales
+    # and must hit the inventory ledger.
+    db.flush()
+    db.refresh(invoice)
+    from app.services.inventory_hooks import post_sale_for_invoice
+
+    post_sale_for_invoice(db, invoice, txn_date=on)
+
+    # the claim moved the schedule on; past its end date, it stops
+    if rec.end_date and rec.next_due > rec.end_date:
+        rec.is_active = False
+    db.flush()
+    return invoice
