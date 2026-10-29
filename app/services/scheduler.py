@@ -37,8 +37,11 @@ _RUN_LOCK = threading.RLock()
 _last_run: dict | None = None
 
 # A recurring invoice schedule is generated one installment per pass; a run
-# makes passes until nothing is due, this many at most.
-PASS_LIMIT = 1000
+# makes passes until a pass generates nothing (2.31.1 gate W-81: a fixed
+# 1,000 passes left a longer backlog for a second run). The cap is a safety
+# net no real backlog meets (a daily schedule some 270 years behind);
+# reached, it is logged and what is still due waits for the next run.
+PASS_SAFETY_CAP = 100_000
 # How often the task looks at the calendar. A change of day runs the
 # schedules, so a machine asleep over midnight catches up on waking.
 POLL_SECONDS = 15 * 60
@@ -47,34 +50,62 @@ POLL_SECONDS = 15 * 60
 ENV_SWITCH = "SLOWBOOKS_AUTO_ENTER"
 
 
+def catch_up_recurring(
+    db: Session, as_of: date | None = None
+) -> tuple[list[int], list[dict]]:
+    """Every due recurring invoice, every missed installment up to as_of
+    (today), each dated its scheduled date: one installment per schedule
+    per pass, passes until one generates nothing. What Enter All Due does
+    and what the cron script does, so the two agree (W-81). Returns the
+    invoices made and the schedules skipped, each named once."""
+    if as_of is None:
+        as_of = date.today()
+    invoice_ids: list[int] = []
+    skipped: list[dict] = []
+    seen: set = set()
+    passes = 0
+    while True:
+        this_pass: list[dict] = []
+        ids = recurring_service.generate_due_invoices(db, as_of, skipped=this_pass)
+        # a schedule skipped for a closed period keeps its date and is
+        # skipped on every pass: reported once
+        for item in this_pass:
+            key = item.get("recurring_id")
+            if key not in seen:
+                seen.add(key)
+                skipped.append(item)
+        if not ids:
+            break
+        invoice_ids.extend(ids)
+        passes += 1
+        if passes >= PASS_SAFETY_CAP:
+            logger.warning(
+                "the recurring invoice catch-up stopped after %d passes (%d "
+                "invoices); what is still due is generated on the next run",
+                passes,
+                len(invoice_ids),
+            )
+            break
+    return invoice_ids, skipped
+
+
 def run_due_schedules(
     db: Session, as_of: date | None = None, include_recurring: bool = True
 ) -> dict:
     """What one run does, on the session given, under the lock: every due
     auto-enter memorized bill and journal entry (every missed occurrence, in
     date order) and, when include_recurring (Enter All Due, pressed by a
-    person), every due recurring invoice (every missed installment, a pass
-    each), up to as_of (today). The automatic runs pass include_recurring
-    False. Returns what it entered and what it had to skip."""
+    person), every due recurring invoice (every missed installment,
+    catch_up_recurring), up to as_of (today). The automatic runs pass
+    include_recurring False. Returns what it entered and what it had to
+    skip."""
     with _RUN_LOCK:
         if as_of is None:
             as_of = date.today()
         invoice_ids: list[int] = []
         invoice_skipped: list[dict] = []
-        seen: set = set()
-        for _ in range(PASS_LIMIT if include_recurring else 0):
-            this_pass: list[dict] = []
-            ids = recurring_service.generate_due_invoices(db, as_of, skipped=this_pass)
-            # a schedule skipped for a closed period keeps its date and is
-            # skipped on every pass: reported once
-            for item in this_pass:
-                key = item.get("recurring_id")
-                if key not in seen:
-                    seen.add(key)
-                    invoice_skipped.append(item)
-            if not ids:
-                break
-            invoice_ids.extend(ids)
+        if include_recurring:
+            invoice_ids, invoice_skipped = catch_up_recurring(db, as_of)
         held: list[dict] = []
         entered = memorized_service.enter_due_memorized(db, as_of, skipped=held)
         return {

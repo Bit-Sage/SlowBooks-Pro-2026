@@ -160,6 +160,20 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
     # occurrence on or after today; missed periods are skipped, not billed.
     if changes.get("is_active") and not was_active:
         rec.next_due = roll_next_due_forward(rec.next_due, rec.frequency, date.today())
+        # Ticking Active on a schedule past its end date did nothing but
+        # answer 200 (2.31.1 gate W-81): it can never bill again until the
+        # end date moves, so say so. An end date cleared or moved past the
+        # next due date in the same request is what makes it active again.
+        if rec.end_date and rec.next_due > rec.end_date:
+            ended_on = rec.end_date
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This schedule has ended: its end date was "
+                    f"{ended_on.isoformat()}; move or clear the end date first."
+                ),
+            )
 
     if data.lines is not None:
         db.query(RecurringInvoiceLine).filter(

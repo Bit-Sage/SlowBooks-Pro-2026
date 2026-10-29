@@ -396,10 +396,17 @@ def resume_memorized(
 ):
     """Resume: the next date rolls forward to the first occurrence on or
     after today, so the months it sat paused are skipped, not entered late
-    (as a re-activated recurring invoice skips its missed periods)."""
+    (as a re-activated recurring invoice skips its missed periods). One
+    that has ended, or would on resuming, is a 409 with the ended sentence
+    and stays as it was, as re-ticking Active on an ended recurring invoice
+    is (2.31.1 gate W-81)."""
     mem = _get(db, mem_id)
     mem.is_active = True
     roll_forward(mem, as_of or date.today())
+    if has_ended(mem):
+        sentence = ended_sentence(mem)
+        db.rollback()
+        raise HTTPException(status_code=409, detail=sentence)
     db.commit()
     db.refresh(mem)
     return _response(mem)

@@ -2130,3 +2130,168 @@ def test_a_run_that_only_skipped_says_what_could_not_be_entered():
     )
     assert both["toasts"] == ["Entered 1 scheduled document while you were away"]
     assert got["neither"]["html"] == "" and got["again"]["html"] == ""
+
+
+def test_a_recurring_backlog_past_a_thousand_is_caught_up_in_one_run(
+    monkeypatch, caplog
+):
+    """W-81: a run made at most 1,000 passes, one installment per schedule
+    each, so a longer backlog needed a second run. It passes until a pass
+    generates nothing; the cap left is a safety net no backlog meets, and
+    reaching it is logged."""
+    due = {"left": 1500}
+
+    def one_more(db, as_of=None, skipped=None):
+        if not due["left"]:
+            return []
+        due["left"] -= 1
+        return [1500 - due["left"]]
+
+    monkeypatch.setattr(recurring_service, "generate_due_invoices", one_more)
+    monkeypatch.setattr(
+        memorized_service, "enter_due_memorized", lambda db, as_of, skipped: []
+    )
+    run = scheduler.run_due_schedules(None, date(2026, 3, 1))
+    assert run["invoices_created"] == 1500 and run["invoice_ids"][-1] == 1500
+    assert run["skipped"] == [] and due["left"] == 0
+    assert scheduler.PASS_SAFETY_CAP >= 100_000
+
+    monkeypatch.setattr(scheduler, "PASS_SAFETY_CAP", 5)
+    monkeypatch.setattr(
+        recurring_service, "generate_due_invoices", lambda db, as_of, skipped: [7]
+    )
+    with caplog.at_level("WARNING", logger="app.services.scheduler"):
+        ids, _ = scheduler.catch_up_recurring(None, date(2026, 3, 1))
+    assert ids == [7] * 5
+    assert "stopped after 5 passes" in caplog.text
+
+
+def test_the_cron_script_catches_up_both_kinds_as_enter_all_due_does(
+    client, db_session, seed_accounts, seed_customer, TestSession, monkeypatch, capsys
+):
+    """W-81: the cron script generated one installment of each recurring
+    invoice per run but entered every missed memorized occurrence. It
+    catches up both, the way Enter All Due does (the same two steps), so a
+    server's cron and the button agree; the docstring and the docs say so."""
+    from datetime import timedelta
+
+    today = date.today()
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": seed_customer.id,
+            "frequency": "weekly",
+            "start_date": (today - timedelta(days=21)).isoformat(),
+            "lines": [{"description": "Weekly service", "quantity": 1, "rate": 25}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    rec_id = r.json()["id"]
+    mem = _bill_schedule(
+        client,
+        _vendor(client),
+        seed_accounts,
+        frequency="weekly",
+        start_date=(today - timedelta(days=14)).isoformat(),
+    )
+    monkeypatch.setattr(app.database, "SessionLocal", TestSession)
+    runpy.run_path(str(RUN_RECURRING), run_name="__main__")
+    out = capsys.readouterr().out
+    assert "Generated 4 invoice(s):" in out
+    assert "Entered 3 memorized transaction(s):" in out
+    db_session.expire_all()
+    made = db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).all()
+    assert sorted(i.date for i in made) == [
+        today - timedelta(days=d) for d in (21, 14, 7, 0)
+    ]
+    assert len(_bills(db_session)) == 3
+    assert client.get(f"/api/memorized/{mem['id']}").json()["entered_count"] == 3
+    # Enter All Due finds nothing left: the two did the same catch-up
+    again = client.post("/api/memorized/enter-due").json()
+    assert again["invoices_created"] == 0 and again["entered_count"] == 0
+
+    script = " ".join(RUN_RECURRING.read_text(encoding="utf-8").split())
+    assert "It catches up both kinds the way Enter All Due does" in script
+    assert "scheduler.catch_up_recurring(db)" in script
+    for doc in ("docs/features.md", "CHANGELOG.md"):
+        assert "catches up both kinds" in _words(doc), doc
+
+
+def test_ticking_active_on_an_ended_schedule_says_it_has_ended(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-81: re-ticking Active on a recurring invoice past its end date
+    answered 200 and changed nothing that mattered: it could never bill
+    again. It is a 409 with the ended sentence, the schedule as it was; an
+    end date cleared or moved past the next due date in the same request is
+    what brings it back. Resume on an ended memorized schedule the same."""
+
+    def ended_schedule():
+        r = client.post(
+            "/api/recurring",
+            json={
+                "customer_id": seed_customer.id,
+                "frequency": "monthly",
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+                "lines": [{"description": "Monthly", "quantity": 1, "rate": 100}],
+            },
+        )
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    rec_id = ended_schedule()
+    assert (
+        client.post("/api/recurring/generate?as_of=2026-03-01").json()[
+            "invoices_created"
+        ]
+        == 1
+    )
+    url = f"/api/recurring/{rec_id}"
+    before = client.get(url).json()
+    assert before["is_active"] is False and before["next_due"] == "2026-02-01"
+    sentence = (
+        "This schedule has ended: its end date was 2026-01-31; move or clear "
+        "the end date first."
+    )
+    form = {
+        "frequency": "monthly",
+        "end_date": "2026-01-31",
+        "terms": "Net 30",
+        "tax_rate": 0,
+        "notes": "ticked again",
+        "is_active": True,
+        "lines": [{"description": "Monthly", "quantity": 1, "rate": 100}],
+    }
+    for body in ({"is_active": True}, form, {**form, "end_date": "2026-01-15"}):
+        r = client.put(url, json=body)
+        assert r.status_code == 409, (body, r.text)
+        assert r.json()["detail"].startswith("This schedule has ended: its end date")
+        assert r.json()["detail"].endswith("move or clear the end date first.")
+    assert client.put(url, json={"is_active": True}).json()["detail"] == sentence
+    after = client.get(url).json()
+    assert after == before  # nothing changed, notes included
+    # an edit that does not tick Active is still an edit
+    r = client.put(url, json={"notes": "kept for the file"})
+    assert r.status_code == 200 and r.json()["is_active"] is False
+    # moving the end date in the same request brings it back
+    r = client.put(url, json={**form, "end_date": "2099-12-31"})
+    assert r.status_code == 200, r.text
+    assert r.json()["is_active"] is True
+    assert date.fromisoformat(r.json()["next_due"]) >= date.today()
+    # and so does clearing it
+    other = ended_schedule()
+    client.post("/api/recurring/generate?as_of=2026-03-01")
+    r = client.put(
+        f"/api/recurring/{other}", json={"is_active": True, "end_date": None}
+    )
+    assert r.status_code == 200 and r.json()["is_active"] is True, r.text
+
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, end_date="2026-01-31")
+    enter_due_memorized(db_session, as_of=date(2026, 3, 1))
+    assert client.post(f"/api/memorized/{mem['id']}/pause").status_code == 200
+    r = client.post(f"/api/memorized/{mem['id']}/resume")
+    assert r.status_code == 409, r.text
+    assert "has ended: its end date was 2026-01-31" in r.json()["detail"]
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["is_active"] is False and got["next_date"] == "2026-02-28"

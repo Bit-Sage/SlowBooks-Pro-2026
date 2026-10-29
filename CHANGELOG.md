@@ -127,11 +127,15 @@ Transactions page says what was entered while you were away (or, when a run
 entered nothing and had to skip something, what could not be entered and
 why), and a box under
 its list (on by default) turns the automatic runs off, for a server that runs
-`scripts/run_recurring.py` from cron instead. Recurring invoices are not
+`scripts/run_recurring.py` from cron instead; the script catches up both kinds
+the way Enter All Due does, every missed installment and occurrence, where it
+used to make one installment of each recurring invoice per run. Recurring
+invoices are not
 entered on their own: as before, they wait for Generate, Enter All Due or
 the server's cron, so a company upgrading with an overdue schedule finds no
 invoices it did not ask for. Enter All Due, pressed by you, enters every due
-schedule of both kinds, every missed date in order. In remind mode it waits on the
+schedule of both kinds, every missed date in order however far behind. In
+remind mode it waits on the
 due list until Enter now posts it, dated the scheduled date or today, and
 moves the schedule on. Enter now names the occurrence the page showed: two
 windows pressing it for the same occurrence post one document, and a page
@@ -144,7 +148,10 @@ claimed the same way, so two generations at once (two windows, Generate,
 Enter All Due or the cron script) invoice a period once: Enter now on an
 installment just generated says so and makes nothing, and a run leaves it
 to the other. Enter now on an ended schedule says it has ended, paused or
-not. A memorized bill's number follows one rule: left blank, each bill is
+not, and so do Resume on one and ticking Active again on a recurring invoice
+past its end date ("move or clear the end date first"); an edit that moves
+the end date past the next date, or clears it, in the same request goes
+through. A memorized bill's number follows one rule: left blank, each bill is
 numbered the date and the vendor's initials, as Enter Bill numbers one; a
 number on the template is used as it is on the first bill and -2, -3 after
 that, since a vendor's bill number cannot repeat, which is why Memorize from
