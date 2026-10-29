@@ -516,3 +516,70 @@ def test_the_sign_job_keeps_stapler_on_tcp():
     run = steps[guard]["run"]
     assert "block return out quick proto udp from any to any port 443" in run
     assert "sudo pfctl -f -" in run and "sudo pfctl -E" in run
+
+
+def test_hdiutil_create_retries_only_on_resource_busy(monkeypatch):
+    """GitHub's macOS runners fail hdiutil create with "Resource busy" now and
+    then right after a large copy (run 40800371868). The candidate DMG gets
+    a few tries on that error alone; any other failure raises at once."""
+    calls = []
+    slept = []
+    outcomes = ["busy", "busy", "ok"]
+
+    def fake_run(*args, check=True):
+        calls.append(args)
+        if outcomes.pop(0) == "busy":
+            raise subprocess.CalledProcessError(
+                1, args, output="", stderr="hdiutil: create failed - Resource busy\n"
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(release, "_run", fake_run)
+    monkeypatch.setattr(release, "_sleep", slept.append)
+    release._run_hdiutil_create("-volname", "SlowBooks Pro", "-ov", "x.dmg")
+    assert len(calls) == 3 and all(c[:2] == ("hdiutil", "create") for c in calls)
+    assert slept == [5, 10]
+
+    outcomes[:] = ["other"]
+    calls.clear()
+    slept.clear()
+
+    def fake_run_other(*args, check=True):
+        calls.append(args)
+        raise subprocess.CalledProcessError(
+            1, args, output="", stderr="no space left\n"
+        )
+
+    monkeypatch.setattr(release, "_run", fake_run_other)
+    with pytest.raises(subprocess.CalledProcessError):
+        release._run_hdiutil_create("-volname", "SlowBooks Pro", "-ov", "x.dmg")
+    assert len(calls) == 1 and slept == []
+
+    outcomes[:] = ["busy"] * release.HDIUTIL_ATTEMPTS
+    calls.clear()
+    slept.clear()
+    monkeypatch.setattr(release, "_run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        release._run_hdiutil_create("-volname", "SlowBooks Pro", "-ov", "x.dmg")
+    assert len(calls) == release.HDIUTIL_ATTEMPTS
+    assert len(slept) == release.HDIUTIL_ATTEMPTS - 1
+
+
+def test_the_build_job_retries_the_unsigned_dmg():
+    """The same flake in the build job's packaging step: sync first, then up
+    to five tries of hdiutil create before the step fails."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (MACOS_DIR.parent.parent / ".github/workflows/macos.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = workflow["jobs"]["build"]["steps"]
+    step = next(s for s in steps if "unsigned transport" in s.get("name", ""))
+    run = step["run"]
+    create = run.index("hdiutil create -volname")  # the command, not the comment
+    assert run.index("sync\n") < create
+    assert "for attempt in 1 2 3 4 5; do" in run
+    assert run.index("for attempt") < create
+    assert "hdiutil create failed 5 times" in run
