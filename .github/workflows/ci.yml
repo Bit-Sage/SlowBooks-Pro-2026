@@ -230,7 +230,11 @@ jobs:
           # 193 with the split expense's check stub test (#599,
           # test_register_check_print.py::test_a_split_expense_check_lists_each_line_on_the_stub,
           # which renders the check through WeasyPrint, not on the runner).
-          MAX_SKIPS: "193"
+          # 194 with the hide-zero-balances PDF test (#625,
+          # test_reports_hide_zero.py::test_the_pdf_takes_the_choice, WeasyPrint
+          # again; the other 2.31.0 tests run everywhere, the job-report
+          # local-day tests pin the zone without tzset on Windows).
+          MAX_SKIPS: "194"
         shell: pwsh
         run: |
           # -v names each test as it starts, so a mid-run death is identified
