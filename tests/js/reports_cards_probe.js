@@ -15,6 +15,8 @@ const ctx = {
   window: {},
   document: { querySelector: () => null, querySelectorAll: () => [] },
   escapeHtml: (s) => String(s ?? ''),
+  // utils.js's customerLabel (#638): "Parent: Sub" for a sub-customer
+  customerLabel: (c) => (c && (c.full_name || c.name)) || '',
   T: (s) => s,
   Terms: {
     text: (s) => s,

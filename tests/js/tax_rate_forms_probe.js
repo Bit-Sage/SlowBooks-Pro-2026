@@ -7,7 +7,7 @@ const fs = require('fs'), vm = require('vm');
 
 const given = JSON.parse(fs.readFileSync(0, 'utf8'));
 const answers = {
-  '/customers?active_only=true': [],
+  '/customers?active_only=true&tree=1': [],
   '/items?active_only=true': [],
   '/accounts': [],
   '/accounts?active_only=true': [],
@@ -32,6 +32,8 @@ const ctx = {
     querySelector: (sel) => els[sel] || null,
   },
   escapeHtml: (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+  // utils.js's customerLabel (#638): "Parent: Sub" for a sub-customer
+  customerLabel: (c) => (c && (c.full_name || c.name)) || '',
   accountWords: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); return a.account_number ? `${a.account_number}${sep}${n}` : n; },
   accountLabel: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); const w = a.account_number ? `${a.account_number}${sep}${n}` : n; return String(w).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); },
   formatCurrency: (n) => '$' + (Number(n) || 0).toFixed(2),

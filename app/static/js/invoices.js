@@ -657,7 +657,7 @@ const InvoicesPage = {
 
     async showForm(id = null, prefillCustomerId = null) {
         const [customers, items, settings, messages] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
             // the saved messages (#392); the form works without the list
@@ -696,7 +696,7 @@ const InvoicesPage = {
         InvoicesPage._items = items;
         InvoicesPage._customers = customers;
 
-        const custOpts = customers.map(c => `<option value="${c.id}" ${inv.customer_id==c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}" ${inv.customer_id==c.id?'selected':''}>${escapeHtml(customerLabel(c))}</option>`).join('');
 
         openModal(Terms.text(id ? 'Edit Invoice' : 'New Invoice'), `
             <form id="invoice-form" aria-labelledby="modal-title" data-skip-to="#inv-lines" data-skip-text="Skip to the line items" onsubmit="InvoicesPage.save(event, ${id})">

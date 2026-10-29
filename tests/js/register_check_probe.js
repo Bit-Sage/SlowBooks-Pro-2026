@@ -34,6 +34,8 @@ const ctx = {
   location: { hash: '#/' },
   document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], getElementById: () => null },
   escapeHtml: (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+  // utils.js's customerLabel (#638): "Parent: Sub" for a sub-customer
+  customerLabel: (c) => (c && (c.full_name || c.name)) || '',
   accountWords: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); return a.account_number ? `${a.account_number}${sep}${n}` : n; },
   accountLabel: (a, name = null, sep = ' - ') => { const n = name !== null ? name : (a.name || ''); const w = a.account_number ? `${a.account_number}${sep}${n}` : n; return String(w).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); },
   formatDate: (s) => s || '',

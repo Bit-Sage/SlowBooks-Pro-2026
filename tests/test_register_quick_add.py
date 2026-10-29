@@ -104,7 +104,9 @@ def test_the_payee_is_offered_by_the_money_side_and_checks_both_lists():
     )
     # both lists are loaded on the register and on the + Entry form
     assert "API.get('/vendors?active_only=true').catch(() => null)" in BANKING_JS
-    assert "API.get('/customers?active_only=true').catch(() => null)" in BANKING_JS
+    assert (
+        "API.get('/customers?active_only=true&tree=1').catch(() => null)" in BANKING_JS
+    )
 
     ask = BANKING_JS[BANKING_JS.index("payeeTyped(payee, moneyIn, returnFocusId) {") :]
     ask = ask[: ask.index("async addParty(name, moneyIn) {")]

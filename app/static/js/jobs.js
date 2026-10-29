@@ -1658,7 +1658,7 @@ const JobsPage = {
             contract_amount: '', notes: '', is_active: true };
         if (id) { try { job = await API.get(`/jobs/${id}`); } catch (err) { toast(err.message, 'error'); return; } }
         const customers = await JobsPage._pickerCustomers(job);
-        const custOpts = customers.map(c => `<option value="${c.id}" ${String(job.customer_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}" ${String(job.customer_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(customerLabel(c))}</option>`).join('');
         const statusOpts = Object.entries(JobsPage.STATUS_LABELS)
             .map(([k, v]) => `<option value="${k}" ${job.status === k ? 'selected' : ''}>${v}</option>`).join('');
         const html = `
@@ -1705,7 +1705,7 @@ const JobsPage = {
     // Center's, for a new job), so an edit never asks for a customer again.
     async _pickerCustomers(job) {
         let customers = [];
-        try { customers = await API.get('/customers?active_only=true'); } catch (e) { /* keep empty */ }
+        try { customers = await API.get('/customers?active_only=true&tree=1'); } catch (e) { /* keep empty */ }
         const own = job.customer_id ? String(job.customer_id) : '';
         if (own && !customers.some(c => String(c.id) === own)) {
             let name = job.customer_name;

@@ -41,6 +41,7 @@ ACTIVE = [["6", "Acme", False], ["7", "Bravo Bakery", False]]
 
 def test_no_picker_asks_for_every_customer_or_vendor(pickers):
     assert "/customers" not in pickers["asked"]
+    assert "/customers?tree=1" not in pickers["asked"]
     assert "/vendors" not in pickers["asked"]
 
 

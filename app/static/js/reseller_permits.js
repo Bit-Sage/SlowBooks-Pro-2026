@@ -16,12 +16,12 @@ const ResellerPermitsPage = {
     async render() {
         const [permits, customers, vendors, expiring] = await Promise.all([
             API.get('/reseller-permits'),
-            API.get('/customers').catch(() => []),
+            API.get('/customers?tree=1').catch(() => []),
             API.get('/vendors').catch(() => []),
             API.get('/reseller-permits/expiring?within_days=30'),
         ]);
 
-        const custById = Object.fromEntries(customers.map(c => [c.id, c.name]));
+        const custById = Object.fromEntries(customers.map(c => [c.id, customerLabel(c)]));
         const vendById = Object.fromEntries(vendors.map(v => [v.id, v.name]));
         const nameFor = (p) => {
             if (p.entity_type === 'customer') return custById[p.entity_id] || `Customer ${p.entity_id}`;
@@ -112,7 +112,7 @@ const ResellerPermitsPage = {
         // The pickers list active customers and vendors (inactive ones were
         // offered too); the one a permit already names stays listed.
         const [active, activeVendors, existing] = await Promise.all([
-            API.get('/customers?active_only=true').catch(() => []),
+            API.get('/customers?active_only=true&tree=1').catch(() => []),
             API.get('/vendors?active_only=true').catch(() => []),
             id ? API.get(`/reseller-permits/${id}`) : Promise.resolve(null),
         ]);
@@ -128,7 +128,7 @@ const ResellerPermitsPage = {
             notes: '',
             is_active: true,
         };
-        const custOpts = customers.map(c => `<option value="${c.id}"${p.entity_id === c.id && p.entity_type === 'customer' ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}"${p.entity_id === c.id && p.entity_type === 'customer' ? ' selected' : ''}>${escapeHtml(customerLabel(c))}</option>`).join('');
         const vendOpts = vendors.map(v => `<option value="${v.id}"${p.entity_id === v.id && p.entity_type === 'vendor' ? ' selected' : ''}>${escapeHtml(v.name)}</option>`).join('');
 
         openModal(id ? 'Edit Reseller Permit' : 'Add Reseller Permit', `
@@ -262,14 +262,14 @@ const ResellerPermitsPage = {
         try {
             [permit, customers, vendors] = await Promise.all([
                 API.get(`/reseller-permits/${id}`),
-                API.get('/customers').catch(() => []),
+                API.get('/customers?tree=1').catch(() => []),
                 API.get('/vendors').catch(() => []),
             ]);
         } catch (err) { toast(err.message, 'error'); return; }
 
         // id -> name, as the list view builds them: _businessNameFor returns the
         // map's value, so mapping to the whole record showed "[object Object]".
-        const custById = Object.fromEntries(customers.map(c => [c.id, c.name]));
+        const custById = Object.fromEntries(customers.map(c => [c.id, customerLabel(c)]));
         const vendById = Object.fromEntries(vendors.map(v => [v.id, v.name]));
         const businessName = ResellerPermitsPage._businessNameFor(permit, custById, vendById);
         const taxId = ResellerPermitsPage._taxIdFor(permit, customers, vendors);

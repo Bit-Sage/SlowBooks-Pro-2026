@@ -470,6 +470,20 @@ const IIFPage = {
             </div>`;
         }
 
+        // "Customer:Job" names (#638): QuickBooks Desktop spells a job and a
+        // sub-customer the same way, so the person importing says which the
+        // file holds; off, each is a job under the customer, as before.
+        if (report.valid && report.customer_job_names > 0) {
+            const n = report.customer_job_names;
+            html += `<div class="iif-retitle">
+                <label><input type="checkbox" id="iif-sub-customers">
+                    The ${n} Customer:Job name${n === 1 ? '' : 's'} in this file ${n === 1 ? 'is a sub-customer' : 'are sub-customers'}, not job${n === 1 ? '' : 's'}</label>
+                <p>A property's tenants, say: each becomes a customer under its parent, with its own
+                    contact details, and can be made inactive on its own. Left unticked, each
+                    Customer:Job is a job under the customer.</p>
+            </div>`;
+        }
+
         $('#iif-validation-result').innerHTML = html;
     },
 
@@ -485,6 +499,7 @@ const IIFPage = {
         formData.append('file', IIFPage._selectedFile);
         formData.append('retitle_names', $('#iif-retitle-names')?.checked ? 'true' : 'false');
         formData.append('adjusting', $('#iif-adjusting')?.checked ? 'true' : 'false');
+        formData.append('sub_customers', $('#iif-sub-customers')?.checked ? 'true' : 'false');
 
         try {
             App.setStatus('Importing IIF file...');

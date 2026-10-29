@@ -110,7 +110,7 @@ const SalesReceiptsPage = {
 
     async showForm() {
         const [customers, items, accounts, settings] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/accounts'),
             API.get('/settings'),
@@ -136,7 +136,7 @@ const SalesReceiptsPage = {
         const walkInId = String(settings.walk_in_customer_id || '');
         const walkInLabel = Terms.isNonprofit() ? 'Anonymous Donor' : 'Walk-in Customer';
         const custOpts = customers.filter(c => String(c.id) !== walkInId)
-            .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+            .map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join('');
         const bankOpts = bankAccts.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
 
         openModal(Terms.text('Enter Sales Receipt'), `

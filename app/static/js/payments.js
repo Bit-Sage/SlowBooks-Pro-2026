@@ -145,12 +145,12 @@ const PaymentsPage = {
     async showForm(_ignoredId = null, prefillCustomerId = null) {
         PaymentsPage._requestKey = null; // a new form, a new key (#292)
         const [customers, accounts] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/accounts'),
         ]);
         const bankAccts = accounts.filter(a => a.bank_kind === 'bank');
 
-        const custOpts = customers.map(c => `<option value="${c.id}"${prefillCustomerId === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}"${prefillCustomerId === c.id ? ' selected' : ''}>${escapeHtml(customerLabel(c))}</option>`).join('');
         const bankOpts = bankAccts.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
 
         openModal('Record Payment', `
@@ -205,7 +205,7 @@ const PaymentsPage = {
             return;
         }
         const [invoices, credits] = await Promise.all([
-            fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true`),
+            fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true&billed_to=true`),
             API.get(`/customers/${customerId}/credits`).catch(() => null),
         ]);
         // One payment is in one currency (the server refuses a mix), so the
@@ -440,7 +440,8 @@ const PaymentsPage = {
         try {
             [credits, invoices] = await Promise.all([
                 API.get(`/customers/${customerId}/credits`),
-                fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true`),
+                // a payment's credit may go to a sub-customer billed with the payer (#638)
+                fetchAllPages(`/invoices?customer_id=${customerId}&open_only=true${kind === 'payment' ? '&billed_to=true' : ''}`),
             ]);
         } catch (err) { toast(err.message, 'error'); return; }
         const credit = credits.credits.find(c => c.kind === kind && c.id === creditId);

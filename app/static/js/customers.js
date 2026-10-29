@@ -1,12 +1,14 @@
 /**
  * Customer Center — list + tabbed detail panel. QuickBooks' old
  * "Customer:Job" hierarchy was a colon-delimited name
- * ("Smith:Kitchen Remodel"); we flattened it because nobody
- * actually liked that feature.
+ * ("Smith:Kitchen Remodel"); jobs are their own records here, and a
+ * sub-customer (#638, "Parent: Sub") is a customer under another, one
+ * level deep: a property's tenants. The list shows each under its parent.
  */
 const CustomersPage = {
     async render() {
-        const customers = await API.get(`/customers${ActiveLists.query('customers')}`);
+        const qs = ActiveLists.query('customers');
+        const customers = await API.get(`/customers${qs ? qs + '&' : '?'}tree=1`);
         ActiveLists.remember('customers', customers);
         let html = `
             <div class="page-header">
@@ -36,16 +38,23 @@ const CustomersPage = {
                     <th scope="col" class="amount">Balance</th><th scope="col">Actions</th>
                 </tr></thead>
                 <tbody id="customer-tbody">`;
+            let prevId = null;
             for (const c of customers) {
                 // in the All view an inactive customer is dimmed and marked,
                 // as on the other lists (text-muted keeps AA contrast)
                 const inactive = c.is_active === false;
-                html += `<tr class="clickable customer-row${inactive ? ' row--dim' : ''}" data-name="${escapeHtml(c.name).toLowerCase()}" onclick="CustomersPage.showDetails(${c.id})">
-                    <td><strong>${escapeHtml(c.name)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}</td>
+                // A sub-customer sits indented under its parent (the API's
+                // tree order); when its parent's row is not right above
+                // (filtered out), its full name says whose it is.
+                const sub = !!c.parent_customer_id;
+                const label = sub && prevId !== c.parent_customer_id ? customerLabel(c) : c.name;
+                prevId = c.id;
+                html += `<tr class="clickable customer-row${inactive ? ' row--dim' : ''}" data-name="${escapeHtml(customerLabel(c)).toLowerCase()}" onclick="CustomersPage.showDetails(${c.id})">
+                    <td${sub ? ' style="padding-left:28px"' : ''}>${sub ? '<span aria-hidden="true" style="color:var(--text-muted)">&#8627; </span>' : ''}<strong>${escapeHtml(label)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}${sub && c.bill_with_parent ? ' <span class="badge badge-draft" title="Invoices to this sub-customer are billed to its parent">billed with parent</span>' : ''}</td>
                     <td>${escapeHtml(c.company) || ''}</td>
                     <td>${escapeHtml(c.phone) || ''}</td>
                     <td>${escapeHtml(c.email) || ''}</td>
-                    <td class="amount">${formatCurrency(c.balance)}</td>
+                    <td class="amount">${formatCurrency(c.balance)}${c.sub_count ? `<div style="font-size:11px;color:var(--text-muted)">${formatCurrency(c.rollup_balance)} with sub-customers</div>` : ''}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); CustomersPage.showForm(${c.id})">Edit</button>
                         ${ActiveLists.buttonHtml('customers', c)}
@@ -71,20 +80,43 @@ const CustomersPage = {
     // payments. Avoid the "click here to see notes, click here to see
     // invoices" gated-screen pattern.
     async showDetails(id) {
-        let customer, invoices, payments, permits, jobs, credits;
+        let customer, invoices, payments, permits, jobs, credits, subs;
         try {
-            [customer, invoices, payments, permits, jobs, credits] = await Promise.all([
+            [customer, invoices, payments, permits, jobs, credits, subs] = await Promise.all([
                 API.get(`/customers/${id}`),
                 fetchAllPages(`/invoices?customer_id=${id}`).catch(() => []),
                 fetchAllPages(`/payments?customer_id=${id}`).catch(() => []),
                 API.get(`/reseller-permits?entity_type=customer&entity_id=${id}`).catch(() => []),
                 API.get(`/jobs?customer_id=${id}&include_inactive=true`).catch(() => []),
                 API.get(`/customers/${id}/credits`).catch(() => null),
+                API.get(`/customers/${id}/subs`).catch(() => null),
             ]);
         } catch (err) {
             toast(err.message, 'error');
             return;
         }
+
+        // -- Sub-customers (#638): a parent's page lists its subs, each with
+        // its balance, and the roll-up; a sub's page names its parent.
+        const subList = (subs && subs.subs) || [];
+        const subsHtml = subList.length === 0 ? '' : `
+            <div style="margin-bottom:14px" id="cust-subs-${id}">
+                <h4 style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px 0">Sub-customers (${subList.length})</h4>
+                <table class="data-table" style="font-size:12px">
+                    <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Billing</th><th scope="col" class="amount">Balance</th></tr></thead>
+                    <tbody>${subList.map(s => `<tr style="cursor:pointer" onclick="closeModal({ keepAddress: true });CustomersPage.showDetails(${s.id})">
+                        <td><a href="#/customers/${s.id}" onclick="event.preventDefault()" style="color:var(--text-link);text-decoration:none">${escapeHtml(s.name)}</a></td>
+                        <td>${s.is_active ? 'Active' : '<span style="color:var(--text-muted)">Inactive</span>'}</td>
+                        <td>${s.bill_with_parent ? 'Billed with parent' : 'Billed on its own'}</td>
+                        <td class="amount">${formatCurrency(s.balance)}</td>
+                    </tr>`).join('')}
+                    <tr style="font-weight:600;background:var(--gray-50)"><td colspan="3">Roll-up: own ${formatCurrency(subs.own_balance)} + sub-customers ${formatCurrency(subs.subs_balance)}</td><td class="amount">${formatCurrency(subs.rollup_balance)}</td></tr>
+                    </tbody>
+                </table>
+            </div>`;
+        const parentLine = customer.parent_customer_id
+            ? `<div style="font-size:13px;margin-top:2px">Sub-customer of <a href="#/customers/${customer.parent_customer_id}" style="color:var(--text-link)" onclick="event.preventDefault();closeModal({ keepAddress: true });CustomersPage.showDetails(${customer.parent_customer_id})">${escapeHtml(customer.parent_name || '')}</a>${customer.bill_with_parent ? ' <span class="badge badge-draft" title="Invoices to this sub-customer are billed to its parent: on the parent\'s statement and A/R Aging row, paid by the parent\'s payments">billed with parent</span>' : ''}</div>`
+            : '';
 
         const fullAddr = (a1, a2, city, state, zip) => {
             const parts = [a1, a2].filter(Boolean).join(', ');
@@ -154,6 +186,7 @@ const CustomersPage = {
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:12px">
                 <div>
                     <h3 style="margin:0;font-size:18px">${escapeHtml(customer.name)}</h3>
+                    ${parentLine}
                     ${customer.company ? `<div style="color:var(--text-muted);font-size:13px">${escapeHtml(customer.company)}</div>` : ''}
                     <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
                         ${customer.is_active === false ? '<span style="color:var(--text-danger)">Inactive</span>' : '<span style="color:var(--text-success)">Active</span>'}
@@ -168,6 +201,7 @@ const CustomersPage = {
                     <div style="font-size:22px;font-weight:700;color:${balance > 0 ? 'var(--text-danger)' : (balance < 0 ? 'var(--text-success)' : 'var(--text-primary)')}">
                         ${formatCurrency(Math.abs(balance))}
                     </div>
+                    ${subList.length ? `<div style="font-size:12px;color:var(--text-muted)">${formatCurrency(subs.rollup_balance)} with sub-customers</div>` : ''}
                     <div style="margin-top:8px">
                         <button class="btn btn-sm btn-primary" data-write onclick="closeModal({ keepAddress: true });InvoicesPage.showForm(null,${id})">${T('New Invoice')}</button>
                         <button class="btn btn-sm btn-secondary" data-write onclick="closeModal({ keepAddress: true });PaymentsPage.showForm(null,${id})">Receive Payment</button>
@@ -213,6 +247,8 @@ const CustomersPage = {
             </div>
 
             ${creditsHtml}
+
+            ${subsHtml}
 
             <!-- reseller permits -->
             <div style="margin-bottom:14px">
@@ -357,6 +393,30 @@ const CustomersPage = {
         const termChoices = ['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt'];
         if (c.terms && !termChoices.includes(c.terms)) termChoices.unshift(c.terms);
 
+        // Sub-customers (#638): the parent picker lists the active top-level
+        // customers (one level deep: a sub-customer is never a parent), the
+        // customer's own parent kept even if inactive; a customer that has
+        // sub-customers of its own cannot become one.
+        let parents = [];
+        try { parents = (await API.get('/customers?active_only=true&tree=1')).filter(p => !p.parent_customer_id && p.id !== id); } catch (e) { parents = []; }
+        if (c.parent_customer_id && !parents.some(p => p.id === c.parent_customer_id)) {
+            parents.push({ id: c.parent_customer_id, name: `${c.parent_name || ''} (inactive)` });
+        }
+        const hasSubs = (c.sub_count || 0) > 0;
+        const parentOpts = parents.map(p => `<option value="${p.id}" ${c.parent_customer_id === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+        const parentHtml = `
+                <h3 id="cust-parent-heading" style="margin:16px 0 8px; font-size:14px; color:var(--gray-600);">Sub-customer</h3>
+                <div class="form-grid" role="group" aria-labelledby="cust-parent-heading">
+                    <div class="form-group"><label for="cust-parent-select">Sub-customer of</label>
+                        <select name="parent_customer_id" id="cust-parent-select" ${hasSubs ? 'disabled' : ''} onchange="CustomersPage._parentChanged(this.value)">
+                            <option value="">None: a customer of its own</option>${parentOpts}
+                        </select>
+                        ${hasSubs ? `<div class="form-hint">This customer has ${c.sub_count} sub-customer${c.sub_count === 1 ? '' : 's'} of its own, so it cannot sit under another.</div>` : '<div class="form-hint">A tenant under a property, say: the sub-customer is invoiced and paid on its own, can be made inactive on its own, and rolls up to its parent.</div>'}</div>
+                    <div class="form-group"><label>Billing</label>
+                        <label style="font-weight:normal;"><input type="checkbox" name="bill_with_parent" id="cust-bill-with-parent" ${c.bill_with_parent ? 'checked' : ''} ${c.parent_customer_id && !hasSubs ? '' : 'disabled'}>
+                            Bill with parent: invoices to this sub-customer are billed to the parent, go on the parent's statement and A/R Aging row, and are paid by the parent's payments</label></div>
+                </div>`;
+
         const title = id ? `Edit ${T('Customer')}` : T('New Customer');
         openModal(title, `
             <form id="customer-form" onsubmit="CustomersPage.save(event, ${id})">
@@ -411,6 +471,7 @@ const CustomersPage = {
                     <div class="form-group"><label>Country</label>
                         <select name="ship_country">${countryOptions(c.ship_country || 'US')}</select></div>
                 </div>
+                ${parentHtml}
                 <div class="form-grid" style="margin-top:16px;">
                     <div class="form-group"><label>Tax ID</label>
                         <input name="tax_id" value="${escapeHtml(c.tax_id || '')}"></div>
@@ -442,13 +503,33 @@ const CustomersPage = {
             </form>`);
     },
 
-    async save(e, id, force) {
+    // The parent picked, or none: "Bill with parent" is offered only
+    // with a parent, and cleared without one.
+    _parentChanged(value) {
+        const box = $('#cust-bill-with-parent');
+        if (!box) return;
+        box.disabled = !value;
+        if (!value) box.checked = false;
+    },
+
+    async save(e, id, force, withSubs) {
         e.preventDefault();
         const form = new FormData(e.target);
         const data = Object.fromEntries(form.entries());
         if (data.credit_limit) data.credit_limit = parseFloat(data.credit_limit);
         else if (id) data.credit_limit = null;  // cleared: no limit
         else delete data.credit_limit;
+        // Sub-customer (#638): the parent, or none; a disabled picker (the
+        // customer has sub-customers) sends nothing, so nothing changes.
+        delete data.bill_with_parent;
+        const parentSel = e.target.parent_customer_id;
+        if (parentSel && !parentSel.disabled) {
+            data.parent_customer_id = parentSel.value ? parseInt(parentSel.value, 10) : null;
+            if (data.parent_customer_id === null && !id) delete data.parent_customer_id;
+            data.bill_with_parent = !!(data.parent_customer_id && e.target.bill_with_parent && e.target.bill_with_parent.checked);
+        } else {
+            delete data.parent_customer_id;
+        }
         if (e.target.send_year_end_statement) data.send_year_end_statement = e.target.send_year_end_statement.checked;
         if ('donor_type' in data && !data.donor_type) data.donor_type = null;
         // Checkboxes: "Tax exempt" is the customer's is_taxable, inverted;
@@ -459,7 +540,7 @@ const CustomersPage = {
 
         try {
             if (id) {
-                await API.put(`/customers/${id}`, data);
+                await API.put(`/customers/${id}${withSubs ? '?with_subs=true' : ''}`, data);
                 toast(`${T('Customer')} updated`);
             } else {
                 await API.post('/customers', data, force ? { query: { force: true } } : undefined);
@@ -471,6 +552,12 @@ const CustomersPage = {
             // similarly-named active customer already exists.
             if (err.status === 409 && err.detail && err.detail.duplicates) {
                 CustomersPage._confirmDuplicate(e.target, id, data, err.detail.duplicates);
+                return;
+            }
+            // Making a parent inactive asks about its active sub-customers
+            // (#638); yes sends the save again with them.
+            if (err.status === 409 && err.detail && err.detail.error === 'active_subs') {
+                if (confirm(err.detail.message)) await CustomersPage.save(e, id, force, true);
                 return;
             }
             toast(err.message, 'error');

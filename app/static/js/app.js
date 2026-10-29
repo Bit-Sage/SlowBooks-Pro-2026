@@ -2030,12 +2030,12 @@ const App = {
     // Quick Entry mode — batch invoice entry for paper invoice backlog
     async renderQuickEntry() {
         const [customers, items] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
         ]);
         App._qeCustomers = customers;
         App._qeItems = items;
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join('');
         // "+ New Customer", as on the New Invoice form (#484): the customer
         // is added in place and picked, and nothing else typed is lost. A
         // read-only or accountant sign-in is not offered it (the server
@@ -2155,7 +2155,7 @@ const App = {
         (App._qeCustomers = App._qeCustomers || []).push(cust);
         const sel = $('#qe-customer');
         if (sel && !sel.querySelector(`option[value="${cust.id}"]`)) {
-            sel.insertAdjacentHTML('beforeend', `<option value="${cust.id}">${escapeHtml(cust.name)}</option>`);
+            sel.insertAdjacentHTML('beforeend', `<option value="${cust.id}">${escapeHtml(customerLabel(cust))}</option>`);
         }
         if (sel) {
             sel.value = String(cust.id);
