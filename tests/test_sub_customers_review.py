@@ -1352,3 +1352,150 @@ def test_an_edit_to_another_customer_takes_its_bill_to_and_a_rename_keeps_the_ol
     assert r.status_code == 200, r.text
     db_session.expire_all()
     assert db_session.get(Invoice, inv["id"]).bill_to_name == "Second Co"
+
+
+# ── the 2.31.1 gate, round 3: W-72, W-73, W-79, W-80 ────────────────────
+
+
+def _printed(db_session, inv_id):
+    """The printed invoice's address blocks, each as the lines it prints:
+    ``{"Bill To": [...], "Ship To": [...]}`` (no Ship To block when the
+    invoice has no ship-to)."""
+    import re
+
+    from app.services.pdf_service import render_invoice_html
+    from app.services.settings_service import get_all_settings
+
+    db_session.expire_all()
+    html = render_invoice_html(
+        db_session.get(Invoice, inv_id), get_all_settings(db_session)
+    )
+    blocks = {}
+    for label, text in re.findall(
+        r'<div class="address-label">(.*?)</div>\s*'
+        r'<div class="address-text">(.*?)</div>',
+        html,
+        re.S,
+    ):
+        lines = (re.sub(r"<[^>]+>", "", part).strip() for part in text.split("<br>"))
+        blocks[label] = [line for line in lines if line]
+    return blocks
+
+
+def test_an_invoice_edited_onto_another_customer_prints_that_customers_whole_bill_to(
+    client, db_session, seed_accounts
+):
+    """W-72: an edit that moves an invoice to another customer takes the
+    whole Bill To from the new customer's payer as create does, the street
+    with the name and country, and the ship-to from the new customer. The
+    edit takes the addresses too, so a street can be corrected, and one
+    sent with the move wins over the one copied. An edit that keeps the
+    customer leaves the Bill To as the invoice was made unless it sends an
+    address."""
+    alpha = _customer(
+        client,
+        "Alpha",
+        bill_address1="1 Solo Way",
+        bill_city="Austin",
+        bill_state="TX",
+        bill_zip="78701",
+        ship_address1="Dock 3",
+        ship_city="Austin",
+    )
+    beta = _customer(
+        client,
+        "Beta SARL",
+        bill_address1="8 Rue des Lilas",
+        bill_city="Lyon",
+        bill_zip="69001",
+        bill_country="FR",
+    )
+    inv = _invoice(client, alpha["id"], 300, 1)
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Alpha", "1 Solo Way", "Austin, TX 78701"],
+        "Ship To": ["Dock 3", "Austin"],
+    }
+
+    r = client.put(f"/api/invoices/{inv['id']}", json={"customer_id": beta["id"]})
+    assert r.status_code == 200, r.text
+    moved = r.json()
+    assert (
+        moved["bill_address1"],
+        moved["bill_city"],
+        moved["bill_state"],
+        moved["bill_zip"],
+    ) == ("8 Rue des Lilas", "Lyon", None, "69001")
+    assert (
+        moved["bill_to_customer_id"],
+        moved["bill_to_name"],
+        moved["bill_to_country"],
+    ) == (beta["id"], "Beta SARL", "FR")
+    # Alpha's dock is not Beta's: Beta has no ship-to, so none prints
+    assert moved["ship_address1"] is None
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Beta SARL", "8 Rue des Lilas", "Lyon, 69001", "France"]
+    }
+
+    # onto a tenant billed with its property: the property's street under
+    # the property's name, "For:" the tenant, and the tenant's ship-to
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    r = client.put(f"/api/customers/{unit['id']}", json={"ship_address1": "Apt 4B"})
+    assert r.status_code == 200, r.text
+    r = client.put(f"/api/invoices/{inv['id']}", json={"customer_id": unit["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_to_customer_id"] == maple["id"]
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": [
+            "Maple St",
+            "12 Maple St",
+            "Springfield, IL 62704",
+            "Canada",
+            "For: Unit 4B",
+        ],
+        "Ship To": ["Apt 4B"],
+    }
+
+    # an address sent with the move wins over the one copied, part by part
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": beta["id"], "bill_address1": "8 Rue des Lilas, Bat. B"},
+    )
+    assert r.status_code == 200, r.text
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Beta SARL", "8 Rue des Lilas, Bat. B", "Lyon, 69001", "France"]
+    }
+
+    # an edit that keeps the customer: Beta moving changes nothing on it...
+    r = client.put(
+        f"/api/customers/{beta['id']}",
+        json={"bill_address1": "2 Quai Perrache", "bill_country": "BE"},
+    )
+    assert r.status_code == 200, r.text
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": beta["id"], "notes": "second notice"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_address1"] == "8 Rue des Lilas, Bat. B"
+    # ...and an address it sends corrects the street; the name and country
+    # stay the ones it was billed with
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={
+            "bill_address1": "10 Rue des Lilas",
+            "bill_zip": "69002",
+            "ship_address1": "Quai 2",
+        },
+    )
+    assert r.status_code == 200, r.text
+    fixed = r.json()
+    assert (fixed["bill_to_name"], fixed["bill_to_country"]) == ("Beta SARL", "FR")
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Beta SARL", "10 Rue des Lilas", "Lyon, 69002", "France"],
+        "Ship To": ["Quai 2"],
+    }
+
+    # a customer that does not exist is refused, as on create
+    r = client.put(f"/api/invoices/{inv['id']}", json={"customer_id": 99999})
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "Customer not found"

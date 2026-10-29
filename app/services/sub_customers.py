@@ -15,7 +15,8 @@ two together lives here:
 * ``billed_balances`` is what sits on a customer's A/R: its own open
   documents plus those of the subs billed with it, the figure its A/R
   Aging row shows; ``payer_for`` is the customer whose limit and balance
-  a new invoice is checked against.
+  a new invoice is checked against, and ``invoice_addresses`` the Bill To
+  (the payer's) and Ship To an invoice is billed with.
 """
 
 from __future__ import annotations
@@ -106,6 +107,51 @@ def payer_for(db: Session, customer: Customer) -> Customer:
     parent of a sub billed with it, else the customer itself (2.31.1
     gate, W-62: the credit limit is the payer's)."""
     return bill_to_parent(db, customer) or customer
+
+
+ADDRESS_PARTS = ("address1", "address2", "city", "state", "zip")
+# The address fields an invoice takes, the Bill To street and the Ship To.
+INVOICE_ADDRESS_FIELDS = tuple(
+    f"{side}_{part}" for side in ("bill", "ship") for part in ADDRESS_PARTS
+)
+
+
+def invoice_addresses(
+    db: Session, customer: Customer, sent: Optional[dict] = None
+) -> dict:
+    """The addresses an invoice to ``customer`` is billed with as of now,
+    as the fields an Invoice takes (2.31.1 gate, W-72, W-73, W-80): the
+    Bill To whole, the street, name and country of the payer (the parent
+    of a sub-customer billed with it, else the customer) with
+    ``bill_to_customer_id`` naming it, and the Ship To of the customer
+    itself. An address field in ``sent`` (what the request gave) wins over
+    the one copied, as it always did on create.
+
+    One helper for every way an invoice is made or moved to another
+    customer: create, an edit to another customer, Duplicate, an
+    estimate's Convert and the invoices a QuickBooks Online export carries
+    over. Each used to copy a street of its own (the customer's, or the
+    original's) beside the name and country frozen from the payer, so the
+    printed Bill To could put one customer's name over another's street."""
+    payer = payer_for(db, customer)
+    sent = sent or {}
+    fields = {
+        f"bill_{part}": sent.get(f"bill_{part}") or getattr(payer, f"bill_{part}")
+        for part in ADDRESS_PARTS
+    }
+    fields.update(
+        {
+            f"ship_{part}": sent.get(f"ship_{part}")
+            or getattr(customer, f"ship_{part}")
+            for part in ADDRESS_PARTS
+        }
+    )
+    fields.update(
+        bill_to_customer_id=payer.id,
+        bill_to_name=payer.name,
+        bill_to_country=payer.bill_country,
+    )
+    return fields
 
 
 def billed_balances(db: Session, customer_ids: Iterable[int]) -> dict[int, Decimal]:

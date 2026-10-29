@@ -170,9 +170,11 @@ def _freeze_bill_to(_mapper, connection, target):
 def freeze_bill_to(connection, target) -> None:
     """Set the invoice's frozen Bill To from its customer as it is now: the
     parent of a sub-customer billed with it, else the customer. Called on
-    insert, and by an edit that moves the invoice to another customer (the
-    Bill To is the new customer's; an edit that keeps the customer keeps
-    the Bill To the invoice was made with)."""
+    insert for an invoice made without one (the scheduler, progress
+    billing, the importers); the routes that make an invoice or move it to
+    another customer set the whole Bill To, the street with the name and
+    country, through app.services.sub_customers.invoice_addresses (2.31.1
+    gate, W-72)."""
     if target.customer_id is None:
         return
     from app.models.contacts import Customer
