@@ -67,10 +67,15 @@ With the terms and What's New showing on a window 700px tall, the splash ran
 past the bottom of the screen with its button out of reach; it scrolls now.
 
 **The top bar fits a window down to 900px.** It ran 1,265px wide at any
-width, so at 900 Sign Out sat past the edge. Below 1280 its quick-entry
-buttons (New Customer, Create Invoice, Receive Payment, Quick Entry, Bill
-Entry, each on the sidebar too) step aside, and Back, the company, Home,
-Reports, search, About, Contact support and Sign Out stay in view.
+width, so at 900 Sign Out sat past the edge. Its quick-entry buttons now
+stay wherever they fit and step aside only as the window narrows: all five
+at Windows' own default window and wider, Quick Entry and Bill Entry going
+below 1250px and New Customer, Create Invoice and Receive Payment below
+1110px, while Back, the company, Home, Reports, search, About, Contact
+support and Sign Out stay in view. Invoice Quick Entry has its own sidebar
+link now, and the bar's buttons name their shortcuts (Home Alt+H, Create
+Invoice Alt+N, Receive Payment Alt+P, Quick Entry Alt+Q) as the pages'
+buttons do.
 
 **One shape for every refused field.** A field an edit sends as null that may
 not be empty (a schedule's mode, a bill's vendor) answered a bare sentence;

@@ -2476,6 +2476,20 @@ const App = {
             if (t) t.textContent = ' ' + T(t.textContent.trim());
         });
         $$('#topbar .tb-btn[data-action]').forEach(b => { b.textContent = T(b.textContent.trim()); });
+        // The bar's buttons that have a shortcut name it, as the pages' own
+        // buttons do: the hover reads "Quick Entry (Alt+Q)", a screen reader
+        // hears the ARIA token (2.31.1 gate W-87: Alt+Q was labelled nowhere).
+        for (const [sel, letter] of [
+            ['[data-nav="#/"]', 'H'],
+            ['[data-action="InvoicesPage.showForm"]', 'N'],
+            ['[data-action="PaymentsPage.showForm"]', 'P'],
+            ['[data-nav="#/quick-entry"]', 'Q'],
+        ]) {
+            const b = document.querySelector('#topbar .tb-btn' + sel);
+            if (!b) continue;
+            b.title = `${b.textContent.trim()} (${App.isMac() ? '⌥' : 'Alt+'}${letter})`;
+            b.setAttribute('aria-keyshortcuts', 'Alt+' + letter);
+        }
         const search = $('#global-search');
         if (search) search.placeholder = Terms.text(search.placeholder);
         const np = Terms.isNonprofit();
