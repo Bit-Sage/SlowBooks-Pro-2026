@@ -44,12 +44,16 @@ FREQUENCY_ALIASES = {
     "biweekly": ("weekly", 2),
     "every_two_weeks": ("weekly", 2),
     "every_four_weeks": ("weekly", 4),
+    "twice_a_month": ("semimonthly", 1),
+    "semi_monthly": ("semimonthly", 1),
     "bimonthly": ("monthly", 2),
     "every_two_months": ("monthly", 2),
     "semiannually": ("monthly", 6),
     "twice_a_year": ("monthly", 6),
     "annually": ("yearly", 1),
 }
+# The stored words that carry their own count, as a plain word does not.
+_COUNTED = ("semimonthly", "quarterly")
 _MONTHS_PER = {"monthly": 1, "quarterly": 3, "yearly": 12}
 
 
@@ -59,17 +63,30 @@ _UNIT_WORDS = {
     "monthly": "months",
     "yearly": "years",
 }
+# The plain word that counts in the same unit: twice a month and quarterly
+# are counted in months.
+_PLAIN_UNIT = {"semimonthly": "monthly", "quarterly": "monthly"}
+
+
+def _takes_no_interval(word: str, unit: str) -> ValueError:
+    plain = _PLAIN_UNIT.get(unit, unit)
+    return ValueError(
+        f"{word.replace('_', ' ')} takes no interval; for every N "
+        f"{_UNIT_WORDS[plain]} use {plain} with an interval"
+    )
 
 
 def normalize_frequency(frequency: str, interval=None) -> tuple[str, int]:
     """The stored (frequency, interval) for what a request said, or
     ValueError naming the problem. A word that carries its own count
     ("every two weeks", "twice a month", "quarterly", "twice a year") takes
-    no interval: sent with one other than 1 it is refused, naming the word,
-    rather than multiplied (2.31.1 gate W-65: "every two weeks" with an
-    interval of 2 was stored as every four weeks). A plain word (daily,
-    weekly, monthly, yearly) takes the interval: every N days, weeks,
-    months or years."""
+    no interval: sent with none, or 1, it is that count; sent with another
+    it is refused, naming the word, rather than multiplied (2.31.1 gate
+    W-65: "every two weeks" with an interval of 2 was stored as every four
+    weeks; W-76: "twice a month" was not known at all, so even an interval
+    of 1 was refused with the list of words). A plain word (daily, weekly,
+    monthly, yearly) takes the interval: every N days, weeks, months or
+    years."""
     word = (frequency or "").strip().lower().replace(" ", "_").replace("-", "_")
     try:
         count = int(interval) if interval is not None else 1
@@ -79,11 +96,9 @@ def normalize_frequency(frequency: str, interval=None) -> tuple[str, int]:
         raise ValueError("interval must be a whole number of 1 or more")
     if word in FREQUENCY_ALIASES:
         unit, base = FREQUENCY_ALIASES[word]
+        # the word's own count is the interval: 1, or none, is that count
         if count != 1:
-            raise ValueError(
-                f"{word.replace('_', ' ')} takes no interval; for every N "
-                f"{_UNIT_WORDS[unit]} use {unit} with an interval"
-            )
+            raise _takes_no_interval(word, unit)
         return unit, base
     if word not in FREQUENCIES:
         raise ValueError(
@@ -92,11 +107,8 @@ def normalize_frequency(frequency: str, interval=None) -> tuple[str, int]:
             + " (every N days, weeks or months is daily, weekly or monthly "
             "with an interval)"
         )
-    if word in ("semimonthly", "quarterly") and count != 1:
-        raise ValueError(
-            f"{word} takes no interval; for every N months use monthly with "
-            "an interval"
-        )
+    if word in _COUNTED and count != 1:
+        raise _takes_no_interval(word, word)
     return word, count
 
 

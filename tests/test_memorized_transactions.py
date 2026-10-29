@@ -1963,3 +1963,44 @@ def test_the_comments_and_the_page_say_both_kinds_are_claimed():
     js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
     assert "occurrence ? `occurrence=${occurrence}` : ''" in js
     assert "API.post(`/recurring/${id}/generate` + (query ? `?${query}` : ''))" in js
+
+
+def test_twice_a_month_takes_one_or_none_and_names_itself_otherwise(
+    client, seed_accounts
+):
+    """W-76: "twice a month" was not a word the schedule knew, so it was
+    refused even with an interval of 1 (or none), with the list of words
+    rather than its own name. A word that carries its own count takes 1 or
+    none; only another interval is refused, naming the word."""
+    assert normalize_frequency("twice a month", 1) == ("semimonthly", 1)
+    assert normalize_frequency("twice a month", None) == ("semimonthly", 1)
+    assert normalize_frequency("Twice-a-Month", None) == ("semimonthly", 1)
+    assert normalize_frequency("semi-monthly", 1) == ("semimonthly", 1)
+    with pytest.raises(ValueError) as refused:
+        normalize_frequency("twice a month", 2)
+    assert str(refused.value) == (
+        "twice a month takes no interval; for every N months use monthly with "
+        "an interval"
+    )
+    base = {
+        "kind": "bill",
+        "name": "Twice a month",
+        "start_date": "2026-01-01",
+        "vendor_id": _vendor(client),
+        "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+    }
+    for sent in ({"interval": 1}, {}):
+        r = client.post(
+            "/api/memorized", json={**base, "frequency": "twice a month", **sent}
+        )
+        assert r.status_code == 201, (sent, r.text)
+        assert (r.json()["frequency"], r.json()["interval"]) == ("semimonthly", 1)
+        assert r.json()["frequency_label"] == "Twice a month"
+    r = client.post(
+        "/api/memorized", json={**base, "frequency": "twice a month", "interval": 2}
+    )
+    assert r.status_code == 422, r.text
+    assert [e["message"] for e in r.json()["detail"]] == [
+        "Twice a month takes no interval; for every N months use monthly with "
+        "an interval."
+    ]

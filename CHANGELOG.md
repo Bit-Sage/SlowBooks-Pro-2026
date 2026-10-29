@@ -118,9 +118,9 @@ N days, weeks or months), a next date, and an end date or a number of
 times; a monthly schedule begun on the 31st lands on the last day of a
 shorter month and on the 31st again after it, and twice a month is the next
 date's day and fifteen days later. A frequency that carries its own count
-(every two weeks, twice a month, quarterly, twice a year) takes no interval
-and is refused with one, naming the word; daily, weekly, monthly and yearly
-take one. In auto-enter mode the app posts the document on its date: it
+(every two weeks, twice a month, quarterly, twice a year) takes no interval:
+sent with none, or 1, it is that count, and with another it is refused,
+naming the word; daily, weekly, monthly and yearly take one. In auto-enter mode the app posts the document on its date: it
 enters every due auto-enter memorized bill and journal entry when it opens
 and once a day while it runs, every missed date in order; the Memorized
 Transactions page says what was entered while you were away, and a box under
