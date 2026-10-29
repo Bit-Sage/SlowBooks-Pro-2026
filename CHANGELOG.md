@@ -7,6 +7,8 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**The sidebar's bottom link now calls for artists.** The link under the left menu pointed at the discussion asking who uses SlowBooks for real work; it now opens the artists' call to action (discussion #636), which is how the community art repo finds its contributors.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
