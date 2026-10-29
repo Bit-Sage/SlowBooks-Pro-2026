@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     func,
 )
+from sqlalchemy.orm import backref, relationship
 
 from app.database import Base
 
@@ -60,11 +61,49 @@ class Customer(Base):
     donor_type = Column(String(20), nullable=True)
     salutation = Column(String(100), nullable=True)
     send_year_end_statement = Column(Boolean, nullable=False, default=True)
+    # Sub-customers (#638): QuickBooks' "Parent:Sub". A property is a
+    # customer and each tenant a sub-customer under it, one level deep (a
+    # sub has no subs of its own). bill_with_parent puts the sub's invoices
+    # on the parent's A/R: the parent's statement and aging row carry them,
+    # the parent's payments apply to them, and the printed invoice bills
+    # the parent naming the sub. Off, the sub is billed on its own.
+    parent_customer_id = Column(
+        Integer, ForeignKey("customers.id"), nullable=True, index=True
+    )
+    bill_with_parent = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    parent = relationship(
+        "Customer",
+        remote_side="Customer.id",
+        foreign_keys="Customer.parent_customer_id",
+        backref=backref("subs", order_by="Customer.name"),
+    )
+
+    @property
+    def full_name(self) -> str:
+        """ "Parent: Sub" for a sub-customer, as the pickers show it; a
+        customer with no parent is its own name."""
+        parent = self.parent if self.parent_customer_id else None
+        return f"{parent.name}: {self.name}" if parent else self.name
+
+    @property
+    def qb_name(self) -> str:
+        """QuickBooks' own spelling, "Parent:Sub", for the IIF export."""
+        parent = self.parent if self.parent_customer_id else None
+        return f"{parent.name}:{self.name}" if parent else self.name
+
+    @property
+    def billed_to_id(self) -> int:
+        """The customer whose A/R carries this one's documents: the parent
+        of a sub billed with it, else the customer itself."""
+        if self.parent_customer_id and self.bill_with_parent:
+            return self.parent_customer_id
+        return self.id
 
 
 class Vendor(Base):

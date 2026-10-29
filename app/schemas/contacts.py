@@ -57,6 +57,10 @@ class CustomerCreate(StrictModel):
     donor_type: Optional[str] = Field(None, max_length=20)
     salutation: Optional[str] = Field(None, max_length=100)
     send_year_end_statement: bool = True
+    # Sub-customer (#638): the customer this one sits under, one level
+    # deep; bill_with_parent puts its invoices on the parent's A/R.
+    parent_customer_id: Optional[int] = None
+    bill_with_parent: bool = False
 
 
 class CustomerUpdate(StrictModel):
@@ -89,6 +93,8 @@ class CustomerUpdate(StrictModel):
     salutation: Optional[str] = Field(None, max_length=100)
     send_year_end_statement: Optional[bool] = None
     is_active: Optional[bool] = None
+    parent_customer_id: Optional[int] = None
+    bill_with_parent: Optional[bool] = None
 
 
 class CustomerResponse(BaseModel):
@@ -125,6 +131,19 @@ class CustomerResponse(BaseModel):
     donor_type: Optional[str] = None
     salutation: Optional[str] = None
     send_year_end_statement: bool = True
+
+    # Sub-customers (#638). full_name is "Parent: Sub" for a sub-customer
+    # (the pickers' spelling) and the name itself otherwise; parent_name
+    # is set on a sub; sub_count on a parent, with rollup_balance = its own
+    # balance plus every sub's (billed with it or not), what the property
+    # has open altogether. balance stays what is open on the customer's
+    # own documents.
+    parent_customer_id: Optional[int] = None
+    parent_name: Optional[str] = None
+    bill_with_parent: bool = False
+    full_name: str = ""
+    sub_count: int = 0
+    rollup_balance: Optional[Decimal] = None
 
     model_config = {"from_attributes": True}
 
