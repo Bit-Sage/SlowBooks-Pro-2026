@@ -583,7 +583,7 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 | `/api/customers` | GET, POST, PUT, DELETE | Customer management |
 | `/api/vendors` | GET, POST, PUT, DELETE | Vendor management |
 | `/api/items` | GET, POST, PUT, DELETE | Items & services |
-| `/api/invoices` | GET, POST, PUT | Invoice CRUD with line items; another customer's `job_id` on the header or a line is refused (400), a job that does not exist 404; an edit touching neither customer, job nor lines saves as it is (v2.22.0) |
+| `/api/invoices` | GET, POST, PUT | Invoice CRUD with line items; another customer's `job_id` on the header or a line is refused (400), a job that does not exist 404; an edit touching neither customer, job nor lines saves as it is (v2.22.0); an edit takes the bill and ship address fields, to correct them or to go with a move to another customer (v2.31.1) |
 | `/api/invoices/{id}/pdf` | GET | Generate invoice PDF |
 | `/api/invoices/{id}/void` | POST | Void with reversing journal entry |
 | `/api/invoices/{id}/send` | POST | Mark invoice as sent |
