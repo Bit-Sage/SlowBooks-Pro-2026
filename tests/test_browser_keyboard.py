@@ -2458,17 +2458,26 @@ def test_tab_brings_every_grid_stop_out_from_under_the_frozen_parts(
             assert back == forward[-2::-1] and not bad, (width, len(back), bad)
         # a mouse's focus stays where the pointer pressed: the grid at its
         # left, a heading cut by its right edge pressed, nothing scrolls
-        page.set_viewport_size({"width": 1440, "height": 900})
-        page.wait_for_timeout(100)
-        cut = page.evaluate(
-            """() => { const g = document.getElementById('grid-scroll');
-                g.scrollLeft = 0; g.scrollTop = 0; document.activeElement.blur();
-                const edge = g.getBoundingClientRect().left + g.clientLeft + g.clientWidth;
-                const a = [...g.querySelectorAll('thead a')].find(a => {
-                    const r = a.getBoundingClientRect(); return r.left < edge - 20 && r.right + 8 > edge; });
-                const r = a.getBoundingClientRect();
-                return { name: a.textContent.trim(), x: r.left + 10, y: r.top + r.height / 2 }; }"""
-        )
+        # A heading the grid's right edge cuts: at 1440 one may end just
+        # inside the edge (the wide dialog's sides moved, 2.31.1 NEW-187), so
+        # the window narrows a step at a time until the edge crosses one.
+        cut = None
+        for width in range(1440, 1200, -8):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_timeout(60)
+            cut = page.evaluate(
+                """() => { const g = document.getElementById('grid-scroll');
+                    g.scrollLeft = 0; g.scrollTop = 0; document.activeElement.blur();
+                    const edge = g.getBoundingClientRect().left + g.clientLeft + g.clientWidth;
+                    const a = [...g.querySelectorAll('thead a')].find(a => {
+                        const r = a.getBoundingClientRect(); return r.left < edge - 20 && r.right + 8 > edge; });
+                    if (!a) return null;
+                    const r = a.getBoundingClientRect();
+                    return { name: a.textContent.trim(), x: r.left + 10, y: r.top + r.height / 2 }; }"""
+            )
+            if cut:
+                break
+        assert cut, "no heading under the grid's right edge between 1440 and 1200"
         page.mouse.move(cut["x"], cut["y"])
         page.mouse.down()
         pressed = page.evaluate("""() => [document.activeElement.textContent.trim(),
