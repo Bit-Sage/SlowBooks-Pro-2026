@@ -201,9 +201,10 @@ host).
   console; output goes to `launcher.log` in the data folder, and
   `--serve-lan` shows its URLs in a popup + `connect-urls.txt`.
 - **Double-clicking the exe shows a WebView2 error** — that's the
-  *desktop window* needing the WebView2 runtime (the installer sets it
-  up; the portable zip doesn't). `--serve-lan` doesn't need WebView2 at
-  all — browsers on client machines are all it takes.
+  *desktop window* needing the WebView2 runtime, version 101.0.1210.39 or
+  later (the installer sets it up or updates it; the portable zip doesn't).
+  `--serve-lan` doesn't need WebView2 at all — browsers on client machines
+  are all it takes.
 - **Other computers can't connect** — check the firewall rule (the
   install script creates it; the quick-trial path relies on you clicking
   Allow), and confirm host and clients are on the same network.

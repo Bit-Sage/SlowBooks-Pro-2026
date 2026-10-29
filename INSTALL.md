@@ -50,6 +50,28 @@ other desktop app. If something goes wrong before the app window can open, a
 small popup explains it, and full details are written to
 `%LOCALAPPDATA%\SlowBooksPro\data\launcher.log`.
 
+### Microsoft Edge WebView2 (the app window)
+
+The app's window is drawn by Microsoft's Edge WebView2 runtime, which
+Windows 11 has and most Windows 10 machines do too. SlowBooks needs
+**version 101.0.1210.39 or later**: an older runtime cannot draw the window
+at all. The installer installs the runtime when it is missing and updates it
+when it is older than that (it downloads it from Microsoft, so it needs the
+internet for that step).
+
+When you open SlowBooks on a computer whose runtime is missing or older (the
+portable .zip never sets it up, and an offline computer, or one whose updates
+are held back, can stay on an old one), the app does not open a blank
+window. It says the runtime is missing, or which version it found and which
+it needs; gives Microsoft's download page,
+<https://developer.microsoft.com/microsoft-edge/webview2/>; and offers to
+open SlowBooks in your web browser meanwhile. Install or update the runtime
+from that page (the Evergreen Bootstrapper), or run the SlowBooks installer,
+which does it for you, then open SlowBooks. `launcher.log` records the
+version found at every start. And if the window does open but the app
+cannot start in it, the page says so in place of a white screen, with the
+error to send to support.
+
 ### Windows Defender "Controlled folder access"
 
 Off by default on Windows 11, but some people (and most managed PCs) turn it

@@ -2676,6 +2676,10 @@ const App = {
             App.applyTerminology();
             App.renderOpenTabs();  // the session's open screens (#336)
             App.navigate(location.hash || '#/');
+            // The first page has started (its status bar says Loading):
+            // boot_check.js stops waiting for a first screen. Its data can
+            // take a while on a big company, and that is not a failed start.
+            if (window.SlowBooksBoot) window.SlowBooksBoot.drawn();
         });
     },
 

@@ -24,6 +24,19 @@ set up on the Banking page sets it up when the mapping is saved. A chart with no
 bank account at all gets a sentence saying how to add one. API: the map routes
 take `ledger_mapping`, a feed's account to a chart account.
 
+**A WebView2 runtime too old to run SlowBooks says so** (from a support
+email). On Windows the app's window is drawn by Microsoft's Edge WebView2
+runtime, and the app only checked that one was installed. A runtime older
+than 101.0.1210.39 opened a window that stayed white, with nothing to click
+and no message, and reinstalling did not help, because the installer set the
+runtime up only when there was none. Now the app checks the version before
+it opens the window: on an older runtime it says which version the computer
+has and which SlowBooks needs, gives Microsoft's download page, and offers to
+open SlowBooks in your web browser meanwhile. The installer installs the
+runtime when it is missing and updates it when it is older than that. And if
+the app's scripts ever cannot start in the window, the page says so, with
+the error and how to reach support, in place of a blank screen.
+
 **The Invoices list sorts by any column** (#650, from the gate). Press a
 heading (number, customer, date, due date, status, total, balance) to sort by
 it, and again to reverse; numbers sort as numbers. A sortable heading on any
