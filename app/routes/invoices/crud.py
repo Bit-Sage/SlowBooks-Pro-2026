@@ -476,10 +476,19 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
             for posting in postings:
                 posting.date = data.date
 
+    previous_customer_id = invoice.customer_id
     for key, val in update_data.items():
         if key == "is_pledge" and val is None:
             continue
         setattr(invoice, key, val)
+    # Moved to another customer: the Bill To is the new customer's, frozen
+    # now (2.31.1 gate, W-59); an edit that keeps the customer keeps the
+    # Bill To the invoice was made with.
+    if invoice.customer_id != previous_customer_id:
+        from app.models.invoices import freeze_bill_to
+
+        db.flush()
+        freeze_bill_to(db.connection(), invoice)
 
     # The SPA always sends due_date now (a field added in the UX pass). An
     # explicitly-cleared field arrives as null, which exclude_unset lets

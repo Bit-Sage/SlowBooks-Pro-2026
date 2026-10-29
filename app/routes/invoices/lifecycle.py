@@ -651,6 +651,11 @@ def duplicate_invoice(
         bill_city=original.bill_city,
         bill_state=original.bill_state,
         bill_zip=original.bill_zip,
+        # the Bill To block whole (W-59): the name and country frozen with
+        # the street it copies
+        bill_to_customer_id=original.bill_to_customer_id,
+        bill_to_name=original.bill_to_name,
+        bill_to_country=original.bill_to_country,
         ship_address1=original.ship_address1,
         ship_address2=original.ship_address2,
         ship_city=original.ship_city,

@@ -169,6 +169,12 @@ class InvoiceResponse(BaseModel):
     bill_city: Optional[str]
     bill_state: Optional[str]
     bill_zip: Optional[str]
+    # Whom the invoice was billed to, frozen with the address when it was
+    # made (#638, W-59): the parent of a sub-customer billed with it, else
+    # the customer. What the printed Bill To block shows.
+    bill_to_customer_id: Optional[int] = None
+    bill_to_name: Optional[str] = None
+    bill_to_country: Optional[str] = None
     ship_address1: Optional[str]
     ship_address2: Optional[str]
     ship_city: Optional[str]

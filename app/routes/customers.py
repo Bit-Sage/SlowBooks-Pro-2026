@@ -10,10 +10,9 @@ from app.models.contacts import Customer
 from app.schemas.contacts import CustomerCreate, CustomerUpdate, CustomerResponse
 from app.routes._helpers import get_or_404, reject_null_updates
 from app.services.contact_balances import ZERO, customer_balances
-from app.services.duplicate_detection import find_duplicates
 from app.services.sub_customers import (
     check_parent,
-    duplicate_candidates,
+    likely_duplicates,
     refuse_inactivating_a_parent,
     refuse_inactive_parent,
     refuse_unbilling_with_parent,
@@ -29,7 +28,10 @@ def _responses(db: Session, customers: list[Customer]) -> list[CustomerResponse]
 
     Sub-customers (#638): a sub's parent is read in one query for the page
     (so full_name costs no query per row), and a parent carries how many
-    subs it has and the roll-up, its own balance plus every sub's."""
+    subs it has, the roll-up (its own balance plus every sub's) and, as
+    every customer does, billed_balance: what sits on its A/R, its own
+    balance plus that of the subs billed with it, the A/R Aging row's
+    figure (2.31.1 gate, W-61)."""
     ids = [c.id for c in customers]
     balances = customer_balances(db, ids)
     parent_ids = {c.parent_customer_id for c in customers if c.parent_customer_id}
@@ -37,11 +39,14 @@ def _responses(db: Session, customers: list[Customer]) -> list[CustomerResponse]
         # into the identity map: c.parent then loads nothing
         db.query(Customer).filter(Customer.id.in_(parent_ids)).all()
     sub_ids: dict[int, list[int]] = defaultdict(list)
+    billed_ids: dict[int, list[int]] = defaultdict(list)
     if ids:
-        for sid, pid in db.query(Customer.id, Customer.parent_customer_id).filter(
-            Customer.parent_customer_id.in_(ids)
-        ):
+        for sid, pid, billed in db.query(
+            Customer.id, Customer.parent_customer_id, Customer.bill_with_parent
+        ).filter(Customer.parent_customer_id.in_(ids)):
             sub_ids[pid].append(sid)
+            if billed:
+                billed_ids[pid].append(sid)
     sub_balances = customer_balances(
         db, [sid for subs in sub_ids.values() for sid in subs]
     )
@@ -49,6 +54,9 @@ def _responses(db: Session, customers: list[Customer]) -> list[CustomerResponse]
     for c in customers:
         resp = CustomerResponse.model_validate(c)
         resp.balance = balances.get(c.id, ZERO)
+        resp.billed_balance = resp.balance + sum(
+            (sub_balances.get(sid, ZERO) for sid in billed_ids.get(c.id, ())), ZERO
+        )
         resp.full_name = c.full_name
         resp.parent_name = c.parent.name if c.parent_customer_id and c.parent else None
         resp.sub_count = len(sub_ids.get(c.id, ()))
@@ -114,15 +122,15 @@ def check_duplicate(
     name: str = Query(..., min_length=1),
     parent_customer_id: Optional[int] = Query(
         None,
-        description="Checking a sub-customer's name: against its siblings "
-        "under this parent and the top-level customers (#638).",
+        description="Checking a sub-customer's name: the same name among "
+        "its siblings under this parent, and a likely match among the "
+        "top-level customers (#638).",
     ),
     db: Session = Depends(get_db),
 ):
     """Phase 11: standalone duplicate-check endpoint the UI can call BEFORE
     submitting a create form to warn the user proactively."""
-    existing = duplicate_candidates(db, parent_customer_id)
-    return {"duplicates": find_duplicates(name, existing)}
+    return {"duplicates": likely_duplicates(db, name, parent_customer_id)}
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse)
@@ -134,9 +142,11 @@ def get_customer(customer_id: int, db: Session = Depends(get_db)):
 def customer_subs(customer_id: int, db: Session = Depends(get_db)):
     """A parent's sub-customers with each one's balance, and the roll-up
     (#638): what the customer's own documents leave open, what its subs'
-    do, and the two together. Every sub is listed, inactive ones too (a
-    tenant who moved out may still owe), each saying whether it is billed
-    with the parent. A customer with no subs answers an empty list."""
+    do, and the two together; and billed_balance, what sits on the
+    parent's A/R (its own plus the subs billed with it: the A/R Aging
+    row). Every sub is listed, inactive ones too (a tenant who moved out
+    may still owe), each saying whether it is billed with the parent. A
+    customer with no subs answers an empty list."""
     customer = get_or_404(db, Customer, customer_id)
     subs = (
         db.query(Customer)
@@ -158,6 +168,9 @@ def customer_subs(customer_id: int, db: Session = Depends(get_db)):
         for s in subs
     ]
     subs_total = sum((balances.get(s.id, ZERO) for s in subs), ZERO)
+    billed_total = sum(
+        (balances.get(s.id, ZERO) for s in subs if s.bill_with_parent), ZERO
+    )
     return {
         "customer_id": customer.id,
         "customer_name": customer.name,
@@ -169,6 +182,7 @@ def customer_subs(customer_id: int, db: Session = Depends(get_db)):
         ),
         "own_balance": float(own),
         "subs_balance": float(subs_total),
+        "billed_balance": float(own + billed_total),
         "rollup_balance": float(own + subs_total),
         "subs": rows,
     }
@@ -257,12 +271,12 @@ def create_customer(
     db: Session = Depends(get_db),
 ):
     # Phase 11: warn on likely duplicate names unless the caller explicitly
-    # passes ?force=true to confirm. A sub-customer's name is checked
-    # against its siblings and the top-level names (#638): every property
-    # has a Unit 1.
+    # passes ?force=true to confirm. A sub-customer's name is checked the
+    # fuzzy way against the top-level names and for the same name among
+    # its siblings (#638): every property has a Unit 1, and Unit 2 beside
+    # it is the next unit.
     if not force:
-        existing = duplicate_candidates(db, data.parent_customer_id)
-        dupes = find_duplicates(data.name, existing)
+        dupes = likely_duplicates(db, data.name, data.parent_customer_id)
         if dupes:
             raise HTTPException(
                 status_code=409,
