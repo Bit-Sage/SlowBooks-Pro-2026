@@ -1586,8 +1586,8 @@ a:hover { text-decoration: underline; }
 .line-order-cell .btn { padding: 0 5px; min-width: 22px; }
 .line-order-handle { cursor: grab; color: var(--gray-600); padding: 0 4px; user-select: none; }
 tr.line-order-dragging { opacity: 0.5; }
-tr.line-order-over-top > td { box-shadow: inset 0 2px 0 var(--primary, #2a6fb0); }
-tr.line-order-over-bottom > td { box-shadow: inset 0 -2px 0 var(--primary, #2a6fb0); }
+tr.line-order-over-top > td { box-shadow: inset 0 2px 0 var(--qb-blue); }
+tr.line-order-over-bottom > td { box-shadow: inset 0 -2px 0 var(--qb-blue); }
 
 .invoice-logo-option {
     display: flex;

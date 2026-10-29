@@ -400,7 +400,7 @@ const BillsPage = {
             <h4>Recent payments</h4>
             ${rows(s.payments, p => `<td>${escapeHtml(p.date)}</td><td class="amount">${formatCurrency(p.amount)}</td><td>${escapeHtml([p.method, p.check_number ? '#' + p.check_number : ''].filter(Boolean).join(' '))}</td>`)}
             ${s.notes ? `<h4>Notes</h4><p class="bill-vendor-summary__notes">${escapeHtml(s.notes)}</p>` : ''}
-            <p><a href="#/vendors/${s.vendor_id}" target="_blank" rel="noopener">Open ${escapeHtml(s.name)}'s page</a></p>`;
+            <p><a href="#/vendors/${s.vendor_id}">Open ${escapeHtml(s.name)}'s page</a></p>`;
         box.hidden = false;
     },
     _summaryFor: null,
