@@ -158,10 +158,11 @@ class Invoice(Base):
 @event.listens_for(Invoice, "before_insert")
 def _freeze_bill_to(_mapper, connection, target):
     """Freeze whom a new invoice is billed to (W-59) unless the maker set
-    it (a duplicate carries its original's). One query on the customer and
-    its parent, so every path that makes an invoice (the form, convert,
-    duplicate, the scheduler, progress billing, the importers) freezes the
-    same thing without each saying so."""
+    it (the form, an edit to another customer, duplicate and convert set
+    it with the street, through sub_customers.invoice_addresses). One
+    query on the customer and its parent, so every other path that makes
+    an invoice (the scheduler, progress billing, the importers) freezes
+    the same thing without each saying so."""
     if target.bill_to_name is not None or target.customer_id is None:
         return
     freeze_bill_to(connection, target)

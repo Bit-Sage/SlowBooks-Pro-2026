@@ -984,7 +984,8 @@ def test_the_printed_invoice_keeps_the_bill_to_it_was_made_with(
     """W-59: the Bill To block comes from the invoice alone. The name and
     country are frozen with the street when the invoice is made, so a
     tenant moved to another property, or billed on its own, afterwards
-    prints the same invoice it was sent."""
+    prints the same invoice it was sent. A duplicate is a new invoice,
+    billed as of now (W-73)."""
     from app.services.donor_documents import invoice_pdf_context
     from app.services.pdf_service import render_invoice_html
     from app.services.settings_service import get_all_settings
@@ -1062,11 +1063,21 @@ def test_the_printed_invoice_keeps_the_bill_to_it_was_made_with(
     )
     own = block(third["id"])
     assert "<strong>Unit 4B</strong>" in own and "Mexico" in own and "For:" not in own
-    # a duplicate carries its original's block whole
+    # a duplicate is a new invoice billed as of now (W-73): the tenant is
+    # billed on its own today, so the copy is too, its own street and all;
+    # the original keeps the block it was sent with
     r = client.post(f"/api/invoices/{rent['id']}/duplicate")
     assert r.status_code == 201, r.text
-    assert (r.json()["bill_to_name"], r.json()["bill_to_country"]) == ("Maple St", "CA")
-    assert "For: Unit 4B" in block(r.json()["id"])
+    copy = r.json()
+    assert (
+        copy["bill_to_customer_id"],
+        copy["bill_to_name"],
+        copy["bill_to_country"],
+        copy["bill_address1"],
+    ) == (unit["id"], "Unit 4B", "MX", "12 Maple St, Apt 4B")
+    dup = block(copy["id"])
+    assert "<strong>Unit 4B</strong>" in dup and "Mexico" in dup and "For:" not in dup
+    assert "For: Unit 4B" in block(rent["id"])
 
 
 def test_the_bill_to_migration_backfills_from_the_customer_billed_to(tmp_path):
@@ -1499,3 +1510,72 @@ def test_an_invoice_edited_onto_another_customer_prints_that_customers_whole_bil
     r = client.put(f"/api/invoices/{inv['id']}", json={"customer_id": 99999})
     assert r.status_code == 404, r.text
     assert r.json()["detail"] == "Customer not found"
+
+
+def test_a_duplicate_is_billed_as_of_now(client, db_session, seed_accounts):
+    """W-73: a duplicate is a new invoice billed as of now. A tenant moved
+    from Maple St to Elm St since its invoice was made has the copy billed
+    to Elm St's account, and the copy prints Elm St's street under Elm
+    St's name with "For:" the tenant, and the tenant's ship-to as it is
+    now; the original still prints what it was sent with."""
+    maple = _customer(
+        client,
+        "Maple St",
+        bill_address1="12 Maple St",
+        bill_city="Springfield",
+        bill_state="IL",
+        bill_zip="62704",
+    )
+    unit = _customer(
+        client,
+        "Unit 7",
+        parent_customer_id=maple["id"],
+        bill_with_parent=True,
+        bill_address1="12 Maple St, Unit 7",
+        bill_city="Springfield",
+        ship_address1="12 Maple St, Unit 7",
+    )
+    rent = _invoice(client, unit["id"], 900, 2)
+    # settled by the property, so the tenant may move
+    assert _payment(client, maple["id"], 900, 4, [(rent["id"], 900)]).status_code == 201
+    elm = _customer(
+        client,
+        "Elm St",
+        bill_address1="40 Elm St",
+        bill_city="Riverton",
+        bill_state="WY",
+        bill_zip="82501",
+    )
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={
+            "parent_customer_id": elm["id"],
+            "bill_with_parent": True,
+            "ship_address1": "40 Elm St, Unit 7",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/invoices/{rent['id']}/duplicate")
+    assert r.status_code == 201, r.text
+    copy = r.json()
+    assert (copy["customer_id"], copy["bill_to_customer_id"], copy["bill_to_name"]) == (
+        unit["id"],
+        elm["id"],
+        "Elm St",
+    )
+    assert (copy["bill_address1"], copy["bill_city"]) == ("40 Elm St", "Riverton")
+    assert _printed(db_session, copy["id"]) == {
+        "Bill To": ["Elm St", "40 Elm St", "Riverton, WY 82501", "For: Unit 7"],
+        "Ship To": ["40 Elm St, Unit 7"],
+    }
+    # on Elm St's A/R: what Receive Payment offers Elm St
+    offered = client.get(
+        f"/api/invoices?customer_id={elm['id']}&billed_to=true&open_only=true"
+    ).json()
+    assert [i["id"] for i in offered] == [copy["id"]]
+    # the original prints what it was sent with
+    assert _printed(db_session, rent["id"]) == {
+        "Bill To": ["Maple St", "12 Maple St", "Springfield, IL 62704", "For: Unit 7"],
+        "Ship To": ["12 Maple St, Unit 7"],
+    }
