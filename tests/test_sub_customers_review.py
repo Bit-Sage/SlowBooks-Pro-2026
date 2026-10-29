@@ -25,8 +25,8 @@ street with the name and country; an edit can correct the addresses; and
 a duplicate is checked against the credit limit (W-79).
 
 Round 3's notes: the printed Ship To keeps the country frozen with its
-street; and an invoice with a payment or credit memo on it stays with its
-customer.
+street; an invoice with a payment or credit memo on it stays with its
+customer; and an address part sent as "" with a move blanks it.
 """
 
 import csv
@@ -1853,8 +1853,8 @@ def test_a_pay_applications_invoice_prints_the_payers_whole_bill_to(
     ]
 
 
-# ── the 2.31.1 gate, round 3's notes: the Ship To's country, and a paid
-# invoice's move ────────────────────────────────────────────────────────
+# ── the 2.31.1 gate, round 3's notes: the Ship To's country, a paid
+# invoice's move, and a part sent empty with a move ─────────────────────
 
 
 def _preview_blocks(client, inv_id):
@@ -2214,4 +2214,114 @@ def test_an_invoice_with_money_on_it_stays_with_its_customer(
     assert (
         "while money is applied to it: Maple St's payment of $1,000.00 (Sep 5, 2026)."
         in r.json()["detail"]["message"]
+    )
+
+
+def test_a_part_sent_empty_with_a_move_blanks_it(client, db_session, seed_accounts):
+    """On a move, an address part sent as "" took the new customer's anyway,
+    so the copied street could not be blanked. An edit takes a part as it
+    is sent, "" or null blanking it, with a move as without one; a part
+    left out keeps what is stored, or with a move is copied. Create keeps
+    its rule: a part left out or sent empty is the customer's. The invoice
+    form sends no address part, so its save never blanks one."""
+    alpha = _customer(client, "Alpha", bill_address1="1 Solo Way", bill_city="Austin")
+    beta = _customer(
+        client,
+        "Beta SARL",
+        bill_address1="8 Rue des Lilas",
+        bill_address2="Bat. B",
+        bill_city="Lyon",
+        bill_zip="69001",
+        bill_country="FR",
+        ship_address1="Quai 2",
+        ship_city="Lyon",
+        ship_country="FR",
+    )
+    inv = _invoice(client, alpha["id"], 300, 1)
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": beta["id"], "bill_address2": "", "ship_address1": ""},
+    )
+    assert r.status_code == 200, r.text
+    moved = r.json()
+    assert (
+        moved["bill_address1"],
+        moved["bill_address2"],
+        moved["bill_city"],
+        moved["bill_zip"],
+        moved["ship_address1"],
+        moved["ship_city"],
+    ) == ("8 Rue des Lilas", "", "Lyon", "69001", "", "Lyon")
+    assert moved["ship_to_country"] == "FR"
+    # the Ship To's street is blank, so no Ship To prints
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": ["Beta SARL", "8 Rue des Lilas", "Lyon, 69001", "France"]
+    }
+    # null blanks a part too, as it does on an edit that keeps the customer
+    r = client.put(
+        f"/api/invoices/{inv['id']}",
+        json={"customer_id": alpha["id"], "bill_city": None, "ship_to_country": ""},
+    )
+    assert r.status_code == 200, r.text
+    back = r.json()
+    assert (back["bill_address1"], back["bill_city"], back["ship_to_country"]) == (
+        "1 Solo Way",
+        None,
+        "",
+    )
+    r = client.put(f"/api/invoices/{inv['id']}", json={"bill_address1": ""})
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_address1"] == ""
+
+    # create: left out or sent empty, a part is the customer's
+    made = _invoice(
+        client, beta["id"], 50, 2, bill_address2="", ship_city="", ship_to_country=""
+    )
+    assert (
+        made["bill_address2"],
+        made["ship_address1"],
+        made["ship_city"],
+        made["ship_to_country"],
+    ) == ("Bat. B", "Quai 2", "Lyon", "FR")
+
+    # the invoice form's save sends no address part: its edit keeps the
+    # addresses, and its change of customer takes the new customer's whole
+    js = _js("invoices.js")
+    save = js[js.index("    async save(e, id) {") : js.index("async creditLimitOk(")]
+    from app.services.sub_customers import INVOICE_ADDRESS_FIELDS
+
+    assert "const data = {" in save
+    assert not [f for f in INVOICE_ADDRESS_FIELDS + ("bill_to_",) if f in save]
+    form = {
+        "customer_id": beta["id"],
+        "date": "2026-09-01",
+        "due_date": None,
+        "terms": "Net 30",
+        "po_number": None,
+        "is_pledge": False,
+        "class_id": None,
+        "job_id": None,
+        "currency": None,
+        "exchange_rate": None,
+        "tax_rate": 0,
+        "notes": None,
+        "lines": [{"description": "Rent", "quantity": 1, "rate": 300}],
+    }
+    other = _invoice(client, alpha["id"], 300, 3)
+    r = client.put(f"/api/invoices/{other['id']}", json=form)
+    assert r.status_code == 200, r.text
+    assert _printed(db_session, other["id"]) == {
+        "Bill To": [
+            "Beta SARL",
+            "8 Rue des Lilas",
+            "Bat. B",
+            "Lyon, 69001",
+            "France",
+        ],
+        "Ship To": ["Quai 2", "Lyon", "France"],
+    }
+    r = client.put(f"/api/invoices/{other['id']}", json={**form, "notes": "again"})
+    assert r.status_code == 200, r.text
+    assert (
+        r.json()["bill_address2"] == "Bat. B" and r.json()["ship_address1"] == "Quai 2"
     )

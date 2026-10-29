@@ -161,10 +161,10 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     # The Bill To whole is the payer's (#638; the parent of a sub-customer
     # billed with it), its street with its name and country, and the
     # ship-to the customer's, its country with it; an address part the
-    # request gives wins.
-    cust_fields = invoice_addresses(
-        db, customer, {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
-    )
+    # request gives a value wins. One left out, or sent empty, is the
+    # customer's, as it always was on create (an edit's "" blanks a part).
+    given = {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
+    cust_fields = invoice_addresses(db, customer, {k: v for k, v in given.items() if v})
 
     invoice = None
     invoice_number = None
@@ -285,9 +285,20 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
 @router.put("/{invoice_id}", response_model=InvoiceResponse)
 def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(get_db)):
     """Edit an invoice: what the request sends changes, what it leaves out
-    stays as stored. A move to another customer is refused (409
-    ``money_applied``) while a payment or credit memo is applied to the
-    invoice, naming each; an unpaid invoice moves."""
+    stays as stored.
+
+    The addresses (2.31.1): a bill or ship address part sent, or
+    ``ship_to_country``, is what the invoice gets, "" or null blanking it.
+    The Bill To's name and country stay the ones the invoice was billed
+    with. An edit that moves the invoice to another customer takes the
+    new customer's addresses as create does, the payer's whole Bill To
+    (street, name and country) and the customer's own Ship To with its
+    country, and a part sent with the move wins over the one copied, ""
+    or null blanking it. The invoice form sends no address part: its save
+    keeps the stored addresses, and a change of customer there takes the
+    new customer's. A move is refused (409 ``money_applied``) while a
+    payment or credit memo is applied to the invoice, naming each; an
+    unpaid invoice moves."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -495,10 +506,10 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
     # Moved to another customer: the Bill To whole is the new customer's
     # payer's as of now, as create makes it, the street with the name and
     # country, and the ship-to the new customer's with its country; an
-    # address sent with the move wins over the one copied (2.31.1 gate,
-    # W-59, W-72; round 3). An edit that keeps the customer keeps the Bill
-    # To the invoice was made with, but for the address parts it sends (set
-    # above).
+    # address part sent with the move wins over the one copied, "" or null
+    # blanking it (2.31.1 gate, W-59, W-72; round 3). An edit that keeps
+    # the customer keeps the Bill To the invoice was made with, but for the
+    # address parts it sends (set above).
     if invoice.customer_id != previous_customer_id:
         sent = {k: v for k, v in update_data.items() if k in INVOICE_ADDRESS_FIELDS}
         moved_to = db.get(Customer, invoice.customer_id)

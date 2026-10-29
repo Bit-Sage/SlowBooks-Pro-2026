@@ -138,7 +138,8 @@ class InvoiceUpdate(StrictModel):
     # ones it was billed with). An edit that moves the invoice to another
     # customer takes that customer's, the payer's Bill To whole as create
     # does and the customer's Ship To, and a part sent with it wins over
-    # the one copied. Left out, an edit keeps what is stored.
+    # the one copied: "" (or null) blanks that part. Left out, an edit
+    # keeps what is stored, and a move copies it.
     bill_address1: Optional[str] = Field(None, max_length=200)
     bill_address2: Optional[str] = Field(None, max_length=200)
     bill_city: Optional[str] = Field(None, max_length=100)
