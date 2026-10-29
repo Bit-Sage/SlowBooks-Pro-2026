@@ -7,6 +7,21 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**A credit memo's lines take their own class and job** (#640, from
+Discussion #633). A memo's lines all posted with the header's class, so a
+credit against work in two divisions had to be two memos. Each line now
+takes a class and a job of its own, as an invoice line does: the form draws
+the Class cell on every line once the company has a class to choose, the
+reversal of that line's income posts with the line's class and job, the tax
+and receivable lines with the memo's, and a line left without one takes the
+memo's. P&L by Class and P&L by Job net the credit against the division or
+job that earned the sale, and a void nets each back to zero. The memo's
+entry now carries the memo's own job as well (it carried the class only), so
+a memo with a job counts on P&L by Job, and a job on a memo line alone keeps
+the job with its customer the way a job on an invoice line does. Over the API
+a line's `class_id` and `job_id` are optional, and a line's job must be the
+customer's, as the memo's is.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
