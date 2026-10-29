@@ -114,17 +114,21 @@ with: the name and country are frozen on the invoice with the street, so a
 move or a flag change afterwards does not alter a printed invoice, and
 neither does renaming the customer, the way its street never did (books from
 before take the name and country of the customer each invoice is billed to
-at the upgrade); an edit that moves an invoice to another customer takes the
-new customer's Bill To. Every customer now answers `billed_balance`, what
-sits on its A/R, its own open documents plus those of the tenants billed
-with it, the figure its A/R Aging row shows; the Customer Center shows it as
-what a property owes, beside its own balance and the roll-up, and the
-customer CSV names a tenant in full, "Parent: Sub". The credit limit checked
-when an invoice is saved is the payer's: an invoice to a tenant billed with
-its property is checked against the property's limit and what sits on its
-A/R, tenants included. Every tenant listed under its property shows its own
-name, not only the first, and among the tenants of one property only the
-same name is a duplicate, so Unit 2 may follow Unit 1.
+at the upgrade). An invoice moved to another customer by an edit, a
+duplicate and an estimate converted to an invoice are billed as of that
+moment: the whole Bill To, street, name and country, is the payer's then
+(the property's for a tenant billed with it) and the ship-to the
+customer's. An edit can correct the invoice's addresses, and a duplicate is
+checked against the credit limit as a new invoice is. Every customer now
+answers `billed_balance`, what sits on its A/R, its own open documents plus
+those of the tenants billed with it, the figure its A/R Aging row shows; the
+Customer Center shows it as what a property owes, beside its own balance and
+the roll-up, and the customer CSV names a tenant in full, "Parent: Sub". The
+credit limit checked when an invoice is saved is the payer's: an invoice to
+a tenant billed with its property is checked against the property's limit
+and what sits on its A/R, tenants included. Every tenant listed under its
+property shows its own name, not only the first, and among the tenants of
+one property only the same name is a duplicate, so Unit 2 may follow Unit 1.
 
 **Memorized bills and journal entries, entered on a schedule** (#605, asked
 by two people moving from QuickBooks). A bill or a journal entry can now be

@@ -64,9 +64,11 @@ class Invoice(Base):
     # Bill To block comes from these alone (name, street, country, and
     # "For: <sub-customer>" when bill_to_customer_id is not the customer),
     # so a move or a flag change afterwards does not alter a printed
-    # invoice. Filled on insert from the customer when left empty, on
-    # every creation path (_freeze_bill_to below); rows from before are
-    # backfilled from the customer they were billed to at the upgrade.
+    # invoice. Set with the street by the paths that make an invoice or
+    # move it to another customer (sub_customers.invoice_addresses), else
+    # filled on insert from the customer (_freeze_bill_to below); rows
+    # from before are backfilled from the customer they were billed to at
+    # the upgrade.
     bill_to_customer_id = Column(Integer, nullable=True)
     bill_to_name = Column(String(200), nullable=True)
     bill_to_country = Column(String(100), nullable=True)
@@ -158,10 +160,13 @@ class Invoice(Base):
 @event.listens_for(Invoice, "before_insert")
 def _freeze_bill_to(_mapper, connection, target):
     """Freeze whom a new invoice is billed to (W-59) unless the maker set
-    it (a duplicate carries its original's). One query on the customer and
-    its parent, so every path that makes an invoice (the form, convert,
-    duplicate, the scheduler, progress billing, the importers) freezes the
-    same thing without each saying so."""
+    it: create, Duplicate, Convert and the QuickBooks Online carry-over set
+    the whole Bill To with the street, through
+    sub_customers.invoice_addresses, as an edit to another customer does.
+    One query on the customer and its parent, so every other path that
+    makes an invoice (the scheduler, progress billing, the IIF and
+    QuickBooks report importers, none of which writes a street) freezes
+    the same thing without each saying so."""
     if target.bill_to_name is not None or target.customer_id is None:
         return
     freeze_bill_to(connection, target)
@@ -170,9 +175,10 @@ def _freeze_bill_to(_mapper, connection, target):
 def freeze_bill_to(connection, target) -> None:
     """Set the invoice's frozen Bill To from its customer as it is now: the
     parent of a sub-customer billed with it, else the customer. Called on
-    insert, and by an edit that moves the invoice to another customer (the
-    Bill To is the new customer's; an edit that keeps the customer keeps
-    the Bill To the invoice was made with)."""
+    insert for an invoice made without one (see _freeze_bill_to); the
+    paths that make an invoice or move it to another customer set the
+    whole Bill To, the street with the name and country, through
+    app.services.sub_customers.invoice_addresses (2.31.1 gate, W-72)."""
     if target.customer_id is None:
         return
     from app.models.contacts import Customer

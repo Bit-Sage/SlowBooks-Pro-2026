@@ -129,6 +129,22 @@ class InvoiceUpdate(StrictModel):
     due_date: Optional[dt_date] = None
     terms: Optional[str] = None
     po_number: Optional[str] = None
+    # The addresses (2.31.1 gate, W-72): sent, they correct the invoice's
+    # Bill To street or its Ship To, and nothing else of the Bill To (the
+    # name and country stay the ones it was billed with). An edit that
+    # moves the invoice to another customer takes that customer's, the
+    # payer's Bill To whole as create does, and a part sent with it wins
+    # over the one copied. Left out, an edit keeps what is stored.
+    bill_address1: Optional[str] = Field(None, max_length=200)
+    bill_address2: Optional[str] = Field(None, max_length=200)
+    bill_city: Optional[str] = Field(None, max_length=100)
+    bill_state: Optional[str] = Field(None, max_length=50)
+    bill_zip: Optional[str] = Field(None, max_length=20)
+    ship_address1: Optional[str] = Field(None, max_length=200)
+    ship_address2: Optional[str] = Field(None, max_length=200)
+    ship_city: Optional[str] = Field(None, max_length=100)
+    ship_state: Optional[str] = Field(None, max_length=50)
+    ship_zip: Optional[str] = Field(None, max_length=20)
     status: Optional[InvoiceStatus] = None
     tax_rate: Optional[TaxRate] = None
     notes: Optional[str] = None
@@ -148,8 +164,9 @@ class InvoiceUpdate(StrictModel):
 class ZeroTotalConfirmation(StrictModel):
     """The optional body of Duplicate and of an estimate's Convert: a copy
     that adds up to $0.00 is made only with ``allow_zero_total: true``, and
-    one that takes the customer past their credit limit only with
-    ``allow_over_credit_limit: true`` (#256)."""
+    one that takes the payer past their credit limit only with
+    ``allow_over_credit_limit: true`` (#256; Duplicate since the 2.31.1
+    gate, W-79)."""
 
     allow_zero_total: bool = False
     allow_over_credit_limit: bool = False

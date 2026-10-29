@@ -1019,6 +1019,7 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
     from app.models.payments import Payment
     from app.routes.invoices.helpers import _post_invoice_journal
     from app.services.accounting import create_journal_entry, get_ar_account_id
+    from app.services.sub_customers import invoice_addresses
 
     if not (plan["invoices"] or plan["payments"]):
         return 0, 0
@@ -1053,8 +1054,6 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
             date=spec["date"],
             due_date=spec["due_date"],
             terms="",
-            bill_address1=who.bill_address1,
-            bill_address2=who.bill_address2,
             subtotal=amount,
             tax_rate=Decimal("0"),
             tax_amount=Decimal("0"),
@@ -1065,6 +1064,11 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
                 "Carried over from QuickBooks Online's A/R Aging Detail report: "
                 "the sale is in the imported history, and this is what was open."
             ),
+            # The report carries no address: billed as a new invoice is,
+            # through the one helper, the payer's Bill To (the property's
+            # street under its name for a tenant billed with it) and the
+            # customer's ship-to.
+            **invoice_addresses(db, who),
         )
         db.add(invoice)
         db.flush()

@@ -119,6 +119,7 @@ def confirm_credit_limit(
     noun: str = "invoice",
     exclude_invoice_id=None,
     question: str | None = None,
+    ask: str = "Save it anyway?",
 ) -> None:
     """A customer's credit limit, told to every way of saving an invoice
     (#256, 2.22.2). The form asked before it saved and nothing else did:
@@ -139,7 +140,8 @@ def confirm_credit_limit(
     parent's limit is checked against what sits on that A/R, the parent's
     own open documents and those of every sub-customer billed with it
     (billed_balance, the A/R Aging row), and the 409 names the parent. A
-    customer billed on its own is its own payer, as before."""
+    customer billed on its own is its own payer, as before. ``ask`` ends
+    the question for the action at hand ("Duplicate it anyway?")."""
     from app.models.invoices import Invoice
     from app.services.contact_balances import home_amount
     from app.services.sub_customers import billed_balance, payer_for
@@ -167,7 +169,7 @@ def confirm_credit_limit(
         detail={
             "code": CREDIT_LIMIT_CODE,
             "message": sentence,
-            "question": question or f"{sentence} Save it anyway?",
+            "question": question or f"{sentence} {ask}",
             "limit": str(_q(limit)),
             "would_owe": str(after),
         },

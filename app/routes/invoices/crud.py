@@ -10,7 +10,7 @@ from app.routes._helpers import clamp_pagination, reject_null_updates
 from app.models.invoices import Invoice, InvoiceLine, InvoiceStatus
 from app.models.items import Item
 from app.models.contacts import Customer
-from app.services.sub_customers import bill_to_parent
+from app.services.sub_customers import INVOICE_ADDRESS_FIELDS, invoice_addresses
 from app.schemas.invoices import InvoiceCreate, InvoiceUpdate, InvoiceResponse
 from app.services.accounting import (
     _q,
@@ -157,22 +157,12 @@ def create_invoice(data: InvoiceCreate, db: Session = Depends(get_db)):
     # requests both compute MAX+1 and race for the same invoice number.
     cust_id = customer.id
     cust_name = customer.full_name
-    # A sub-customer billed with its parent is billed at the parent's
-    # address (#638): the invoice's Bill To is the parent's unless the
-    # request gives one.
-    billed = bill_to_parent(db, customer) or customer
-    cust_fields = {
-        "bill_address1": data.bill_address1 or billed.bill_address1,
-        "bill_address2": data.bill_address2 or billed.bill_address2,
-        "bill_city": data.bill_city or billed.bill_city,
-        "bill_state": data.bill_state or billed.bill_state,
-        "bill_zip": data.bill_zip or billed.bill_zip,
-        "ship_address1": data.ship_address1 or customer.ship_address1,
-        "ship_address2": data.ship_address2 or customer.ship_address2,
-        "ship_city": data.ship_city or customer.ship_city,
-        "ship_state": data.ship_state or customer.ship_state,
-        "ship_zip": data.ship_zip or customer.ship_zip,
-    }
+    # The Bill To whole is the payer's (#638; the parent of a sub-customer
+    # billed with it), its street with its name and country, and the
+    # ship-to the customer's; an address part the request gives wins.
+    cust_fields = invoice_addresses(
+        db, customer, {k: getattr(data, k) for k in INVOICE_ADDRESS_FIELDS}
+    )
 
     invoice = None
     invoice_number = None
@@ -316,6 +306,9 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         Invoice,
         data.model_dump(exclude_unset=True, exclude={"lines", "allow_zero_total"}),
     )
+    if update_data.get("customer_id") not in (None, invoice.customer_id):
+        if db.get(Customer, update_data["customer_id"]) is None:
+            raise HTTPException(status_code=404, detail="Customer not found")
     # What the edit changes — the customer, the header's job, a line's job —
     # must leave the invoice on its customer's jobs (NEW-36); what it leaves
     # alone is not judged, so a note saved over a job the user didn't touch
@@ -481,14 +474,17 @@ def update_invoice(invoice_id: int, data: InvoiceUpdate, db: Session = Depends(g
         if key == "is_pledge" and val is None:
             continue
         setattr(invoice, key, val)
-    # Moved to another customer: the Bill To is the new customer's, frozen
-    # now (2.31.1 gate, W-59); an edit that keeps the customer keeps the
-    # Bill To the invoice was made with.
+    # Moved to another customer: the Bill To whole is the new customer's
+    # payer's as of now, as create makes it, the street with the name and
+    # country, and the ship-to the new customer's; an address sent with the
+    # move wins over the one copied (2.31.1 gate, W-59, W-72). An edit that
+    # keeps the customer keeps the Bill To the invoice was made with, but
+    # for the address parts it sends (set above).
     if invoice.customer_id != previous_customer_id:
-        from app.models.invoices import freeze_bill_to
-
-        db.flush()
-        freeze_bill_to(db.connection(), invoice)
+        sent = {k: v for k, v in update_data.items() if k in INVOICE_ADDRESS_FIELDS}
+        moved_to = db.get(Customer, invoice.customer_id)
+        for key, val in invoice_addresses(db, moved_to, sent).items():
+            setattr(invoice, key, val)
 
     # The SPA always sends due_date now (a field added in the UX pass). An
     # explicitly-cleared field arrives as null, which exclude_unset lets

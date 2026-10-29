@@ -30,10 +30,12 @@ from app.routes.invoices.helpers import (
     invoice_customer_name,
     _due_date_from_terms,
     _post_invoice_journal,
+    confirm_credit_limit,
     confirm_zero_total,
     opening_status,
 )
 from app.services.donor_documents import document_label
+from app.services.sub_customers import invoice_addresses
 from app.services.terminology import document_reference, terms_from_db
 
 
@@ -610,7 +612,9 @@ def duplicate_invoice(
     sent yet. The copy carries what the original says about the sale: its
     currency and the rate it was booked at, the job, class and PO number,
     and each line's item, job, class and cost code. Each line's tax is the
-    customer's as they stand today. It posts the way a new invoice does.
+    customer's as they stand today, and the copy is billed as of today
+    too: the Bill To is the payer's now and the ship-to the customer's now
+    (2.31.1 gate, W-73). It posts the way a new invoice does.
 
     The copy used to drop the currency and rate, so a EUR 850.00 invoice's
     duplicate was a $850.00 invoice (and posted $850 where the original
@@ -636,6 +640,20 @@ def duplicate_invoice(
         "duplicating it",
         question=f"This {noun} adds up to $0.00. Duplicate it anyway?",
     )
+    # Past the payer's credit limit? Asked as a new invoice is (2.31.1
+    # gate, W-79): the same 409 "credit_limit", and the copy is made with
+    # allow_over_credit_limit, as create takes it. The copy owes its whole
+    # total, at the rate it carries.
+    from app.services.contact_balances import home_amount
+
+    confirm_credit_limit(
+        db,
+        original.customer,
+        home_amount(total, original.exchange_rate),
+        bool(data and data.allow_over_credit_limit),
+        noun,
+        ask="Duplicate it anyway?",
+    )
 
     left_off: list[str] = []
     new_invoice = Invoice(
@@ -646,21 +664,6 @@ def duplicate_invoice(
         due_date=_due_date_from_terms(today, original.terms),
         terms=original.terms,
         po_number=original.po_number,
-        bill_address1=original.bill_address1,
-        bill_address2=original.bill_address2,
-        bill_city=original.bill_city,
-        bill_state=original.bill_state,
-        bill_zip=original.bill_zip,
-        # the Bill To block whole (W-59): the name and country frozen with
-        # the street it copies
-        bill_to_customer_id=original.bill_to_customer_id,
-        bill_to_name=original.bill_to_name,
-        bill_to_country=original.bill_to_country,
-        ship_address1=original.ship_address1,
-        ship_address2=original.ship_address2,
-        ship_city=original.ship_city,
-        ship_state=original.ship_state,
-        ship_zip=original.ship_zip,
         subtotal=subtotal,
         tax_rate=original.tax_rate,
         tax_amount=tax_amount,
@@ -677,6 +680,12 @@ def duplicate_invoice(
         # stored on the original (books from before the rule) is left off,
         # and the response says which (NEW-36).
         job_id=own_job(db, original.customer_id, original.job_id, left_off),
+        # A new invoice, billed as of now (2.31.1 gate, W-73): the Bill To
+        # whole is the payer's today, the street with the name and country,
+        # and the ship-to the customer's today. The original's frozen block
+        # is what was sent then: a tenant moved since would get a copy on
+        # the new property's account printing the old one's street.
+        **(invoice_addresses(db, original.customer) if original.customer else {}),
     )
     db.add(new_invoice)
     db.flush()

@@ -234,6 +234,17 @@ def test_the_page_asks_and_sends_again_with_the_flag():
     # Duplicate on the invoice view
     assert got["duplicate"]["bodies"] == [None, {"allow_zero_total": True}]
     assert got["duplicate"]["toasts"] == ["Duplicated as Invoice #1002"]
+    # ...past the payer's credit limit (2.31.1 gate, W-79): the server's
+    # question, then the same request with the flag it named
+    assert got["duplicateOverLimit"] == {
+        "asked": [
+            "Salt & Pine's credit limit is $500.00. With this invoice they would owe $550.00. Duplicate it anyway?"
+        ],
+        "bodies": [None, {"allow_over_credit_limit": True}],
+        "toasts": ["Duplicated as Invoice #1002"],
+    }
+    # no: nothing made, nothing said
+    assert got["duplicateOverLimitNo"] == {"asked": 1, "bodies": [None], "toasts": []}
 
 
 def test_every_zero_total_form_sends_through_the_question():
