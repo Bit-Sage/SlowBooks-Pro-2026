@@ -100,3 +100,34 @@ def test_the_changelog_and_docs_say_so():
     assert "#650" in changelog
     features = (ROOT / "docs/features.md").read_text(encoding="utf-8")
     assert "#650" in features
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_dates_sort_by_the_day_and_amounts_as_numbers():
+    """W-82 (2.31.1 gate): parseFloat read "2026-05-15" as 2026, so Date and
+    Due Date sorted by the year alone, the server's newest-first order kept
+    within it (Bills and Fixed Assets share the helper). A value sorts as a
+    number only when it is wholly one; an ISO date compares as text, which
+    is date order."""
+    src = _helper_source()
+    script = src + """
+const items = [
+  { d: '2026-05-15', t: '100.00' }, { d: '2024-12-26', t: '25.50' },
+  { d: '2026-01-02', t: '-3' }, { d: '2024-12-22', t: '1000' },
+  { d: null, t: null },
+];
+const key = (k, dir) => items.slice()
+  .sort((a, b) => (dir === 'desc' ? -1 : 1) * _listSortCompare(a, b, k))
+  .map(i => i[k]);
+console.log(JSON.stringify({ dAsc: key('d', 'asc'), dDesc: key('d', 'desc'), tAsc: key('t', 'asc') }));
+"""
+    got = _run(script)
+    assert got["dAsc"] == [None, "2024-12-22", "2024-12-26", "2026-01-02", "2026-05-15"]
+    assert got["dDesc"] == [
+        "2026-05-15",
+        "2026-01-02",
+        "2024-12-26",
+        "2024-12-22",
+        None,
+    ]
+    assert got["tAsc"][1:] == ["-3", "25.50", "100.00", "1000"]

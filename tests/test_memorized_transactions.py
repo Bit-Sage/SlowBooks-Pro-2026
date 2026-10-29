@@ -1410,7 +1410,9 @@ def test_a_cadence_word_takes_no_interval(client, seed_accounts):
         json={"frequency": "every two weeks", "interval": 2},
     )
     assert r.status_code == 422
-    assert "every two weeks takes no interval" in r.json()["detail"].lower()
+    assert (
+        "every two weeks takes no interval" in r.json()["detail"][0]["message"].lower()
+    )
     got = client.get(f"/api/memorized/{mem['id']}").json()
     assert (got["frequency"], got["interval"]) == ("weekly", 2)
     for word in (
@@ -1425,7 +1427,8 @@ def test_a_cadence_word_takes_no_interval(client, seed_accounts):
             f"/api/memorized/{mem['id']}", json={"frequency": word, "interval": 2}
         )
         assert r.status_code == 422, word
-        assert f"{word} takes no interval" in r.json()["detail"].lower(), word
+        message = r.json()["detail"][0]["message"].lower()
+        assert f"{word} takes no interval" in message, word
     # the word with no interval, or 1, is the count it carries
     r = client.put(
         f"/api/memorized/{mem['id']}", json={"frequency": "twice a year", "interval": 1}
@@ -2024,9 +2027,11 @@ def test_twice_a_month_takes_one_or_none_and_names_itself_otherwise(
 def test_an_edit_refused_says_one_plain_sentence(client, seed_accounts):
     """W-77: an edit the create rules refuse answered the validator's dump
     of the whole request ("1 validation error for MemorizedCreate ...
-    input_value={...}"). It answers one plain sentence now, the first
-    error's message with the field named in words, as a create's refusal
-    reads on the page."""
+    input_value={...}"). It answers the API's one shape for a refused
+    field now, the list a create's refusal and the request's own
+    validation answer (an unknown field, a missing date), each error with
+    one plain sentence in `message`, the field named in words, as the
+    page shows it."""
     vendor_id = _vendor(client)
     mem = _bill_schedule(client, vendor_id, seed_accounts)
     url = f"/api/memorized/{mem['id']}"
@@ -2063,16 +2068,20 @@ def test_an_edit_refused_says_one_plain_sentence(client, seed_accounts):
         r = client.put(url, json=body)
         assert r.status_code == 422, (body, r.text)
         detail = r.json()["detail"]
-        assert isinstance(detail, str), detail
+        assert isinstance(detail, list) and detail, detail
+        message = detail[0]["message"]
         for dump in ("validation error", "input_value", "pydantic", "[type="):
-            assert dump not in detail, (body, detail)
-        assert detail[0].isupper() and detail.endswith("."), detail
+            assert dump not in message, (body, message)
+        assert message[0].isupper() and message.endswith("."), message
         if sentence:
-            assert detail == sentence, detail
-    # the same sentence the create's refusal gives the page
-    assert client.put(url, json=cadence).json()["detail"] == (
+            assert message == sentence, message
+    # the same sentence, in the same shape, the create's refusal gives
+    assert client.put(url, json=cadence).json()["detail"][0]["message"] == (
         created.json()["detail"][0]["message"]
     )
+    # and the shape the request's own validation answers on this router
+    unknown = client.put(url, json={"colour": "blue"}).json()["detail"]
+    assert unknown[0]["message"] == "'colour' is not a field this accepts."
     # and a create's refusal of a line no longer carries the line's dump
     r = client.post(
         "/api/memorized",
@@ -2091,7 +2100,7 @@ def test_an_edit_refused_says_one_plain_sentence(client, seed_accounts):
     ]
     assert (
         client.put(url, json={"mode": "later"})
-        .json()["detail"]
+        .json()["detail"][0]["message"]
         .startswith("Mode must be auto")
     )
     got = client.get(url).json()

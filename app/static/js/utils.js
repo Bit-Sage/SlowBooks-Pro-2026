@@ -1073,9 +1073,19 @@ function closeSearchDropdown() {
  */
 const _listSortState = {};
 
+// A value sorts as a number only when it is one: a number, or text that is
+// wholly a number ("1001", "-12.50"). parseFloat read "2026-05-15" as 2026,
+// so the Date columns sorted by year alone (2.31.1 gate, W-82); anything
+// else compares as text, which puts ISO dates in date order.
+const _LIST_SORT_NUMBER = /^\s*-?\d+(\.\d+)?\s*$/;
+function _listSortNumber(v) {
+    if (typeof v === 'number') return v;
+    return typeof v === 'string' && _LIST_SORT_NUMBER.test(v) ? Number(v) : NaN;
+}
+
 function _listSortCompare(a, b, key) {
     const av = a?.[key], bv = b?.[key];
-    const an = parseFloat(av), bn = parseFloat(bv);
+    const an = _listSortNumber(av), bn = _listSortNumber(bv);
     if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
     return String(av ?? '').toLowerCase().localeCompare(String(bv ?? '').toLowerCase());
 }

@@ -133,6 +133,8 @@ def test_converting_an_estimate_past_the_limit_asks(client, limited):
     est = r.json()
     r = client.post(f"/api/estimates/{est['id']}/convert")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "credit_limit"
+    # the question names the action at hand: Convert, not Save
+    assert r.json()["detail"]["question"].endswith("Convert it anyway?")
     r = client.post(
         f"/api/estimates/{est['id']}/convert", json={"allow_over_credit_limit": True}
     )
