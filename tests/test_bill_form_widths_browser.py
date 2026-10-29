@@ -117,3 +117,41 @@ def test_in_a_narrow_window_the_table_scrolls_and_add_line_clears_the_bar(
         assert m["room"] is not None and m["room"] >= BAR, m
     finally:
         page.close()
+
+
+def test_a_construction_bill_shows_every_column_at_the_agents_window(
+    browser, company, books, classed, client
+):
+    """2.31.1 gate, NEW-187: a construction company's bill adds Cost Type,
+    eleven columns with the move controls, and its line table scrolled at
+    the 1264px window and at the 1280px cap alike. The wide dialog takes the
+    window less a margin, the line cells' sides are 2px, and the move
+    controls fold where the table is tight, so every column shows at 1264,
+    the move controls with them; with room, the controls keep one row."""
+    before = client.get("/api/settings").json().get("company_type") or "business"
+    r = client.put("/api/settings", json={"company_type": "construction"})
+    assert r.status_code == 200, r.text
+    try:
+        for width in (1264, 1440):
+            page = _bill_form(browser, company, client, width)
+            try:
+                m = page.evaluate(MEASURE)
+                _boxes_hold(m)
+                assert page.evaluate(
+                    "() => !!document.querySelector('#bill-lines tr .line-cost-type')"
+                ), m
+                assert not m["scrollable"], (width, m)
+                assert m["lastCellRight"] <= m["boxRight"], (width, m)
+                rows = page.evaluate(
+                    """() => { const c = document.querySelector('#bill-lines tr .line-order-controls');
+                               const mid = (e) => { const b = e.getBoundingClientRect(); return Math.round((b.top + b.bottom) / 2); };
+                               return new Set([...c.children].map(mid)).size; }"""
+                )
+                if width == 1440:
+                    assert rows == 1, (width, rows)  # room: one row
+                else:
+                    assert rows in (1, 2), (width, rows)
+            finally:
+                page.close()
+    finally:
+        client.put("/api/settings", json={"company_type": before})

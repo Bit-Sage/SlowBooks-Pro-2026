@@ -7,8 +7,11 @@ says how its column is sorted (aria-sort). The order last chosen on a list is
 kept when the list is drawn again."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,6 +52,7 @@ def _run(script):
     return json.loads(out.stdout)
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_a_sortable_heading_is_a_button_with_aria_sort():
     src = _helper_source()
     script = src + """

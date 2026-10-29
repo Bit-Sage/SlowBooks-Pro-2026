@@ -46,10 +46,14 @@ the column is sorted. The order chosen is kept when you come back to the list.
 **The wide dialogs use the window's width, and the splash scrolls on a
 short window.** A dialog with a wide line table (Enter Bill, an estimate, a
 job cost entry) took 90% of the window, so since 2.31.0's move column the
-bill's lines scrolled sideways at a 1264px window with Amount out of view;
-such a dialog now takes the window's width, up to 1280px; and at 900px or
-less, where Enter Bill's vendor panel goes under the form, the lines' table
-scrolls inside the dialog instead of the whole dialog scrolling sideways.
+bill's lines scrolled sideways at a 1264px window with Amount out of view,
+and a construction company's bill, with its Cost Code and Cost Type
+columns, scrolled at any window size. Such a dialog now takes the window's
+width less a margin, up to 1280px, the line cells sit closer, and each
+line's move controls fold two by two where the table is tight, so the bill
+shows every column at a 1264px window; and at 900px or less, where Enter
+Bill's vendor panel goes under the form, the lines' table scrolls inside
+the dialog instead of the whole dialog scrolling sideways.
 With the terms and What's New showing on a window 700px tall, the splash ran
 past the bottom of the screen with its button out of reach; it scrolls now.
 
