@@ -85,7 +85,7 @@ def test_the_credits_are_served_without_a_sign_in(unauthed_client):
 def test_the_docs_and_the_changelog_say_so():
     features = (ROOT / "docs" / "features.md").read_text(encoding="utf-8")
     assert "#635" in features and "artists.json" in features
+    # anywhere in the changelog: the paragraph starts under "Unreleased" and
+    # keeps its place under the release's own heading once that is cut
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = changelog[changelog.index("### Unreleased") :]
-    unreleased = unreleased[: unreleased.index("\n### ")]
-    assert "#635" in unreleased and "Slowbooks-Pro-Art" in unreleased
+    assert "#635" in changelog and "Slowbooks-Pro-Art" in changelog
