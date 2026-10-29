@@ -3,15 +3,45 @@
 # PostgreSQL in server mode, per-company SQLite files in desktop mode.
 # ============================================================================
 
+import os
+import sqlite3
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from starlette.requests import HTTPConnection
 
 from app.config import DATABASE_URL
+
+# The test suite walks the migration chain against real SQLite files a few
+# hundred times, and every commit's fsync is what made the Windows CI job
+# take 45 minutes (the sixty slowest tests were all migration walks, 15 to
+# 80 s each there against 1 to 3 s on Linux). SLOWBOOKS_SQLITE_NO_FSYNC=1,
+# which tests/conftest.py sets and nothing else does, turns the fsyncs off
+# on every SQLite connection this process opens, the migration runner's
+# and the company files' alike: the file is written exactly as before, it
+# is only not safe against a power cut mid-test, which a test does not
+# need. Never a production setting.
+if os.environ.get("SLOWBOOKS_SQLITE_NO_FSYNC") == "1":
+
+    @event.listens_for(Engine, "connect")
+    def _sqlite_without_fsync(dbapi_conn, _record):
+        kind = type(dbapi_conn)
+        if not isinstance(dbapi_conn, sqlite3.Connection) and "sqlcipher" not in (
+            kind.__module__ or ""
+        ):
+            return
+        try:
+            dbapi_conn.execute("PRAGMA synchronous=OFF")
+        except Exception:
+            # an encrypted file before its key is applied (company_file's
+            # own listener keys it next): the engine's tuning sets the
+            # PRAGMAs again after the key
+            pass
+
 
 # Pool tuning rationale (Phase 9.6 perf pass):
 #   pool_size=10        small base pool; most requests are short-lived

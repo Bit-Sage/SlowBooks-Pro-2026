@@ -51,6 +51,10 @@ os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
 os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# No fsync on the suite's SQLite files (app/database.py): the migration
+# walks that dominate the Windows job go from tens of seconds to a few.
+# SLOWBOOKS_SQLITE_NO_FSYNC=0 in the shell turns it back on for a timing.
+os.environ.setdefault("SLOWBOOKS_SQLITE_NO_FSYNC", "1")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
