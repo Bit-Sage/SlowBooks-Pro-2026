@@ -268,7 +268,10 @@ def test_put_bill_vendor_id_null_is_still_422(client, db_session, seed_accounts)
     _, bill = _posted_bill(client, db_session, seed_accounts)
     r = client.put(f"/api/bills/{bill['id']}", json={"vendor_id": None})
     assert r.status_code == 422, r.text
-    assert "vendor_id" in r.json()["detail"]
+    # the API's one 422 shape: the field named in the error and in words
+    (err,) = r.json()["detail"]
+    assert err["loc"] == ["body", "vendor_id"]
+    assert err["message"].startswith("Vendor may not be set to null")
     r = client.put(f"/api/bills/{bill['id']}", json={"date": None})
     assert r.status_code == 422, r.text
 

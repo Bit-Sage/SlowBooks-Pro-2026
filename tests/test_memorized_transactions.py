@@ -2996,3 +2996,33 @@ def test_the_docs_say_what_the_schedules_and_the_page_do_now():
             assert words in text, (doc, words)
     features = _words("docs/features.md")
     assert "the app generates what is due when it opens" not in features
+
+
+def test_an_occurrence_before_the_start_was_never_one_of_its_dates(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Round 4 note: an occurrence before the schedule's start answered
+    "That occurrence was just entered", though no such date was ever on the
+    schedule. It says the date is before the schedule starts, names the
+    start and the next date, and posts nothing; a recurring invoice's
+    Generate the same."""
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, mode="remind")
+    r = client.post(
+        f"/api/memorized/{mem['id']}/enter", json={"occurrence": "2025-12-31"}
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        "The 2025-12-31 occurrence is before 'Electric bill' starts (2026-01-31), "
+        "so nothing was posted: its next date is 2026-01-31, with 0 entered."
+    )
+    assert _bills(db_session) == []
+
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    r = client.post(f"/api/recurring/{rec_id}/generate?occurrence=2025-12-01")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        "The 2025-12-01 installment is before the schedule for Test Customer "
+        "starts (2026-01-01), so nothing was created: its next due date is "
+        "2026-01-01."
+    )
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0

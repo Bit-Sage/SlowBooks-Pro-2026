@@ -53,8 +53,25 @@ def reject_null_updates(
         and update_data[c.name] is None
     )
     if offenders:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{', '.join(offenders)} may not be set to null.",
+        # The API's one 422 shape (2.31.1 gate): the list the request's own
+        # validation answers, an error per field, each with a plain
+        # `message` the page shows ("Mode may not be set to null; ..."). A
+        # bare sentence here was the one refusal a client had to read
+        # another way.
+        from fastapi.exceptions import RequestValidationError
+
+        from app.services.validation_messages import field_label
+
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", name),
+                    "msg": f"Value error, {field_label(name)} may not be set "
+                    "to null; leave it out to keep what it is",
+                    "input": None,
+                }
+                for name in offenders
+            ]
         )
     return update_data

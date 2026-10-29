@@ -66,6 +66,18 @@ the dialog instead of the whole dialog scrolling sideways.
 With the terms and What's New showing on a window 700px tall, the splash ran
 past the bottom of the screen with its button out of reach; it scrolls now.
 
+**The top bar fits a window down to 900px.** It ran 1,265px wide at any
+width, so at 900 Sign Out sat past the edge. Below 1280 its quick-entry
+buttons (New Customer, Create Invoice, Receive Payment, Quick Entry, Bill
+Entry, each on the sidebar too) step aside, and Back, the company, Home,
+Reports, search, About, Contact support and Sign Out stay in view.
+
+**One shape for every refused field.** A field an edit sends as null that may
+not be empty (a schedule's mode, a bill's vendor) answered a bare sentence;
+it is refused now as every other field is, a list with a plain `message` for
+each field the page shows. An occurrence asked for before a schedule starts
+says so, rather than that it was just entered.
+
 **An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
 expense's memo was read back off its bank line, which holds the memo or,
 when none was typed, the payee. So a memo typed the same as the payee came

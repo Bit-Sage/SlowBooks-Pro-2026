@@ -246,14 +246,21 @@ class InstallmentTaken(HTTPException):
 
     def __init__(self, rec: RecurringInvoice, occurrence: date):
         ended = bool(rec.end_date and rec.next_due > rec.end_date)
-        if occurrence > rec.next_due:
+        # a date before the schedule starts was never one of its dates, so
+        # it was not "just generated" either (2.31.1 gate, a round-4 note)
+        before_start = rec.start_date is not None and occurrence < rec.start_date
+        if occurrence > rec.next_due or before_start:
             now = (
                 "it has ended"
                 if ended
                 else f"its next due date is {rec.next_due.isoformat()}"
             )
             detail = (
-                f"The {occurrence.isoformat()} installment is not the next one "
+                f"The {occurrence.isoformat()} installment is before the schedule "
+                f"for {_who(rec)} starts ({rec.start_date.isoformat()}), so "
+                f"nothing was created: {now}."
+                if before_start
+                else f"The {occurrence.isoformat()} installment is not the next one "
                 f"of the schedule for {_who(rec)}, so nothing was created: "
                 f"{now}."
             )

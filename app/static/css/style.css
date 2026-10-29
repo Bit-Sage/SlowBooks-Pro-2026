@@ -439,6 +439,16 @@ body {
 }
 /* Below 1366 the clock and the brand's year go, so Contact support, About
    and the company name all keep their words (2.30.0 gate, macbase1) */
+/* Below 1280 the bar's quick-entry buttons go (New Customer, Create Invoice,
+   Receive Payment, Quick Entry, Bill Entry: each is on the sidebar and has
+   its shortcut), so Back, the company, Home, Reports, search, About,
+   Contact support and Sign Out fit the window down to 900 (2.31.1 gate: at
+   900 the bar ran 1265px wide and Sign Out sat past the edge). */
+@media (max-width: 1279px) {
+    #topbar .tb-btn[data-action],
+    #topbar .tb-btn[data-nav="#/quick-entry"],
+    #topbar .tb-btn[data-nav="#/bill-entry"] { display: none; }
+}
 @media (max-width: 1365px) {
     #topbar-clock { display: none; }
     .topbar-brand span { display: none; }

@@ -165,7 +165,11 @@ def list_schedules(
 ):
     """Every schedule in one list: recurring invoices (kind "invoice"),
     memorized bills and memorized journal entries. `due=true` keeps the
-    ones due on or before today (or `as_of`)."""
+    ones due on or before today (or `as_of`). A row's `id` is its
+    schedule's id within its kind: an invoice row's is a recurring invoice
+    (`/api/recurring/{id}`), a bill or journal row's a memorized schedule
+    (`/api/memorized/{id}`). The two can be equal, so a row is named by its
+    `kind` and `id` together."""
     if kind is not None and kind not in ("invoice", KIND_BILL, KIND_JOURNAL):
         raise HTTPException(
             status_code=422, detail="kind must be invoice, bill or journal"
@@ -176,7 +180,9 @@ def list_schedules(
 @router.get("/due", response_model=list[ScheduleRow])
 def list_due(as_of: date | None = Query(default=None), db: Session = Depends(get_db)):
     """The schedules due on or before today: a remind schedule waiting to
-    be entered, and an auto-enter one the scheduler has not run for yet."""
+    be entered, and an auto-enter one the scheduler has not run for yet.
+    Rows as GET /api/memorized gives them: named by `kind` and
+    `id` together."""
     return schedule_rows(db, as_of, due_only=True)
 
 

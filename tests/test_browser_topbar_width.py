@@ -28,7 +28,7 @@ MEASURE = """() => {
 }"""
 
 
-@pytest.mark.parametrize("width", [1280, 1366, 1600])
+@pytest.mark.parametrize("width", [900, 1024, 1279, 1280, 1366, 1600])
 def test_the_company_name_keeps_its_room_beside_contact_support(browser, width):
     page = _open(browser, width, 800, "#/")
     got = page.evaluate(MEASURE)

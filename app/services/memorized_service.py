@@ -192,7 +192,10 @@ class OccurrenceTaken(HTTPException):
 
     def __init__(self, mem: MemorizedTransaction, occurrence: date):
         entered = mem.entered_count or 0
-        if occurrence > mem.next_date:
+        # a date before the schedule starts was never one of its dates, so
+        # it was not "just entered" either (2.31.1 gate, a round-4 note)
+        before_start = mem.start_date is not None and occurrence < mem.start_date
+        if occurrence > mem.next_date or before_start:
             now = (
                 f"it has ended, with {entered} entered"
                 if has_ended(mem)
@@ -200,7 +203,11 @@ class OccurrenceTaken(HTTPException):
                 f"{entered} entered"
             )
             detail = (
-                f"The {occurrence.isoformat()} occurrence is not the next one "
+                f"The {occurrence.isoformat()} occurrence is before {mem.name!r} "
+                f"starts ({mem.start_date.isoformat()}), so nothing was posted: "
+                f"{now}."
+                if before_start
+                else f"The {occurrence.isoformat()} occurrence is not the next one "
                 f"of {mem.name!r}, so nothing was posted: {now}."
             )
         else:
