@@ -33,12 +33,14 @@ from app.schemas.memorized import (
     MemorizedUpdate,
     ScheduleRow,
 )
+from app.services import scheduler
 from app.services.accounting import compute_line_totals
 from app.services.memorized_service import (
     amount_of,
-    enter_due_memorized,
+    ended_sentence,
     enter_memorized,
     frequency_label,
+    has_ended,
     is_due,
     roll_forward,
     schedule_rows,
@@ -177,12 +179,21 @@ def list_due(as_of: date | None = Query(default=None), db: Session = Depends(get
 
 @router.post("/enter-due")
 def enter_due(as_of: date | None = Query(default=None), db: Session = Depends(get_db)):
-    """What the scheduler does: enter every auto-enter memorized bill and
-    journal entry due on or before as_of (today), one entry each, dated
-    its scheduled date. Remind schedules are left on the due list."""
-    skipped: list = []
-    entered = enter_due_memorized(db, as_of, skipped=skipped)
-    return {"entered": entered, "entered_count": len(entered), "skipped": skipped}
+    """Enter All Due: what the app does by itself when it opens and once a
+    day. Generate every due recurring invoice and enter every auto-enter
+    memorized bill and journal entry due on or before as_of (today), every
+    missed occurrence in order, each dated its scheduled date. Remind
+    schedules are left on the due list."""
+    return scheduler.run_due_schedules(db, as_of)
+
+
+@router.get("/entered-recently")
+def entered_recently():
+    """What the last run of the in-app scheduler entered (this server's
+    startup run or daily run), for the page to say "Entered 3 scheduled
+    documents while you were away": `ran_at`, `origin`, `entered`,
+    `invoice_ids`, `skipped`. Empty before the first run."""
+    return scheduler.last_run() or {}
 
 
 @router.get("/{mem_id}", response_model=MemorizedResponse)
@@ -315,6 +326,10 @@ def enter_now(
     move the schedule on. Works for a remind schedule, and for an
     auto-enter one ahead of the scheduler."""
     mem = _get(db, mem_id)
+    # ended before paused (2.31.1 gate W-64): the page shows Ended, and a
+    # resume would not bring an ended schedule back
+    if has_ended(mem):
+        raise HTTPException(status_code=409, detail=ended_sentence(mem))
     if not mem.is_active:
         raise HTTPException(
             status_code=409,

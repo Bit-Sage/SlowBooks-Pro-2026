@@ -17,6 +17,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.bills import Bill
@@ -60,6 +61,19 @@ def has_ended(mem: MemorizedTransaction) -> bool:
     return False
 
 
+def ended_sentence(mem: MemorizedTransaction) -> str:
+    """Why an ended schedule enters nothing, and what to do."""
+    return (
+        f"{mem.name!r} has ended: "
+        + (
+            f"its end date was {mem.end_date.isoformat()}."
+            if mem.end_date and mem.next_date > mem.end_date
+            else f"all {mem.occurrences_limit} occurrences are entered."
+        )
+        + " Edit it and move the end to enter it again."
+    )
+
+
 def status_of(mem: MemorizedTransaction) -> str:
     if has_ended(mem):
         return STATUS_ENDED
@@ -68,14 +82,6 @@ def status_of(mem: MemorizedTransaction) -> str:
 
 def is_due(mem: MemorizedTransaction, as_of: date) -> bool:
     return status_of(mem) == STATUS_ACTIVE and mem.next_date <= as_of
-
-
-def advance(mem: MemorizedTransaction) -> None:
-    """The schedule's next date after an entry: from the scheduled date,
-    whatever day the document was dated."""
-    mem.next_date = advance_date(
-        mem.next_date, mem.frequency, mem.interval or 1, mem.anchor_day
-    )
 
 
 def roll_forward(mem: MemorizedTransaction, as_of: date) -> None:
@@ -148,11 +154,84 @@ def amount_of(mem: MemorizedTransaction) -> Decimal:
 # ---------------------------------------------------------------------------
 
 
+class OccurrenceTaken(HTTPException):
+    """The occurrence was entered between the read and the claim: another
+    window's Enter now, Enter All Due, or the scheduler. 409, nothing
+    posted, the schedule as it now stands in the sentence."""
+
+    def __init__(self, mem: MemorizedTransaction):
+        super().__init__(
+            status_code=409,
+            detail=(
+                "That occurrence was just entered (by another window, Enter All "
+                f"Due or the scheduler), so nothing more was posted: {mem.name!r} "
+                f"has {mem.entered_count or 0} entered and its next date is "
+                f"{mem.next_date.isoformat()}."
+            ),
+        )
+
+
+class ScheduleBusy(HTTPException):
+    """SQLite's "database is locked": another entry held the file past the
+    busy timeout. A clean 409 that says to try again, never a 500."""
+
+    def __init__(self, mem: MemorizedTransaction):
+        super().__init__(
+            status_code=409,
+            detail=(
+                f"Another entry of {mem.name!r} is still being saved. Wait a "
+                "moment and try again."
+            ),
+        )
+
+
+def claim_occurrence(db: Session, mem: MemorizedTransaction) -> date:
+    """Move the schedule past its next date in one statement that succeeds
+    only while that date is still the one read (2.31.1 gate W-57: two
+    requests that had both read the same next date each posted a document,
+    then each wrote the same next date and count back). The database does
+    the check: the second UPDATE waits for the first to commit and then
+    matches no row, on SQLite and PostgreSQL alike. Returns the date
+    claimed; the ORM copy of the schedule is expired so it reads the row.
+    Raises OccurrenceTaken when the row had already moved on and
+    ScheduleBusy when SQLite would not give the write lock in time."""
+    expected = mem.next_date
+    following = advance_date(expected, mem.frequency, mem.interval or 1, mem.anchor_day)
+    try:
+        moved = (
+            db.query(MemorizedTransaction)
+            .filter(
+                MemorizedTransaction.id == mem.id,
+                MemorizedTransaction.next_date == expected,
+            )
+            .update(
+                {
+                    MemorizedTransaction.next_date: following,
+                    MemorizedTransaction.entered_count: (
+                        func.coalesce(MemorizedTransaction.entered_count, 0) + 1
+                    ),
+                },
+                synchronize_session=False,
+            )
+        )
+    except OperationalError as e:
+        if "locked" in str(e.orig).lower():
+            raise ScheduleBusy(mem) from e
+        raise
+    db.expire(mem, ["next_date", "entered_count"])
+    if moved != 1:
+        db.refresh(mem)
+        raise OccurrenceTaken(mem)
+    return expected
+
+
 def _bill_number_for(db: Session, vendor: Vendor, wanted, on: date) -> str:
-    """The template's number when it has one, suffixed "-2", "-3"... if that
-    vendor already has a bill under it (the same number every month would
-    meet the vendor + number index); otherwise the date and the vendor's
-    initials, as Enter Bill numbers a bill left blank."""
+    """One rule, in words: left blank, each bill is numbered the date and
+    the vendor's initials, as Enter Bill numbers a bill left blank (unique
+    per day); a number on the template is used as it is on the first bill
+    and suffixed "-2", "-3"... after that, because a vendor's bill number
+    cannot repeat (the vendor + number index); Memorize from a bill leaves
+    the number blank on purpose, since a fixed number would collide."""
     from app.routes.bills import _default_bill_number
 
     base = (wanted or "").strip()
@@ -270,18 +349,15 @@ def enter_memorized(
 
     on = on or mem.next_date
     if has_ended(mem):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{mem.name!r} has ended: "
-                + (
-                    f"its end date was {mem.end_date.isoformat()}."
-                    if mem.end_date and mem.next_date > mem.end_date
-                    else f"all {mem.occurrences_limit} occurrences are entered."
-                )
-                + " Edit it and move the end to enter it again."
-            ),
-        )
+        raise HTTPException(status_code=409, detail=ended_sentence(mem))
+    # The claim first (W-57), before any read in this transaction: the
+    # schedule moves on in one guarded statement, so a second request that
+    # read the same date answers 409 and posts nothing. As the transaction's
+    # first statement it also waits its turn for SQLite's write lock; after
+    # a read (the closing date's settings row) the wait was an immediate
+    # "database is locked", since the read's snapshot could not be upgraded.
+    # A refusal below unwinds the claim with the rest of the transaction.
+    claim_occurrence(db, mem)
     check_closing_date(db, on)
     check_entry_date(db, on)
 
@@ -296,48 +372,67 @@ def enter_memorized(
             status_code=400, detail=f"Unknown memorized transaction kind {mem.kind!r}"
         )
 
-    mem.entered_count = (mem.entered_count or 0) + 1
     mem.last_entered_on = on
     mem.last_document_id = document_id
-    advance(mem)
     db.flush()
     return mem.kind, document_id
+
+
+# A run enters at most this many occurrences; a backlog beyond it waits for
+# the next run rather than holding the file open indefinitely.
+RUN_LIMIT = 10000
+
+
+def _earliest_due(db: Session, as_of: date, refused: set) -> MemorizedTransaction:
+    q = db.query(MemorizedTransaction).filter(
+        MemorizedTransaction.mode == MODE_AUTO,
+        MemorizedTransaction.is_active,
+        MemorizedTransaction.next_date <= as_of,
+    )
+    if refused:
+        q = q.filter(MemorizedTransaction.id.notin_(refused))
+    return q.order_by(MemorizedTransaction.next_date, MemorizedTransaction.id).first()
 
 
 def enter_due_memorized(
     db: Session, as_of: date | None = None, skipped: list | None = None
 ) -> list[dict]:
     """The scheduler's run: every auto-enter schedule due on or before
-    as_of is entered once, dated its scheduled date. A remind schedule is
+    as_of is entered, every missed occurrence in date order (a schedule two
+    months behind gets both, the earlier first, and the earliest date
+    across all schedules goes first; 2.31.1 gate W-66), each dated its
+    scheduled date and committed as it is entered. A remind schedule is
     never entered here; it waits on the due list. One that cannot be
     entered (a closed period, a vendor gone, a $0.00 template) is skipped
-    and reported in `skipped`, and the rest go through."""
+    and reported in `skipped`, and the rest go through. An occurrence
+    another window enters meanwhile is left to it (W-57)."""
     if as_of is None:
         as_of = date.today()
-    due = (
-        db.query(MemorizedTransaction)
-        .filter(
-            MemorizedTransaction.mode == MODE_AUTO,
-            MemorizedTransaction.is_active,
-            MemorizedTransaction.next_date <= as_of,
-        )
-        .order_by(MemorizedTransaction.next_date, MemorizedTransaction.id)
-        .all()
-    )
     entered: list[dict] = []
-    for mem in due:
+    refused: set[int] = set()
+    for _ in range(RUN_LIMIT):
+        mem = _earliest_due(db, as_of, refused)
+        if mem is None:
+            break
         if has_ended(mem):
+            refused.add(mem.id)
             continue
         on = mem.next_date
-        # A SAVEPOINT per schedule: a refusal part way through one (an
+        # A SAVEPOINT per entry: a refusal part way through one (an
         # inventory item with no asset account, say) rolls back only that
-        # one's rows, and the others in the run still go through.
+        # one's rows, and the rest of the run still goes through.
         nested = db.begin_nested()
         try:
             kind, document_id = enter_memorized(db, mem, on)
             nested.commit()
+        except OccurrenceTaken:
+            # entered by another window or run between the read and the
+            # claim; the schedule has moved on, and the next query sees it
+            nested.rollback()
+            continue
         except HTTPException as e:
             nested.rollback()
+            refused.add(mem.id)
             if skipped is not None:
                 skipped.append(
                     {
@@ -351,6 +446,10 @@ def enter_due_memorized(
                     }
                 )
             continue
+        # Each entry is its own unit: committed as it is made, so a run cut
+        # short keeps what it entered, and the file is not held for the
+        # whole run (two runs at once gave "database is locked").
+        db.commit()
         entered.append(
             {
                 "memorized_id": mem.id,
@@ -361,7 +460,6 @@ def enter_due_memorized(
                 "next_date": mem.next_date.isoformat(),
             }
         )
-    db.commit()
     return entered
 
 

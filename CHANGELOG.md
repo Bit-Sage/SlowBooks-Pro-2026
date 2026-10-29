@@ -78,21 +78,38 @@ month, monthly, every two months, quarterly, twice a year, yearly, or every
 N days, weeks or months), a next date, and an end date or a number of
 times; a monthly schedule begun on the 31st lands on the last day of a
 shorter month and on the 31st again after it, and twice a month is the next
-date's day and fifteen days later. In auto-enter mode the scheduler
-(`scripts/run_recurring.py`, or Enter All Due on the page) posts the
-document on its date; in remind mode it waits on the due list until Enter
-now posts it, dated the scheduled date or today, and moves the schedule on.
-Schedules pause and resume (resuming skips the dates missed). The new
-Memorized Transactions page, beside Recurring Invoices in the sidebar, lists
-every schedule in one place, recurring invoices included, with type, next
-date, how often, mode, last entered, status and amount, a Due filter, and
-Enter now, Pause, Edit and Delete on each; Memorize on a bill's page or a
-journal entry's page starts a memorized one from it. API: `/api/memorized`
-(GET, POST, PUT, DELETE), `/api/memorized/due`, `/api/memorized/{id}/enter`,
-`/pause`, `/resume`, `/api/memorized/enter-due`, and
-`/api/recurring/{id}/generate` to enter one recurring invoice now. IIF
-carries no memorized transactions, so the QuickBooks guide says to rebuild
-them here. Migration `c9e5a7b3d1f2` adds the two tables.
+date's day and fifteen days later. A frequency that carries its own count
+(every two weeks, twice a month, quarterly, twice a year) takes no interval
+and is refused with one, naming the word; daily, weekly, monthly and yearly
+take one. In auto-enter mode the app posts the document on its date: it
+enters every due schedule, recurring invoices included, when it opens and
+once a day while it runs, every missed date in order, and Enter All Due on
+the page does the same at once; the Memorized Transactions page says what
+was entered while you were away, and a box under its list (on by default)
+turns the automatic runs off, for a server that runs
+`scripts/run_recurring.py` from cron instead. In remind mode it waits on the
+due list until Enter now posts it, dated the scheduled date or today, and
+moves the schedule on. Two windows pressing Enter now on the same
+occurrence post one document: the schedule is moved on in one guarded
+statement before anything posts, so the second is told it was just entered
+and posts nothing; Enter now on an ended schedule says it has ended, paused
+or not. A memorized bill's number follows one rule: left blank, each bill is
+numbered the date and the vendor's initials, as Enter Bill numbers one; a
+number on the template is used as it is on the first bill and -2, -3 after
+that, since a vendor's bill number cannot repeat, which is why Memorize from
+a bill leaves the number blank. Schedules pause and resume (resuming skips
+the dates missed). The new Memorized Transactions page, beside Recurring
+Invoices in the sidebar, lists every schedule in one place, recurring
+invoices included, with type, next date, how often, mode, last entered,
+status and amount, a Due filter, and Enter now, Pause, Edit and Delete on
+each; Memorize on a bill's page or a journal entry's page starts a memorized
+one from it. API: `/api/memorized` (GET, POST, PUT, DELETE),
+`/api/memorized/due`, `/api/memorized/{id}/enter`, `/pause`, `/resume`,
+`/api/memorized/enter-due`, `/api/memorized/entered-recently`, and
+`/api/recurring/{id}/generate` to enter one recurring invoice now; the
+setting is `auto_enter_on_open`. IIF carries no memorized transactions, so
+the QuickBooks guide says to rebuild them here. Migration `c9e5a7b3d1f2`
+adds the two tables.
 
 ### v2.31.0 — Split expenses, lines that move, and stock that comes back
 

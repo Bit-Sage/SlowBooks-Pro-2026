@@ -568,7 +568,19 @@ async def lifespan(app: FastAPI):
             _db.close()
     except Exception:
         pass  # never block boot on the upgrader
-    yield
+    # #605 (2.31.1 gate W-66): enter what is due when the app opens, and
+    # once a day while it runs. A background task; the first request is
+    # not kept waiting for a backlog, and the Memorized transactions page
+    # says what was entered. Every way the app is served runs this
+    # lifespan: the desktop launcher's --_serve child (desktop_launcher.py
+    # _serve passes app.main.app to uvicorn), Server Edition and Docker.
+    from app.services import scheduler as _scheduler
+
+    _auto_enter = _scheduler.start()
+    try:
+        yield
+    finally:
+        await _scheduler.stop(_auto_enter)
 
 
 # FastAPI 0.121+ serializes return values to JSON bytes directly via Pydantic

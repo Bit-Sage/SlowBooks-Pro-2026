@@ -12,6 +12,8 @@
 const MemorizedPage = {
     _rows: [],
     _filter: 'all',
+    // the scheduler run the page has already reported (its ran_at)
+    _shownRun: null,
 
     // The How often choices: key, words, and the frequency + interval each means.
     FREQUENCIES: [
@@ -28,9 +30,14 @@ const MemorizedPage = {
     ],
 
     async render() {
-        const rows = await API.get('/memorized');
+        const [rows, settings, lastRun] = await Promise.all([
+            API.get('/memorized'),
+            API.get('/settings').catch(() => ({})),
+            API.get('/memorized/entered-recently').catch(() => null),
+        ]);
         MemorizedPage._rows = rows;
         const due = rows.filter(r => r.is_due).length;
+        const autoEnter = !settings || settings.auto_enter_on_open !== 'false';
         return `
             <div class="page-header">
                 <h2>Memorized Transactions</h2>
@@ -38,9 +45,10 @@ const MemorizedPage = {
                     <button class="btn btn-primary" onclick="MemorizedPage.showBillForm()">+ Memorized Bill</button>
                     <button class="btn btn-primary" onclick="MemorizedPage.showJournalForm()">+ Memorized Journal Entry</button>
                     <button class="btn btn-secondary" onclick="RecurringPage.showForm()">+ Recurring ${T('Invoice')}</button>
-                    <button class="btn btn-secondary" title="Enter every auto-enter schedule that is due, as the scheduler would" onclick="MemorizedPage.enterAllDue()">Enter All Due</button>
+                    <button id="mem-enter-all" class="btn btn-secondary" title="Enter every schedule that is due, every missed date in order, as the app does when it opens" onclick="MemorizedPage.enterAllDue(this)">Enter All Due</button>
                 </div>
             </div>
+            ${MemorizedPage.whileAwayHtml(lastRun)}
             <div class="filters" style="display:flex; gap:12px; align-items:center; margin-bottom:12px;">
                 <label for="mem-filter" style="font-weight:700;">Show</label>
                 <select id="mem-filter" data-no-search onchange="MemorizedPage.setFilter(this.value)">
@@ -50,7 +58,43 @@ const MemorizedPage = {
                 ${due ? `<span class="badge badge-partial" title="Schedules whose next date is today or earlier">${due} due</span>` : ''}
             </div>
             <div id="mem-table">${MemorizedPage.tableHtml(rows)}</div>
-            <p class="hint" style="margin-top:12px;">An auto-enter schedule is entered on its date by the scheduler (scripts/run_recurring.py, or Enter All Due here); a remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed.</p>`;
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:normal;"><input type="checkbox" id="mem-auto-enter" name="auto_enter_on_open" value="true" style="width:auto; vertical-align:middle; margin-right:6px;" ${autoEnter ? 'checked' : ''} onchange="MemorizedPage.setAutoEnter(this)">Enter due schedules when the app opens and once a day</label>
+            </div>
+            <p class="hint" style="margin-top:8px;">An auto-enter schedule is entered on its date: the app enters every due schedule, recurring ${T('invoices')} included, when it opens and once a day while it runs, every missed date in order, and Enter All Due does the same at once. A remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed. A server install can run scripts/run_recurring.py from cron instead.</p>`;
+    },
+
+    // What the app entered by itself (when it opened, or its daily run)
+    // since the page last said so: a sentence, and each document as a link.
+    whileAwayHtml(run) {
+        if (!run || !run.ran_at || run.ran_at === MemorizedPage._shownRun) return '';
+        const n = (run.invoices_created || 0) + (run.entered_count || 0);
+        const held = run.skipped || [];
+        if (!n && !held.length) return '';
+        MemorizedPage._shownRun = run.ran_at;
+        const sentence = `Entered ${n} scheduled document${n === 1 ? '' : 's'} while you were away`;
+        if (n) toastPosted(sentence);
+        const items = (run.entered || []).map(e => {
+            const href = e.kind === 'bill' ? `#/bills/${e.document_id}` : `#/journal/${e.document_id}`;
+            return `<li><a href="${href}">${escapeHtml(e.name)}</a> dated ${formatDate(e.date)}</li>`;
+        });
+        (run.invoice_ids || []).forEach(id => items.push(`<li><a href="#/invoices/${id}">Recurring ${T('invoice')}</a></li>`));
+        return `<div class="hint" role="status" style="margin-bottom:12px;">
+            <strong>${sentence}</strong>${run.origin === 'daily' ? " (today's run)" : ''}.
+            ${items.length ? `<ul style="margin:6px 0 0 18px;">${items.join('')}</ul>` : ''}
+            ${held.length ? `<div style="margin-top:6px;">Not entered:</div><ul style="margin:0 0 0 18px;">${held.map(s => `<li>${escapeHtml(s.message)}</li>`).join('')}</ul>` : ''}
+        </div>`;
+    },
+
+    // The setting: the app enters due schedules when it opens and once a day.
+    async setAutoEnter(box) {
+        try {
+            await API.put('/settings', { auto_enter_on_open: box.checked ? 'true' : 'false' });
+            toast(box.checked ? 'Due schedules are entered when the app opens and once a day' : 'Due schedules wait for Enter All Due or Enter now');
+        } catch (err) {
+            box.checked = !box.checked;
+            toast(err.message, 'error');
+        }
     },
 
     setFilter(value) {
@@ -147,7 +191,13 @@ const MemorizedPage = {
 
     async doEnter(e, kind, id) {
         e.preventDefault();
-        const dated = e.target.dated.value || null;
+        const form = e.target;
+        // one request at a time: a second click (or Enter) while the first
+        // is in flight entered the same occurrence twice
+        const button = form.querySelector('button[type="submit"]');
+        if (button && button.disabled) return;
+        if (button) button.disabled = true;
+        const dated = form.dated.value || null;
         try {
             if (kind === 'invoice') {
                 const result = await API.post(`/recurring/${id}/generate` + (dated ? `?dated=${dated}` : ''));
@@ -158,7 +208,13 @@ const MemorizedPage = {
             }
             closeModal();
             App.navigate('#/memorized');
-        } catch (err) { toast(err.message, 'error'); }
+        } catch (err) {
+            toast(err.message, 'error');
+            if (button) button.disabled = false;
+            // entered meanwhile (another window, the scheduler), or ended or
+            // paused: show the schedule as it now stands
+            if (err.status === 409) { closeModal(); App.navigate('#/memorized'); }
+        }
     },
 
     async pause(kind, id) {
@@ -198,15 +254,20 @@ const MemorizedPage = {
     },
 
     // The scheduler's run by hand: due recurring invoices and due auto-enter
-    // memorized transactions. Remind schedules stay on the list.
-    async enterAllDue() {
+    // memorized transactions, every missed date in order. Remind schedules
+    // stay on the list. The button is disabled while the run is in flight.
+    async enterAllDue(button) {
+        if (button && button.disabled) return;
+        if (button) button.disabled = true;
         try {
-            const inv = await API.post('/recurring/generate');
-            const mem = await API.post('/memorized/enter-due');
-            toastPosted(`Entered ${inv.invoices_created} ${T('invoice')}(s) and ${mem.entered_count} memorized transaction(s)`);
-            [...(inv.skipped || []), ...(mem.skipped || [])].forEach(s => toast(s.message, 'error'));
+            const run = await API.post('/memorized/enter-due');
+            toastPosted(`Entered ${run.invoices_created} ${T('invoice')}(s) and ${run.entered_count} memorized transaction(s)`);
+            (run.skipped || []).forEach(s => toast(s.message, 'error'));
             App.navigate('#/memorized');
-        } catch (err) { toast(err.message, 'error'); }
+        } catch (err) {
+            toast(err.message, 'error');
+            if (button) button.disabled = false;
+        }
     },
 
     // ----------------------------------------------------------- the schedule fields
@@ -225,7 +286,7 @@ const MemorizedPage = {
             <div class="form-group"><label>How to enter it</label>
                 <select name="mode" data-no-search>
                     <option value="remind" ${mem.mode !== 'auto' ? 'selected' : ''}>Remind me: listed as due until I enter it</option>
-                    <option value="auto" ${mem.mode === 'auto' ? 'selected' : ''}>Auto-enter: posted on its date by the scheduler</option>
+                    <option value="auto" ${mem.mode === 'auto' ? 'selected' : ''}>Auto-enter: posted on its date (when the app opens, or its daily run)</option>
                 </select></div>
             <div class="form-group"><label>How often *</label>
                 <select name="frequency_choice" data-no-search onchange="MemorizedPage.frequencyChanged(this)">
@@ -306,7 +367,8 @@ const MemorizedPage = {
                     <div class="form-group"><label>Vendor *</label>
                         ${VendorQuickAdd.html(vendors, { id: 'mem-vendor', onchange: 'BillsPage.vendorSelected(this.value)' })}</div>
                     <div class="form-group"><label>Bill Number</label>
-                        <input name="bill_number" placeholder="left blank: the date and the vendor's initials" value="${escapeHtml(m.bill_number || '')}" title="Used as it is each time, with -2, -3... when the vendor already has one"></div>
+                        <input name="bill_number" placeholder="left blank: the date and the vendor's initials" value="${escapeHtml(m.bill_number || '')}" aria-describedby="mem-bill-number-hint">
+                        <div class="hint" id="mem-bill-number-hint">Left blank, each bill is numbered the date and the vendor's initials, as Enter Bill numbers one. A number typed here is used as it is on the first bill and -2, -3... after that, since a vendor's bill number cannot repeat. Memorize from a bill leaves it blank on purpose.</div></div>
                     <div class="form-group"><label>Terms</label>
                         <select name="terms" title="The due date follows from the terms">
                             <option value="" ${!terms ? 'selected' : ''}>The vendor's terms</option>

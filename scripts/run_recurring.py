@@ -4,6 +4,11 @@ Standalone cron script to generate due recurring invoices and to enter the
 memorized bills and journal entries set to auto-enter (#605); a remind
 schedule is left on the Memorized transactions page's due list.
 Add to crontab: 0 6 * * * cd /path/to/bookkeeper && python3 scripts/run_recurring.py
+
+The app does this by itself when it opens and once a day while it runs
+(app/services/scheduler.py, the auto_enter_on_open setting); this script is
+for a server install, and can run beside the app: an occurrence is claimed
+in the database before it is posted, so neither enters one twice.
 """
 
 import sys

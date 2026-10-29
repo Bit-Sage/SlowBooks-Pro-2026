@@ -420,6 +420,13 @@ def refuse_oversell(db: Session) -> bool:
     return get_setting_raw(db, "inventory_refuse_oversell") == "true"
 
 
+def auto_enter_on_open(db: Session) -> bool:
+    """Whether the app enters due schedules by itself, when it opens and
+    once a day while it runs (Settings -> auto_enter_on_open, #605). On
+    unless set to "false"."""
+    return get_setting_raw(db, "auto_enter_on_open") != "false"
+
+
 def is_nonprofit(db: Session) -> bool:
     """True when the company file is set to nonprofit mode (Settings ->
     company_type). Gates the nonprofit documents, reports and vocabulary."""
