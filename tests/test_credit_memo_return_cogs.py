@@ -479,3 +479,104 @@ def test_voiding_a_return_keeps_the_ledger_and_the_valuation_together(
     assert _on_hand(db_session, item.id) == Decimal("0")
     assert _balances(db_session, seed_accounts["1300"])["1300"] == Decimal("0.00")
     assert client.get("/api/items/valuation").json()["total_value"] == 0.0
+
+
+def _residue_entry(db, source_type, source_id):
+    """The entry a void posts for what the pool could not absorb (#647)."""
+    (entry,) = [
+        e
+        for e in _entries(db, source_type, source_id)
+        if "quantity x average cost" in (e.description or "")
+    ]
+    return entry
+
+
+def test_a_return_voided_with_nothing_else_on_hand_leaves_no_value_in_inventory(
+    client, db_session, seed_accounts, seed_customer
+):
+    """#647 (2.31.0 gate): the return's void takes the last unit out at the
+    return's cost, 10.00, when the unit is carried at 11.8667. The count
+    lands on zero and the average with it; the 1.87 the pool held beyond
+    the void's cost is posted to the item's own COGS account under the
+    void, so Inventory reads 0.00 with nothing on hand and cost of goods
+    is the 198.00 the stock cost."""
+    sub = _sub_cogs(db_session, seed_accounts)
+    vendor, item, inv = _sold_three_at_ten(
+        client, db_session, seed_accounts, seed_customer, sub.id
+    )
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=7, unit_cost="14.00", bill_number="B-2"
+    )  # 14 at 12.00
+    memo = _credit_memo(client, seed_customer.id, [(item.id, 1)], invoice_id=inv["id"])
+    # 15 at 11.8667, Inventory 178.00; sell 14 at that average: 166.13
+    _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=14, unit_rate="25.00"
+    )
+    db_session.expire_all()
+    assert _on_hand(db_session, item.id) == Decimal("1")
+    assert Decimal(str(db_session.get(Item, item.id).avg_cost)) == Decimal("11.8667")
+    assert _balances(db_session, seed_accounts["1300"])["1300"] == Decimal("11.87")
+
+    assert client.post(f"/api/credit-memos/{memo['id']}/void").status_code == 200
+
+    db_session.expire_all()
+    assert _on_hand(db_session, item.id) == Decimal("0")
+    assert Decimal(str(db_session.get(Item, item.id).avg_cost)) == Decimal("0.0000")
+    # the memo's own reversal, the return's, and what the pool held beyond it
+    assert len(_entries(db_session, "credit_memo_void", memo["id"])) == 3
+    residue = _residue_entry(db_session, "credit_memo_void", memo["id"])
+    debits, credits = _sides(residue)
+    assert debits == {sub.id: Decimal("1.87")}
+    assert credits == {seed_accounts["1300"].id: Decimal("1.87")}
+    assert _balances(db_session, seed_accounts["1300"], sub, seed_accounts["5000"]) == {
+        "1300": Decimal("0.00"),
+        "5150": Decimal("198.00"),
+        "5000": Decimal("0.00"),
+    }
+    assert client.get("/api/items/valuation").json()["total_value"] == 0.0
+
+
+def test_a_return_voided_for_more_than_the_stock_holds_posts_the_shortfall_to_cogs(
+    client, db_session, seed_accounts, seed_customer
+):
+    """#647: a return at 12.00 (no invoice named, so the average of its day)
+    is voided when the two on hand are carried at 4.50 after a cheap receipt
+    and a large sale. The void takes 12.00 out of a pool holding 9.00: the
+    average is held at zero rather than going below it, and the 3.00 the
+    pool could not give is posted Dr Inventory / Cr Cost of Goods Sold
+    under the void, so Inventory reads 0.00 = 1 x 0.00 and cost of goods
+    the 288.00 the stock cost."""
+    vendor, item, _inv = _sold_three_at_ten(
+        client, db_session, seed_accounts, seed_customer
+    )
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=7, unit_cost="14.00", bill_number="B-2"
+    )  # 14 at 12.00
+    memo = _credit_memo(client, seed_customer.id, [(item.id, 1)])  # 15 at 12.00
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=45, unit_cost="2.00", bill_number="B-3"
+    )  # 60 at 4.50
+    _create_invoice_for_inventory(
+        client, seed_customer.id, item.id, qty=58, unit_rate="25.00"
+    )  # 261.00 of cost; 2 at 4.50 left
+    db_session.expire_all()
+    assert _on_hand(db_session, item.id) == Decimal("2")
+    assert Decimal(str(db_session.get(Item, item.id).avg_cost)) == Decimal("4.5000")
+    assert _balances(db_session, seed_accounts["1300"])["1300"] == Decimal("9.00")
+    (mv,) = _returns(db_session, memo["id"])
+    assert Decimal(str(mv.unit_cost)) == Decimal("12.0000")
+
+    assert client.post(f"/api/credit-memos/{memo['id']}/void").status_code == 200
+
+    db_session.expire_all()
+    assert _on_hand(db_session, item.id) == Decimal("1")
+    assert Decimal(str(db_session.get(Item, item.id).avg_cost)) == Decimal("0.0000")
+    residue = _residue_entry(db_session, "credit_memo_void", memo["id"])
+    debits, credits = _sides(residue)
+    assert debits == {seed_accounts["1300"].id: Decimal("3.00")}
+    assert credits == {seed_accounts["5000"].id: Decimal("3.00")}
+    assert _balances(db_session, seed_accounts["1300"], seed_accounts["5000"]) == {
+        "1300": Decimal("0.00"),
+        "5000": Decimal("288.00"),
+    }
+    assert client.get("/api/items/valuation").json()["total_value"] == 0.0
