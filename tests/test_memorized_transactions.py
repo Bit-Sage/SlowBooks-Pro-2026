@@ -1081,6 +1081,17 @@ def test_the_page_hides_enter_now_on_a_paused_row_and_keeps_the_bills_tax_rate()
 
 WAIT = 10  # seconds a racer waits at a barrier before the test fails
 
+# A locked file's 409, whatever holds the lock: not "another entry" or
+# "another installment" of the schedule (2.31.1 Windows round 3 wording note).
+BUSY_ENTRY = (
+    "The company file is busy saving another change, so nothing was posted. "
+    "Wait a moment and try again."
+)
+BUSY_INSTALLMENT = (
+    "The company file is busy saving another change, so nothing was created. "
+    "Wait a moment and try again."
+)
+
 
 @pytest.fixture
 def file_company(tmp_path, monkeypatch):
@@ -1277,13 +1288,16 @@ def test_a_locked_file_is_a_409_and_a_skip_never_a_500(
     monkeypatch.setattr(Query, "update", locked)
     r = client.post(f"/api/memorized/{mem['id']}/enter")
     assert r.status_code == 409, r.text
-    assert "still being saved" in r.json()["detail"]
+    assert r.json()["detail"] == BUSY_ENTRY
     assert _bills(db_session) == []
     skipped: list = []
     assert (
         enter_due_memorized(db_session, as_of=date(2026, 1, 31), skipped=skipped) == []
     )
-    assert len(skipped) == 1 and "still being saved" in skipped[0]["message"]
+    assert len(skipped) == 1
+    assert skipped[0]["message"] == (
+        "Electric bill (due 2026-01-31) was not entered: " + BUSY_ENTRY
+    )
     assert _bills(db_session) == []
     got = client.get(f"/api/memorized/{mem['id']}").json()
     assert got["entered_count"] == 0 and got["next_date"] == "2026-01-31"
@@ -1964,12 +1978,17 @@ def test_a_locked_file_while_generating_is_a_409_and_a_skip(
     monkeypatch.setattr(Query, "update", locked)
     r = client.post(f"/api/recurring/{rec_id}/generate")
     assert r.status_code == 409, r.text
-    assert "still being saved" in r.json()["detail"]
+    assert r.json()["detail"] == BUSY_INSTALLMENT
     r = client.post("/api/recurring/generate?as_of=2026-01-15")
     assert r.status_code == 200, r.text
     assert r.json()["invoices_created"] == 0
     (skip,) = r.json()["skipped"]
-    assert skip["recurring_id"] == rec_id and "still being saved" in skip["message"]
+    assert skip["recurring_id"] == rec_id
+    assert skip["message"] == (
+        "The schedule for Test Customer (due 2026-01-01) was not generated this "
+        "time: the company file was busy saving another change. Run it again in "
+        "a moment."
+    )
     monkeypatch.undo()
     assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0
     got = client.get(f"/api/recurring/{rec_id}").json()
@@ -2344,8 +2363,8 @@ def test_the_ended_sentence_reads_for_any_number_of_times(
     r = client.post(f"/api/memorized/{mem['id']}/enter")
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == (
-        f"'Electric bill' has ended: {words} Edit it and move the end to enter "
-        "it again."
+        f"'Electric bill' has ended: {words} Edit it and raise the number of "
+        "times to enter it again."
     )
     assert "1 occurrences" not in r.json()["detail"]
 
@@ -2766,3 +2785,181 @@ def test_a_recurring_invoice_is_listed_as_generated_not_auto_enter(
     assert "return r.mode === 'auto' ? 'Auto-enter' : 'Remind';" in mode
     assert "<td>${MemorizedPage.modeHtml(r)}</td>" in js
     assert "<td>${r.mode === 'auto' ? 'Auto-enter' : 'Remind'}</td>" not in js
+
+
+def _today_is(frozen: date):
+    """A date class whose today() is `frozen`, for a route module's `date`
+    (the pattern tests/test_fiscal_year.py uses)."""
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return cls(frozen.year, frozen.month, frozen.day)
+
+    return _Frozen
+
+
+def test_ticking_active_again_names_the_end_date_the_schedule_has(
+    client, db_session, seed_accounts, seed_customer, monkeypatch
+):
+    """Round 3 wording note: W-81's 409 for ticking Active again on a
+    recurring invoice past its end date quoted the end date the request
+    sent, though the request is refused and rolled back. It names the end
+    date the schedule has; an end date sent that is still too early is
+    named as such, with the date it would resume on."""
+    import app.routes.recurring as recurring_routes
+
+    monkeypatch.setattr(recurring_routes, "date", _today_is(date(2026, 4, 15)))
+    line = [{"description": "Monthly", "quantity": 1, "rate": 100}]
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": seed_customer.id,
+            "frequency": "monthly",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "lines": line,
+        },
+    )
+    assert r.status_code == 201, r.text
+    url = f"/api/recurring/{r.json()['id']}"
+    assert (
+        client.post("/api/recurring/generate?as_of=2026-03-01").json()[
+            "invoices_created"
+        ]
+        == 1
+    )
+    before = client.get(url).json()
+    assert before["is_active"] is False and before["end_date"] == "2026-01-31"
+    for sent in ("2026-01-15", "2026-04-30"):
+        r = client.put(url, json={"is_active": True, "end_date": sent})
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == (
+            "This schedule has ended: its end date was 2026-01-31, and the end "
+            f"date sent, {sent}, is before 2026-05-01, the next due date it would "
+            "resume on, so nothing was changed; move or clear the end date first."
+        )
+        assert client.get(url).json() == before
+    for body in ({"is_active": True}, {"is_active": True, "end_date": "2026-01-31"}):
+        r = client.put(url, json=body)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == (
+            "This schedule has ended: its end date was 2026-01-31; move or clear "
+            "the end date first."
+        )
+    # paused with no end date, ticked Active with an end date already past
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": seed_customer.id,
+            "frequency": "monthly",
+            "start_date": "2026-01-01",
+            "lines": line,
+        },
+    )
+    url = f"/api/recurring/{r.json()['id']}"
+    assert client.put(url, json={"is_active": False}).status_code == 200
+    r = client.put(url, json={"is_active": True, "end_date": "2026-03-31"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        "This schedule would end as soon as it resumed: the end date sent, "
+        "2026-03-31, is before 2026-05-01, the next due date it would resume on, "
+        "so nothing was changed; move or clear the end date first."
+    )
+    got = client.get(url).json()
+    assert got["end_date"] is None and got["is_active"] is False
+    assert got["next_due"] == "2026-01-01"
+
+
+def test_the_ended_sentence_says_what_to_change(client, db_session, seed_accounts):
+    """Round 3 wording note: "Edit it and move the end" read loosely for a
+    schedule that ended by its number of times. That one says to raise the
+    number of times; one past its end date keeps its sentence, as does one
+    past both."""
+    vendor_id = _vendor(client)
+    counted = _bill_schedule(client, vendor_id, seed_accounts, occurrences=2)
+    dated = _bill_schedule(
+        client, vendor_id, seed_accounts, name="Water", end_date="2026-02-28"
+    )
+    both = _bill_schedule(
+        client,
+        vendor_id,
+        seed_accounts,
+        name="Gas",
+        end_date="2026-02-28",
+        occurrences=2,
+    )
+    enter_due_memorized(db_session, as_of=date(2026, 12, 31))
+    said = {}
+    for mem in (counted, dated, both):
+        r = client.post(f"/api/memorized/{mem['id']}/enter")
+        assert r.status_code == 409, r.text
+        said[mem["name"]] = r.json()["detail"]
+    assert said["Electric bill"] == (
+        "'Electric bill' has ended: both occurrences are entered. Edit it and "
+        "raise the number of times to enter it again."
+    )
+    assert said["Water"] == (
+        "'Water' has ended: its end date was 2026-02-28. Edit it and move the "
+        "end to enter it again."
+    )
+    assert said["Gas"] == (
+        "'Gas' has ended: its end date was 2026-02-28. Edit it and move the end "
+        "to enter it again."
+    )
+
+
+def test_a_later_occurrence_is_not_the_next_one(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Round 3 wording note: Enter now for an occurrence after the
+    schedule's next date answered "That occurrence was just entered", which
+    is wrong for a date not yet reached. It says that occurrence is not the
+    next one, names both dates, and posts nothing; an occurrence already
+    passed keeps its sentence. A recurring invoice's Enter now the same."""
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, mode="remind")
+    url = f"/api/memorized/{mem['id']}/enter"
+    r = client.post(url, json={"occurrence": "2026-03-31"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        "The 2026-03-31 occurrence is not the next one of 'Electric bill', so "
+        "nothing was posted: its next date is 2026-01-31, with 0 entered."
+    )
+    assert _bills(db_session) == []
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-01-31" and got["entered_count"] == 0
+    assert client.post(url, json={"occurrence": "2026-01-31"}).status_code == 200
+    r = client.post(url, json={"occurrence": "2026-01-31"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"].startswith("That occurrence was just entered")
+    assert "'Electric bill' was due 2026-01-31 and its next date is now 2026-02-28" in (
+        r.json()["detail"]
+    )
+    # one that has ended, asked for a later date
+    once = _bill_schedule(
+        client,
+        _vendor(client, name="City Water"),
+        seed_accounts,
+        name="Water",
+        occurrences=1,
+    )
+    assert client.post(f"/api/memorized/{once['id']}/enter").status_code == 200
+    r = client.post(
+        f"/api/memorized/{once['id']}/enter", json={"occurrence": "2026-05-31"}
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        "The 2026-05-31 occurrence is not the next one of 'Water', so nothing was "
+        "posted: it has ended, with 1 entered."
+    )
+
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    for query in ("occurrence=2026-03-01", "occurrence=2026-03-01&dated=2026-01-20"):
+        r = client.post(f"/api/recurring/{rec_id}/generate?{query}")
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == (
+            "The 2026-03-01 installment is not the next one of the schedule for "
+            "Test Customer, so nothing was created: its next due date is "
+            "2026-01-01."
+        )
+    assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0

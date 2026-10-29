@@ -234,41 +234,57 @@ def _locked(exc: OperationalError) -> bool:
 
 
 class InstallmentTaken(HTTPException):
-    """The installment asked for is no longer the schedule's next one: it
-    was generated between the read and the claim (another window's Enter
+    """The installment asked for is not the schedule's next one. Most often
+    it was generated between the read and the claim (another window's Enter
     now, Generate, Enter All Due or the cron script), or the page that asked
     was showing a date the schedule has since moved on from. 409, nothing
     created; the sentence names the installment and the schedule as it now
-    stands (2.31.1 gate W-71)."""
+    stands (2.31.1 gate W-71). A date after the schedule's next one (an API
+    call that names a later installment) was never generated, so that
+    sentence says it is not the next one, naming both dates, rather than
+    "just generated" (2.31.1 gate, round 3 wording note)."""
 
     def __init__(self, rec: RecurringInvoice, occurrence: date):
         ended = bool(rec.end_date and rec.next_due > rec.end_date)
-        now = (
-            "it has ended"
-            if ended
-            else f"its next due date is now {rec.next_due.isoformat()}"
-        )
-        super().__init__(
-            status_code=409,
-            detail=(
+        if occurrence > rec.next_due:
+            now = (
+                "it has ended"
+                if ended
+                else f"its next due date is {rec.next_due.isoformat()}"
+            )
+            detail = (
+                f"The {occurrence.isoformat()} installment is not the next one "
+                f"of the schedule for {_who(rec)}, so nothing was created: "
+                f"{now}."
+            )
+        else:
+            now = (
+                "it has ended"
+                if ended
+                else f"its next due date is now {rec.next_due.isoformat()}"
+            )
+            detail = (
                 "That installment was just generated (by another window, "
                 "Generate or Enter All Due) or the schedule was changed, so "
                 f"nothing was created: the schedule for {_who(rec)} was due "
                 f"{occurrence.isoformat()} and {now}."
-            ),
-        )
+            )
+        super().__init__(status_code=409, detail=detail)
 
 
 class InstallmentBusy(HTTPException):
     """SQLite's "database is locked" while claiming an installment: a clean
-    409 that says to try again, never a 500."""
+    409 that says to try again, never a 500. Whatever holds the lock (any
+    save in another window, not only another installment of this schedule,
+    which the sentence used to say) is named only as another change (2.31.1
+    gate, round 3 wording note)."""
 
     def __init__(self, rec: RecurringInvoice):
         super().__init__(
             status_code=409,
             detail=(
-                f"Another installment of the schedule for {_who(rec)} is still "
-                "being saved. Wait a moment and try again."
+                "The company file is busy saving another change, so nothing "
+                "was created. Wait a moment and try again."
             ),
         )
 
@@ -496,8 +512,8 @@ def generate_due_invoices(
                     "customer_name": rec.customer.name if rec.customer else None,
                     "message": (
                         f"The schedule for {_who(rec)} (due {on}) was not "
-                        "generated this time: another installment of it was "
-                        "still being saved. Run it again in a moment."
+                        "generated this time: the company file was busy "
+                        "saving another change. Run it again in a moment."
                     ),
                 }
             )

@@ -337,7 +337,8 @@ def enter_now(
     and for an auto-enter one ahead of the scheduler. An occurrence that is
     no longer the next one (entered meanwhile by another window, Enter All
     Due or the scheduler, or the schedule edited) is a 409 naming it and the
-    schedule's next date, and nothing is posted (2.31.1 gate W-75)."""
+    schedule's next date, and nothing is posted (2.31.1 gate W-75); one
+    after the next date is a 409 saying it is not the next one."""
     mem = _get(db, mem_id)
     occurrence = data.occurrence if data and data.occurrence else mem.next_date
     if occurrence != mem.next_date:

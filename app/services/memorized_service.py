@@ -82,15 +82,20 @@ def _all_entered(limit: int, entered: int) -> str:
 
 
 def ended_sentence(mem: MemorizedTransaction) -> str:
-    """Why an ended schedule enters nothing, and what to do."""
+    """Why an ended schedule enters nothing, and what to do: past its end
+    date, move the end; its number of times entered, raise the number of
+    times (the end-date advice read loosely for a schedule ended by its
+    count; 2.31.1 gate, round 3 wording note)."""
+    if mem.end_date and mem.next_date > mem.end_date:
+        return (
+            f"{mem.name!r} has ended: its end date was "
+            f"{mem.end_date.isoformat()}. Edit it and move the end to enter it "
+            "again."
+        )
     return (
         f"{mem.name!r} has ended: "
-        + (
-            f"its end date was {mem.end_date.isoformat()}."
-            if mem.end_date and mem.next_date > mem.end_date
-            else _all_entered(mem.occurrences_limit, mem.entered_count or 0)
-        )
-        + " Edit it and move the end to enter it again."
+        + _all_entered(mem.occurrences_limit, mem.entered_count or 0)
+        + " Edit it and raise the number of times to enter it again."
     )
 
 
@@ -175,42 +180,59 @@ def amount_of(mem: MemorizedTransaction) -> Decimal:
 
 
 class OccurrenceTaken(HTTPException):
-    """The occurrence asked for is no longer the schedule's next one: it was
-    entered between the read and the claim (another window's Enter now,
-    Enter All Due, the scheduler), or the page that asked was showing a date
-    the schedule has since moved on from (2.31.1 gate W-75). 409, nothing
-    posted; the sentence names the occurrence and the schedule as it now
-    stands."""
+    """The occurrence asked for is not the schedule's next one. Most often
+    it was entered between the read and the claim (another window's Enter
+    now, Enter All Due, the scheduler), or the page that asked was showing a
+    date the schedule has since moved on from (2.31.1 gate W-75). 409,
+    nothing posted; the sentence names the occurrence and the schedule as
+    it now stands. A date after the schedule's next one (an API call that
+    names a later occurrence) was never entered, so that sentence says it
+    is not the next one, naming both dates, rather than "just entered"
+    (2.31.1 gate, round 3 wording note)."""
 
     def __init__(self, mem: MemorizedTransaction, occurrence: date):
         entered = mem.entered_count or 0
-        now = (
-            f"it has ended, with {entered} entered"
-            if has_ended(mem)
-            else f"its next date is now {mem.next_date.isoformat()}, with "
-            f"{entered} entered"
-        )
-        super().__init__(
-            status_code=409,
-            detail=(
+        if occurrence > mem.next_date:
+            now = (
+                f"it has ended, with {entered} entered"
+                if has_ended(mem)
+                else f"its next date is {mem.next_date.isoformat()}, with "
+                f"{entered} entered"
+            )
+            detail = (
+                f"The {occurrence.isoformat()} occurrence is not the next one "
+                f"of {mem.name!r}, so nothing was posted: {now}."
+            )
+        else:
+            now = (
+                f"it has ended, with {entered} entered"
+                if has_ended(mem)
+                else f"its next date is now {mem.next_date.isoformat()}, with "
+                f"{entered} entered"
+            )
+            detail = (
                 "That occurrence was just entered (by another window, Enter All "
                 "Due or the scheduler) or the schedule was changed, so nothing "
                 f"was posted: {mem.name!r} was due {occurrence.isoformat()} and "
                 f"{now}."
-            ),
-        )
+            )
+        super().__init__(status_code=409, detail=detail)
 
 
 class ScheduleBusy(HTTPException):
-    """SQLite's "database is locked": another entry held the file past the
-    busy timeout. A clean 409 that says to try again, never a 500."""
+    """SQLite's "database is locked": another write held the file past the
+    busy timeout. A clean 409 that says to try again, never a 500. Whatever
+    holds the lock (any save in another window, not only another entry of
+    this schedule, which the sentence used to say) is named only as another
+    change, as a recurring invoice's InstallmentBusy says (2.31.1 gate,
+    round 3 wording note)."""
 
     def __init__(self, mem: MemorizedTransaction):
         super().__init__(
             status_code=409,
             detail=(
-                f"Another entry of {mem.name!r} is still being saved. Wait a "
-                "moment and try again."
+                "The company file is busy saving another change, so nothing "
+                "was posted. Wait a moment and try again."
             ),
         )
 

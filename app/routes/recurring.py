@@ -70,6 +70,30 @@ def _refuse_end_before_start(start: date, end: date | None) -> None:
         )
 
 
+def _ended_on_resume(stored: date | None, sent: date, resumes: date) -> str:
+    """Why ticking Active again is refused: the schedule would be past its
+    end date on its first installment. The request is refused and rolled
+    back, so the end date named is the one the schedule has, not the one
+    the request sent (2.31.1 gate W-81(c) quoted the request's); an end date
+    sent that is still too early is named as such, with the date the
+    schedule would resume on."""
+    tail = "; move or clear the end date first."
+    if sent == stored:
+        return f"This schedule has ended: its end date was {stored.isoformat()}" + tail
+    sent_too_early = (
+        f"the end date sent, {sent.isoformat()}, is before "
+        f"{resumes.isoformat()}, the next due date it would resume on, so "
+        "nothing was changed"
+    )
+    if stored is None:
+        return "This schedule would end as soon as it resumed: " + sent_too_early + tail
+    return (
+        f"This schedule has ended: its end date was {stored.isoformat()}, and "
+        + sent_too_early
+        + tail
+    )
+
+
 def _schedule_noun(db: Session) -> str:
     """The schedule as the company's vocabulary names it: "recurring
     invoice", or "recurring pledge" for a nonprofit."""
@@ -151,6 +175,7 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
         )
 
     was_active = rec.is_active
+    stored_end = rec.end_date
     for key, val in changes.items():
         setattr(rec, key, val)
 
@@ -169,15 +194,9 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
         # end date moves, so say so. An end date cleared or moved past the
         # next due date in the same request is what makes it active again.
         if rec.end_date and rec.next_due > rec.end_date:
-            ended_on = rec.end_date
+            detail = _ended_on_resume(stored_end, rec.end_date, rec.next_due)
             db.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"This schedule has ended: its end date was "
-                    f"{ended_on.isoformat()}; move or clear the end date first."
-                ),
-            )
+            raise HTTPException(status_code=409, detail=detail)
 
     if data.lines is not None:
         db.query(RecurringInvoiceLine).filter(
@@ -247,7 +266,8 @@ def generate_one(
     date. The installment is claimed before anything posts, so one that is
     no longer the next (generated meanwhile by another window, Generate or
     Enter All Due, or the schedule edited) is a 409, "That installment was
-    just generated", and nothing is created (2.31.1 gate W-71)."""
+    just generated", and nothing is created (2.31.1 gate W-71); one after
+    the next due date is a 409 saying it is not the next one."""
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
