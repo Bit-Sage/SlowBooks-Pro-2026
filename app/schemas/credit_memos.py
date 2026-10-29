@@ -22,6 +22,10 @@ class CreditMemoLineCreate(StrictModel):
     # flag (a non-taxable customer: never), as on an invoice line. Used for
     # the memo's tax; the line itself does not store it.
     is_taxable: Optional[bool] = None
+    # The line's own class and job (#640); left out, the line posts with
+    # the memo's, as an invoice line does. A job must be the customer's.
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
     line_order: int = 0
 
     @model_validator(mode="after")
@@ -37,6 +41,8 @@ class CreditMemoLineResponse(BaseModel):
     quantity: Decimal = Decimal("0")
     rate: RateOut = Decimal("0")
     amount: Decimal = Decimal("0")
+    class_id: Optional[int] = None
+    job_id: Optional[int] = None
     line_order: int = 0
     model_config = {"from_attributes": True}
 

@@ -134,8 +134,8 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
     customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-    # The job is this customer's (NEW-36); a memo's lines carry no job.
-    refuse_other_customers_jobs(db, customer.id, data.job_id, (), "credit memo")
+    # The job, on the header or a line, is this customer's (NEW-36).
+    refuse_other_customers_jobs(db, customer.id, data.job_id, data.lines, "credit memo")
 
     # A memo that credits an invoice takes that invoice's tax rate unless
     # it states its own: the tax goes back the way it was charged. It
@@ -219,6 +219,8 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
                 quantity=line_data.quantity,
                 rate=line_data.rate,
                 amount=amt,
+                class_id=line_data.class_id,
+                job_id=line_data.job_id,
                 line_order=i,
             )
         )
@@ -235,6 +237,11 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
                         "debit": amt,
                         "credit": Decimal("0"),
                         "description": line_data.description or "",
+                        # the line's own class and job (#640); None takes
+                        # the memo's in create_journal_entry, as the tax
+                        # and A/R lines below do
+                        "class_id": line_data.class_id,
+                        "job_id": line_data.job_id,
                     }
                 )
 
@@ -267,6 +274,7 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
             source_type="credit_memo",
             source_id=cm.id,
             class_id=cm.class_id,
+            job_id=cm.job_id,
         )
         cm.transaction_id = txn.id
 
