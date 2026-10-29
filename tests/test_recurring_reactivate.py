@@ -161,3 +161,106 @@ def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
     assert "Skipped 1 schedule(s):" in out
     assert "The schedule for Acme LLC is due 2026-09-01" in out
     assert "re-tick Active" in out
+
+
+def test_the_cron_script_runs_in_a_process_of_its_own(tmp_path):
+    """W-83 (2.31.1 gate): run the way cron runs it, in a fresh interpreter,
+    the script stopped at the first due recurring invoice ("could not find
+    table 'pay_applications'"): an invoice's pay_application_id names a
+    table that only the web app's routes had registered, and the tests ran
+    the script inside a process that had imported the whole app. Every
+    model is registered with the models now: in a process of its own the
+    script generates the due invoice and enters the due memorized bill."""
+    import os
+    import subprocess
+    import sys
+    from decimal import Decimal
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    import app.models  # noqa: F401  (every table, for create_all)
+    from app.database import Base
+    from app.models.accounts import Account, AccountType
+    from app.models.bills import Bill
+    from app.models.contacts import Customer, Vendor
+    from app.models.invoices import Invoice
+    from app.models.memorized import MemorizedTransaction, MemorizedTransactionLine
+    from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
+    from app.seed.chart_of_accounts import CHART_OF_ACCOUNTS
+
+    url = "sqlite:///" + (tmp_path / "cron.db").as_posix()
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    due = date.today()
+    with Session(engine) as s:
+        chart = {}
+        for data in CHART_OF_ACCOUNTS:
+            a = Account(
+                account_number=data["account_number"],
+                name=data["name"],
+                account_type=AccountType(data["account_type"]),
+                bank_kind=data.get("bank_kind"),
+                detail_type=data.get("detail_type"),
+                is_system=True,
+                balance=Decimal("0"),
+            )
+            s.add(a)
+            chart[data["account_number"]] = a
+        customer = Customer(name="Acme LLC", is_active=True)
+        vendor = Vendor(name="Harbor Power & Light")
+        s.add_all([customer, vendor])
+        s.flush()
+        rec = RecurringInvoice(
+            customer_id=customer.id,
+            frequency="monthly",
+            start_date=due,
+            next_due=due,
+            is_active=True,
+        )
+        s.add(rec)
+        s.flush()
+        s.add(RecurringInvoiceLine(recurring_invoice_id=rec.id, **LINE))
+        rec_id = rec.id
+        mem = MemorizedTransaction(
+            kind="bill",
+            name="Electric bill",
+            mode="auto",
+            frequency="monthly",
+            interval=1,
+            start_date=due,
+            next_date=due,
+            anchor_day=due.day,
+            vendor_id=vendor.id,
+            terms="Net 15",
+        )
+        s.add(mem)
+        s.flush()
+        s.add(
+            MemorizedTransactionLine(
+                memorized_id=mem.id,
+                account_id=chart["6500"].id,
+                description="Service",
+                quantity=1,
+                rate=40,
+            )
+        )
+        s.commit()
+
+    env = {**os.environ, "DATABASE_URL": url, "SLOWBOOKS_AUTO_ENTER": "0"}
+    out = subprocess.run(
+        [sys.executable, str(RUN_RECURRING)],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        cwd=RUN_RECURRING.parent.parent,
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    with Session(engine) as s:
+        assert (
+            s.query(Invoice).filter(Invoice.recurring_invoice_id == rec_id).count() == 1
+        )
+        assert s.query(Bill).count() == 1
+    engine.dispose()

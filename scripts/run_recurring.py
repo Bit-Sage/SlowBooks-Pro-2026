@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.database import SessionLocal
+import app.models  # noqa: F401,E402  (every table, so an invoice's foreign keys resolve)
 from app.services import memorized_service, scheduler
 
 if __name__ == "__main__":

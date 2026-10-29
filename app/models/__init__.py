@@ -210,3 +210,14 @@ __all__ = [
 from app.models.ocr_templates import OcrTemplate  # noqa: F401
 from app.models.request_keys import RequestKey  # noqa: F401
 from app.models.accountants_copies import AccountantsCopy  # noqa: E402,F401
+
+# Construction billing (#555): registered here too, not only through their
+# routes, so every process that imports the models knows every table. The
+# cron script (scripts/run_recurring.py) imports the services without the
+# web app, and its first invoice could not be flushed: invoices.
+# pay_application_id names pay_applications, a table only the routes had
+# registered (2.31.1 gate, W-83).
+from app.models.pay_applications import PayApplication  # noqa: E402,F401
+from app.models.pay_applications import PayApplicationLine  # noqa: E402,F401
+from app.models.lien_waivers import LienWaiver  # noqa: E402,F401
+from app.models.job_deposits import JobDeposit  # noqa: E402,F401
