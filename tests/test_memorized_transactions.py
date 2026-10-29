@@ -5,8 +5,11 @@ a number of times; pause and resume; the one list of every schedule; the
 page's wiring and the migration."""
 
 import asyncio
+import json
 import runpy
+import shutil
 import sqlite3
+import subprocess
 import threading
 import types
 from datetime import date
@@ -2090,3 +2093,40 @@ def test_an_edit_refused_says_one_plain_sentence(client, seed_accounts):
     )
     got = client.get(url).json()
     assert got["name"] == "Electric bill" and got["end_date"] is None
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_a_run_that_only_skipped_says_what_could_not_be_entered():
+    """W-78: a run that entered nothing and skipped something said
+    "Entered 0 scheduled documents while you were away". It says "N
+    scheduled documents could not be entered", with the reasons, and
+    nothing at all when nothing was entered or skipped."""
+    out = subprocess.run(
+        ["node", str(ROOT / "tests" / "js" / "memorized_while_away_probe.js")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    closed = "Rent (due 2026-01-05) was not entered: the closing date is 2026-01-31."
+    one = got["skippedOne"]
+    assert one["text"] == f"1 scheduled document could not be entered. {closed}"
+    assert one["toasts"] == [] and 'role="status"' in one["html"]
+    two = got["skippedTwo"]
+    assert two["text"].startswith(
+        "2 scheduled documents could not be entered (today's run). " + closed
+    )
+    assert "Water (due 2026-01-07) was not entered" in two["text"]
+    for key in ("skippedOne", "skippedTwo"):
+        assert "Entered 0" not in got[key]["text"], key
+        assert "Not entered:" not in got[key]["text"], key
+    both = got["both"]
+    assert both["text"].startswith(
+        "Entered 1 scheduled document while you were away. Electric bill dated "
+        "2026-01-31 Not entered: " + closed
+    )
+    assert both["toasts"] == ["Entered 1 scheduled document while you were away"]
+    assert got["neither"]["html"] == "" and got["again"]["html"] == ""

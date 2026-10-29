@@ -123,7 +123,9 @@ sent with none, or 1, it is that count, and with another it is refused,
 naming the word; daily, weekly, monthly and yearly take one. In auto-enter mode the app posts the document on its date: it
 enters every due auto-enter memorized bill and journal entry when it opens
 and once a day while it runs, every missed date in order; the Memorized
-Transactions page says what was entered while you were away, and a box under
+Transactions page says what was entered while you were away (or, when a run
+entered nothing and had to skip something, what could not be entered and
+why), and a box under
 its list (on by default) turns the automatic runs off, for a server that runs
 `scripts/run_recurring.py` from cron instead. Recurring invoices are not
 entered on their own: as before, they wait for Generate, Enter All Due or

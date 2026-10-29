@@ -66,13 +66,17 @@ const MemorizedPage = {
 
     // What the app entered by itself (when it opened, or its daily run)
     // since the page last said so: a sentence, and each document as a link.
+    // A run that entered nothing but had to skip something says what could
+    // not be entered, and why; a run that did neither says nothing.
     whileAwayHtml(run) {
         if (!run || !run.ran_at || run.ran_at === MemorizedPage._shownRun) return '';
         const n = (run.invoices_created || 0) + (run.entered_count || 0);
         const held = run.skipped || [];
         if (!n && !held.length) return '';
         MemorizedPage._shownRun = run.ran_at;
-        const sentence = `Entered ${n} scheduled document${n === 1 ? '' : 's'} while you were away`;
+        const sentence = n
+            ? `Entered ${n} scheduled document${n === 1 ? '' : 's'} while you were away`
+            : `${held.length} scheduled document${held.length === 1 ? '' : 's'} could not be entered`;
         if (n) toastPosted(sentence);
         const items = (run.entered || []).map(e => {
             const href = e.kind === 'bill' ? `#/bills/${e.document_id}` : `#/journal/${e.document_id}`;
@@ -82,7 +86,7 @@ const MemorizedPage = {
         return `<div class="hint" role="status" style="margin-bottom:12px;">
             <strong>${sentence}</strong>${run.origin === 'daily' ? " (today's run)" : ''}.
             ${items.length ? `<ul style="margin:6px 0 0 18px;">${items.join('')}</ul>` : ''}
-            ${held.length ? `<div style="margin-top:6px;">Not entered:</div><ul style="margin:0 0 0 18px;">${held.map(s => `<li>${escapeHtml(s.message)}</li>`).join('')}</ul>` : ''}
+            ${held.length ? `${n ? '<div style="margin-top:6px;">Not entered:</div>' : ''}<ul style="margin:${n ? '0' : '6px'} 0 0 18px;">${held.map(s => `<li>${escapeHtml(s.message)}</li>`).join('')}</ul>` : ''}
         </div>`;
     },
 
