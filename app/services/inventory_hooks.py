@@ -6,7 +6,7 @@
 #
 # Callers: invoices.create/update/void/duplicate, estimates.convert_to_invoice,
 # credit_memos.create/void, recurring_service.generate_due_invoices, iif_import,
-# bills.create/update/void.
+# bills.create/update/void, vendor_credits.create/void.
 #
 # Design rule: all helpers are NO-OPS if track_inventory=False on the item,
 # so they're safe to call unconditionally for every line.
@@ -325,6 +325,59 @@ def reverse_receipts_for_bill(
         )
 
 
+def reverse_returns_for_vendor_credit(
+    db: Session,
+    vendor_credit,
+    txn_date=None,
+    transaction_id: Optional[int] = None,
+) -> None:
+    """Put a vendor credit's returned stock back on the shelf (W-74, 2.31.1
+    gate): each RETURN_OUT movement the credit recorded comes back at the
+    cost it went out at (the line's rate with its share of the tax, what
+    the credit took off Inventory), one VOID movement per return naming it
+    and linked to the void's reversing entry (`transaction_id`), the way a
+    bill's void walks its receipts. It used to put each line's quantity
+    back at the rate alone, so a taxed credit's void left Inventory above
+    quantity x average cost.
+
+    The journal side is the caller's: the void's reversing entry mirrors
+    the credit's own, the very amounts the returns were costed from. What
+    the pool cannot absorb (stock coming back into a count below zero fills
+    the hole first, W-60) is posted to the item's COGS account under
+    "vendor_credit_void" (reverse_at_cost, #647), so Inventory reads
+    quantity x average cost afterwards. A return of an item no longer
+    tracked is left alone, as a sale's reversal leaves it. A credit has no
+    edit, so each return is reversed whole, once.
+    """
+    date_to_use = txn_date or vendor_credit.date
+    returns = (
+        db.query(InventoryMovement)
+        .filter(
+            InventoryMovement.source_type == "vendor_credit",
+            InventoryMovement.source_id == vendor_credit.id,
+            InventoryMovement.movement_type == MovementType.RETURN_OUT,
+        )
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    for mv in returns:
+        item = mv.item
+        quantity = Decimal(str(mv.quantity or 0))
+        if not (item and item.track_inventory) or quantity >= 0:
+            continue
+        reverse_at_cost(
+            db,
+            item,
+            mv,
+            quantity,
+            source_type="vendor_credit_void",
+            source_id=vendor_credit.id,
+            txn_date=date_to_use,
+            transaction_id=transaction_id,
+            memo=f"VOID Vendor Credit {vendor_credit.credit_number}",
+        )
+
+
 def oversold_by_reversal(db: Session, bill, lines=()) -> list[dict[str, Any]]:
     """The stock items a bill's void or edit takes past what is on hand
     (W-67, 2.31.1 gate), in oversold_items' shape. What the bill's receipts
@@ -484,7 +537,8 @@ def oversell_warning(short: dict[str, Any], action: str = "sale") -> str:
     """One sentence for a sale past the stock, as the response carries it:
     'Widget: 2 on hand; this sale takes it to -4.' A bill's void or edit
     that takes stock already sold below zero says "this void" or "this
-    edit" (W-67)."""
+    edit" (W-67), and a vendor credit that returns more than is on hand
+    "this credit" (W-74)."""
     return (
         f"{short['item'].name}: {plain_quantity(short['on_hand'])} on hand; "
         f"this {action} takes it to {plain_quantity(short['after'])}."
@@ -505,13 +559,18 @@ _OVERSELL_WAY_OUT = {
         "Keep at least what has sold on the bill, void the sale that took it, "
         "or turn off Refuse a sale of more than is on hand under Settings."
     ),
+    "credit": (
+        "Return no more than is on hand, enter the bill that received the "
+        "stock first, or turn off Refuse a sale of more than is on hand under "
+        "Settings."
+    ),
 }
 
 
 def oversell_refusal(shorts: list[dict[str, Any]], action: str = "sale") -> str:
-    """The sentence a refused sale (or a bill's refused void or edit, W-67)
-    answers with when Settings says to refuse: each item, its count and how
-    many short, and what to do."""
+    """The sentence a refused sale (or a bill's refused void or edit, W-67,
+    or a refused vendor credit, W-74) answers with when Settings says to
+    refuse: each item, its count and how many short, and what to do."""
     parts = [
         f"{s['item'].name}: {plain_quantity(s['on_hand'])} on hand; this {action} "
         f"takes it to {plain_quantity(s['after'])}, "

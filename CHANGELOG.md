@@ -64,7 +64,10 @@ more than is on hand turned on, the void or edit is refused naming the item
 and the shortfall, with nothing posted. Each reversal movement names the
 receipt it reverses ("VOID Bill B-2 line 2") and the movements API carries
 `reverses_movement_id`, so the two reversals of a two-line bill no longer
-read the same.
+read the same. Vendor credits now keep Inventory at quantity x average cost
+too, and a credit that returns more of an item than is on hand says so in
+`warnings` ("Widget: 2 on hand; this credit takes it to -3.") or, with that
+setting on, is refused.
 
 **Sub-customers with parent billing** (#638, from Discussion #633). A customer
 can now sit under another, one level deep, the way QuickBooks spells

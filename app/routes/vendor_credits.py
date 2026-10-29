@@ -125,6 +125,13 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
             ),
         )
 
+    # More of a stock item going back than is on hand (W-74, the shape of a
+    # sale's #642 and a bill void's W-67): said in the response, or refused
+    # here when Settings says so. Nothing is written yet.
+    from app.routes.invoices.helpers import warn_or_refuse_oversell
+
+    stock_warnings = warn_or_refuse_oversell(db, data.lines, action="credit")
+
     vc = None
     # Same retry as invoices and credit memos: next_vendor_credit_number is
     # MAX+1 with no row lock, so two concurrent creates can compute the same
@@ -278,13 +285,17 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
 
     if returns:
         from app.models.items import MovementType
-        from app.services.inventory_service import _append_movement
+        from app.services.inventory_service import _append_at_cost
 
         for item, qty, unit_cost in returns:
             # Negative quantity: the goods went back to the vendor. Costed at
-            # the credit's own rate, not avg_cost, so a bill and the credit
-            # that reverses it net to zero on both quantity and value.
-            _append_movement(
+            # what the credit took off Inventory (the line's rate with its
+            # share of the tax), not avg_cost, so a bill and the credit that
+            # reverses it net to zero on both quantity and value. What the
+            # pool cannot carry of that cost (the shelf emptied, or the count
+            # below zero) goes to the item's cost of goods account under the
+            # credit (W-74), so Inventory reads quantity x average cost.
+            _append_at_cost(
                 db,
                 item,
                 MovementType.RETURN_OUT,
@@ -292,13 +303,16 @@ def create_vendor_credit(data: VendorCreditCreate, db: Session = Depends(get_db)
                 unit_cost=unit_cost,
                 source_type="vendor_credit",
                 source_id=vc.id,
+                txn_date=data.date,
                 transaction_id=txn.id,
                 memo=f"Return to vendor: {vc.credit_number}",
             )
 
     db.commit()
     db.refresh(vc)
-    return _with_vendor_name(vc)
+    resp = _with_vendor_name(vc)
+    resp.warnings = stock_warnings
+    return resp
 
 
 @router.post("/{vc_id}/apply")
@@ -375,10 +389,10 @@ def apply_vendor_credit(
 @router.post("/{vc_id}/void", response_model=VendorCreditResponse)
 def void_vendor_credit(vc_id: int, db: Session = Depends(get_db)):
     """Reverse a vendor credit: put every application back on its bill, post
-    the mirror-image entry, put returned stock back on the shelf, and mark it
-    void."""
-    from app.models.items import MovementType
-    from app.services.inventory_service import _append_movement
+    the mirror-image entry, put returned stock back on the shelf at the cost
+    it went out at, and mark it void. Stock coming back never takes a count
+    below zero, so the void has no stock warning to give."""
+    from app.services.inventory_hooks import reverse_returns_for_vendor_credit
 
     vc = (
         db.query(VendorCredit)
@@ -405,10 +419,11 @@ def void_vendor_credit(vc_id: int, db: Session = Depends(get_db)):
             )
         db.delete(app_row)
 
+    reversal_id = None
     if vc.transaction_id:
         txn = db.query(Transaction).filter(Transaction.id == vc.transaction_id).first()
         if txn is not None:
-            create_journal_entry(
+            reversal_id = create_journal_entry(
                 db,
                 vc.date,
                 f"VOID Vendor Credit {vc.credit_number}",
@@ -417,23 +432,15 @@ def void_vendor_credit(vc_id: int, db: Session = Depends(get_db)):
                 source_id=vc.id,
                 class_id=vc.class_id,
                 job_id=vc.job_id,
-            )
+            ).id
 
-    for line in vc.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory and line.quantity > 0:
-            _append_movement(
-                db,
-                item,
-                MovementType.VOID,
-                quantity=Decimal(str(line.quantity)),
-                unit_cost=Decimal(str(line.rate or 0)),
-                source_type="vendor_credit_void",
-                source_id=vc.id,
-                memo=f"VOID Vendor Credit {vc.credit_number}",
-            )
+    # The returned stock comes back at the cost it went out at, one reversal
+    # per return naming it and linked to the reversing entry, which already
+    # undoes the Inventory side; what the pool cannot absorb is posted by
+    # the hook (W-74).
+    reverse_returns_for_vendor_credit(
+        db, vc, txn_date=vc.date, transaction_id=reversal_id
+    )
 
     vc.amount_applied = Decimal("0")
     vc.balance_remaining = Decimal("0")
