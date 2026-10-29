@@ -7,6 +7,15 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
+expense's memo was read back off its bank line, which holds the memo or,
+when none was typed, the payee. So a memo typed the same as the payee came
+back blank, and an expense entered for a vendor with a different payee typed
+and no memo came back with that payee as its memo. The expense now stores
+the memo it was given and returns exactly that, blank when none was typed.
+Expenses saved before this release are read as before. The bank line is
+unchanged, so the register shows what it always did.
+
 **Sub-customers with parent billing** (#638, from Discussion #633). A customer
 can now sit under another, one level deep, the way QuickBooks spells
 "Parent:Sub": a property manager keeps each property as a customer and each

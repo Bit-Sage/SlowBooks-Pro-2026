@@ -44,6 +44,19 @@ def _void_ids(db: Session, txn_ids: list[int]) -> set[int]:
     return {r[0] for r in rows}
 
 
+def _memo_of(txn: Transaction, credit_line) -> str:
+    """The memo typed on the expense: its own column (#648), "" when none
+    was typed. An expense saved before the column existed has none stored:
+    its bank line holds the memo or, with none typed, the payee the entry's
+    description carries ("Expense: {payee}", the vendor's name only when no
+    payee was typed), which is not a memo."""
+    if txn.memo is not None:
+        return txn.memo
+    line_desc = (credit_line.description or "") if credit_line else ""
+    on_entry = (txn.description or "").removeprefix("Expense: ").strip()
+    return "" if line_desc == on_entry else line_desc
+
+
 def _serialize(
     txn: Transaction, db: Session, voided: bool | None = None
 ) -> ExpenseResponse:
@@ -90,14 +103,9 @@ def _serialize(
         ),
         amount=float(sum((ln.debit for ln in debit_lines), Decimal("0"))),
         reference=txn.reference or "",
-        # the memo typed on the expense: the bank line carries it (a split's
-        # debit lines carry their own, #599); with none typed the bank line
-        # holds the payee, which is not a memo (W-51, 2.31.0 gate)
-        memo=(
-            credit_line.description or ""
-            if credit_line and (credit_line.description or "") != payee
-            else ""
-        ),
+        # the memo typed on the expense, kept on its own (#648); a split's
+        # debit lines carry their own (#599)
+        memo=_memo_of(txn, credit_line),
         status="void" if voided else "recorded",
         printable=(
             not voided
@@ -287,6 +295,7 @@ def create_expense(
 
     payee = (data.payee or "").strip() or (vendor.name if vendor else "")
     memo = (data.memo or "").strip()
+    # the bank line shows in the register: the memo, else the payee
     line_desc = memo or payee
     journal_lines = []
     for sp in specs:
@@ -329,6 +338,9 @@ def create_expense(
         class_id=data.class_id,
         job_id=data.job_id,
     )
+    # the memo on its own (#648): "" when none was typed, which tells it
+    # from an expense saved before the column existed
+    txn.memo = memo
     db.commit()
     db.refresh(txn)
     return _serialize(txn, db)
