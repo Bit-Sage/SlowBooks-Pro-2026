@@ -154,7 +154,11 @@ def test_a_bookkeeper_syncs_with_the_saved_mapping(client, db_session, bank, tra
             mapping = page.get_by_role("combobox", name="Import My LLC into")
             mapping.wait_for()
             assert mapping.is_disabled()
-            assert mapping.locator("option:checked").inner_text() == "Mercury LLC"
+            # the chart account the feed imports into, the feed's own name after it
+            # (2.31.1: the list offers the chart's bank accounts)
+            assert (
+                mapping.locator("option:checked").inner_text().endswith("(Mercury LLC)")
+            )
             page.get_by_text(
                 "An administrator chooses which bank account each Mercury account",
                 exact=False,

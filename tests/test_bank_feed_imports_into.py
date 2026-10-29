@@ -8,7 +8,12 @@ an empty list and no word why (Mercury's section had the hint, SimpleFIN's did
 not). Both lists now offer every bank account in the chart (SimpleFIN its
 credit-card accounts too), and choosing one with no feed record makes it."""
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from app.models.accounts import Account, AccountType
 from app.models.banking import BankAccount
@@ -138,3 +143,58 @@ def test_the_page_offers_the_chart_and_says_what_to_do_when_it_is_empty():
     # the hint for a chart with no bank account, on both sections
     assert js.count("BankingPage._noBankAccountHint(") == 2
     assert "Add one with <strong>+ New Bank Account</strong> above" in js
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_both_connected_sections_draw_the_chart_accounts():
+    """Each connected section named its table rows `rows`, the name of the
+    chart's accounts it was given, so the first look at the chart threw
+    ("Cannot access 'rows' before initialization") and a connected feed's
+    section never drew. Drawn here with the chart's accounts and a feed
+    record no longer listed: each mapping box offers both, with the one
+    mapped chosen."""
+    probe = r"""
+const fs = require('fs'), vm = require('vm');
+const ctx = { console, window: {}, document: { addEventListener: () => {} },
+  location: { origin: 'http://127.0.0.1:3001', hash: '#/banking' },
+  setTimeout: () => 0, clearTimeout: () => {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync('app/static/js/utils.js', 'utf8')
+  + '\n' + fs.readFileSync('app/static/js/banking.js', 'utf8')
+  + '\nthis.BankingPage = BankingPage;', ctx);
+const rows = [
+  { account_id: 7, account_number: '1000', name: 'Operating Checking', bank_kind: 'bank',
+    feed: { bank_account_id: 3, name: 'Operating Checking' } },
+  { account_id: 8, account_number: '2100', name: 'Company Visa', bank_kind: 'credit_card', feed: null },
+];
+const feeds = [{ id: 3, name: 'Operating Checking', is_active: true, bank_kind: 'bank' },
+               { id: 9, name: 'Old Savings', is_active: true, bank_kind: 'bank', account_name: null }];
+const mercury = ctx.BankingPage._renderMercurySection({ connected: true,
+  accounts: [{ id: 'm1', name: 'Mercury Checking', last_four: '1234', balance: '10.00',
+               available_balance: '10.00' }],
+  account_map: { m1: 3 }, webhook: { path: '/api/mercury/webhook' }, last_sync: null }, feeds, rows);
+const simplefin = ctx.BankingPage._renderFeedSection({ connected: true,
+  accounts: [{ id: 'ACT-1', name: 'Demo Checking', org: 'Demo', balance: '1.00', currency: 'USD' }],
+  account_map: { 'ACT-1': 9 }, reversed: [], last_sync: null }, feeds, rows);
+console.log(JSON.stringify({ mercury, simplefin }));
+"""
+    out = subprocess.run(
+        ["node", "-e", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    mercury, simplefin = got["mercury"], got["simplefin"]
+    # Mercury: bank accounts only, the mapped feed's chart account chosen
+    assert '<option value="acct:7" selected>' in mercury
+    assert 'value="acct:8"' not in mercury
+    assert '<option value="feed:9">Old Savings</option>' in mercury
+    assert "Mercury Checking" in mercury and "The chart has no" not in mercury
+    # SimpleFIN: bank and card accounts, the unlisted feed record kept and chosen
+    assert 'value="acct:7"' in simplefin and 'value="acct:8"' in simplefin
+    assert '<option value="feed:9" selected>Old Savings</option>' in simplefin
+    assert "Demo Checking" in simplefin and "The chart has no" not in simplefin

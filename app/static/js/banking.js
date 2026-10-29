@@ -97,7 +97,7 @@ const BankingPage = {
                 </form>`;
         } else {
             const banks = rows.filter(a => a.bank_kind === 'bank');
-            const rows = feed.accounts.map(a => `<tr data-mercury-account="${escapeHtml(a.id)}">
+            const tableRows = feed.accounts.map(a => `<tr data-mercury-account="${escapeHtml(a.id)}">
                 <td>${escapeHtml(a.name)} ${a.last_four ? '••••' + escapeHtml(a.last_four) : ''}</td>
                 <td class="amount mercury-current">${escapeHtml(a.balance)} USD</td>
                 <td class="amount mercury-available">${escapeHtml(a.available_balance)} USD</td>
@@ -114,7 +114,7 @@ const BankingPage = {
                 <p>${feed.last_sync ? 'Last successful sync: ' + escapeHtml(feed.last_sync.replace('T', ' ')) : 'Not synced yet.'}</p>
                 <div class="table-container"><table id="mercury-balances">
                     <thead><tr><th scope="col">Mercury account</th><th scope="col" class="amount">Current balance</th><th scope="col" class="amount">Available</th><th scope="col" class="amount">Incoming transfers</th><th scope="col">Imports into</th></tr></thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${tableRows}</tbody>
                 </table></div>
                 <p id="mercury-balance-status" aria-live="polite">${escapeHtml(BankingPage._mercuryBalanceStatus(feed))}</p>
                 <form onsubmit="BankingPage.syncMercury(event)" data-write>
@@ -374,7 +374,7 @@ const BankingPage = {
             const options = (sfId) => BankingPage._importOptions(
                 rows, feeds, feed.account_map[sfId], ['bank', 'credit_card']);
             const reversed = new Set(feed.reversed || []);
-            const rows = feed.accounts.map(a => `<tr>
+            const tableRows = feed.accounts.map(a => `<tr>
                     <td>${escapeHtml(a.name)}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.org || '')}</div></td>
                     <td class="amount">${escapeHtml(a.balance)} ${escapeHtml(a.currency)}</td>
                     <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map" data-admin
@@ -397,7 +397,7 @@ const BankingPage = {
                 <p class="form-hint hidden" data-admin-note>An administrator chooses which bank account each feed imports into and whether its signs are reversed${Object.keys(feed.account_map || {}).length ? '.' : '; until one does, Sync has nothing to import.'}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th><th scope="col">Amounts</th></tr></thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${tableRows}</tbody>
                 </table></div>
                 <div class="form-actions" style="margin-top:12px;">
                     <button class="btn btn-primary" onclick="BankingPage.syncSimpleFIN()">Sync Now</button>
