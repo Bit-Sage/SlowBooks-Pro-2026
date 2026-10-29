@@ -696,6 +696,8 @@ def convert_to_invoice(
         bool(data and data.allow_over_credit_limit),
         "invoice",
         question=None,
+        # the action at hand: Convert, not Save (2.31.1 gate, a round-3 note)
+        ask="Convert it anyway?",
     )
 
     invoice_number = next_invoice_number(db)
