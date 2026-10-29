@@ -7,6 +7,19 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Job reports read a timestamp on the local day** (#644). A cost-to-complete
+forecast and a change order approval are stored with a UTC timestamp, and the
+construction reports compared that timestamp's UTC date with the local "as of"
+day. On a US evening, once it was already the next day in UTC, a forecast
+typed that night made the WIP Schedule as of the same day warn that it was
+entered the next day (on the screen, in the CSV and in the PDF), and a sub
+change order approved that night dropped out of Commitment Status as of that
+day; the change order log and the WIP revised contract read an owner change
+order's approval the same way. The timestamp is now read as the local calendar
+date before the comparison. Also, a commitment that is partly billed now reads
+as sent on an as-of day before its first bill, the way a commitment closed by
+a later bill already read as open before that bill.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
