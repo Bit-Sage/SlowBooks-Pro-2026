@@ -203,8 +203,14 @@ const RecurringPage = {
             if (id) { await API.put(`/recurring/${id}`, data); toast('Recurring updated'); }
             else { await API.post('/recurring', data); toast('Recurring created'); }
             closeModal();
-            App.navigate('#/recurring');
+            App.navigate(RecurringPage.backTo());
         } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // The list to return to: the Memorized transactions page when the form
+    // was opened from there (#605), else this page.
+    backTo() {
+        return location.hash.startsWith('#/memorized') ? '#/memorized' : '#/recurring';
     },
 
     async del(id) {
@@ -212,7 +218,7 @@ const RecurringPage = {
         try {
             await API.del(`/recurring/${id}`);
             toast('Deleted');
-            App.navigate('#/recurring');
+            App.navigate(RecurringPage.backTo());
         } catch (err) { toast(err.message, 'error'); }
     },
 

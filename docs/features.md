@@ -23,6 +23,7 @@ pass, and the per-integration setup guides ([Stripe](setup-stripe.md),
 - **Customer credits** — Unapplied payment money and open credit memos are listed on Receive Payment, the customer page, the payment and the invoice, each with **Apply**; applying a foreign-currency remainder posts the realized exchange difference. A/R Aging, Income by Customer, the dashboard and every customer balance count them, so they tie to account 1100
 - **Foreign-currency invoices** — The document carries its currency ("EUR 850.00") on screen, in lists, on the PDF and in email; the ledger books the home amount at the invoice's rate, and A/R reports count that booked amount. Receive Payment offers the customer's invoice currencies and takes the rate on the payment date
 - **Recurring Invoices** — Schedule automatic invoice generation (weekly/monthly/quarterly/yearly) with manual "Generate Now" or cron script. The form prices the item and shows a total; a schedule that adds up to $0.00 is refused, and the generator skips an old one
+- **Memorized transactions** (#605) — A bill or a journal entry kept whole with a schedule, the way QuickBooks memorizes one: a memorized bill carries its vendor, terms, bill number and lines (account, memo, job, cost code, class, billable mark); a memorized journal entry its lines, reference, basis and adjusting mark. How often: daily, weekly, every two weeks, twice a month, monthly, every two months, quarterly, twice a year, yearly, or every N days, weeks or months; a next date, and an end date or a number of times. A monthly schedule begun on the 31st is entered on the last day of a shorter month and the 31st again after it; twice a month is the next date's day and fifteen days later. Two modes: **auto-enter** posts the document on its date when the scheduler runs (`scripts/run_recurring.py`, or Enter All Due on the page), **remind** lists it as due until you press **Enter now**, which posts it dated the scheduled date or today and moves the schedule on. Pause and resume (resuming skips the dates missed, as a re-activated recurring invoice does). The **Memorized Transactions** page lists every schedule in one place, recurring invoices included, with type, next date, how often, mode, last entered (a link to the document), status and amount, a Due filter, and Enter now, Pause, Edit and Delete on each; **Memorize** on a bill's page or a journal entry's page starts a memorized one from it. The posted bill is what Enter Bill posts and the entry what the journal form posts, so a closed period refuses them the same way
 - **Documents that add up to $0.00** — An invoice, credit memo, duplicate or estimate conversion for $0.00 asks "Save it anyway?" before it saves (API: `allow_zero_total: true`, else 409 `zero_total`); a no-charge invoice starts Paid
 - **Invoice numbering and footer** — Settings' invoice prefix, next invoice number (leading zeros kept as padding) and invoice footer are used
 - **Saved invoice messages** (#392) — Settings → Invoice Messages keeps a short list of notes (how to pay, a thank-you), one the default; the invoice form's **Message** select copies the chosen text into Notes, editable — appended on a new line when Notes already hold hand-typed text, replacing them only when they are empty or still hold a saved message's text — and a new invoice starts with the default's text. The invoice keeps the text, not the choice, so editing a message later leaves old invoices alone
@@ -464,7 +465,7 @@ Full IIF format reference, account-type mapping, and round-trip examples live in
 
 ## Utilities
 - **Backup Script** — `scripts/backup.sh` — pg_dump with gzip compression, keeps last 30 backups
-- **Recurring Invoice Cron** — `scripts/run_recurring.py` — Standalone script for generating due recurring invoices
+- **Recurring Invoice Cron** — `scripts/run_recurring.py` — Standalone script for generating due recurring invoices and entering the memorized bills and journal entries set to auto-enter (#605)
 - **IRS Mock Data** — `scripts/seed_irs_mock_data.py` — Seeds realistic test data from IRS Publication 583 (Henry Brown's Auto Body Shop: 8 customers, 13 vendors, 10 invoices, 5 payments, 3 estimates)
 
 ---
@@ -650,6 +651,13 @@ All endpoints under `/api/`. Swagger docs at `/docs`. 300+ routes across 50 rout
 |----------|---------|-------------|
 | `/api/recurring` | GET, POST, PUT, DELETE | Recurring invoice templates; a job must be the customer's (v2.22.0) |
 | `/api/recurring/generate` | POST | Generate due recurring invoices |
+| `/api/recurring/{id}/generate` | POST | Enter this one schedule's next invoice now, due or not, dated its scheduled date or `?dated=` (#605) |
+| `/api/memorized` | GET, POST | Every schedule in one list (recurring invoices as kind `invoice`, memorized bills and journal entries), `?due=true` and `?kind=`; create a memorized bill or journal entry (#605) |
+| `/api/memorized/due` | GET | The schedules due on or before today |
+| `/api/memorized/enter-due` | POST | Enter every due auto-enter memorized bill and journal entry, as the scheduler does |
+| `/api/memorized/{id}` | GET, PUT, DELETE | One memorized bill or journal entry with its lines |
+| `/api/memorized/{id}/enter` | POST | Enter it now, dated its scheduled date or the `date` sent, and move the schedule on |
+| `/api/memorized/{id}/pause`, `/resume` | POST | Pause; resume rolls the next date forward past the dates missed |
 | `/api/batch-payments` | POST | Batch payment application |
 
 ### Payroll & HR Core

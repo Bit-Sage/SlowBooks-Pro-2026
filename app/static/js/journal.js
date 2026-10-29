@@ -117,6 +117,7 @@ const JournalPage = {
             </div>
             <div class="form-actions">
                 ${JournalPage.canVoid(entry) ? `<button data-destructive data-accountant-ok class="btn btn-danger" onclick="JournalPage.void(${entry.id})">Void</button>` : ''}
+                ${!entry.voided ? `<button class="btn btn-secondary" data-write title="Keep this entry as a memorized transaction, to enter again on a schedule" onclick="MemorizedPage.memorizeJournal(${entry.id})">Memorize</button>` : ''}
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
             </div>`);
         JournalPage.loadAttachments(entry.id);
@@ -278,19 +279,7 @@ const JournalPage = {
         (entry.lines || []).forEach(l => {
             JournalPage.addLine();
             const row = body ? body.lastElementChild : null;
-            if (!row) return;
-            row.querySelector('.je-account').value = l.account_id;
-            row.querySelector('.je-desc').value = l.description || '';
-            row.querySelector('.je-debit').value = Number(l.debit || 0).toFixed(2);
-            row.querySelector('.je-credit').value = Number(l.credit || 0).toFixed(2);
-            const cc = row.querySelector('.je-cost-code');
-            if (cc && l.cost_code_id != null) cc.value = l.cost_code_id;
-            const ct = row.querySelector('.je-cost-type');
-            if (ct && l.cost_type != null) ct.value = l.cost_type;
-            const fund = row.querySelector('.je-function-fund');
-            if (fund && l.class_id != null) fund.value = l.class_id;
-            const fn = row.querySelector('.je-function');
-            if (fn && l.function) fn.value = l.function;
+            if (row) JournalPage.fillLine(row, l);
         });
         JournalPage.recalc();
         if (entry.reconciled_note) {
@@ -298,6 +287,54 @@ const JournalPage = {
             if (grid) grid.insertAdjacentHTML('beforeend',
                 `<div class="form-group full-width" role="status" style="font-size:11px; color:var(--text-muted);">${escapeHtml(entry.reconciled_note)}</div>`);
         }
+    },
+
+    // One row of the grid filled from a stored line: an entry's (the edit
+    // above) or a memorized journal entry's (#605).
+    fillLine(row, l) {
+        row.querySelector('.je-account').value = l.account_id;
+        row.querySelector('.je-desc').value = l.description || '';
+        row.querySelector('.je-debit').value = Number(l.debit || 0).toFixed(2);
+        row.querySelector('.je-credit').value = Number(l.credit || 0).toFixed(2);
+        const cc = row.querySelector('.je-cost-code');
+        if (cc && l.cost_code_id != null) cc.value = l.cost_code_id;
+        const ct = row.querySelector('.je-cost-type');
+        if (ct && l.cost_type != null) ct.value = l.cost_type;
+        const fund = row.querySelector('.je-function-fund');
+        if (fund && l.class_id != null) fund.value = l.class_id;
+        const fn = row.querySelector('.je-function');
+        if (fn && l.function) fn.value = l.function;
+    },
+
+    // The grid's lines as the API takes them: an account and an amount on
+    // one side, the memo, and the cost code, cost type and class only when
+    // the form shows a picker for them (see save). Shared with the
+    // memorized journal form (#605).
+    collectLines() {
+        const lines = [];
+        $$('#je-lines tr').forEach(row => {
+            const account_id = row.querySelector('.je-account')?.value;
+            const debit = parseFloat(row.querySelector('.je-debit')?.value) || 0;
+            const credit = parseFloat(row.querySelector('.je-credit')?.value) || 0;
+            if (account_id && (debit > 0 || credit > 0)) {
+                const line = {
+                    account_id: parseInt(account_id),
+                    debit, credit,
+                    description: row.querySelector('.je-desc')?.value || '',
+                    ...Nonprofit.linePayload(row, 'je-function'),
+                };
+                // A line's cost code and class go only when the form shows
+                // a picker for them: a business company with no classes has
+                // no class cell, and a null sent for it cleared an imported
+                // line's class on every edit (#388 review). Left out, the
+                // server keeps what the line has.
+                if (row.querySelector('.je-cost-code')) line.cost_code_id = CostCodes.fromRow(row, 'je-cost-code');
+                if (row.querySelector('.je-cost-type')) line.cost_type = CostTypes.fromRow(row, 'je-cost-type');
+                if (row.querySelector('.je-function-fund')) line.class_id = Nonprofit.fundFromRow(row, 'je-function');
+                lines.push(line);
+            }
+        });
+        return lines;
     },
 
     addLine() {
@@ -367,29 +404,7 @@ const JournalPage = {
     async save(e) {
         e.preventDefault();
         const form = e.target;
-        const lines = [];
-        $$('#je-lines tr').forEach(row => {
-            const account_id = row.querySelector('.je-account')?.value;
-            const debit = parseFloat(row.querySelector('.je-debit')?.value) || 0;
-            const credit = parseFloat(row.querySelector('.je-credit')?.value) || 0;
-            if (account_id && (debit > 0 || credit > 0)) {
-                const line = {
-                    account_id: parseInt(account_id),
-                    debit, credit,
-                    description: row.querySelector('.je-desc')?.value || '',
-                    ...Nonprofit.linePayload(row, 'je-function'),
-                };
-                // A line's cost code and class go only when the form shows
-                // a picker for them: a business company with no classes has
-                // no class cell, and a null sent for it cleared an imported
-                // line's class on every edit (#388 review). Left out, the
-                // server keeps what the line has.
-                if (row.querySelector('.je-cost-code')) line.cost_code_id = CostCodes.fromRow(row, 'je-cost-code');
-                if (row.querySelector('.je-cost-type')) line.cost_type = CostTypes.fromRow(row, 'je-cost-type');
-                if (row.querySelector('.je-function-fund')) line.class_id = Nonprofit.fundFromRow(row, 'je-function');
-                lines.push(line);
-            }
-        });
+        const lines = JournalPage.collectLines();
         if (lines.length < 2) { toast('At least 2 lines required', 'error'); return; }
         // an entry already saved (opened from the journal or the register,
         // #388) asks before its changes save, as every edit does (#481)

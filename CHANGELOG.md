@@ -25,6 +25,32 @@ aged on its own. The IIF import asks whether a file's Customer:Job names are
 sub-customers or jobs (jobs, as before, unless told), and the QuickBooks
 Online export's "Parent:Sub" customers come in as parent and sub-customer.
 
+**Memorized bills and journal entries, entered on a schedule** (#605, asked
+by two people moving from QuickBooks). A bill or a journal entry can now be
+kept whole with a schedule: the vendor, terms, bill number and every line
+with its account, memo, job, cost code and class for a bill; the lines,
+reference, basis and adjusting mark for a journal entry. The schedule takes
+the choices QuickBooks offers (daily, weekly, every two weeks, twice a
+month, monthly, every two months, quarterly, twice a year, yearly, or every
+N days, weeks or months), a next date, and an end date or a number of
+times; a monthly schedule begun on the 31st lands on the last day of a
+shorter month and on the 31st again after it, and twice a month is the next
+date's day and fifteen days later. In auto-enter mode the scheduler
+(`scripts/run_recurring.py`, or Enter All Due on the page) posts the
+document on its date; in remind mode it waits on the due list until Enter
+now posts it, dated the scheduled date or today, and moves the schedule on.
+Schedules pause and resume (resuming skips the dates missed). The new
+Memorized Transactions page, beside Recurring Invoices in the sidebar, lists
+every schedule in one place, recurring invoices included, with type, next
+date, how often, mode, last entered, status and amount, a Due filter, and
+Enter now, Pause, Edit and Delete on each; Memorize on a bill's page or a
+journal entry's page starts a memorized one from it. API: `/api/memorized`
+(GET, POST, PUT, DELETE), `/api/memorized/due`, `/api/memorized/{id}/enter`,
+`/pause`, `/resume`, `/api/memorized/enter-due`, and
+`/api/recurring/{id}/generate` to enter one recurring invoice now. IIF
+carries no memorized transactions, so the QuickBooks guide says to rebuild
+them here. Migration `c9e5a7b3d1f2` adds the two tables.
+
 ### v2.31.0 — Split expenses, lines that move, and stock that comes back
 
 **A sale's reversal comes off each posting's own accounts at its own cost**

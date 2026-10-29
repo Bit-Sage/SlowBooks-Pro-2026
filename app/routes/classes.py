@@ -339,6 +339,9 @@ def delete_class(class_id: int, db: Session = Depends(get_db)):
             status_code=400,
             detail="Class is used by posted transactions — archive it instead",
         )
+    from app.services.memorized_service import refuse_if_memorized
+
+    refuse_if_memorized(db, "Class", "class_id", class_id)
     db.delete(row)
     db.commit()
     return {"message": "Class deleted"}

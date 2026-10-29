@@ -214,6 +214,39 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
     return {"message": "Recurring invoice deleted"}
 
 
+@router.post("/{rec_id}/generate")
+def generate_one(
+    rec_id: int, dated: date = Query(default=None), db: Session = Depends(get_db)
+):
+    """Enter this one schedule's next installment now (#605, the Memorized
+    transactions page's Enter now), due or not, dated its scheduled date
+    or `dated`; the schedule moves on from the scheduled date."""
+    rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    skipped: list = []
+    created_ids = generate_due_invoices(
+        db, rec.next_due, skipped=skipped, only_id=rec.id, dated=dated
+    )
+    if skipped:
+        raise HTTPException(status_code=409, detail=skipped[0]["message"])
+    if not created_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This {_schedule_noun(db)} is past its end date, so nothing "
+                "was created. Move or clear the end date to bill it again."
+            ),
+        )
+    db.refresh(rec)
+    return {
+        "invoices_created": len(created_ids),
+        "invoice_ids": created_ids,
+        "next_due": rec.next_due,
+        "skipped": skipped,
+    }
+
+
 @router.post("/generate")
 def generate_now(as_of: date = Query(default=None), db: Session = Depends(get_db)):
     """Manually trigger generation of all due recurring invoices — one
