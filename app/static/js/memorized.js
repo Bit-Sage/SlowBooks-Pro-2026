@@ -61,18 +61,22 @@ const MemorizedPage = {
             <div class="form-group" style="margin-top:12px;">
                 <label style="font-weight:normal;"><input type="checkbox" id="mem-auto-enter" name="auto_enter_on_open" value="true" data-admin style="width:auto; vertical-align:middle; margin-right:6px;" ${autoEnter ? 'checked' : ''} onchange="MemorizedPage.setAutoEnter(this)">Enter due memorized bills and journal entries when the app opens and once a day</label>
             </div>
-            <p class="hint" style="margin-top:8px;">An auto-enter memorized bill or journal entry is entered on its date: the app enters every due one when it opens and once a day while it runs, every missed date in order. Recurring ${T('invoices')} wait, as before, for Generate or Enter All Due, which enters every due schedule of both kinds at once. A remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed. A server install can run scripts/run_recurring.py from cron instead.</p>`;
+            <p class="hint" style="margin-top:8px;">An auto-enter memorized bill or journal entry is entered on its date: the app enters every due one when it opens and once a day while it runs, every missed date in order, once someone has signed in. Recurring ${T('invoices')} wait, as before, for Generate or Enter All Due, which enters every due schedule of both kinds at once. A remind schedule waits on the Due now list until you press Enter now. Paused schedules enter nothing; resuming one skips the dates it missed. A server install can run scripts/run_recurring.py from cron instead.</p>`;
     },
 
     // What the app entered by itself (when it opened, or its daily run)
     // since the page last said so: a sentence, and each document as a link.
+    // A run that entered nothing but had to skip something says what could
+    // not be entered, and why; a run that did neither says nothing.
     whileAwayHtml(run) {
         if (!run || !run.ran_at || run.ran_at === MemorizedPage._shownRun) return '';
         const n = (run.invoices_created || 0) + (run.entered_count || 0);
         const held = run.skipped || [];
         if (!n && !held.length) return '';
         MemorizedPage._shownRun = run.ran_at;
-        const sentence = `Entered ${n} scheduled document${n === 1 ? '' : 's'} while you were away`;
+        const sentence = n
+            ? `Entered ${n} scheduled document${n === 1 ? '' : 's'} while you were away`
+            : `${held.length} scheduled document${held.length === 1 ? '' : 's'} could not be entered`;
         if (n) toastPosted(sentence);
         const items = (run.entered || []).map(e => {
             const href = e.kind === 'bill' ? `#/bills/${e.document_id}` : `#/journal/${e.document_id}`;
@@ -82,7 +86,7 @@ const MemorizedPage = {
         return `<div class="hint" role="status" style="margin-bottom:12px;">
             <strong>${sentence}</strong>${run.origin === 'daily' ? " (today's run)" : ''}.
             ${items.length ? `<ul style="margin:6px 0 0 18px;">${items.join('')}</ul>` : ''}
-            ${held.length ? `<div style="margin-top:6px;">Not entered:</div><ul style="margin:0 0 0 18px;">${held.map(s => `<li>${escapeHtml(s.message)}</li>`).join('')}</ul>` : ''}
+            ${held.length ? `${n ? '<div style="margin-top:6px;">Not entered:</div>' : ''}<ul style="margin:${n ? '0' : '6px'} 0 0 18px;">${held.map(s => `<li>${escapeHtml(s.message)}</li>`).join('')}</ul>` : ''}
         </div>`;
     },
 
@@ -168,12 +172,16 @@ const MemorizedPage = {
 
     // ----------------------------------------------------------- actions
 
-    // Enter now: dated the scheduled date, or today.
+    // Enter now: the occurrence this row shows, dated its scheduled date or
+    // today. The request names that occurrence, so one entered meanwhile
+    // (another window, Enter All Due, the scheduler) is refused, not the
+    // next one posted early.
     enter(kind, id) {
         const r = MemorizedPage.row(kind, id);
         const scheduled = r ? r.next_date : todayISO();
         openModal(`Enter ${r ? escapeHtml(r.name) : 'now'}`, `
             <form onsubmit="MemorizedPage.doEnter(event, '${kind}', ${Number(id)})">
+                <input type="hidden" name="occurrence" value="${r ? escapeHtml(r.next_date) : ''}">
                 <p style="margin-bottom:8px;">Enter the ${kind === 'invoice' ? T('invoice') : kind === 'bill' ? 'bill' : 'journal entry'} dated:</p>
                 <div class="form-group">
                     <label style="font-weight:normal;"><input type="radio" name="dated" value="" checked> The scheduled date, ${formatDate(scheduled)}</label>
@@ -198,12 +206,17 @@ const MemorizedPage = {
         if (button && button.disabled) return;
         if (button) button.disabled = true;
         const dated = form.dated.value || null;
+        const occurrence = form.occurrence.value || null;
         try {
             if (kind === 'invoice') {
-                const result = await API.post(`/recurring/${id}/generate` + (dated ? `?dated=${dated}` : ''));
+                const query = [occurrence ? `occurrence=${occurrence}` : '', dated ? `dated=${dated}` : ''].filter(Boolean).join('&');
+                const result = await API.post(`/recurring/${id}/generate` + (query ? `?${query}` : ''));
                 toastPosted(`${T('Invoice')} created; next on ${formatDate(result.next_due)}`);
             } else {
-                const result = await API.post(`/memorized/${id}/enter`, dated ? { date: dated } : {});
+                const body = {};
+                if (occurrence) body.occurrence = occurrence;
+                if (dated) body.date = dated;
+                const result = await API.post(`/memorized/${id}/enter`, body);
                 toastPosted(result.message);
             }
             closeModal();

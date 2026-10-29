@@ -5,10 +5,19 @@ memorized bills and journal entries set to auto-enter (#605); a remind
 schedule is left on the Memorized transactions page's due list.
 Add to crontab: 0 6 * * * cd /path/to/bookkeeper && python3 scripts/run_recurring.py
 
-The app does this by itself when it opens and once a day while it runs
-(app/services/scheduler.py, the auto_enter_on_open setting); this script is
-for a server install, and can run beside the app: an occurrence is claimed
-in the database before it is posted, so neither enters one twice.
+It catches up both kinds the way Enter All Due does (the same two steps,
+app/services/scheduler.py catch_up_recurring and memorized_service
+enter_due_memorized): every missed installment of a recurring invoice and
+every missed occurrence of an auto-enter memorized bill or journal entry up
+to today, each dated its scheduled date, so a server's cron and Enter All
+Due agree. Before 2.31.1 the script generated one installment of each
+recurring invoice per run.
+
+The app enters due memorized bills and journal entries by itself when it
+opens and once a day while it runs (the auto_enter_on_open setting); this
+script is for a server install, and can run beside the app: a memorized
+occurrence and a recurring invoice's installment are each claimed in the
+database before anything is posted, so neither enters one twice.
 """
 
 import sys
@@ -19,17 +28,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.database import SessionLocal
-from app.services.recurring_service import generate_due_invoices
-from app.services import memorized_service
+from app.services import memorized_service, scheduler
 
 if __name__ == "__main__":
     db = SessionLocal()
+    # nobody signs in to a cron run: the audit log names it
+    db.info["acting_username"] = scheduler.SCHEDULED_RUN
     try:
         # Collect the skipped templates too: a schedule skipped for a closed
         # period or a $0.00 total keeps its due date and is skipped again on
         # every later run, so the operator's log has to name it and say why.
-        skipped: list = []
-        ids = generate_due_invoices(db, skipped=skipped)
+        ids, skipped = scheduler.catch_up_recurring(db)
         if ids:
             print(f"Generated {len(ids)} invoice(s): {ids}")
         else:

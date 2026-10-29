@@ -2,7 +2,13 @@ from datetime import date as dt_date
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ValidationError,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.models.memorized import KIND_BILL, KINDS, MODES
 from app.models.transactions import BASES
@@ -17,6 +23,7 @@ from app.schemas.common import (
 from app.schemas.invoices import RateOut
 from app.schemas.journal import JournalLineCreate
 from app.services.recurring_service import normalize_frequency
+from app.services.validation_messages import plain_message
 
 
 class MemorizedLineIn(StrictModel):
@@ -78,6 +85,14 @@ class MemorizedLineIn(StrictModel):
         )
 
 
+def _line_refusal(n: int, e: ValueError) -> ValueError:
+    """A line the document's own line schema refused, as one sentence: its
+    ValidationError's first error in words, never the validator's dump of
+    the line (2.31.1 gate W-77)."""
+    reason = plain_message(e.errors()[0]) if isinstance(e, ValidationError) else e
+    return ValueError(f"line {n}: {reason}")
+
+
 def _checked_lines(kind: str, lines: list[MemorizedLineIn]) -> list[MemorizedLineIn]:
     """The lines as the kind's own schema accepts them, priced (a bill
     line's amount alone becomes 1 x amount) and balanced (a journal)."""
@@ -88,7 +103,7 @@ def _checked_lines(kind: str, lines: list[MemorizedLineIn]) -> list[MemorizedLin
             try:
                 priced = line.as_bill_line()
             except ValueError as e:
-                raise ValueError(f"line {i + 1}: {e}")
+                raise _line_refusal(i + 1, e)
             line.quantity, line.rate, line.amount = (
                 priced.quantity,
                 priced.rate,
@@ -104,7 +119,7 @@ def _checked_lines(kind: str, lines: list[MemorizedLineIn]) -> list[MemorizedLin
         try:
             jl = line.as_journal_line()
         except ValueError as e:
-            raise ValueError(f"line {i + 1}: {e}")
+            raise _line_refusal(i + 1, e)
         if jl.debit < 0 or jl.credit < 0:
             raise ValueError(f"line {i + 1}: debit and credit must be non-negative")
         if jl.debit > 0 and jl.credit > 0:
@@ -236,8 +251,12 @@ class MemorizedUpdate(StrictModel):
 
 
 class EnterRequest(StrictModel):
-    """Enter now: dated the scheduled date unless a date is given."""
+    """Enter now: the occurrence the page showed (its scheduled date), dated
+    that date unless a date is given. An occurrence that is no longer the
+    schedule's next one is refused (409) and nothing is posted; left out
+    (an API caller), the schedule's next date is entered."""
 
+    occurrence: Optional[dt_date] = None
     date: Optional[dt_date] = None
 
 
@@ -328,6 +347,8 @@ class MemorizedResponse(BaseModel):
 class EnterResponse(BaseModel):
     kind: str
     document_id: int
+    # the scheduled date entered, and the date the document carries
+    occurrence: dt_date
     date: dt_date
     next_date: dt_date
     status: str

@@ -12,6 +12,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -36,6 +37,7 @@ from app.schemas.memorized import (
 from app.services import scheduler
 from app.services.accounting import compute_line_totals
 from app.services.memorized_service import (
+    OccurrenceTaken,
     amount_of,
     ended_sentence,
     enter_memorized,
@@ -46,6 +48,7 @@ from app.services.memorized_service import (
     schedule_rows,
     status_of,
 )
+from app.services.validation_messages import plain_message
 
 router = APIRouter(prefix="/api/memorized", tags=["memorized"])
 
@@ -179,11 +182,12 @@ def list_due(as_of: date | None = Query(default=None), db: Session = Depends(get
 
 @router.post("/enter-due")
 def enter_due(as_of: date | None = Query(default=None), db: Session = Depends(get_db)):
-    """Enter All Due: what the app does by itself when it opens and once a
-    day. Generate every due recurring invoice and enter every auto-enter
-    memorized bill and journal entry due on or before as_of (today), every
-    missed occurrence in order, each dated its scheduled date. Remind
-    schedules are left on the due list."""
+    """Enter All Due: generate every due recurring invoice and enter every
+    auto-enter memorized bill and journal entry due on or before as_of
+    (today), every missed occurrence in order however far behind, each
+    dated its scheduled date; the cron script does the same. The app's own
+    runs, when it opens and once a day, enter the memorized ones only.
+    Remind schedules are left on the due list."""
     return scheduler.run_due_schedules(db, as_of)
 
 
@@ -192,7 +196,8 @@ def entered_recently():
     """What the last run of the in-app scheduler entered (this server's
     startup run or daily run), for the page to say "Entered 3 scheduled
     documents while you were away": `ran_at`, `origin`, `entered`,
-    `invoice_ids`, `skipped`. Empty before the first run."""
+    `invoice_ids`, `skipped`. Empty before the first run, which waits for
+    a sign-in when the company has a password."""
     return scheduler.last_run() or {}
 
 
@@ -283,6 +288,10 @@ def update_memorized(mem_id: int, data: MemorizedUpdate, db: Session = Depends(g
         whole[key] = value
     try:
         checked = MemorizedCreate(**whole)
+    except ValidationError as e:
+        # one plain sentence, as a create's refusal reads on the page, not
+        # the validator's dump of the whole request (2.31.1 gate W-77)
+        raise HTTPException(status_code=422, detail=plain_message(e.errors()[0]))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     _check_with_books(db, checked)
@@ -322,10 +331,17 @@ def delete_memorized(mem_id: int, db: Session = Depends(get_db)):
 def enter_now(
     mem_id: int, data: EnterRequest | None = None, db: Session = Depends(get_db)
 ):
-    """Enter the document now, dated its scheduled date (or `date`), and
-    move the schedule on. Works for a remind schedule, and for an
-    auto-enter one ahead of the scheduler."""
+    """Enter the occurrence the page showed (`occurrence`, its scheduled
+    date; the schedule's next date when not sent) now, dated that date (or
+    `date`), and move the schedule on past it. Works for a remind schedule,
+    and for an auto-enter one ahead of the scheduler. An occurrence that is
+    no longer the next one (entered meanwhile by another window, Enter All
+    Due or the scheduler, or the schedule edited) is a 409 naming it and the
+    schedule's next date, and nothing is posted (2.31.1 gate W-75)."""
     mem = _get(db, mem_id)
+    occurrence = data.occurrence if data and data.occurrence else mem.next_date
+    if occurrence != mem.next_date:
+        raise OccurrenceTaken(mem, occurrence)
     # ended before paused (2.31.1 gate W-64): the page shows Ended, and a
     # resume would not bring an ended schedule back
     if has_ended(mem):
@@ -338,19 +354,26 @@ def enter_now(
                 "or enter one by hand."
             ),
         )
-    on = data.date if data and data.date else mem.next_date
-    kind, document_id = enter_memorized(db, mem, on)
+    on = data.date if data and data.date else occurrence
+    kind, document_id = enter_memorized(db, mem, on, occurrence)
     db.commit()
     db.refresh(mem)
     word = _DOC_WORD.get(kind, kind)
     return EnterResponse(
         kind=kind,
         document_id=document_id,
+        occurrence=occurrence,
         date=on,
         next_date=mem.next_date,
         status=status_of(mem),
         message=(
-            f"Entered the {word} dated {on.isoformat()}; "
+            f"Entered the {word} dated {on.isoformat()}"
+            + (
+                f" for the {occurrence.isoformat()} occurrence"
+                if on != occurrence
+                else ""
+            )
+            + "; "
             + (
                 f"next on {mem.next_date.isoformat()}."
                 if status_of(mem) != "ended"
@@ -375,10 +398,17 @@ def resume_memorized(
 ):
     """Resume: the next date rolls forward to the first occurrence on or
     after today, so the months it sat paused are skipped, not entered late
-    (as a re-activated recurring invoice skips its missed periods)."""
+    (as a re-activated recurring invoice skips its missed periods). One
+    that has ended, or would on resuming, is a 409 with the ended sentence
+    and stays as it was, as re-ticking Active on an ended recurring invoice
+    is (2.31.1 gate W-81)."""
     mem = _get(db, mem_id)
     mem.is_active = True
     roll_forward(mem, as_of or date.today())
+    if has_ended(mem):
+        sentence = ended_sentence(mem)
+        db.rollback()
+        raise HTTPException(status_code=409, detail=sentence)
     db.commit()
     db.refresh(mem)
     return _response(mem)
