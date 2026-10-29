@@ -31,12 +31,13 @@ lines and these rows agree; only an invoice whose discount makes one
 income line larger than its total can land the cent on income instead.
 
 COGS for a tracked item is read from its inventory movements for the
-invoices in the report: the sale ("invoice", including an edit that raised
-the quantity) less an edit that lowered it ("invoice_edit"), each at the
-cost its journal entry posted, so the column is the COGS the P&L shows for
-those sales. A credit memo's return puts stock back without a COGS entry
-(inventory_hooks.post_return_for_credit_memo), so it leaves COGS alone here
-as it does on the P&L.
+invoices and credit memos in the report: the sale ("invoice", including an
+edit that raised the quantity) less an edit that lowered it ("invoice_edit")
+and less a credit memo's return ("credit_memo"), each at the cost its
+journal entry posted, so the column is the COGS the P&L shows for those
+documents. A return puts the cost of what came back on Inventory, off COGS,
+as it puts the stock back (inventory_hooks.post_return_for_credit_memo,
+#641), so the column nets it as the P&L does.
 """
 
 from datetime import date
@@ -44,6 +45,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, Request
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -168,7 +170,7 @@ def _sales_by_item(
         invoices = invoices.filter(Invoice.customer_id == customer_id)
 
     # Per item_id (None groups the no-item lines): quantity, amount, count,
-    # and the invoice/credit-memo ids behind it (for COGS from movements).
+    # and the invoice and credit memo ids behind it (for COGS from movements).
     rows: dict = {}
 
     def bucket(item_id):
@@ -179,6 +181,7 @@ def _sales_by_item(
                 "amount": Decimal("0"),
                 "line_count": 0,
                 "inv_ids": set(),
+                "cm_ids": set(),
             },
         )
 
@@ -222,11 +225,13 @@ def _sales_by_item(
             b["quantity"] -= Decimal(str(line.quantity or 0))
             b["amount"] -= home_amount(line.amount, None)
             b["line_count"] += 1
+            if line.item_id:
+                b["cm_ids"].add(cm.id)
 
     cogs_by_item = _items_cogs(
         db,
         {
-            item_id: b["inv_ids"]
+            item_id: (b["inv_ids"], b["cm_ids"])
             for item_id, b in rows.items()
             if item_id and meta.get(item_id, (None, None, False))[2]
         },
@@ -302,12 +307,14 @@ def _sales_by_item(
 
 
 # The movements that carry a sale's COGS: the sale itself (an edit that
-# raises the quantity records another "invoice" sale) and an edit that lowers
-# it ("invoice_edit", inventory_hooks.reconcile_invoice_inventory_delta). A
-# void ("invoice_void") reverses the whole sale, and a voided invoice is not
-# in the report. A credit memo's RETURN_IN posts no COGS entry, so it is not
-# here either: the P&L's COGS keeps the cost of a returned item.
-_COGS_SOURCES = ("invoice", "invoice_edit")
+# raises the quantity records another "invoice" sale), an edit that lowers
+# it ("invoice_edit", inventory_hooks.reconcile_invoice_inventory_delta) and
+# a credit memo's return ("credit_memo", post_return_for_credit_memo), which
+# puts the cost of what came back on Inventory, off COGS (#641). A void
+# ("invoice_void", "credit_memo_void") reverses the whole document, and a
+# voided document is not in the report.
+_SALE_COGS_SOURCES = ("invoice", "invoice_edit")
+_RETURN_COGS_SOURCE = "credit_memo"
 
 # Ids per IN (...) query, under SQLite's bound-parameter limit.
 _CHUNK = 500
@@ -320,35 +327,57 @@ def _cm_line_counts(line, to_income) -> bool:
     return Decimal(str(line.amount or 0)) > 0 and to_income(line.item_id)
 
 
-def _items_cogs(db: Session, inv_ids_by_item: dict) -> dict:
+def _items_cogs(db: Session, ids_by_item: dict) -> dict:
     """item_id -> COGS, for every tracked item at once: one read of the
-    movements of the report's invoices (in chunks), not each item's whole
-    history. A sale stores a negative quantity at the cost it posted
-    (inventory_service.record_sale) and an edit's reversal a positive one at
-    the sale's cost (reverse_sale), so −Σ(quantity × unit_cost) is the cost
-    of what the invoices, as they stand, shipped, each movement rounded to
-    the cent its entry posted: sell 5 and edit to 3 and
-    it is the cost of 3, the P&L's COGS for the sale."""
-    out = {item_id: Decimal("0") for item_id in inv_ids_by_item}
-    all_inv_ids = sorted(set().union(*inv_ids_by_item.values())) if out else []
+    movements of the report's invoices and credit memos (in chunks), not
+    each item's whole history. `ids_by_item` maps an item to its
+    (invoice ids, credit memo ids). A sale stores a negative quantity at the
+    cost it posted (inventory_service.record_sale), an edit's reversal a
+    positive one at the sale's cost (reverse_sale) and a return a positive
+    one at the cost its entry put back (#641), so −Σ(quantity × unit_cost)
+    is the cost of what the documents, as they stand, shipped, each movement
+    rounded to the cent its entry posted: sell 5, edit to 3 and take 1 back
+    on a credit memo and it is the cost of 2, the P&L's COGS."""
+    out = {item_id: Decimal("0") for item_id in ids_by_item}
+    all_inv_ids = sorted(set().union(*(inv for inv, _cm in ids_by_item.values())))
+    all_cm_ids = sorted(set().union(*(cm for _inv, cm in ids_by_item.values())))
     item_ids = list(out)
-    for i in range(0, len(all_inv_ids), _CHUNK):
-        chunk = all_inv_ids[i : i + _CHUNK]
+    for i in range(0, max(len(all_inv_ids), len(all_cm_ids)), _CHUNK):
+        wanted = []
+        inv_chunk = all_inv_ids[i : i + _CHUNK]
+        if inv_chunk:
+            wanted.append(
+                and_(
+                    InventoryMovement.source_type.in_(_SALE_COGS_SOURCES),
+                    InventoryMovement.source_id.in_(inv_chunk),
+                )
+            )
+        cm_chunk = all_cm_ids[i : i + _CHUNK]
+        if cm_chunk:
+            wanted.append(
+                and_(
+                    InventoryMovement.source_type == _RETURN_COGS_SOURCE,
+                    InventoryMovement.source_id.in_(cm_chunk),
+                )
+            )
         movements = db.query(
             InventoryMovement.item_id,
+            InventoryMovement.source_type,
             InventoryMovement.source_id,
             InventoryMovement.quantity,
             InventoryMovement.unit_cost,
-        ).filter(
-            InventoryMovement.source_type.in_(_COGS_SOURCES),
-            InventoryMovement.source_id.in_(chunk),
-        )
+        ).filter(or_(*wanted))
         if len(item_ids) <= _CHUNK:
             movements = movements.filter(InventoryMovement.item_id.in_(item_ids))
-        for item_id, source_id, qty, unit_cost in movements:
-            if item_id in out and source_id in inv_ids_by_item[item_id]:
+        for item_id, source_type, source_id, qty, unit_cost in movements:
+            if item_id not in out:
+                continue
+            inv_ids, cm_ids = ids_by_item[item_id]
+            behind = cm_ids if source_type == _RETURN_COGS_SOURCE else inv_ids
+            if source_id in behind:
                 # rounded to the cent as its journal entry is (record_sale,
-                # reverse_sale: _q(quantity × unit_cost)), the sign kept
+                # reverse_sale, the return: _q(quantity × unit_cost)), the
+                # sign kept
                 qty = Decimal(str(qty or 0))
                 cost = _q(abs(qty) * Decimal(str(unit_cost or 0)))
                 out[item_id] += cost if qty < 0 else -cost

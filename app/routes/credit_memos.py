@@ -278,9 +278,10 @@ def create_credit_memo(data: CreditMemoCreate, db: Session = Depends(get_db)):
         )
         cm.transaction_id = txn.id
 
-    # Phase 11 (audit fix): a credit memo for returned inventory goods must
-    # put the qty back on the shelf. This only adds quantity (no cost basis
-    # JE) since the income-side reversal already covered the P&L impact.
+    # A credit memo for returned stock puts the quantity back on the shelf
+    # and the cost of what came back on Inventory, off COGS (#641): one
+    # entry per memo, at the original sale's cost when the memo names the
+    # invoice, else the item's average cost.
     db.flush()
     db.refresh(cm)
     from app.services.inventory_hooks import post_return_for_credit_memo
@@ -388,9 +389,8 @@ def void_credit_memo(cm_id: int, db: Session = Depends(get_db)):
     """Reverse a credit memo: put every application back on its invoice,
     post the mirror-image entry, return any inventory the memo took back,
     and mark it void. This is also how a mistaken write-off is undone."""
-    from app.models.items import MovementType
     from app.services.accounting import reversing_lines
-    from app.services.inventory_service import _append_movement
+    from app.services.inventory_hooks import reverse_return_for_credit_memo
 
     cm = db.query(CreditMemo).filter(CreditMemo.id == cm_id).with_for_update().first()
     if not cm:
@@ -430,21 +430,9 @@ def void_credit_memo(cm_id: int, db: Session = Depends(get_db)):
                 job_id=cm.job_id,
             )
 
-    for line in cm.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory and line.quantity > 0:
-            _append_movement(
-                db,
-                item,
-                MovementType.VOID,
-                quantity=-Decimal(str(line.quantity)),
-                unit_cost=Decimal(str(item.avg_cost or 0)),
-                source_type="credit_memo_void",
-                source_id=cm.id,
-                memo=f"VOID Credit Memo {cm.memo_number}",
-            )
+    # The stock the memo took back goes out again and its cost entry is
+    # reversed, each return movement mirrored at its own cost (#641).
+    reverse_return_for_credit_memo(db, cm, txn_date=cm.date)
 
     cm.amount_applied = Decimal("0")
     cm.balance_remaining = Decimal("0")
