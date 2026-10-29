@@ -6,9 +6,10 @@ it is converted), took the company's terms where a direct invoice takes the
 customer's, printed "BILL TO" with no address because an estimate was never
 addressed, and lost the default invoice notes. It is now dated today and due
 by the customer's terms; the estimate is addressed to its customer when it
-is saved, and the invoice takes the estimate's bill-to (else the
-customer's), the customer's ship-to, and the estimate's notes (else the
-default invoice notes).
+is saved, and the invoice takes the Bill To of the customer it is billed
+to as of the conversion (the payer's, 2.31.1 gate W-80: the parent of a
+sub-customer billed with it), the customer's ship-to, and the estimate's
+notes (else the default invoice notes).
 """
 
 from datetime import date, timedelta

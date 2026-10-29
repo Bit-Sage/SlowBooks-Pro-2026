@@ -1622,3 +1622,60 @@ def test_a_duplicate_is_checked_against_the_payers_credit_limit(
     r = client.put(f"/api/customers/{maple['id']}", json={"credit_limit": "5000"})
     assert r.status_code == 200, r.text
     assert client.post(f"/api/invoices/{small['id']}/duplicate").status_code == 201
+
+
+def test_an_estimate_converted_for_a_billed_tenant_bills_the_property_street_and_all(
+    client, db_session, seed_accounts
+):
+    """W-80: Convert bills the payer's street with the payer's name, as a
+    new invoice is billed. A tenant billed with its property (the estimate
+    itself is addressed to the tenant) gets the property's street under the
+    property's name and country, "For:" the tenant, and its own ship-to; a
+    tenant billed on its own gets its own street."""
+
+    def convert(cid):
+        r = client.post(
+            "/api/estimates",
+            json={
+                "customer_id": cid,
+                "date": "2026-09-01",
+                "tax_rate": 0,
+                "lines": [{"description": "Repaint", "quantity": 1, "rate": 400}],
+            },
+        )
+        assert r.status_code == 201, r.text
+        r = client.post(f"/api/estimates/{r.json()['id']}/convert")
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    r = client.put(f"/api/customers/{unit['id']}", json={"ship_address1": "Apt 4B"})
+    assert r.status_code == 200, r.text
+    inv = convert(unit["id"])
+    assert (
+        inv["bill_to_customer_id"],
+        inv["bill_to_name"],
+        inv["bill_to_country"],
+        inv["bill_address1"],
+        inv["ship_address1"],
+    ) == (maple["id"], "Maple St", "CA", "12 Maple St", "Apt 4B")
+    assert _printed(db_session, inv["id"]) == {
+        "Bill To": [
+            "Maple St",
+            "12 Maple St",
+            "Springfield, IL 62704",
+            "Canada",
+            "For: Unit 4B",
+        ],
+        "Ship To": ["Apt 4B"],
+    }
+    # billed on its own: the tenant's own street under its own name
+    r = client.put(f"/api/customers/{unit['id']}", json={"bill_with_parent": False})
+    assert r.status_code == 200, r.text
+    own = convert(unit["id"])
+    assert (own["bill_to_customer_id"], own["bill_to_name"]) == (unit["id"], "Unit 4B")
+    assert _printed(db_session, own["id"])["Bill To"] == [
+        "Unit 4B",
+        "12 Maple St, Apt 4B",
+        "Springfield",
+    ]
