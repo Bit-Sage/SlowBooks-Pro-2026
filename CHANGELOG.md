@@ -114,65 +114,65 @@ with its account, memo, job, cost code and class for a bill; the lines,
 reference, basis and adjusting mark for a journal entry. The schedule takes
 the choices QuickBooks offers (daily, weekly, every two weeks, twice a
 month, monthly, every two months, quarterly, twice a year, yearly, or every
-N days, weeks or months), a next date, and an end date or a number of
-times; a monthly schedule begun on the 31st lands on the last day of a
-shorter month and on the 31st again after it, and twice a month is the next
-date's day and fifteen days later. A frequency that carries its own count
-(every two weeks, twice a month, quarterly, twice a year) takes no interval:
-sent with none, or 1, it is that count, and with another it is refused,
-naming the word; daily, weekly, monthly and yearly take one. In auto-enter mode the app posts the document on its date: it
-enters every due auto-enter memorized bill and journal entry when it opens
-and once a day while it runs, every missed date in order. When the company
-has a password, those runs wait until someone has signed in since the app
-started (a sign-in the app remembers counts, an API token does not), so
-nothing is entered behind the sign-in screen; the audit log names the person
-signed in for what a run enters, or "scheduled run" when nobody signs in (a
-company with no password yet, the cron script). The Memorized
-Transactions page says what was entered while you were away (or, when a run
-entered nothing and had to skip something, what could not be entered and
-why), and a box under
-its list (on by default) turns the automatic runs off, for a server that runs
-`scripts/run_recurring.py` from cron instead; the script catches up both kinds
-the way Enter All Due does, every missed installment and occurrence, where it
-used to make one installment of each recurring invoice per run. Recurring
-invoices are not
-entered on their own: as before, they wait for Generate, Enter All Due or
-the server's cron, so a company upgrading with an overdue schedule finds no
-invoices it did not ask for. Enter All Due, pressed by you, enters every due
-schedule of both kinds, every missed date in order however far behind. In
-remind mode it waits on the
-due list until Enter now posts it, dated the scheduled date or today, and
-moves the schedule on. Enter now names the occurrence the page showed: two
-windows pressing it for the same occurrence post one document, and a page
-left open after that occurrence was entered elsewhere (another window, Enter
-All Due or the app's own run) is told so, with the schedule's next date, and
-posts nothing, rather than entering the next one early; dated today, it
-still enters that occurrence. The schedule is moved on in one guarded
-statement before anything posts, and a recurring invoice's installment is
-claimed the same way, so two generations at once (two windows, Generate,
-Enter All Due or the cron script) invoice a period once: Enter now on an
-installment just generated says so and makes nothing, and a run leaves it
-to the other. Enter now on an ended schedule says it has ended, paused or
-not, and so do Resume on one and ticking Active again on a recurring invoice
-past its end date ("move or clear the end date first"); an edit that moves
-the end date past the next date, or clears it, in the same request goes
-through. A memorized bill's number follows one rule: left blank, each bill is
-numbered the date and the vendor's initials, as Enter Bill numbers one; a
-number on the template is used as it is on the first bill and -2, -3 after
-that, since a vendor's bill number cannot repeat, which is why Memorize from
-a bill leaves the number blank. Schedules pause and resume (resuming skips
-the dates missed). The new Memorized Transactions page, beside Recurring
-Invoices in the sidebar, lists every schedule in one place, recurring
-invoices included, with type, next date, how often, mode, last entered,
-status and amount, a Due filter, and Enter now, Pause, Edit and Delete on
-each; Memorize on a bill's page or a journal entry's page starts a memorized
-one from it. API: `/api/memorized` (GET, POST, PUT, DELETE),
-`/api/memorized/due`, `/api/memorized/{id}/enter`, `/pause`, `/resume`,
+N days, weeks or months), a next date, and an end date or a number of times;
+a monthly schedule begun on the 31st lands on the last day of a shorter
+month and on the 31st again after it, and twice a month is the next date's
+day and fifteen days later. A frequency that carries its own count (every
+two weeks, twice a month, quarterly, twice a year) takes no interval: sent
+with none, or 1, it is that count, and with another it is refused, naming
+the word; daily, weekly, monthly and yearly take one. In auto-enter mode the
+app posts the document on its date: it enters every due auto-enter memorized
+bill and journal entry when it opens and once a day while it runs, every
+missed date in order. When the company has a password, those runs wait until
+someone has signed in since the app started (a sign-in the app remembers
+counts, an API token does not), so nothing is entered behind the sign-in
+screen; the audit log names the person signed in for what a run enters, or
+"scheduled run" when nobody signs in (a company with no password yet, the
+cron script). The Memorized Transactions page says what was entered while
+you were away (or, when a run entered nothing and had to skip something,
+what could not be entered and why), and a box under its list (on by default)
+turns the automatic runs off, for a server that runs
+`scripts/run_recurring.py` from cron instead; the script catches up both
+kinds the way Enter All Due does, every missed installment and occurrence,
+where it used to make one installment of each recurring invoice per run.
+Recurring invoices are not entered on their own: as before, they wait for
+Generate, Enter All Due or the server's cron, so a company upgrading with an
+overdue schedule finds no invoices it did not ask for. Enter All Due,
+pressed by you, enters every due schedule of both kinds, every missed date
+in order however far behind. In remind mode it waits on the due list until
+Enter now posts it, dated the scheduled date or today, and moves the
+schedule on. Enter now names the occurrence the page showed: two windows
+pressing it for the same occurrence post one document, and a page left open
+after that occurrence was entered elsewhere (another window, Enter All Due
+or the app's own run) is told so, with the schedule's next date, and posts
+nothing, rather than entering the next one early; dated today, it still
+enters that occurrence. The schedule is moved on in one guarded statement
+before anything posts, and a recurring invoice's installment is claimed the
+same way, so two generations at once (two windows, Generate, Enter All Due
+or the cron script) invoice a period once: Enter now on an installment just
+generated says so and makes nothing, and a run leaves it to the other. Enter
+now on an ended schedule says it has ended, paused or not, and so do Resume
+on one and ticking Active again on a recurring invoice past its end date
+("move or clear the end date first"); an edit that moves the end date past
+the next date, or clears it, in the same request goes through. A memorized
+bill's number follows one rule: left blank, each bill is numbered the date
+and the vendor's initials, as Enter Bill numbers one; a number on the
+template is used as it is on the first bill and -2, -3 after that, since a
+vendor's bill number cannot repeat, which is why Memorize from a bill leaves
+the number blank. Schedules pause and resume (resuming skips the dates
+missed). The new Memorized Transactions page, beside Recurring Invoices in
+the sidebar, lists every schedule in one place, recurring invoices included,
+with type, next date, how often, mode, last entered, status and amount, a
+Due filter, and Enter now, Pause, Edit and Delete on each; Memorize on a
+bill's page or a journal entry's page starts a memorized one from it. API:
+`/api/memorized` (GET, POST, PUT, DELETE), `/api/memorized/due`,
+`/api/memorized/{id}/enter`, `/pause`, `/resume`,
 `/api/memorized/enter-due`, `/api/memorized/entered-recently`, and
-`/api/recurring/{id}/generate` to enter one recurring invoice now; the
-setting is `auto_enter_on_open`. IIF carries no memorized transactions, so
-the QuickBooks guide says to rebuild them here. Migration `c9e5a7b3d1f2`
-adds the two tables.
+`/api/recurring/{id}/generate` to enter one recurring invoice now (both
+Enter now routes take the `occurrence` the page showed); the setting is
+`auto_enter_on_open`. IIF carries no memorized transactions, so the
+QuickBooks guide says to rebuild them here. Migration `c9e5a7b3d1f2` adds
+the two tables.
 
 ### v2.31.0 — Split expenses, lines that move, and stock that comes back
 

@@ -182,11 +182,12 @@ def list_due(as_of: date | None = Query(default=None), db: Session = Depends(get
 
 @router.post("/enter-due")
 def enter_due(as_of: date | None = Query(default=None), db: Session = Depends(get_db)):
-    """Enter All Due: what the app does by itself when it opens and once a
-    day. Generate every due recurring invoice and enter every auto-enter
-    memorized bill and journal entry due on or before as_of (today), every
-    missed occurrence in order, each dated its scheduled date. Remind
-    schedules are left on the due list."""
+    """Enter All Due: generate every due recurring invoice and enter every
+    auto-enter memorized bill and journal entry due on or before as_of
+    (today), every missed occurrence in order however far behind, each
+    dated its scheduled date; the cron script does the same. The app's own
+    runs, when it opens and once a day, enter the memorized ones only.
+    Remind schedules are left on the due list."""
     return scheduler.run_due_schedules(db, as_of)
 
 
@@ -195,7 +196,8 @@ def entered_recently():
     """What the last run of the in-app scheduler entered (this server's
     startup run or daily run), for the page to say "Entered 3 scheduled
     documents while you were away": `ran_at`, `origin`, `entered`,
-    `invoice_ids`, `skipped`. Empty before the first run."""
+    `invoice_ids`, `skipped`. Empty before the first run, which waits for
+    a sign-in when the company has a password."""
     return scheduler.last_run() or {}
 
 
