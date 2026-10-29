@@ -48,6 +48,7 @@ from app.services.pay_applications import (
     retainage_outstanding,
 )
 from app.services.request_utils import content_disposition
+from app.services.sub_customers import invoice_addresses
 
 router = APIRouter(prefix="/api/pay-applications", tags=["pay-applications"])
 
@@ -586,6 +587,10 @@ def _create_invoice(
     income_id = get_default_income_account_id(db)
     retainage_recv = ensure_construction_accounts(db)["1150"].id
     balance_due = _q(total - retainage_held + retainage_released)
+    # The payer's whole Bill To as of now and the customer's own Ship To,
+    # through the helper every other new invoice uses (a pay application's
+    # invoice used to carry no street, so it printed a name alone).
+    addresses = invoice_addresses(db, customer)
 
     invoice = None
     last_err = None
@@ -594,6 +599,7 @@ def _create_invoice(
         invoice = Invoice(
             invoice_number=number,
             customer_id=customer.id,
+            **addresses,
             status=(InvoiceStatus.PAID if balance_due == 0 else InvoiceStatus.SENT),
             date=when,
             due_date=when,

@@ -439,6 +439,7 @@ def setup(
     remember_this_start(request.session)
     remember_this_company(request.session)
     _stash_user(request, admin)
+    _note_sign_in(request.session, chosen, admin)
     if served_companies.enabled() and admin is not None:
         # a company set up from another one's sign-in (#358): the way back
         # is a click when the password is the same there
@@ -537,6 +538,23 @@ def _keep_keyring_current(user, password: str, *, force: bool = False) -> None:
         logging.getLogger(__name__).exception("could not update the keyring")
 
 
+def _note_sign_in(session, company_file, user) -> None:
+    """Tell the scheduler a person signed in, when the sign-in is to the
+    company this server was started for (company_file None, or its own
+    file): the app's own run of the schedules waits for one (2.31.1 gate
+    W-70). A one-time password not yet replaced is not a sign-in yet."""
+    from app.services import scheduler
+
+    if company_file is not None and company_file != served_companies.started_file():
+        return
+    if session.get("must_change_password"):
+        return
+    scheduler.note_sign_in(
+        getattr(user, "username", None) or session.get("username") or "operator",
+        getattr(user, "role", None) or session.get("role"),
+    )
+
+
 def _stash_user(request: Request, user) -> None:
     """Record the acting principal in the session (None = legacy no-row)."""
     if user is None:
@@ -601,11 +619,13 @@ def login(
         )
     _record_login_attempt(db, request, success=True)
     # Same rotation rationale as /setup.
+    company = served_companies.chosen_file(request.session)
     request.session.clear()
     request.session["authenticated"] = True
     remember_this_start(request.session)
     remember_this_company(request.session)
     _stash_user(request, user)
+    _note_sign_in(request.session, company, user)
     _keep_keyring_current(user, payload.password)
     if served_companies.enabled():
         _remember_opened(
@@ -824,6 +844,7 @@ def choose_company(request: Request, payload: CompanyChoice):
                     session[served_companies.SESSION_FILE_KEY] = target
                     remember_this_company(session)
                     _stash_user(request, user)
+                    _note_sign_in(session, target, user)
                     session[served_companies.SESSION_OPENS_KEY] = opens
                     session[served_companies.SESSION_OPENS_FP_KEY] = fingerprints
                     return {"status": "ok", "authenticated": True}

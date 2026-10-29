@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models.banking import BankAccount
 from app.routes._roles import require_admin
 from app.services import simplefin_service
+from app.services.bank_posting import feed_for_ledger_account
 from app.services.settings_service import get_setting_raw, set_setting
 from app.services.simplefin_service import SimpleFINError
 
@@ -41,7 +42,11 @@ class ClaimRequest(StrictModel):
 
 
 class MapRequest(StrictModel):
-    mapping: dict[str, int]
+    mapping: dict[str, int] = {}
+    # Feed id -> a bank or card account in the chart: its bank feed record
+    # is used, or made when it has none (bank_posting.feed_for_ledger_account),
+    # so the "Imports into" list can offer the chart's own accounts.
+    ledger_mapping: Optional[dict[str, int]] = None
     # Feeds whose bank connection reports amounts the other way round
     # (deposits negative). Omitted leaves the stored choice as it is.
     reversed: Optional[list[str]] = None
@@ -117,6 +122,12 @@ def save_mapping(payload: MapRequest, request: Request, db: Session = Depends(ge
                 status_code=404, detail=f"Bank account {bank_account_id} not found"
             )
         clean[str(sf_id)] = int(bank_account_id)
+    for sf_id, ledger_account_id in (payload.ledger_mapping or {}).items():
+        if not ledger_account_id:
+            clean.pop(str(sf_id), None)
+            continue
+        feed = feed_for_ledger_account(db, int(ledger_account_id))
+        clean[str(sf_id)] = feed.id
     set_setting(db, "simplefin_account_map", json.dumps(clean))
     if payload.reversed is not None:
         reversed_ids = sorted({str(sf_id) for sf_id in payload.reversed})

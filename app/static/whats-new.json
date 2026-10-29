@@ -1,4 +1,15 @@
 {
+  "2.31.1": {
+    "title": "Sub-customers, memorized transactions, and stock that comes back out at its own cost",
+    "items": [
+      "Sub-customers: a customer under another, one level deep, shown as \"Parent: Sub\"; a sub billed with its parent posts to the parent's receivable, shows on the parent's statement and aging, and is paid by the parent's payments; the QuickBooks importers keep Parent:Sub.",
+      "Memorized bills and journal entries beside recurring invoices: every QuickBooks frequency, auto-enter or remind, a Due list with Enter now, pause and resume, and one Memorized transactions page for all of them; the app enters due auto-enter memorized bills and journal entries when it opens (once someone signs in, for a company with a password) and once a day, and says what it entered while you were away; recurring invoices still wait for Generate or Enter All Due.",
+      "A bill's void or edit takes its stock back out at the cost it came in at, and a reversal's leftover goes to Cost of Goods Sold, so Inventory always reads quantity times average cost.",
+      "An expense keeps the memo it was given.",
+      "The Invoices list sorts by any column: press a heading, again to reverse.",
+      "A bank feed imports into any bank account in your chart: no need to add it on the Banking page first.", "On Windows, a WebView2 runtime too old for the app's window is named at start, with what to do, instead of a white window; the installer now updates an old one."
+    ]
+  },
   "2.31.0": {
     "title": "Split expenses, lines that move, and stock that comes back",
     "items": [

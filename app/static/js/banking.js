@@ -74,12 +74,12 @@ const BankingPage = {
             }
             html += `</div>`;
         }
-        html += BankingPage._renderFeedSection(feed, feeds);
-        html += BankingPage._renderMercurySection(mercury, feeds);
+        html += BankingPage._renderFeedSection(feed, feeds, rows);
+        html += BankingPage._renderMercurySection(mercury, feeds, rows);
         return html;
     },
 
-    _renderMercurySection(feed, feeds) {
+    _renderMercurySection(feed, feeds, rows = []) {
         let body;
         if (!feed.connected) {
             body = `<p>See payments arriving in your Mercury account in SlowBooks.
@@ -96,26 +96,25 @@ const BankingPage = {
                     <button class="btn btn-primary" type="submit">Connect Mercury</button>
                 </form>`;
         } else {
-            const choices = feeds.filter(a => a.is_active && a.bank_kind === 'bank');
-            const rows = feed.accounts.map(a => `<tr data-mercury-account="${escapeHtml(a.id)}">
+            const banks = rows.filter(a => a.bank_kind === 'bank');
+            const tableRows = feed.accounts.map(a => `<tr data-mercury-account="${escapeHtml(a.id)}">
                 <td>${escapeHtml(a.name)} ${a.last_four ? '••••' + escapeHtml(a.last_four) : ''}</td>
                 <td class="amount mercury-current">${escapeHtml(a.balance)} USD</td>
                 <td class="amount mercury-available">${escapeHtml(a.available_balance)} USD</td>
                 <td class="amount mercury-inflight">${a.in_flight_balance === undefined ? '—' : escapeHtml(a.in_flight_balance) + ' USD'}</td>
                 <td><select class="mercury-map" data-mercury-id="${escapeHtml(a.id)}" data-admin
                     aria-label="Import ${escapeHtml(a.name)} into">
-                    <option value="">— not imported —</option>
-                    ${choices.map(b => `<option value="${b.id}" ${feed.account_map[a.id] === b.id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}
+                    ${BankingPage._importOptions(rows, feeds, feed.account_map[a.id], ['bank'])}
                 </select></td></tr>`).join('');
             body = `<p>Sync posted deposits and withdrawals into <em>To review</em>.
                 Match them to payments already recorded, or review and add them to your books.
                 Syncing does not mark invoices paid.</p>
-                ${!choices.length ? '<p>Add a bank account using <strong>+ New Bank Account</strong> above, then map it here.</p>' : ''}
+                ${!banks.length ? BankingPage._noBankAccountHint('bank account') : ''}
                 <p class="form-hint hidden" data-admin-note>An administrator chooses which bank account each Mercury account imports into${Object.keys(feed.account_map || {}).length ? '.' : '; until one does, Sync has nothing to import.'}</p>
                 <p>${feed.last_sync ? 'Last successful sync: ' + escapeHtml(feed.last_sync.replace('T', ' ')) : 'Not synced yet.'}</p>
                 <div class="table-container"><table id="mercury-balances">
                     <thead><tr><th scope="col">Mercury account</th><th scope="col" class="amount">Current balance</th><th scope="col" class="amount">Available</th><th scope="col" class="amount">Incoming transfers</th><th scope="col">Imports into</th></tr></thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${tableRows}</tbody>
                 </table></div>
                 <p id="mercury-balance-status" aria-live="polite">${escapeHtml(BankingPage._mercuryBalanceStatus(feed))}</p>
                 <form onsubmit="BankingPage.syncMercury(event)" data-write>
@@ -236,16 +235,18 @@ const BankingPage = {
         e.preventDefault();
         const button = e.target.querySelector('button[type=submit]');
         const since = $('#mercury-since').value;
-        const mapping = {};
+        const mapping = {}, ledger_mapping = {};
         document.querySelectorAll('.mercury-map').forEach(sel => {
-            if (sel.value) mapping[sel.dataset.mercuryId] = Number(sel.value);
+            const [kind, id] = BankingPage._importChoice(sel.value);
+            if (kind === 'acct') ledger_mapping[sel.dataset.mercuryId] = id;
+            else if (kind === 'feed') mapping[sel.dataset.mercuryId] = id;
         });
         button.disabled = true;
         button.textContent = 'Syncing…';
         try {
             // the mapping is an administrator's to change (#384's rule); a
             // bookkeeper syncs with the one saved
-            if (App.isAdmin()) await API.post('/mercury/map', { mapping });
+            if (App.isAdmin()) await API.post('/mercury/map', { mapping, ledger_mapping });
             const r = await API.post('/mercury/sync', { since });
             toast(`Mercury: ${r.imported} new, ${r.skipped} already imported, ${r.matched} matched`);
             BankingPage.go('#/banking');
@@ -312,7 +313,42 @@ const BankingPage = {
     // SimpleFIN server (bridge.simplefin.org or another provider); we claim
     // the token once, then sync on click.
     // ------------------------------------------------------------------
-    _renderFeedSection(feed, feeds) {
+    // The "Imports into" choices (a support email, 2.31.1): every bank (and,
+    // where the feed takes them, credit-card) account in the chart, whether
+    // or not it has a bank feed record yet. Choosing one that has none makes
+    // it when the mapping is saved (ledger_mapping on the map routes), so no
+    // trip to + New Bank Account comes first. A feed record whose account is
+    // no longer listed stays offered, so a saved mapping is never dropped.
+    _importOptions(rows, feeds, mapped, kinds) {
+        const listed = rows.filter(a => kinds.includes(a.bank_kind));
+        const opts = ['<option value="">— not imported —</option>'];
+        const shown = new Set();
+        for (const a of listed) {
+            const feedId = a.feed ? a.feed.bank_account_id : null;
+            if (feedId) shown.add(feedId);
+            const sel = feedId && feedId === mapped ? ' selected' : '';
+            const named = a.feed && a.feed.name && a.feed.name !== a.name ? ` (${escapeHtml(a.feed.name)})` : '';
+            opts.push(`<option value="acct:${a.account_id}"${sel}>${accountLabel(a)}${named}</option>`);
+        }
+        for (const ba of feeds) {
+            if (shown.has(ba.id) || !ba.is_active) continue;
+            if (ba.bank_kind && !kinds.includes(ba.bank_kind)) continue;
+            opts.push(`<option value="feed:${ba.id}"${ba.id === mapped ? ' selected' : ''}>${escapeHtml(ba.name)}${ba.account_name ? ' → ' + escapeHtml(ba.account_name) : ''}</option>`);
+        }
+        return opts.join('');
+    },
+
+    // A choice's value: "acct:<chart account id>", "feed:<bank feed id>" or "".
+    _importChoice(value) {
+        const m = /^(acct|feed):(\d+)$/.exec(value || '');
+        return m ? [m[1], parseInt(m[2], 10)] : ['none', 0];
+    },
+
+    _noBankAccountHint(what) {
+        return `<p>The chart has no ${what} yet. Add one with <strong>+ New Bank Account</strong> above, or mark an account in the Chart of Accounts as a bank account, then choose it here.</p>`;
+    },
+
+    _renderFeedSection(feed, feeds, rows = []) {
         let body;
         if (!feed.connected) {
             body = `
@@ -335,15 +371,10 @@ const BankingPage = {
                     </div>
                 </form>`;
         } else {
-            const options = (sfId) => {
-                const mapped = feed.account_map[sfId] || '';
-                return ['<option value="">— not imported —</option>']
-                    .concat(feeds.map(ba =>
-                        `<option value="${ba.id}" ${ba.id === mapped ? 'selected' : ''}>${escapeHtml(ba.name)}${ba.account_name ? ' → ' + escapeHtml(ba.account_name) : ''}</option>`))
-                    .join('');
-            };
+            const options = (sfId) => BankingPage._importOptions(
+                rows, feeds, feed.account_map[sfId], ['bank', 'credit_card']);
             const reversed = new Set(feed.reversed || []);
-            const rows = feed.accounts.map(a => `<tr>
+            const tableRows = feed.accounts.map(a => `<tr>
                     <td>${escapeHtml(a.name)}<div style="font-size:10px; color:var(--gray-400);">${escapeHtml(a.org || '')}</div></td>
                     <td class="amount">${escapeHtml(a.balance)} ${escapeHtml(a.currency)}</td>
                     <td><select data-sfid="${escapeHtml(a.id)}" class="simplefin-map" data-admin
@@ -362,10 +393,11 @@ const BankingPage = {
                     If a feed shows a bank account's balance as negative and its deposits as withdrawals,
                     tick <em>Reverse signs</em> for it before syncing.
                 </p>
+                ${!rows.some(a => a.bank_kind === 'bank' || a.bank_kind === 'credit_card') ? BankingPage._noBankAccountHint('bank or credit-card account') : ''}
                 <p class="form-hint hidden" data-admin-note>An administrator chooses which bank account each feed imports into and whether its signs are reversed${Object.keys(feed.account_map || {}).length ? '.' : '; until one does, Sync has nothing to import.'}</p>
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Bank feed</th><th scope="col" class="amount">Balance</th><th scope="col">Imports into</th><th scope="col">Amounts</th></tr></thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${tableRows}</tbody>
                 </table></div>
                 <div class="form-actions" style="margin-top:12px;">
                     <button class="btn btn-primary" onclick="BankingPage.syncSimpleFIN()">Sync Now</button>
@@ -389,13 +421,15 @@ const BankingPage = {
     },
 
     async saveSimpleFINMap() {
-        const mapping = {};
+        const mapping = {}, ledger_mapping = {};
         document.querySelectorAll('.simplefin-map').forEach(sel => {
-            mapping[sel.dataset.sfid] = sel.value ? parseInt(sel.value, 10) : 0;
+            const [kind, id] = BankingPage._importChoice(sel.value);
+            if (kind === 'acct') ledger_mapping[sel.dataset.sfid] = id;
+            else mapping[sel.dataset.sfid] = kind === 'feed' ? id : 0;
         });
         const reversed = [...document.querySelectorAll('.simplefin-reverse')]
             .filter(box => box.checked).map(box => box.dataset.sfid);
-        await API.post('/simplefin/map', { mapping, reversed });
+        await API.post('/simplefin/map', { mapping, ledger_mapping, reversed });
     },
 
     async syncSimpleFIN() {
@@ -661,7 +695,7 @@ const BankingPage = {
             API.get('/classes?include_archived=true').catch(() => []),
             API.get('/accounts?active_only=true').catch(() => []),
             API.get('/vendors?active_only=true').catch(() => null),
-            API.get('/customers?active_only=true').catch(() => null),
+            API.get('/customers?active_only=true&tree=1').catch(() => null),
         ]);
         BankingPage._accounts = chart;
         BankingPage._setVendors(vendors);
@@ -1204,7 +1238,7 @@ const BankingPage = {
         }
         // the names a deposit line can carry (#606): every open of the form
         // reads the list afresh, so a donor added elsewhere is there
-        const customers = await API.get('/customers?active_only=true').catch(() => null);
+        const customers = await API.get('/customers?active_only=true&tree=1').catch(() => null);
         if (customers) {
             BankingPage._customers = customers;
             BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
@@ -1446,7 +1480,7 @@ const BankingPage = {
         const list = BankingPage._customers || [];
         return `<option value="">—</option>`
             + (App.isLocked() ? '' : `<option value="__new__">+ ${T('New Customer')}</option>`)
-            + list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+            + list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${escapeHtml(customerLabel(c))}</option>`).join('');
     },
     nameSelectHtml(id, name, selected, label) {
         return `<select${id ? ` id="${id}"` : ''}${name ? ` name="${name}"` : ''} aria-label="${escapeHtml(label)}" onchange="BankingPage.nameChosen(this)">${BankingPage._nameOptions(selected)}</select>`;

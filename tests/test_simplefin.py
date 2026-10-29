@@ -908,4 +908,4 @@ def test_the_banking_page_offers_reverse_signs_per_feed():
         encoding="utf-8"
     )
     assert 'class="simplefin-reverse"' in js
-    assert "API.post('/simplefin/map', { mapping, reversed })" in js
+    assert "API.post('/simplefin/map', { mapping, ledger_mapping, reversed })" in js

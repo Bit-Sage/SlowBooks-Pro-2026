@@ -1073,9 +1073,19 @@ function closeSearchDropdown() {
  */
 const _listSortState = {};
 
+// A value sorts as a number only when it is one: a number, or text that is
+// wholly a number ("1001", "-12.50"). parseFloat read "2026-05-15" as 2026,
+// so the Date columns sorted by year alone (2.31.1 gate, W-82); anything
+// else compares as text, which puts ISO dates in date order.
+const _LIST_SORT_NUMBER = /^\s*-?\d+(\.\d+)?\s*$/;
+function _listSortNumber(v) {
+    if (typeof v === 'number') return v;
+    return typeof v === 'string' && _LIST_SORT_NUMBER.test(v) ? Number(v) : NaN;
+}
+
 function _listSortCompare(a, b, key) {
     const av = a?.[key], bv = b?.[key];
-    const an = parseFloat(av), bn = parseFloat(bv);
+    const an = _listSortNumber(av), bn = _listSortNumber(bv);
     if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
     return String(av ?? '').toLowerCase().localeCompare(String(bv ?? '').toLowerCase());
 }
@@ -1090,16 +1100,21 @@ function _listTableHtml(state) {
     const ths = columns.map(c => {
         const col = typeof c === 'string' ? { label: c } : c;
         const cls = [col.cls || ''];
-        let arrow = '', click = '';
-        if (sort && col.key) {
-            cls.push('sortable');
-            if (sort.column === col.key) {
-                cls.push('sort-active');
-                arrow = ` <span class="sort-arrow">${sort.direction === 'asc' ? '▲' : '▼'}</span>`;
-            }
-            click = ` onclick="sortListRows('${sort.id}', '${col.key}')"`;
+        if (!(sort && col.key)) {
+            return `<th scope="col" class="${cls.filter(Boolean).join(' ')}">${col.label}</th>`;
         }
-        return `<th scope="col" class="${cls.filter(Boolean).join(' ')}"${click}>${col.label}${arrow}</th>`;
+        // A sortable heading is a button, so the keyboard reaches it (Tab,
+        // then Enter or Space), and the header cell says how the column is
+        // sorted (aria-sort) for a screen reader (#650).
+        cls.push('sortable');
+        let arrow = '', ariaSort = 'none';
+        if (sort.column === col.key) {
+            cls.push('sort-active');
+            ariaSort = sort.direction === 'asc' ? 'ascending' : 'descending';
+            arrow = ` <span class="sort-arrow" aria-hidden="true">${sort.direction === 'asc' ? '▲' : '▼'}</span>`;
+        }
+        return `<th scope="col" class="${cls.filter(Boolean).join(' ')}" aria-sort="${ariaSort}">`
+            + `<button type="button" class="th-sort" onclick="sortListRows('${sort.id}', '${col.key}')">${col.label}${arrow}</button></th>`;
     }).join('');
     return `<table>
         <thead><tr>${ths}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
@@ -1163,6 +1178,13 @@ function renderListPage({ title, headerHtml = '', filter = null, empty, columns,
         return html + `<div class="empty-state">${empty}</div>`;
     }
     if (sort) {
+        // Coming back to the list (after an edit, or from another page)
+        // keeps the order last chosen on it (#650).
+        const kept = _listSortState[sort.id]?.sort;
+        if (kept && kept.column) {
+            sort.column = kept.column;
+            sort.direction = kept.direction;
+        }
         sort.direction = sort.direction || 'asc';
         const state = { columns, items, row, sort, filter };
         _listSortState[sort.id] = state;
@@ -1187,6 +1209,8 @@ function sortListRows(sortId, key) {
     if (!wrap) return;
     wrap.innerHTML = _listTableHtml(state);
     if (state.filter) filterRows(state.filter.id, state.filter.rowSelector);
+    // the keyboard stays on the heading it pressed
+    wrap.querySelector(`th.sort-active .th-sort`)?.focus();
 }
 
 function filterRows(selectId, rowSelector) {
@@ -1261,6 +1285,13 @@ const COUNTRIES = [
     { code: 'UY', name: 'Uruguay' },
     { code: 'VN', name: 'Vietnam' },
 ];
+
+// A customer's name in a picker and a list: "Parent: Sub" for a
+// sub-customer (#638), the name itself otherwise. The API's full_name;
+// a row made on the page (a quick add) has only its name.
+function customerLabel(c) {
+    return (c && (c.full_name || c.name)) || '';
+}
 
 function countryOptions(selected) {
     return COUNTRIES.map(c =>

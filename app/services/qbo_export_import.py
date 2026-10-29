@@ -49,7 +49,7 @@ import io
 import re
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.accounts import AccountType, DetailType
 from app.models.contacts import Customer, Vendor
@@ -583,26 +583,47 @@ def _address(raw: str) -> tuple[str, str]:
 
 
 def _import_contacts(db: Session, bundle: dict) -> tuple[int, int]:
+    """The Customer list's names as QuickBooks Online spells them: a
+    sub-customer is "Parent:Sub" (the export carries no parent column; the
+    colon, which a QuickBooks name cannot otherwise hold, is the parent
+    reference), and is made a sub-customer under its parent here (#638),
+    the parent first if the list did not carry it."""
+    from app.services.jobs_service import resolve_customer_and_job
+
     created_customers = created_vendors = 0
     if "customers" in bundle:
-        have = {c.name.lower() for c in db.query(Customer.name).all()}
+        have = {c.qb_name.lower() for c in db.query(Customer).all()}
         for spec in parse_contacts(bundle["customers"], "Customer"):
             if spec["name"].lower() in have:
                 continue
             phone, mobile = _phone(spec["phone"])
             a1, a2 = _address(spec["address"])
-            db.add(
-                Customer(
-                    name=spec["name"],
-                    email=spec["email"] or None,
-                    phone=phone or None,
-                    mobile=mobile or None,
-                    bill_address1=a1 or None,
-                    bill_address2=a2 or None,
+            if ":" in spec["name"]:
+                db.flush()
+                before = db.query(Customer).count()
+                customer, job = resolve_customer_and_job(
+                    db, spec["name"], sub_customers=True
                 )
-            )
+                if job is not None:
+                    # on file as a job (an earlier IIF import): not a customer
+                    have.add(spec["name"].lower())
+                    continue
+                if customer is None or customer.parent_customer_id is None:
+                    # "A:" or ":B": no sub-customer in it; the name as given
+                    customer = Customer(name=spec["name"])
+                    db.add(customer)
+                    db.flush()
+                created_customers += db.query(Customer).count() - before
+            else:
+                customer = Customer(name=spec["name"])
+                db.add(customer)
+                created_customers += 1
+            customer.email = spec["email"] or None
+            customer.phone = phone or None
+            customer.mobile = mobile or None
+            customer.bill_address1 = a1 or None
+            customer.bill_address2 = a2 or None
             have.add(spec["name"].lower())
-            created_customers += 1
     if "vendors" in bundle:
         have = {v.name.lower() for v in db.query(Vendor.name).all()}
         for spec in parse_contacts(bundle["vendors"], "Vendor"):
@@ -793,7 +814,7 @@ def _customer_names(db: Session, bundle: dict) -> dict[str, str]:
     """Every name a customer may go by, lowercased, to the name it has
     here: the books' customers, then the Customer list's names and (when
     one person has it) its Full Name column."""
-    names = {c.name.lower(): c.name for c in db.query(Customer.name).all()}
+    names = {c.qb_name.lower(): c.qb_name for c in db.query(Customer).all()}
     if "customers" in bundle:
         listed = parse_contacts(bundle["customers"], "Customer")
         for spec in listed:
@@ -895,22 +916,22 @@ def _carry_plan(db: Session, bundle: dict) -> dict:
         else None
     )
     here = {
-        n: c
-        for n, c in db.query(Invoice.invoice_number, Customer.name).join(
-            Customer, Customer.id == Invoice.customer_id
-        )
+        inv.invoice_number: inv.customer.qb_name
+        for inv in db.query(Invoice).options(joinedload(Invoice.customer))
+        if inv.customer is not None
     }
     carried_payments: dict[tuple, int] = {}
     if receivable_id is not None:
-        for cname, pdate, amount in (
-            db.query(Customer.name, Payment.date, Payment.amount)
-            .join(Customer, Customer.id == Payment.customer_id)
+        for pay in (
+            db.query(Payment)
+            .options(joinedload(Payment.customer))
             .filter(
                 Payment.deposit_to_account_id == receivable_id,
                 Payment.is_voided.isnot(True),
             )
         ):
-            key = (cname.lower(), pdate, Decimal(str(amount)))
+            cname = pay.customer.qb_name if pay.customer is not None else ""
+            key = (cname.lower(), pay.date, Decimal(str(pay.amount)))
             carried_payments[key] = carried_payments.get(key, 0) + 1
     for item in items:
         if item["kind"] == "invoice":
@@ -998,21 +1019,28 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
     from app.models.payments import Payment
     from app.routes.invoices.helpers import _post_invoice_journal
     from app.services.accounting import create_journal_entry, get_ar_account_id
+    from app.services.sub_customers import invoice_addresses
 
     if not (plan["invoices"] or plan["payments"]):
         return 0, 0
     receivable = db.query(Account).filter(Account.name == plan["receivable"]).one()
     ar_id = get_ar_account_id(db)
     item = _carry_item(db, receivable.id)
-    customers = {c.name.lower(): c for c in db.query(Customer).all()}
+    from app.services.jobs_service import resolve_customer_and_job
+
+    customers = {c.qb_name.lower(): c for c in db.query(Customer).all()}
 
     def customer(name):
+        """The customer the report names; "Parent:Sub" is the sub-customer
+        (#638), made under its parent when the list did not carry it."""
         found = customers.get(name.lower())
+        if found is None and ":" in name:
+            found, _job = resolve_customer_and_job(db, name, sub_customers=True)
         if found is None:
             found = Customer(name=name)
             db.add(found)
             db.flush()
-            customers[name.lower()] = found
+        customers[name.lower()] = found
         return found
 
     for spec in plan["invoices"]:
@@ -1026,8 +1054,6 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
             date=spec["date"],
             due_date=spec["due_date"],
             terms="",
-            bill_address1=who.bill_address1,
-            bill_address2=who.bill_address2,
             subtotal=amount,
             tax_rate=Decimal("0"),
             tax_amount=Decimal("0"),
@@ -1038,6 +1064,11 @@ def _import_carried(db: Session, plan: dict) -> tuple[int, int]:
                 "Carried over from QuickBooks Online's A/R Aging Detail report: "
                 "the sale is in the imported history, and this is what was open."
             ),
+            # The report carries no address: billed as a new invoice is,
+            # through the one helper, the payer's Bill To (the property's
+            # street under its name for a tenant billed with it) and the
+            # customer's ship-to.
+            **invoice_addresses(db, who),
         )
         db.add(invoice)
         db.flush()

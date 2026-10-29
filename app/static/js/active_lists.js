@@ -116,7 +116,15 @@ const ActiveLists = {
             if (k.payroll && !confirm(`Make ${name} inactive? An inactive employee isn't included in new pay runs.`)) return;
         }
         try {
-            await API.put(`${k.api}/${id}`, { is_active: active });
+            try {
+                await API.put(`${k.api}/${id}`, { is_active: active });
+            } catch (err) {
+                // A parent customer with active sub-customers asks about
+                // them (#638): yes makes them inactive with it.
+                if (!(err.status === 409 && err.detail && err.detail.error === 'active_subs')) throw err;
+                if (!confirm(err.detail.message)) return;
+                await API.put(`${k.api}/${id}?with_subs=true`, { is_active: active });
+            }
             toast(active ? `${name} is active again` : `${name} is inactive: kept on file, out of the pickers`);
             App.navigate(k.route);
         } catch (err) {

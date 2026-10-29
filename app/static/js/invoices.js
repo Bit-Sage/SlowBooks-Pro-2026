@@ -228,8 +228,19 @@ const InvoicesPage = {
             },
             empty: Terms.text(`<p>No invoices yet.</p>
                 <button class="btn btn-primary" onclick="InvoicesPage.showForm()" style="margin-top:10px;">+ Create your first invoice</button>`),
-            columns: ['#', T('Customer'), 'Date', 'Due Date', 'Status',
-                { label: 'Total', cls: 'amount' }, { label: 'Balance', cls: 'amount' }, 'Actions'],
+            // Every column but Actions sorts (#650); until a heading is
+            // pressed the list keeps the server's order, newest first.
+            columns: [
+                { label: '#', key: 'invoice_number' },
+                { label: T('Customer'), key: 'customer_name' },
+                { label: 'Date', key: 'date' },
+                { label: 'Due Date', key: 'due_date' },
+                { label: 'Status', key: 'status' },
+                { label: 'Total', cls: 'amount', key: 'total' },
+                { label: 'Balance', cls: 'amount', key: 'balance_due' },
+                'Actions',
+            ],
+            sort: { id: 'inv-list' },
             items: invoices,
             row: inv => `<tr class="inv-row" data-status="${inv.status}">
                     <td><strong>${escapeHtml(inv.invoice_number)}</strong></td>
@@ -676,7 +687,7 @@ const InvoicesPage = {
 
     async showForm(id = null, prefillCustomerId = null) {
         const [customers, items, settings, messages] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
             // the saved messages (#392); the form works without the list
@@ -715,7 +726,7 @@ const InvoicesPage = {
         InvoicesPage._items = items;
         InvoicesPage._customers = customers;
 
-        const custOpts = customers.map(c => `<option value="${c.id}" ${inv.customer_id==c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}" ${inv.customer_id==c.id?'selected':''}>${escapeHtml(customerLabel(c))}</option>`).join('');
 
         openModal(Terms.text(id ? 'Edit Invoice' : 'New Invoice'), `
             <form id="invoice-form" aria-labelledby="modal-title" data-skip-to="#inv-lines" data-skip-text="Skip to the line items" onsubmit="InvoicesPage.save(event, ${id})">

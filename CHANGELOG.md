@@ -5,6 +5,293 @@ Notable changes between releases. Format roughly follows
 used during development is captured here so the README can stay focused
 on what the software does, not on what sprint shipped what.
 
+### v2.31.1 — Sub-customers, memorized transactions, and stock that comes back out at its own cost
+
+**Each sign-in is offered only what it may do.** The Memorized Transactions
+page's box for entering due schedules when the app opens is a company setting,
+so only an administrator can change it; a bill payment's Print Check no longer
+saves the check memo first for a read-only sign-in (it prints the check as it
+stands); and a bookkeeper sees Settings' payroll posting accounts locked, as the
+rest of the administrator's settings are.
+
+**A bank feed imports into any bank account in the chart** (from a support
+email). The "Imports into" list beside a SimpleFIN or Mercury feed offered only
+the bank accounts added with + New Bank Account, so a company whose bank
+accounts were already in its chart saw an empty list, and SimpleFIN's section
+did not say why. Both lists now offer every bank account in the chart (and,
+for SimpleFIN, every credit-card account), and choosing one that has never been
+set up on the Banking page sets it up when the mapping is saved. A chart with no
+bank account at all gets a sentence saying how to add one. API: the map routes
+take `ledger_mapping`, a feed's account to a chart account.
+
+**A WebView2 runtime too old to run SlowBooks says so** (from a support
+email). On Windows the app's window is drawn by Microsoft's Edge WebView2
+runtime, and the app only checked that one was installed. A runtime older
+than 101.0.1210.39 opened a window that stayed white, with nothing to click
+and no message, and reinstalling did not help, because the installer set the
+runtime up only when there was none. Now the app checks the version before
+it opens the window: on an older runtime it says which version the computer
+has and which SlowBooks needs, gives Microsoft's download page, and offers to
+open SlowBooks in your web browser meanwhile. The installer installs the
+runtime when it is missing and updates it when it is older than that. And if
+the app's scripts ever cannot start in the window, the page says so, with
+the error and how to reach support, in place of a blank screen.
+
+**The Invoices list sorts by any column** (#650, from the gate). Press a
+heading (number, customer, date, due date, status, total, balance) to sort by
+it, and again to reverse; numbers sort as numbers. A sortable heading on any
+list is now a button the keyboard reaches, and it tells a screen reader how
+the column is sorted. The order chosen is kept when you come back to the list.
+Dates sort by the day: the Invoices list's Date and Due Date, and the date
+columns of Bills and Fixed Assets, which share the list helper, had sorted by
+the year alone.
+
+**The server's cron script runs again.** Since 2.30.0, `scripts/run_recurring.py`
+stopped at the first due recurring invoice with "could not find table
+'pay_applications'": that table was known only to the web app, so a server's
+cron entered nothing, recurring or memorized. Every table is registered with
+the rest of the models now, and the script runs in a process of its own.
+
+**The wide dialogs use the window's width, and the splash scrolls on a
+short window.** A dialog with a wide line table (Enter Bill, an estimate, a
+job cost entry) took 90% of the window, so since 2.31.0's move column the
+bill's lines scrolled sideways at a 1264px window with Amount out of view,
+and a construction company's bill, with its Cost Code and Cost Type
+columns, scrolled at any window size. Such a dialog now takes the window's
+width less a margin, up to 1280px, the line cells sit closer, and each
+line's move controls fold two by two where the table is tight, so the bill
+shows every column at a 1264px window; and at 900px or less, where Enter
+Bill's vendor panel goes under the form, the lines' table scrolls inside
+the dialog instead of the whole dialog scrolling sideways.
+With the terms and What's New showing on a window 700px tall, the splash ran
+past the bottom of the screen with its button out of reach; it scrolls now.
+
+**The top bar fits a window down to 900px.** It ran 1,265px wide at any
+width, so at 900 Sign Out sat past the edge. Its quick-entry buttons now
+stay wherever they fit and step aside only as the window narrows: all five
+at Windows' own default window and wider, Quick Entry and Bill Entry going
+below 1250px and New Customer, Create Invoice and Receive Payment below
+1110px, while Back, the company, Home, Reports, search, About, Contact
+support and Sign Out stay in view. Invoice Quick Entry has its own sidebar
+link now, and the bar's buttons name their shortcuts (Home Alt+H, Create
+Invoice Alt+N, Receive Payment Alt+P, Quick Entry Alt+Q) as the pages'
+buttons do.
+
+**One shape for every refused field.** A field an edit sends as null that may
+not be empty (a schedule's mode, a bill's vendor) answered a bare sentence;
+it is refused now as every other field is, a list with a plain `message` for
+each field the page shows. An occurrence asked for before a schedule starts
+says so, rather than that it was just entered.
+
+**An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
+expense's memo was read back off its bank line, which holds the memo or,
+when none was typed, the payee. So a memo typed the same as the payee came
+back blank, and an expense entered for a vendor with a different payee typed
+and no memo came back with that payee as its memo. The expense now stores
+the memo it was given and returns exactly that, blank when none was typed.
+Expenses saved before this release are read as before. The bank line is
+unchanged, so the register shows what it always did.
+
+**A bill's void or edit takes its stock back out at the cost it came in at**
+(#646, #647, from the 2.31.0 gate). A stock line on a taxed bill is received
+at the line's rate with its share of the tax, the figure the bill puts on
+Inventory, but voiding the bill took the stock out at the rate alone, and an
+edit of a bill with the same item on two lines took the whole quantity out at
+the last line's rate; either way the ledger's Inventory no longer equalled
+quantity x average cost, and selling out left a figure in Inventory with
+nothing on hand. Each receipt now comes back out by itself at the cost it
+carried, one reversal movement per receipt naming it, the way a sale's void
+walks its postings; a bill edited on an earlier release and voided now
+reverses only the receipt the edit left standing. Two edges of the
+re-averaging that came with 2.31.0 are closed as well (#647): a reversal that
+lands the count on zero, or is worth more than the stock holds, left the
+difference sitting in Inventory. That difference is now posted to the item's
+cost of goods account (its own, else the chart's) under the void or edit that
+caused it, so Inventory reads quantity x average cost afterwards, 0.00 with
+nothing on hand. The receiving side is covered as well: stock that comes in
+while the count is below zero (sold ahead of its receipt) first fills that
+hole, and the difference between what the units sold ahead were costed at and
+what they cost now goes to the same cost of goods account under the bill, so
+bill 5 at 10.00, invoice 8, bill 3 at 14.00 leaves 0 on hand, Inventory 0.00
+and the 12.00 difference in cost of goods, where it used to leave 12.00 in
+Inventory with nothing on the shelf; a receipt bigger than the hole is stock
+at its own price past it, and a sale's void, a credit memo's return and a
+count adjustment up fill the hole the same way. A bill's void or edit that
+takes stock already sold below zero now says so in the response's `warnings`
+("Widget: 2 on hand; this void takes it to -3."), the way a sale past the
+stock does, and the Bills page shows it as a toast; with Refuse a sale of
+more than is on hand turned on, the void or edit is refused naming the item
+and the shortfall, with nothing posted. Each reversal movement names the
+receipt it reverses ("VOID Bill B-2 line 2") and the movements API carries
+`reverses_movement_id`, so the two reversals of a two-line bill no longer
+read the same. Vendor credits now keep Inventory at quantity x average cost
+too, and a credit that returns more of an item than is on hand says so in
+`warnings` ("Widget: 2 on hand; this credit takes it to -3.") or, with that
+setting on, is refused.
+
+**Sub-customers with parent billing** (#638, from Discussion #633). A customer
+can now sit under another, one level deep, the way QuickBooks spells
+"Parent:Sub": a property manager keeps each property as a customer and each
+tenant as a sub-customer under it. A tenant is made inactive on move-out
+without touching the property (making a parent inactive asks about its active
+sub-customers first, and can take them along), and everything rolls up to the
+property: its page lists its sub-customers with their balances and the total.
+Every customer picker shows a sub-customer as "Parent: Sub" under its parent,
+and searching the property's name finds its tenants. Bill with parent, on the
+sub-customer, puts its invoices on the parent's A/R: the printed invoice bills
+the parent and names the sub-customer under the address, the parent's
+statement and A/R Aging row carry the sub-customer's open items, overdue
+statements and collection letters go to the parent, and the parent's payments
+apply to the sub-customer's invoices. Without it a sub-customer is billed and
+aged on its own. The IIF import asks whether a file's Customer:Job names are
+sub-customers or jobs (jobs, as before, unless told), and the QuickBooks
+Online export's "Parent:Sub" customers come in as parent and sub-customer. A
+name in an imported file is read the way QuickBooks spells it: a bare name is
+a top-level customer, never a tenant that happens to share it, so a file's
+"Smith" does not post to "Oak St:Smith" and "Smith:Unit 2" never makes a
+third level; a three-level name is imported one level deep and the import
+says so. A statement's payment and credit lines are what relieved the
+invoices on it, whoever paid, so a tenant's own statement shows the
+property's payment that paid its rent and reads what the tenant owes, and
+while the property's money is on a tenant's open invoices, Bill with parent
+stays on. A property is not made inactive while a tenant billed with it
+still owes (the 409 says what is owed and what to do), the question about
+active tenants names each one's open balance, and a tenant is not made
+active again under an inactive property. A credit memo of the property
+applies to a tenant billed with it, as a payment does. The IIF export spells
+a sub-customer "Parent:Sub" on every row, every invoice response names a
+sub-customer the same way, the printed invoice prints the billed customer's
+country, and a second property's Unit 1 is not a duplicate of the first's.
+Tenants do move: once every invoice the property's money is on is settled, a
+tenant may be billed on its own or moved to another property, and the
+statements keep the history. A customer's statement lists its own payments
+and credits that relieved another customer's invoices as a pair, the payment
+and the invoice it paid ("for Unit 1: #1001"), so the former property's
+statement still shows what it paid and its balance is unchanged, and the new
+property's statement carries neither the old property's payments nor the
+invoices they relieved. The printed invoice keeps the Bill To it was made
+with: the name and country are frozen on the invoice with the street, so a
+move or a flag change afterwards does not alter a printed invoice, and
+neither does renaming the customer, the way its street never did (books from
+before take the name and country of the customer each invoice is billed to
+at the upgrade). An invoice moved to another customer by an edit, a
+duplicate and an estimate converted to an invoice are billed as of that
+moment: the whole Bill To, street, name and country, is the payer's then
+(the property's for a tenant billed with it) and the ship-to the
+customer's. Recurring invoices and a pay application's invoice, which used
+to carry no street and printed a name alone, are billed the same way. An
+edit can correct the invoice's addresses, and a duplicate is checked against
+the credit limit as a new invoice is. The printed Ship To keeps its country
+the same way: the country is kept on the invoice with the ship-to street,
+the customer's own, so an old invoice no longer prints the country a
+customer has moved to since under the street it was sent to (books from
+before take each invoice's customer's ship country at the upgrade), and an
+edit can correct it as it corrects the street (`ship_to_country`). An
+address part an edit sends empty is now left empty, also when the edit moves
+the invoice to another customer, where it used to take the new customer's
+anyway; a new invoice still fills a part left empty from the customer. An
+invoice with a payment or credit memo applied to it stays with its customer:
+moving it to another customer is refused with a sentence naming each payment
+and credit, whose it is and for how much, and saying to void it and enter it
+again where it belongs first (409 `money_applied`), since the moved invoice
+put the payment on both customers' statements. Every customer now
+answers `billed_balance`, what sits on its A/R, its own open documents plus
+those of the tenants billed with it, the figure its A/R Aging row shows; the
+Customer Center shows it as what a property owes, beside its own balance and
+the roll-up, and the customer CSV names a tenant in full, "Parent: Sub". The
+credit limit checked when an invoice is saved is the payer's: an invoice to
+a tenant billed with its property is checked against the property's limit
+and what sits on its A/R, tenants included. Every tenant listed under its
+property shows its own name, not only the first, and among the tenants of
+one property only the same name is a duplicate, so Unit 2 may follow Unit 1.
+
+**Memorized bills and journal entries, entered on a schedule** (#605, asked
+by two people moving from QuickBooks). A bill or a journal entry can now be
+kept whole with a schedule: the vendor, terms, bill number and every line
+with its account, memo, job, cost code and class for a bill; the lines,
+reference, basis and adjusting mark for a journal entry. The schedule takes
+the choices QuickBooks offers (daily, weekly, every two weeks, twice a
+month, monthly, every two months, quarterly, twice a year, yearly, or every
+N days, weeks or months), a next date, and an end date or a number of times;
+a monthly schedule begun on the 31st lands on the last day of a shorter
+month and on the 31st again after it, and twice a month is the next date's
+day and fifteen days later. A recurring invoice now keeps the day of its
+start date the same way: one begun on the 29th, 30th or 31st used to slip
+to an earlier day for good after the first shorter month (the 28th, after
+February), and a catch-up could make one invoice too many in the month it
+ran. One that has already slipped goes back to its day at its next
+installment, and a re-activated one resumes on that day. A frequency that
+carries its own count (every
+two weeks, twice a month, quarterly, twice a year) takes no interval: sent
+with none, or 1, it is that count, and with another it is refused, naming
+the word; daily, weekly, monthly and yearly take one. In auto-enter mode the
+app posts the document on its date: it enters every due auto-enter memorized
+bill and journal entry when it opens and once a day while it runs, every
+missed date in order. When the company has a password, those runs wait until
+someone has signed in since the app started (a sign-in the app remembers
+counts, an API token does not), so nothing is entered behind the sign-in
+screen; the audit log names the person signed in for what a run enters (an
+administrator or bookkeeper), or "scheduled run" when nobody signs in (a
+company with no password yet, the cron script) or only a read-only or an
+accountant's sign-in has. The Memorized Transactions page says what was
+entered while
+you were away (or, when a run entered nothing and had to skip something,
+what could not be entered and why), and a box under its list (on by default)
+turns the automatic runs off, for a server that runs
+`scripts/run_recurring.py` from cron instead; the script catches up both
+kinds the way Enter All Due does, every missed installment and occurrence,
+where it used to make one installment of each recurring invoice per run.
+Recurring invoices are not entered on their own: as before, they wait for
+Generate, Enter All Due or the server's cron, so a company upgrading with an
+overdue schedule finds no invoices it did not ask for, and the Memorized
+Transactions page lists their mode as Generated, with a note naming those
+three. Enter All Due, pressed by you, enters every due schedule of both
+kinds, every missed date in order however far behind; when another window
+generates one of those installments first, it keeps going, as the cron
+script does, so the installments after it are still made in the same run.
+In remind mode it waits on the due list until
+Enter now posts it, dated the scheduled date or today, and moves the
+schedule on. Enter now names the occurrence the page showed: two windows
+pressing it for the same occurrence post one document, and a page left open
+after that occurrence was entered elsewhere (another window, Enter All Due
+or the app's own run) is told so, with the schedule's next date, and posts
+nothing, rather than entering the next one early; dated today, it still
+enters that occurrence. Asked for an occurrence later than the schedule's
+next one, Enter now says that occurrence is not the next one, naming both
+dates, and posts nothing. The schedule is moved on in one guarded statement
+before anything posts, and a recurring invoice's installment is claimed the
+same way, so two generations at once (two windows, Generate, Enter All Due
+or the cron script) invoice a period once: Enter now on an installment just
+generated says so and makes nothing, and a run leaves it to the other. When
+the company file is busy saving another change, Enter now says so and asks
+you to try again in a moment, and a run names what it could not enter.
+Enter now on an ended schedule says it has ended, paused or not, and so do
+Resume on one and ticking Active again on a recurring invoice past its end
+date ("move or clear the end date first"), which names the end date the
+schedule has, and an end date sent with it that is still too early; an
+edit that moves the end date past the next date, or clears it, in the same
+request goes through. A schedule that ended by its number of times says to
+raise the number of times instead. A memorized
+bill's number follows one rule: left blank, each bill is numbered the date
+and the vendor's initials, as Enter Bill numbers one; a number on the
+template is used as it is on the first bill and -2, -3 after that, since a
+vendor's bill number cannot repeat, which is why Memorize from a bill leaves
+the number blank. Schedules pause and resume (resuming skips the dates
+missed). The new Memorized Transactions page, beside Recurring Invoices in
+the sidebar, lists every schedule in one place, recurring invoices included,
+with type, next date, how often, mode, last entered, status and amount, a
+Due filter, and Enter now, Pause, Edit and Delete on each; Memorize on a
+bill's page or a journal entry's page starts a memorized one from it. API:
+`/api/memorized` (GET, POST, PUT, DELETE; a recurring invoice's row has
+the mode `generate`), `/api/memorized/due`,
+`/api/memorized/{id}/enter`, `/pause`, `/resume`,
+`/api/memorized/enter-due`, `/api/memorized/entered-recently`, and
+`/api/recurring/{id}/generate` to enter one recurring invoice now (both
+Enter now routes take the `occurrence` the page showed); the setting is
+`auto_enter_on_open`. IIF carries no memorized transactions, so the
+QuickBooks guide says to rebuild them here. Migration `c9e5a7b3d1f2` adds
+the two tables.
+
 ### v2.31.0 — Split expenses, lines that move, and stock that comes back
 
 **From the release gate.** Voiding a credit memo's return took the stock out at

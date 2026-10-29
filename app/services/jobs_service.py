@@ -38,16 +38,48 @@ def split_customer_job(name: str) -> tuple[str, Optional[str]]:
     return cust, job
 
 
+def nested_customer_job(name: str) -> bool:
+    """Whether a QuickBooks name has more than one level ("A:B:C": a
+    sub-job, or a sub-customer under a sub-customer). split_customer_job
+    keeps one level, so the import flattens it to "A" with "B:C" under it,
+    and says so (#638 review) rather than silently."""
+    _cust, child = split_customer_job(name)
+    return bool(child) and split_customer_job(child)[1] is not None
+
+
 def find_customer(db: Session, name: str) -> Optional[Customer]:
-    """Exact, then in any case, as find_job does: an import that spells a
-    customer BOB JONES means the Bob Jones already on file (#195)."""
+    """The top-level customer called ``name``: exact, then in any case, as
+    find_job does: an import that spells a customer BOB JONES means the Bob
+    Jones already on file (#195).
+
+    A sub-customer (#638) is never matched by its bare name: in QuickBooks'
+    spelling a bare name is always a top-level customer, and a sub is
+    reached only as "Parent:Sub", through find_sub_customer under its
+    parent. A file's "Smith" used to post its invoice and payment to the
+    tenant "Oak St:Smith", and "Smith:Unit 2" made a third level under it."""
     if not name:
         return None
-    row = db.query(Customer).filter(Customer.name == name).first()
+    q = db.query(Customer).filter(Customer.parent_customer_id.is_(None))
+    row = q.filter(Customer.name == name).first()
     if not row:
         row = (
-            db.query(Customer)
-            .filter(sqlfunc.lower(Customer.name) == name.lower())
+            q.filter(sqlfunc.lower(Customer.name) == name.lower())
+            .order_by(Customer.id)
+            .first()
+        )
+    return row
+
+
+def find_sub_customer(db: Session, parent_id: int, name: str) -> Optional[Customer]:
+    """The sub-customer called ``name`` under this parent (#638): exact,
+    then in any case, as find_job does."""
+    if not name:
+        return None
+    q = db.query(Customer).filter(Customer.parent_customer_id == parent_id)
+    row = q.filter(Customer.name == name).first()
+    if not row:
+        row = (
+            q.filter(sqlfunc.lower(Customer.name) == name.lower())
             .order_by(Customer.id)
             .first()
         )
@@ -79,14 +111,23 @@ def get_or_create_job(db: Session, customer_id: int, name: str) -> Job:
 
 
 def resolve_customer_and_job(
-    db: Session, full_name: str, create: bool = True
+    db: Session, full_name: str, create: bool = True, sub_customers: bool = False
 ) -> tuple[Optional[Customer], Optional[Job]]:
     """Resolve an imported "Customer:Job" name to (customer, job).
 
     A flat customer literally named "A:B" that already exists keeps
     matching (re-imports of pre-jobs files stay stable); otherwise the
     name splits, the customer is found or created, and the job is found
-    or created under it. `create=False` only looks up.
+    or created under it. `create=False` only looks up. The flat match and
+    the customer half resolve against top-level customers only
+    (find_customer): a bare name is a top-level customer, never a
+    sub-customer that happens to share it.
+
+    Sub-customers (#638): a "Parent:Sub" whose Sub is a sub-customer on
+    file under Parent resolves to that sub-customer, with no job, whatever
+    was asked; ``sub_customers`` says a child never seen before is made a
+    sub-customer, not a job (the IIF import's "Customer:Job names are
+    sub-customers" choice; QuickBooks Online's export, which has no jobs).
     """
     raw = (full_name or "").strip()
     if not raw:
@@ -104,7 +145,17 @@ def resolve_customer_and_job(
         db.flush()
     if not job_name:
         return customer, None
+    sub = find_sub_customer(db, customer.id, job_name)
+    if sub:
+        return sub, None
     job = find_job(db, customer.id, job_name)
+    if not job and create and sub_customers:
+        sub = Customer(
+            name=job_name[:200], parent_customer_id=customer.id, is_active=True
+        )
+        db.add(sub)
+        db.flush()
+        return sub, None
     if not job and create:
         job = get_or_create_job(db, customer.id, job_name)
     return customer, job

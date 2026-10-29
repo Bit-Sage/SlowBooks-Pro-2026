@@ -98,7 +98,25 @@ def document_label(inv, t: Terms) -> str:
 
 def invoice_pdf_context(inv, company: dict) -> dict:
     """Extra template context for invoice_pdf.html: the document kind and,
-    on a nonprofit donation receipt, the IRS acknowledgment block."""
+    on a nonprofit donation receipt, the IRS acknowledgment block; the
+    Bill To block's name, country and "For:" line; and the Ship To's
+    country.
+
+    The Bill To block comes from the invoice alone (2.31.1 gate, W-59):
+    the name and country frozen with the street when the invoice was made
+    (Invoice.bill_to_name, bill_to_country), and "For: <sub-customer>"
+    when the invoice was billed to someone other than its customer
+    (bill_to_customer_id, the parent of a sub-customer billed with it,
+    #638). A tenant moved to another property, or billed on its own,
+    afterwards does not change what its old invoice prints: the name over
+    a street stays the name that street belongs to. The Ship To's country
+    is the one frozen with the ship-to street (Invoice.ship_to_country,
+    round 3), so a customer's move abroad does not print the new country
+    under an old invoice's street; blank, it prints none. An invoice with
+    nothing frozen (written around the ORM) is read off its customer as it
+    was before: the parent's name and country when the customer is a sub
+    billed with its parent, else the customer's own, and the customer's
+    ship country."""
     t = terms_for(company)
     kind = invoice_doc_kind(inv, t)
     irs = None
@@ -109,7 +127,43 @@ def invoice_pdf_context(inv, company: dict) -> dict:
             getattr(inv, "fair_value_amount", None),
             getattr(inv, "fair_value_description", None),
         )
-    return {"doc_kind": kind, "irs": irs}
+    customer = getattr(inv, "customer", None)
+    bill_to_for = None
+    if getattr(inv, "bill_to_name", None) is not None:
+        bill_to_name = inv.bill_to_name
+        bill_to_country = getattr(inv, "bill_to_country", None)
+        ship_to_country = getattr(inv, "ship_to_country", None)
+        billed_id = getattr(inv, "bill_to_customer_id", None)
+        if (
+            customer is not None
+            and billed_id is not None
+            and billed_id != getattr(inv, "customer_id", None)
+        ):
+            bill_to_for = customer.name
+    else:
+        bill_to_name = getattr(inv, "customer_name", None) or (
+            customer.name if customer is not None else ""
+        )
+        bill_to_country = getattr(customer, "bill_country", None)
+        ship_to_country = getattr(customer, "ship_country", None)
+        parent = (
+            customer.parent
+            if customer is not None
+            and getattr(customer, "parent_customer_id", None)
+            and getattr(customer, "bill_with_parent", False)
+            else None
+        )
+        if parent is not None:
+            bill_to_name, bill_to_for = parent.name, customer.name
+            bill_to_country = getattr(parent, "bill_country", None)
+    return {
+        "doc_kind": kind,
+        "irs": irs,
+        "bill_to_name": bill_to_name,
+        "bill_to_for": bill_to_for,
+        "bill_to_country": bill_to_country,
+        "ship_to_country": ship_to_country,
+    }
 
 
 # ── gifts: one shape for a receipt, a payment, or property ───────────────

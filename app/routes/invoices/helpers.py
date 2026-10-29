@@ -22,6 +22,7 @@ from app.services.terminology import document_reference
 
 ZERO_TOTAL_CODE = "zero_total"
 CREDIT_LIMIT_CODE = "credit_limit"
+MONEY_APPLIED_CODE = "money_applied"
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +78,7 @@ def confirm_zero_total(
     )
 
 
-def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
+def warn_or_refuse_oversell(db, lines, before=(), action: str = "sale") -> list[str]:
     """A sale of more of a stock item than is on hand (#642). The sale
     posts whatever the count is, as it always has (some businesses enter
     the receiving bill after the sale), and the count went below zero with
@@ -87,21 +88,28 @@ def warn_or_refuse_oversell(db, lines, before=()) -> list[str]:
     Settings -> inventory_refuse_oversell on, the sale is refused instead
     with a 422 naming each item and how many short. ``before`` is the
     invoice's stored lines on an edit, so only what the edit adds counts.
-    Called before anything is written, so the refused request writes
-    nothing."""
-    from app.services.inventory_hooks import (
-        oversell_refusal,
-        oversell_warning,
-        oversold_items,
-    )
+    A vendor credit's return to the supplier is asked the same way, with
+    ``action="credit"`` ("this credit takes it to -3.", W-74). Called
+    before anything is written, so the refused request writes nothing."""
+    from app.services.inventory_hooks import oversold_items
+
+    return warn_or_refuse_shorts(db, oversold_items(db, lines, before), action)
+
+
+def warn_or_refuse_shorts(db, shorts, action: str = "sale") -> list[str]:
+    """The sentences for stock items already found short (oversold_items'
+    shape), or the 422 when Settings says to refuse. A bill's void and edit
+    find their shorts from the bill's receipts (oversold_by_reversal, W-67)
+    and say "this void" or "this edit" in place of "this sale"; the refusal
+    says what to do about that one."""
+    from app.services.inventory_hooks import oversell_refusal, oversell_warning
     from app.services.settings_service import refuse_oversell
 
-    shorts = oversold_items(db, lines, before)
     if not shorts:
         return []
     if refuse_oversell(db):
-        raise HTTPException(status_code=422, detail=oversell_refusal(shorts))
-    return [oversell_warning(s) for s in shorts]
+        raise HTTPException(status_code=422, detail=oversell_refusal(shorts, action))
+    return [oversell_warning(s, action) for s in shorts]
 
 
 def confirm_credit_limit(
@@ -112,6 +120,7 @@ def confirm_credit_limit(
     noun: str = "invoice",
     exclude_invoice_id=None,
     question: str | None = None,
+    ask: str = "Save it anyway?",
 ) -> None:
     """A customer's credit limit, told to every way of saving an invoice
     (#256, 2.22.2). The form asked before it saved and nothing else did:
@@ -125,16 +134,26 @@ def confirm_credit_limit(
     home dollars, net of the credits and unapplied payments they hold (as
     A/R Aging and the customer page count it), less the invoice being
     edited (whose new amount is `owed`). Nothing is written by the refused
-    request. A customer with no limit is never asked."""
+    request. A customer with no limit is never asked.
+
+    The limit checked is the payer's (2.31.1 gate, W-62): an invoice to a
+    sub-customer billed with its parent lands on the parent's A/R, so the
+    parent's limit is checked against what sits on that A/R, the parent's
+    own open documents and those of every sub-customer billed with it
+    (billed_balance, the A/R Aging row), and the 409 names the parent. A
+    customer billed on its own is its own payer, as before. ``ask`` ends
+    the question for the action at hand ("Duplicate it anyway?")."""
     from app.models.invoices import Invoice
-    from app.services.contact_balances import customer_balance, home_amount
+    from app.services.contact_balances import home_amount
+    from app.services.sub_customers import billed_balance, payer_for
 
     if allowed or customer is None:
         return
-    limit = Decimal(str(getattr(customer, "credit_limit", None) or 0))
+    payer = payer_for(db, customer)
+    limit = Decimal(str(getattr(payer, "credit_limit", None) or 0))
     if limit <= 0:
         return
-    open_balance = customer_balance(db, customer.id)
+    open_balance = billed_balance(db, payer.id)
     if exclude_invoice_id is not None:
         current = db.get(Invoice, exclude_invoice_id)
         if current is not None and current.status != InvoiceStatus.VOID:
@@ -143,7 +162,7 @@ def confirm_credit_limit(
     if after <= limit:
         return
     sentence = (
-        f"{customer.name}'s credit limit is ${limit:,.2f}. "
+        f"{payer.name}'s credit limit is ${limit:,.2f}. "
         f"With this {noun} they would owe ${after:,.2f}."
     )
     raise HTTPException(
@@ -151,7 +170,7 @@ def confirm_credit_limit(
         detail={
             "code": CREDIT_LIMIT_CODE,
             "message": sentence,
-            "question": question or f"{sentence} Save it anyway?",
+            "question": question or f"{sentence} {ask}",
             "limit": str(_q(limit)),
             "would_owe": str(after),
         },
@@ -184,6 +203,137 @@ def refuse_due_before_date(doc_date: date | None, due_date: date | None) -> None
                 f"({_day(doc_date)}). Pick a due date on or after the invoice date."
             ),
         )
+
+
+def money_applied(db: Session, invoice) -> list[dict]:
+    """The payments and credit memos (a write-off is one) applied to an
+    invoice and still standing, oldest first, each as ``{kind, id,
+    number, customer_id, customer_name, date, amount}``: ``kind`` is
+    "payment", "credit_memo" or "write_off", ``customer_name`` whose money
+    it is ("Parent: Sub" for a sub-customer). A voided payment, or a
+    credit memo voided (which takes its applications off), is not on the
+    invoice any more."""
+    from sqlalchemy import or_
+
+    from app.models.credit_memos import (
+        CreditApplication,
+        CreditMemo,
+        CreditMemoStatus,
+    )
+    from app.models.payments import Payment, PaymentAllocation
+
+    found: dict = {}
+
+    def add(kind, doc, number, amount):
+        row = found.setdefault(
+            (kind, doc.id),
+            {
+                "kind": kind,
+                "id": doc.id,
+                "number": number,
+                "customer_id": doc.customer_id,
+                "customer_name": doc.customer.full_name if doc.customer else "",
+                "date": doc.date,
+                "amount": Decimal("0"),
+            },
+        )
+        row["amount"] += Decimal(str(amount or 0))
+
+    for payment, amount in (
+        db.query(Payment, PaymentAllocation.amount)
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.id)
+        .filter(
+            PaymentAllocation.invoice_id == invoice.id,
+            or_(Payment.is_voided.is_(False), Payment.is_voided.is_(None)),
+        )
+    ):
+        add("payment", payment, payment.check_number or payment.reference, amount)
+    for memo, amount in (
+        db.query(CreditMemo, CreditApplication.amount)
+        .join(CreditApplication, CreditApplication.credit_memo_id == CreditMemo.id)
+        .filter(
+            CreditApplication.invoice_id == invoice.id,
+            CreditMemo.status != CreditMemoStatus.VOID,
+        )
+    ):
+        kind = "write_off" if memo.is_write_off else "credit_memo"
+        add(kind, memo, memo.memo_number, amount)
+    return sorted(
+        (row for row in found.values() if row["amount"]),
+        key=lambda row: (row["date"], row["kind"] != "payment", row["id"]),
+    )
+
+
+def _money_phrase(row: dict) -> str:
+    amount = f"${row['amount']:,.2f}"
+    who = f"{row['customer_name']}'s" if row["customer_name"] else "a"
+    if row["kind"] == "payment":
+        return f"{who} payment of {amount} ({_day(row['date'])})"
+    noun = "write-off" if row["kind"] == "write_off" else "credit memo"
+    number = f" {row['number']}" if row["number"] else ""
+    return f"{who} {noun}{number} for {amount}"
+
+
+def refuse_moving_money(db: Session, invoice, moved_to, words) -> None:
+    """An edit may not move an invoice to another customer while a payment
+    or credit memo is applied to it (2.31.1 gate, round 3): moved, an
+    invoice Alpha paid went to Beta's statement with Alpha's payment on
+    it, and Alpha's statement still listed the payment, so both carried
+    it. Refused with 409 ``{"code": "money_applied", "message",
+    "applied"}``, the message naming each payment and credit, whose it is
+    and for how much, and the way out: void it, and enter it again where
+    it belongs, then move the invoice. The rule W-58 keeps for a tenant
+    while its parent's money is on its invoices, for every invoice. An
+    unpaid invoice moves; nothing is written by the refused request."""
+    from app.services.donor_documents import document_label
+    from app.services.terminology import document_reference
+
+    applied = money_applied(db, invoice)
+    paid = Decimal(str(invoice.amount_paid or 0))
+    if not applied and paid <= 0:
+        return
+    face = document_label(invoice, words)
+    noun = face.lower()
+    ref = document_reference(face, invoice.invoice_number)
+    what = f"{ref} cannot move to {moved_to.full_name}"
+    if applied:
+        phrases = [_money_phrase(row) for row in applied]
+        listed = (
+            phrases[0]
+            if len(phrases) == 1
+            else ", ".join(phrases[:-1]) + " and " + phrases[-1]
+        )
+        if len(applied) == 1:
+            kind = {"payment": "payment", "write_off": "write-off"}.get(
+                applied[0]["kind"], "credit memo"
+            )
+            undo = f"Void the {kind} first and enter it again where it belongs"
+        else:
+            undo = "Void them first and enter them again where they belong"
+        message = (
+            f"{what} while money is applied to it: {listed}. {undo}, then "
+            f"move the {noun}."
+        )
+    else:
+        message = (
+            f"{what} while money is applied to it: ${paid:,.2f} is paid on it. "
+            f"Void what was paid on it first, then move the {noun}."
+        )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": MONEY_APPLIED_CODE,
+            "message": message,
+            "applied": [
+                {
+                    **row,
+                    "date": row["date"].isoformat() if row["date"] else None,
+                    "amount": str(_q(row["amount"])),
+                }
+                for row in applied
+            ],
+        },
+    )
 
 
 def _due_date_from_terms(base_date: date, terms: str | None) -> date:
@@ -354,6 +504,16 @@ def _build_invoice_journal_lines(
             }
         )
     return journal_lines
+
+
+def invoice_customer_name(invoice):
+    """The name an invoice (or the credit memo written off it) carries for
+    its customer, everywhere a response or a journal names it: "Parent:
+    Sub" for a sub-customer (#638), the customer's name otherwise, None
+    with no customer. One helper, so send, void, duplicate and edit answer
+    the name the list and get answer."""
+    customer = getattr(invoice, "customer", None)
+    return customer.full_name if customer is not None else None
 
 
 def _post_invoice_journal(

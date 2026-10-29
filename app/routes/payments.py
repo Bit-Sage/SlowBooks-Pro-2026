@@ -13,6 +13,7 @@ from app.routes._helpers import clamp_pagination
 from app.models.payments import Payment, PaymentAllocation
 from app.models.invoices import Invoice, InvoiceStatus
 from app.models.contacts import Customer
+from app.services.sub_customers import pays_for, refuse_unless_pays_for
 from app.models.transactions import Transaction
 from app.schemas.payments import PaymentApply, PaymentCreate, PaymentResponse
 from app.services.accounting import (
@@ -166,7 +167,9 @@ def create_payment(
             raise HTTPException(
                 status_code=404, detail=f"Invoice {alloc_data.invoice_id} not found"
             )
-        if invoice.customer_id != data.customer_id:
+        # The payer's own invoice, or one of a sub-customer billed with
+        # it (#638): a property's payment pays its tenants' invoices.
+        if not pays_for(db, data.customer_id, invoice):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invoice {invoice.invoice_number} does not belong to payment customer",
@@ -366,15 +369,9 @@ def apply_payment(payment_id: int, data: PaymentApply, db: Session = Depends(get
             raise HTTPException(
                 status_code=404, detail=f"Invoice {alloc_data.invoice_id} not found"
             )
-        # A payment pays its own customer's invoices only (#189).
-        if invoice.customer_id != payment.customer_id:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Invoice {invoice.invoice_number} belongs to a different "
-                    "customer than this payment."
-                ),
-            )
+        # A payment pays its own customer's invoices only (#189), and
+        # those of a sub-customer billed with it (#638).
+        refuse_unless_pays_for(db, payment.customer_id, invoice, "payment")
         if invoice.status == InvoiceStatus.VOID:
             raise HTTPException(
                 status_code=400,

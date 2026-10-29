@@ -88,7 +88,7 @@ against any of eight providers (Anthropic Claude and xAI Grok first, then
 Groq, Cloudflare Workers AI, OpenAI, Google Gemini, a Cloudflare Worker you
 host yourself, or any OpenAI-compatible endpoint you name) — keys encrypted at rest with versioned, rotatable ciphertext.
 And the whole app is agent-operable: every install serves a
-self-documenting local REST API (721 operations in v2.31.0) — built for Claude
+self-documenting local REST API (734 operations in v2.31.1) — built for Claude
 Code and Grok first, and any agentic CLI works; the
 [AI setup guide](https://www.slowbookspro.com/ai/) has the paste-prompt.
 What stays on your machine is the company file and the API. A cloud-backed
@@ -186,8 +186,9 @@ Full catalog in **[docs/features.md](docs/features.md)**. Highlights:
 Download **[SlowBooksPro-Setup-x64.exe](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest/download/SlowBooksPro-Setup-x64.exe)**
 and double-click. Fully self-contained (64-bit Windows 10/11); a portable
 .zip is on the [releases page](https://github.com/VonHoltenCodes/SlowBooks-Pro-2026/releases/latest)
-— it needs the Microsoft Edge WebView2 runtime, which Windows 11 has and the
-installer sets up; without it the app offers to open in your browser instead.
+— it needs the Microsoft Edge WebView2 runtime, 101 or later, which Windows 11
+has and the installer sets up or updates; without it, or with an older one,
+the app says so and offers to open in your browser instead.
 Each company is one SQLite file under `%LOCALAPPDATA%\SlowBooksPro` —
 upgrades and even uninstalls never touch your books.
 

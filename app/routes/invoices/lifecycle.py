@@ -27,12 +27,15 @@ from app.services.closing_date import check_closing_date
 
 from app.routes.invoices._router import router
 from app.routes.invoices.helpers import (
+    invoice_customer_name,
     _due_date_from_terms,
     _post_invoice_journal,
+    confirm_credit_limit,
     confirm_zero_total,
     opening_status,
 )
 from app.services.donor_documents import document_label
+from app.services.sub_customers import invoice_addresses
 from app.services.terminology import document_reference, terms_from_db
 
 
@@ -204,7 +207,7 @@ def void_invoice_unchecked(invoice_id: int, db: Session, commit: bool = True):
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
-        resp.customer_name = invoice.customer.name
+        resp.customer_name = invoice_customer_name(invoice)
     return resp
 
 
@@ -223,7 +226,7 @@ def mark_invoice_sent(invoice_id: int, db: Session = Depends(get_db)):
     db.refresh(invoice)
     resp = InvoiceResponse.model_validate(invoice)
     if invoice.customer:
-        resp.customer_name = invoice.customer.name
+        resp.customer_name = invoice_customer_name(invoice)
     return resp
 
 
@@ -491,7 +494,7 @@ def write_off_invoice(
     db.commit()
     db.refresh(cm)
     resp = CreditMemoResponse.model_validate(cm)
-    resp.customer_name = inv.customer.name if inv.customer else None
+    resp.customer_name = invoice_customer_name(inv)
     return resp
 
 
@@ -523,7 +526,7 @@ def _small_balances(db: Session, under: Decimal, as_of: dt_date) -> list:
                 "id": inv.id,
                 "invoice_number": inv.invoice_number,
                 "customer_id": inv.customer_id,
-                "customer_name": inv.customer.name if inv.customer else "",
+                "customer_name": invoice_customer_name(inv) or "",
                 "date": inv.date.isoformat(),
                 "due_date": inv.due_date.isoformat() if inv.due_date else None,
                 "days_overdue": (
@@ -589,7 +592,7 @@ def write_off_batch(data: WriteOffBatchRequest, db: Session = Depends(get_db)):
         written.append(
             {
                 **row,
-                "customer_name": inv.customer.name if inv.customer else "",
+                "customer_name": invoice_customer_name(inv) or "",
                 "amount": str(_q(balance)),
                 "credit_memo_id": cm.id,
                 "memo_number": cm.memo_number,
@@ -609,7 +612,9 @@ def duplicate_invoice(
     sent yet. The copy carries what the original says about the sale: its
     currency and the rate it was booked at, the job, class and PO number,
     and each line's item, job, class and cost code. Each line's tax is the
-    customer's as they stand today. It posts the way a new invoice does.
+    customer's as they stand today, and the copy is billed as of today
+    too: the Bill To is the payer's now and the ship-to the customer's now
+    (2.31.1 gate, W-73). It posts the way a new invoice does.
 
     The copy used to drop the currency and rate, so a EUR 850.00 invoice's
     duplicate was a $850.00 invoice (and posted $850 where the original
@@ -635,6 +640,20 @@ def duplicate_invoice(
         "duplicating it",
         question=f"This {noun} adds up to $0.00. Duplicate it anyway?",
     )
+    # Past the payer's credit limit? Asked as a new invoice is (2.31.1
+    # gate, W-79): the same 409 "credit_limit", and the copy is made with
+    # allow_over_credit_limit, as create takes it. The copy owes its whole
+    # total, at the rate it carries.
+    from app.services.contact_balances import home_amount
+
+    confirm_credit_limit(
+        db,
+        original.customer,
+        home_amount(total, original.exchange_rate),
+        bool(data and data.allow_over_credit_limit),
+        noun,
+        ask="Duplicate it anyway?",
+    )
 
     left_off: list[str] = []
     new_invoice = Invoice(
@@ -645,16 +664,6 @@ def duplicate_invoice(
         due_date=_due_date_from_terms(today, original.terms),
         terms=original.terms,
         po_number=original.po_number,
-        bill_address1=original.bill_address1,
-        bill_address2=original.bill_address2,
-        bill_city=original.bill_city,
-        bill_state=original.bill_state,
-        bill_zip=original.bill_zip,
-        ship_address1=original.ship_address1,
-        ship_address2=original.ship_address2,
-        ship_city=original.ship_city,
-        ship_state=original.ship_state,
-        ship_zip=original.ship_zip,
         subtotal=subtotal,
         tax_rate=original.tax_rate,
         tax_amount=tax_amount,
@@ -671,6 +680,12 @@ def duplicate_invoice(
         # stored on the original (books from before the rule) is left off,
         # and the response says which (NEW-36).
         job_id=own_job(db, original.customer_id, original.job_id, left_off),
+        # A new invoice, billed as of now (2.31.1 gate, W-73): the Bill To
+        # whole is the payer's today, the street with the name and country,
+        # and the ship-to the customer's today. The original's frozen block
+        # is what was sent then: a tenant moved since would get a copy on
+        # the new property's account printing the old one's street.
+        **(invoice_addresses(db, original.customer) if original.customer else {}),
     )
     db.add(new_invoice)
     db.flush()
@@ -697,9 +712,8 @@ def duplicate_invoice(
     # The posting a new invoice gets: DR A/R, CR income per line with its
     # job / class / cost code, CR sales tax — converted to home currency at
     # the copy's rate.
-    customer = original.customer
     txn = _post_invoice_journal(
-        db, new_invoice, new_lines, customer.name if customer else ""
+        db, new_invoice, new_lines, invoice_customer_name(original) or ""
     )
     # A duplicated $0.00 invoice posts no journal, so it keeps no transaction.
     new_invoice.transaction_id = txn.id if txn is not None else None
@@ -714,6 +728,6 @@ def duplicate_invoice(
     db.refresh(new_invoice)
     resp = InvoiceResponse.model_validate(new_invoice)
     if new_invoice.customer:
-        resp.customer_name = new_invoice.customer.name
+        resp.customer_name = invoice_customer_name(new_invoice)
     resp.jobs_left_off = left_off
     return resp

@@ -734,6 +734,8 @@
         } else {
             wireLogin(overlay, onSuccess);
         }
+        // A first screen is up: boot_check.js stops waiting for one.
+        if (window.SlowBooksBoot) window.SlowBooksBoot.drawn();
     }
 
     // Single entry point used by api.js (on 401) and the DOMContentLoaded

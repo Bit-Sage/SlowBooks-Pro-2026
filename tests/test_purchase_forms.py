@@ -87,9 +87,10 @@ def test_enter_bill_has_an_account_column_and_sends_each_lines_account():
     row = _method(js, "lineHtml(idx, line = null)")
     assert 'class="line-account"' in row
     assert "PurchaseAccounts.options(BillsPage._accounts" in row
+    lines_ = _method(js, "collectLines()")  # the line code moved here (#605)
+    assert "account_id: accountId" in lines_
     save = _method(js, "async save(e, id = null)")
-    assert "account_id: accountId" in save
-    assert "Choose an account for line" in save
+    assert "Choose an account for line" in lines_ + save
 
 
 def test_picking_an_item_on_a_bill_fills_its_cost_and_account():

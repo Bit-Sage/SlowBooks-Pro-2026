@@ -241,18 +241,21 @@ def test_a_vendor_credit_line_and_an_expense_add_an_account_too(
         page.evaluate("async () => { closeModal(); await ExpensesPage.showForm(); }")
         page.wait_for_function(MODAL_SHOWN, timeout=5000)
         settle(page, handled)
-        page.click("#expense-form .aqa-add")
-        page.wait_for_selector("#expense-form .aqa-panel .aqa-name")
-        page.fill("#expense-form .aqa-name", "Market stall fees")
-        page.click("#expense-form .aqa-save")
+        # an expense's account is on each of its lines since 2.31.0's split
+        # expenses: the first line's box
+        exp_row = "#expense-lines tr:nth-child(1)"
+        page.click(f"{exp_row} .aqa-add")
+        page.wait_for_selector(f"{exp_row} .aqa-panel .aqa-name")
+        page.fill(f"{exp_row} .aqa-name", "Market stall fees")
+        page.click(f"{exp_row} .aqa-save")
         page.wait_for_function(
-            "() => /^\\d+$/.test(document.querySelector('#expense-form [name=expense_account_id]').value)",
+            f"() => /^\\d+$/.test(document.querySelector('{exp_row} select.line-account').value)",
             timeout=5000,
         )
         settle(page, handled)
         exp_focus = page.evaluate(
             "() => { const a = document.activeElement; const c = a.closest('.cbx');"
-            " return [a.className, !!(c && c.querySelector('[name=expense_account_id]')), a.value]; }"
+            " return [a.className, !!(c && c.querySelector('select.line-account')), a.value]; }"
         )
     finally:
         page.close()

@@ -30,5 +30,8 @@ def test_the_job_cost_entry_opens_wide_with_a_scrolling_table():
 
 def test_the_stylesheet_carries_both_rules():
     css = CSS.read_text(encoding="utf-8")
-    assert ".modal.modal--wide {" in css and "max-width: min(1280px, 96vw)" in css
+    # as wide as the window less a margin, up to 1280px (NEW-187: the 90%,
+    # then 96%, left a construction bill's lines scrolling)
+    assert ".modal.modal--wide {" in css
+    assert "width: calc(100% - 12px);\n    max-width: 1280px;" in css
     assert ".table-container--scroll {" in css and "overflow-x: auto" in css

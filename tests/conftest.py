@@ -52,7 +52,129 @@ os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
+# ---- No fsync on the suite's SQLite files ----
+# The Windows CI job spent most of its time waiting on fsync: every test that
+# walks the migration chain against a real SQLite file commits once per
+# migration, 15 to 80 s a test there against 1 to 3 s on Linux, and the
+# slowest of them outgrew the job's per-test timeout. synchronous=OFF on every
+# SQLite connection this test process opens (the migration runner's engine and
+# the company files' alike, through a class-level listener) writes the same
+# files without waiting for the disk. Test setup only: nothing in app/ reads
+# it. SLOWBOOKS_SQLITE_FSYNC=1 in the shell keeps fsync on, for a timing.
+import sqlite3 as _sqlite3  # noqa: E402
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+from sqlalchemy.engine import Engine as _Engine  # noqa: E402
+
+if os.environ.get("SLOWBOOKS_SQLITE_FSYNC") != "1":
+
+    @_sa_event.listens_for(_Engine, "connect")
+    def _suite_sqlite_without_fsync(dbapi_conn, _record):
+        module = type(dbapi_conn).__module__ or ""
+        if (
+            not isinstance(dbapi_conn, _sqlite3.Connection)
+            and "sqlcipher" not in module
+        ):
+            return
+        try:
+            dbapi_conn.execute("PRAGMA synchronous=OFF")
+        except Exception:
+            # an encrypted file before its key (company_file keys it next)
+            pass
+
+
+# The in-app scheduler (#605) is a background task the lifespan starts; it
+# would run against a lifespan test's single shared connection from its own
+# thread. Off for the suite; the tests of the task call it directly.
+os.environ["SLOWBOOKS_AUTO_ENTER"] = "0"
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# ---- Each migration walk runs once per test run ----
+# 33 test files, and every test that makes a company file, run the migration
+# chain (86 migrations) from an empty SQLite file; most of them to the same
+# few targets (head, or the revision before the one a test checks). The file
+# such a walk leaves is the same every time, so the first walk to a target is
+# run for real and kept, and every later one gets a copy of it. Only a walk
+# from an empty (or missing) plain SQLite file is kept; a walk on a file that
+# already holds anything, an encrypted file, offline SQL, PostgreSQL and a
+# relative target all run for real, as do downgrades. Test setup only: the
+# migrations themselves, and app code that calls command.upgrade, are
+# unchanged. SLOWBOOKS_MIGRATION_CACHE=0 in the shell runs every walk.
+import sqlite3 as _cache_sqlite3  # noqa: E402
+
+import alembic.command as _alembic_command  # noqa: E402
+
+_real_upgrade = _alembic_command.upgrade
+_MIGRATION_CACHE: dict = {}
+_MIGRATION_CACHE_DIR = SUITE_DATA_DIR / "migrated"
+
+
+def _sqlite_file(url: str):
+    if not url.startswith("sqlite:///") or ":memory:" in url:
+        return None
+    raw = url[len("sqlite:///") :].split("?", 1)[0]
+    return Path(raw) if raw else None
+
+
+def _cached_upgrade(config, revision, sql=False, tag=None, **kw):
+    url = (
+        config.attributes.get("database_url")
+        or config.get_main_option("sqlalchemy.url")
+        or os.environ.get("DATABASE_URL", "")
+    )
+    path = _sqlite_file(url)
+    if (
+        sql
+        or tag
+        or kw
+        or path is None
+        or (path.exists() and path.stat().st_size > 0)
+        or config.attributes.get("company_file_key")
+        or os.environ.get("SLOWBOOKS_COMPANY_FILE_KEY")
+    ):
+        return _real_upgrade(config, revision, sql=sql, tag=tag, **kw)
+    from alembic.script import ScriptDirectory
+
+    try:
+        script = ScriptDirectory.from_config(config)
+        targets = script.get_revisions(revision)
+    except Exception:
+        return _real_upgrade(config, revision, sql=sql, tag=tag)
+    if len(targets) != 1 or targets[0] is None:
+        return _real_upgrade(config, revision, sql=sql, tag=tag)
+    key = (str(Path(script.dir).resolve()), targets[0].revision)
+    kept = _MIGRATION_CACHE.get(key)
+    if kept is not None and kept.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        src = _cache_sqlite3.connect(kept)
+        dst = _cache_sqlite3.connect(path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        return None
+    result = _real_upgrade(config, revision, sql=sql, tag=tag)
+    if path.exists():
+        _MIGRATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        kept = (
+            _MIGRATION_CACHE_DIR / f"{len(_MIGRATION_CACHE)}-{targets[0].revision}.db"
+        )
+        src = _cache_sqlite3.connect(path)
+        dst = _cache_sqlite3.connect(kept)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        _MIGRATION_CACHE[key] = kept
+    return result
+
+
+if os.environ.get("SLOWBOOKS_MIGRATION_CACHE") != "0":
+    _alembic_command.upgrade = _cached_upgrade
+
 
 import pytest  # noqa: E402
 

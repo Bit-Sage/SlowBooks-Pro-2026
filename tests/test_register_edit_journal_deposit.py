@@ -671,7 +671,8 @@ def test_a_null_class_or_cost_code_the_form_does_not_manage_keeps_the_line(
 
 def test_the_journal_form_sends_a_class_only_with_its_picker():
     src = (ROOT / "app/static/js/journal.js").read_text(encoding="utf-8")
-    save = src[src.index("    async save(e) {") :]
+    # the line code lives in collectLines() since #605 (save() calls it)
+    save = src[src.index("    collectLines() {") :]
     save = save[: save.index("\n    },\n")]
     assert "if (row.querySelector('.je-function-fund')) line.class_id" in save
     assert "if (row.querySelector('.je-cost-code')) line.cost_code_id" in save

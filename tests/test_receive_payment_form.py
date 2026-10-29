@@ -99,7 +99,7 @@ def test_drafts_are_listed_oldest_first_and_voids_are_not(probe):
     js = _read("payments.js")
     load = js[js.index("async loadInvoices(") : js.index("_autoApply() {")]
     assert "status=sent" not in load and "status=partial" not in load
-    assert "/invoices?customer_id=${customerId}&open_only=true`" in load
+    assert "/invoices?customer_id=${customerId}&open_only=true&billed_to=true`" in load
 
 
 def test_a_draft_invoice_can_be_paid(client, seed_accounts, seed_customer):

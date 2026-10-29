@@ -114,7 +114,7 @@ SlowBooks-Pro-2026/
 ├── scripts/
 │   ├── seed_database.py      # Seed the Chart of Accounts
 │   ├── seed_irs_mock_data.py # IRS Pub 583 mock data
-│   ├── run_recurring.py      # Cron script for recurring invoices
+│   ├── run_recurring.py      # Cron script for recurring invoices + auto-enter memorized transactions
 │   └── backup.sh             # PostgreSQL backup with rotation
 ├── screenshots/              # README + docs images
 ├── cloudflare/               # Self-hosted Cloudflare Worker AI gateway

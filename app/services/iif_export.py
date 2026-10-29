@@ -279,7 +279,7 @@ def _item_fields(il, rate: Decimal = Decimal("1"), home_amount=None) -> list[str
 def _customer_job(db: Session, customer, job_id) -> str:
     """QuickBooks' NAME for a sale, raw: "Customer" or "Customer:Job" (the
     caller cleans it as it does any name)."""
-    name = customer.name if customer else ""
+    name = customer.qb_name if customer else ""
     if job_id:
         from app.models.jobs import Job
 
@@ -385,6 +385,18 @@ def export_customers(db: Session) -> str:
     customers = (
         db.query(Customer).filter(Customer.is_active).order_by(Customer.name).all()
     )
+    # A sub-customer (#638) goes out as QuickBooks' "Parent:Sub", right
+    # after its parent so the parent is on file first. The top-level rows
+    # keep the database's name order, as they always have: a company with
+    # no sub-customers exports exactly as before.
+    position = {c.id: i for i, c in enumerate(customers)}
+    customers.sort(
+        key=lambda c: (
+            position.get(c.parent_customer_id, position[c.id]),
+            c.parent_customer_id is not None,
+            position[c.id],
+        )
+    )
 
     lines = header
     for c in customers:
@@ -402,7 +414,7 @@ def export_customers(db: Session) -> str:
         lines += _iif_line(
             [
                 "CUST",
-                _iif_text(c.name),
+                _iif_text(c.qb_name),
                 _iif_text(c.company),
                 _iif_text(first),
                 _iif_text(last),
@@ -427,7 +439,9 @@ def export_customers(db: Session) -> str:
         # QuickBooks "Customer:Job" — every job goes out as a CUST row under
         # its customer, which is exactly what the importer splits back.
         for job in sorted(getattr(c, "jobs", None) or [], key=lambda j: j.name):
-            lines += _iif_line(["CUST", _iif_text(f"{c.name}:{job.name}")] + [""] * 14)
+            lines += _iif_line(
+                ["CUST", _iif_text(f"{c.qb_name}:{job.name}")] + [""] * 14
+            )
     return lines
 
 
@@ -544,7 +558,9 @@ def export_invoices(db: Session, date_from: date = None, date_to: date = None) -
     lines = header
     for inv in invoices:
         cls = _class_name(db, getattr(inv, "class_id", None))
-        cust_name = _iif_text(inv.customer.name) if inv.customer else ""
+        # every NAME is QuickBooks' spelling: "Parent:Sub" for a
+        # sub-customer (#638), on the SPL rows as on the TRNS row
+        cust_name = _iif_text(_customer_job(db, inv.customer, None))
         # the TRNS row names the Customer:Job, so the job survives the trip
         header_name = _iif_text(
             _customer_job(db, inv.customer, getattr(inv, "job_id", None))
@@ -689,7 +705,8 @@ def export_payments(db: Session, date_from: date = None, date_to: date = None) -
         if receipt_part and amount <= 0:
             continue
         cls = _class_name(db, getattr(pmt, "class_id", None))
-        cust_name = _iif_text(pmt.customer.name) if pmt.customer else ""
+        # "Parent:Sub" for a sub-customer's payment (#638)
+        cust_name = _iif_text(_customer_job(db, pmt.customer, None))
         pmt_date = _iif_date(pmt.date)
         pay_rate = _rate(pmt)
 
@@ -800,7 +817,8 @@ def export_estimates(db: Session) -> str:
     lines = header
     for est in estimates:
         cls = _class_name(db, getattr(est, "class_id", None))
-        cust_name = _iif_text(est.customer.name) if est.customer else ""
+        # "Parent:Sub" for a sub-customer's estimate (#638)
+        cust_name = _iif_text(_customer_job(db, est.customer, None))
         est_date = _iif_date(est.date)
         total = Decimal(str(est.total or 0))
 
@@ -1117,7 +1135,8 @@ def export_sales_receipts(
     lines = _txn_header(_TXN_COLUMNS, _SPL_ITEM_COLUMNS)
     for inv in q.order_by(Invoice.date, Invoice.id).all():
         cls = _class_name(db, inv.class_id)
-        cust = inv.customer.name if inv.customer else ""
+        # "Parent:Sub" for a sub-customer's receipt (#638), on every row
+        cust = _customer_job(db, inv.customer, None)
         header_name = _customer_job(db, inv.customer, getattr(inv, "job_id", None))
         pay = (
             db.query(Payment)

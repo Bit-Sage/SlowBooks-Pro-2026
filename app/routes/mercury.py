@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +14,7 @@ from app.models.banking import BankAccount, BankTransaction
 from app.schemas.common import StrictModel
 from app.services import mercury_service as mercury
 from app.services import mercury_balances as balances
+from app.services.bank_posting import feed_for_ledger_account
 from app.services.currency import home_currency
 from app.services.ofx_import import import_transactions
 from app.services.settings_service import get_setting_raw, set_setting
@@ -25,7 +27,10 @@ class ConnectRequest(StrictModel):
 
 
 class MappingRequest(StrictModel):
-    mapping: dict[UUID, int]
+    mapping: dict[UUID, int] = {}
+    # Mercury account -> a bank account in the chart: its bank feed record
+    # is used, or made when it has none (bank_posting.feed_for_ledger_account).
+    ledger_mapping: Optional[dict[UUID, int]] = None
 
 
 class SyncRequest(StrictModel):
@@ -154,6 +159,12 @@ def refresh(db: Session = Depends(get_db)):
 def save_mapping(payload: MappingRequest, db: Session = Depends(get_db)):
     _token(db)
     mapping = {str(k): v for k, v in payload.mapping.items() if v}
+    for k, ledger_account_id in (payload.ledger_mapping or {}).items():
+        if not ledger_account_id:
+            mapping.pop(str(k), None)
+            continue
+        feed = feed_for_ledger_account(db, ledger_account_id, kinds=("bank",))
+        mapping[str(k)] = feed.id
     _validate_mapping(db, mapping, json.loads(_setting(db, "accounts_cache", "[]")))
     set_setting(db, "mercury_account_map", json.dumps(mapping))
     db.commit()

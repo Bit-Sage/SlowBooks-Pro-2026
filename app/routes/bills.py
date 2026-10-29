@@ -190,7 +190,7 @@ def _post_bill_lines(
         record_purchase,
     )
 
-    inv_receipts = []  # [(item, quantity, unit_cost), ...]
+    inv_receipts = []  # [(item, quantity, unit_cost, line number), ...]
 
     # Round per line so stored BillLine.amount matches compute_line_totals
     # and the JE debit lands on the same cents as the rounded AP credit.
@@ -236,6 +236,7 @@ def _post_bill_lines(
                         unit_cost_with_tax(
                             amt, tax_shares[i], line_data.quantity, line_data.rate
                         ),
+                        i + 1,
                     )
                 )
         elif amt > 0 or line_data.account_id:
@@ -336,8 +337,11 @@ def _post_bill_lines(
         bill.transaction_id = txn.id
 
     # Phase 11: record inventory movements (no additional JE — the bill's
-    # existing JE already debits the Inventory Asset account for these lines)
-    for item, qty, unit_cost in inv_receipts:
+    # existing JE already debits the Inventory Asset account for these lines;
+    # a receipt into a count below zero posts what the hole cost under the
+    # bill, W-60). The memo names the line, so a reversal can name the
+    # receipt it reverses (W-68).
+    for item, qty, unit_cost, line_no in inv_receipts:
         record_purchase(
             db,
             item,
@@ -345,7 +349,7 @@ def _post_bill_lines(
             unit_cost=unit_cost,
             source_type="bill",
             source_id=bill.id,
-            memo=f"Bill {bill.bill_number}",
+            memo=f"Bill {bill.bill_number} line {line_no}",
             post_journal=False,
             txn_date=txn_date,
         )
@@ -789,6 +793,19 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         if txn:
             check_closing_date(db, txn.date)
 
+    # The old receipts come out and the new lines go in (below): a net take
+    # past what is on hand is said in the response, or refused with the
+    # setting on, the way a sale past the stock is (W-67), before anything
+    # is written.
+    stock_warnings: list[str] = []
+    if needs_repost:
+        from app.routes.invoices.helpers import warn_or_refuse_shorts
+        from app.services.inventory_hooks import oversold_by_reversal
+
+        stock_warnings = warn_or_refuse_shorts(
+            db, oversold_by_reversal(db, bill, effective_lines), "edit"
+        )
+
     renumbered = number != bill.bill_number or vendor.id != bill.vendor_id
     for key, val in update_data.items():
         setattr(bill, key, val)
@@ -806,22 +823,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
 
     if needs_repost:
         from app.routes.invoices.helpers import _reverse_and_delete_journal
-        from app.services.inventory_service import _append_movement
-        from app.models.items import MovementType as _MovementType
-
-        # What the old lines received into stock, to be reversed below so
-        # the stock ledger nets to the edit (an invoice edit posts the delta
-        # of its sales the same way).
-        old_receipts: dict[int, tuple[Decimal, Decimal]] = {}
-        for ln in bill.lines:
-            if ln.item_id and ln.quantity and ln.quantity > 0:
-                it = db.query(Item).filter(Item.id == ln.item_id).first()
-                if it and it.track_inventory:
-                    q, _c = old_receipts.get(ln.item_id, (Decimal("0"), Decimal("0")))
-                    old_receipts[ln.item_id] = (
-                        q + Decimal(str(ln.quantity)),
-                        Decimal(str(ln.rate)),
-                    )
+        from app.services.inventory_hooks import reverse_receipts_for_bill
 
         # each old line leaves a DELETE event with its amounts (#289)
         audited_bulk_delete(db, db.query(BillLine).filter(BillLine.bill_id == bill.id))
@@ -840,18 +842,17 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
         bill.total = total
         bill.balance_due = _q(total - retainage_held - amount_paid)
 
-        for item_id, (qty, unit_cost) in old_receipts.items():
-            it = db.query(Item).filter(Item.id == item_id).first()
-            _append_movement(
-                db,
-                it,
-                _MovementType.VOID,
-                quantity=-qty,
-                unit_cost=unit_cost,
-                source_type="bill_edit",
-                source_id=bill.id,
-                memo=f"Edit Bill {bill.bill_number}: previous receipt reversed",
-            )
+        # What the old lines received into stock comes back out, each
+        # receipt at the cost it went in at (#646), before the new lines are
+        # received below, so the stock ledger nets to the edit (an invoice
+        # edit posts the delta of its sales the same way).
+        reverse_receipts_for_bill(
+            db,
+            bill,
+            source_type="bill_edit",
+            txn_date=bill.date,
+            memo="Edit {receipt}: previous receipt reversed",
+        )
         _post_bill_lines(
             db,
             bill,
@@ -897,6 +898,7 @@ def update_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db)):
     resp = BillResponse.model_validate(bill)
     resp.vendor_name = vendor.name
     resp.vendor_compliance = VendorCompliance(**vendor_compliance(vendor))
+    resp.warnings = stock_warnings
     return resp
 
 
@@ -924,6 +926,15 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     # can be reversed into a locked period.
     check_closing_date(db, bill.date)
 
+    # The receipts still in stock come back out: past what is on hand, the
+    # void says so in the response, or is refused with the setting on, the
+    # way a sale past the stock is (W-67), before anything is written.
+    from app.routes.invoices.helpers import warn_or_refuse_shorts
+    from app.services.inventory_hooks import oversold_by_reversal
+
+    stock_warnings = warn_or_refuse_shorts(db, oversold_by_reversal(db, bill), "void")
+
+    reversal_id = None
     if bill.transaction_id:
         from app.models.transactions import TransactionLine
 
@@ -934,7 +945,7 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
         )
         reverse_lines = reversing_lines(original_lines)
         if reverse_lines:
-            create_journal_entry(
+            reversal_id = create_journal_entry(
                 db,
                 bill.date,
                 f"VOID Bill {bill.bill_number}",
@@ -943,28 +954,22 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
                 source_id=bill.id,
                 class_id=bill.class_id,
                 job_id=bill.job_id,
-            )
+            ).id
 
-    # Phase 11: reverse inventory receipts (the reversing JE already undoes
-    # the Inventory Asset side; we just need the movement rows)
-    from app.services.inventory_service import _append_movement
-    from app.models.items import MovementType as _MovementType
+    # Phase 11: the receipts come back out at the cost they went in at, one
+    # reversal per receipt naming it and linked to the reversing entry, which
+    # already undoes the Inventory side (#646; what the pool cannot absorb is
+    # posted by the hook, #647).
+    from app.services.inventory_hooks import reverse_receipts_for_bill
 
-    for line in bill.lines:
-        if not line.item_id:
-            continue
-        item = db.query(Item).filter(Item.id == line.item_id).first()
-        if item and item.track_inventory and line.quantity > 0:
-            _append_movement(
-                db,
-                item,
-                _MovementType.VOID,
-                quantity=-Decimal(str(line.quantity)),
-                unit_cost=Decimal(str(line.rate)),
-                source_type="bill_void",
-                source_id=bill.id,
-                memo=f"VOID Bill {bill.bill_number}",
-            )
+    reverse_receipts_for_bill(
+        db,
+        bill,
+        source_type="bill_void",
+        txn_date=bill.date,
+        memo="VOID {receipt}",
+        transaction_id=reversal_id,
+    )
 
     # Give the billed dollars back to the commitment this bill drew on, and
     # reopen it (#553): the reversing JE above already backed out the A/P and
@@ -1008,4 +1013,5 @@ def void_bill(bill_id: int, db: Session = Depends(get_db)):
     if bill.vendor:
         resp.vendor_name = bill.vendor.name
         resp.vendor_compliance = VendorCompliance(**vendor_compliance(bill.vendor))
+    resp.warnings = stock_warnings
     return resp

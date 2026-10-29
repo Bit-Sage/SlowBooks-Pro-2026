@@ -194,7 +194,7 @@ const EstimatesPage = {
 
     async showForm(id = null) {
         const [customers, items, settings] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
         ]);
@@ -219,7 +219,7 @@ const EstimatesPage = {
         EstimatesPage._items = items;
 
         EstimatesPage._customers = customers;
-        const custOpts = customers.map(c => `<option value="${c.id}" ${est.customer_id==c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}" ${est.customer_id==c.id?'selected':''}>${escapeHtml(customerLabel(c))}</option>`).join('');
 
         openModal(id ? 'Edit Estimate' : 'New Estimate', `
             <form id="est-form" onsubmit="EstimatesPage.save(event, ${id})">

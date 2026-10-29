@@ -20,6 +20,8 @@ from app.services.jobs_service import (
     refuse_other_customers_jobs_on_edit,
 )
 from app.services.recurring_service import (
+    InstallmentTaken,
+    anchor_day_of,
     generate_due_invoices,
     roll_next_due_forward,
 )
@@ -66,6 +68,30 @@ def _refuse_end_before_start(start: date, end: date | None) -> None:
                 "or after the start date, or leave it blank for no end."
             ),
         )
+
+
+def _ended_on_resume(stored: date | None, sent: date, resumes: date) -> str:
+    """Why ticking Active again is refused: the schedule would be past its
+    end date on its first installment. The request is refused and rolled
+    back, so the end date named is the one the schedule has, not the one
+    the request sent (2.31.1 gate W-81(c) quoted the request's); an end date
+    sent that is still too early is named as such, with the date the
+    schedule would resume on."""
+    tail = "; move or clear the end date first."
+    if sent == stored:
+        return f"This schedule has ended: its end date was {stored.isoformat()}" + tail
+    sent_too_early = (
+        f"the end date sent, {sent.isoformat()}, is before "
+        f"{resumes.isoformat()}, the next due date it would resume on, so "
+        "nothing was changed"
+    )
+    if stored is None:
+        return "This schedule would end as soon as it resumed: " + sent_too_early + tail
+    return (
+        f"This schedule has ended: its end date was {stored.isoformat()}, and "
+        + sent_too_early
+        + tail
+    )
 
 
 def _schedule_noun(db: Session) -> str:
@@ -149,6 +175,7 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
         )
 
     was_active = rec.is_active
+    stored_end = rec.end_date
     for key, val in changes.items():
         setattr(rec, key, val)
 
@@ -157,8 +184,19 @@ def update_recurring(rec_id: int, data: RecurringUpdate, db: Session = Depends(g
     # closing date made generate refuse every schedule). When Active goes
     # from off to on, roll next_due forward by whole periods to the first
     # occurrence on or after today; missed periods are skipped, not billed.
+    # The roll holds to the schedule's start day (2.31.1 gate W-85).
     if changes.get("is_active") and not was_active:
-        rec.next_due = roll_next_due_forward(rec.next_due, rec.frequency, date.today())
+        rec.next_due = roll_next_due_forward(
+            rec.next_due, rec.frequency, date.today(), 1, anchor_day_of(rec)
+        )
+        # Ticking Active on a schedule past its end date did nothing but
+        # answer 200 (2.31.1 gate W-81): it can never bill again until the
+        # end date moves, so say so. An end date cleared or moved past the
+        # next due date in the same request is what makes it active again.
+        if rec.end_date and rec.next_due > rec.end_date:
+            detail = _ended_on_resume(stored_end, rec.end_date, rec.next_due)
+            db.rollback()
+            raise HTTPException(status_code=409, detail=detail)
 
     if data.lines is not None:
         db.query(RecurringInvoiceLine).filter(
@@ -214,11 +252,85 @@ def delete_recurring(rec_id: int, db: Session = Depends(get_db)):
     return {"message": "Recurring invoice deleted"}
 
 
+@router.post("/{rec_id}/generate")
+def generate_one(
+    rec_id: int,
+    dated: date = Query(default=None),
+    occurrence: date = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Enter this one schedule's installment now (#605, the Memorized
+    transactions page's Enter now), due or not: `occurrence`, the
+    installment the page showed (the next due date when not sent), dated
+    its scheduled date or `dated`; the schedule moves on from the scheduled
+    date. The installment is claimed before anything posts, so one that is
+    no longer the next (generated meanwhile by another window, Generate or
+    Enter All Due, or the schedule edited) is a 409, "That installment was
+    just generated", and nothing is created (2.31.1 gate W-71); one after
+    the next due date is a 409 saying it is not the next one."""
+    rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    asked = occurrence or rec.next_due
+    if asked != rec.next_due:
+        raise InstallmentTaken(rec, asked)
+    # Ended before paused (2.31.1 gate W-64): the generator marks a schedule
+    # past its end date inactive, so the paused sentence fired for one that
+    # had ended, and resuming it would not have helped.
+    if rec.end_date and rec.next_due > rec.end_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This schedule has ended: its end date was "
+                f"{rec.end_date.isoformat()}, so nothing was created. Move or "
+                "clear the end date to bill it again."
+            ),
+        )
+    if not rec.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This schedule is paused. Resume it to enter the invoice, "
+                "or enter one by hand."
+            ),
+        )
+    skipped: list = []
+    created_ids = generate_due_invoices(
+        db,
+        rec.next_due,
+        skipped=skipped,
+        only_id=rec.id,
+        dated=dated,
+        occurrence=asked,
+    )
+    if skipped:
+        raise HTTPException(status_code=409, detail=skipped[0]["message"])
+    if not created_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This {_schedule_noun(db)} is past its end date, so nothing "
+                "was created. Move or clear the end date to bill it again."
+            ),
+        )
+    db.refresh(rec)
+    return {
+        "invoices_created": len(created_ids),
+        "invoice_ids": created_ids,
+        "occurrence": asked,
+        "next_due": rec.next_due,
+        "skipped": skipped,
+    }
+
+
 @router.post("/generate")
 def generate_now(as_of: date = Query(default=None), db: Session = Depends(get_db)):
     """Manually trigger generation of all due recurring invoices — one
     installment per template per call. `as_of` (default today) lets a
-    catch-up or a test run generate a past installment deterministically."""
+    catch-up or a test run generate a past installment deterministically.
+    Each installment is claimed before it posts, so two at once never
+    invoice one period twice; a schedule another generation holds is
+    skipped and named."""
     skipped: list = []
     created_ids = generate_due_invoices(db, as_of, skipped=skipped)
     return {

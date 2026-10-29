@@ -322,3 +322,164 @@ def test_the_setting_round_trips(client):
     settings_js = _source("js/settings.js")
     assert 'name="inventory_refuse_oversell" value="true" data-bool' in settings_js
     assert "Refuse a sale of more than is on hand" in settings_js
+
+
+# -------------------------------------------------------------------------
+# A bill's void or edit after its stock has sold (W-67, 2.31.1 gate)
+# -------------------------------------------------------------------------
+
+
+def _received(client, db_session, seed_accounts, qty=5, bill_number="B-1"):
+    """A stock item with no history, and a bill that brings `qty` at 10.00."""
+    from tests.test_inventory import _create_bill_for_inventory, _seed_vendor
+
+    vendor = _seed_vendor(db_session)
+    item = _stock_item(db_session, seed_accounts, on_hand=0)
+    bill = _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=qty, unit_cost="10.00", bill_number=bill_number
+    )
+    return vendor, item, bill
+
+
+def _bill_lines(item_id, qty):
+    return [
+        {
+            "item_id": item_id,
+            "description": "Stock receipt",
+            "quantity": str(qty),
+            "rate": "10.00",
+        }
+    ]
+
+
+def _movement_count(db_session, item_id):
+    return db_session.query(InventoryMovement).filter_by(item_id=item_id).count()
+
+
+def test_a_bill_void_after_its_stock_has_sold_says_so(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Five received, three sold, two on hand: the void takes the five back
+    out, posts as before (-3 on hand), and the response says so."""
+    _vendor, item, bill = _received(client, db_session, seed_accounts)
+    assert _sell(client, seed_customer.id, _lines((item.id, 3))).status_code == 201
+    r = client.post(f"/api/bills/{bill['id']}/void")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "void"
+    assert r.json()["warnings"] == ["Widget: 2 on hand; this void takes it to -3."]
+    assert _on_hand(db_session, item.id) == Decimal("-3")
+
+
+def test_a_bill_void_within_the_stock_has_no_warning(
+    client, db_session, seed_accounts, seed_customer
+):
+    from tests.test_inventory import _create_bill_for_inventory
+
+    vendor, item, first = _received(client, db_session, seed_accounts)
+    _create_bill_for_inventory(
+        client, vendor.id, item.id, qty=5, unit_cost="10.00", bill_number="B-2"
+    )
+    assert _sell(client, seed_customer.id, _lines((item.id, 3))).status_code == 201
+    r = client.post(f"/api/bills/{first['id']}/void")
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    assert _on_hand(db_session, item.id) == Decimal("2")
+
+
+def test_a_bill_edit_below_what_has_sold_says_so(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Five received, three sold: editing the bill to one takes four back
+    out of the two on hand. Posted, and said."""
+    _vendor, item, bill = _received(client, db_session, seed_accounts)
+    assert _sell(client, seed_customer.id, _lines((item.id, 3))).status_code == 201
+    r = client.put(f"/api/bills/{bill['id']}", json={"lines": _bill_lines(item.id, 1)})
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == ["Widget: 2 on hand; this edit takes it to -2."]
+    assert _on_hand(db_session, item.id) == Decimal("-2")
+
+
+def test_a_bill_edit_that_keeps_what_has_sold_says_nothing(
+    client, db_session, seed_accounts, seed_customer
+):
+    """Editing five down to three with three sold lands on zero: not short.
+    A header-only edit moves no stock at all."""
+    _vendor, item, bill = _received(client, db_session, seed_accounts)
+    assert _sell(client, seed_customer.id, _lines((item.id, 3))).status_code == 201
+    r = client.put(f"/api/bills/{bill['id']}", json={"lines": _bill_lines(item.id, 3)})
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    assert _on_hand(db_session, item.id) == Decimal("0")
+    r = client.put(f"/api/bills/{bill['id']}", json={"notes": "same stock"})
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    assert _on_hand(db_session, item.id) == Decimal("0")
+
+
+def test_with_the_setting_on_a_bill_void_past_the_stock_is_refused_and_nothing_posts(
+    client, db_session, seed_accounts, seed_customer
+):
+    from tests.test_credit_memo_return_cogs import _entries
+
+    _vendor, item, bill = _received(client, db_session, seed_accounts)
+    sale = _sell(client, seed_customer.id, _lines((item.id, 3)))
+    assert sale.status_code == 201
+    _refuse(client, True)
+    before = _movement_count(db_session, item.id)
+
+    r = client.post(f"/api/bills/{bill['id']}/void")
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == (
+        "Widget: 2 on hand; this void takes it to -3, 3 short. Void the sale "
+        "that took the stock first, or turn off Refuse a sale of more than is "
+        "on hand under Settings."
+    )
+    assert client.get(f"/api/bills/{bill['id']}").json()["status"] == "unpaid"
+    assert _on_hand(db_session, item.id) == Decimal("2")
+    assert _movement_count(db_session, item.id) == before
+    assert _entries(db_session, "bill_void", bill["id"]) == []
+    # the sale voided first, the bill's void is within the stock
+    assert client.post(f"/api/invoices/{sale.json()['id']}/void").status_code == 200
+    r = client.post(f"/api/bills/{bill['id']}/void")
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    assert _on_hand(db_session, item.id) == Decimal("0")
+
+
+def test_with_the_setting_on_a_bill_edit_past_the_stock_keeps_the_bill_as_it_was(
+    client, db_session, seed_accounts, seed_customer
+):
+    _vendor, item, bill = _received(client, db_session, seed_accounts)
+    assert _sell(client, seed_customer.id, _lines((item.id, 3))).status_code == 201
+    _refuse(client, True)
+    before = _movement_count(db_session, item.id)
+
+    r = client.put(f"/api/bills/{bill['id']}", json={"lines": _bill_lines(item.id, 1)})
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == (
+        "Widget: 2 on hand; this edit takes it to -2, 2 short. Keep at least "
+        "what has sold on the bill, void the sale that took it, or turn off "
+        "Refuse a sale of more than is on hand under Settings."
+    )
+    kept = client.get(f"/api/bills/{bill['id']}").json()
+    assert [Decimal(ln["quantity"]) for ln in kept["lines"]] == [Decimal("5")]
+    assert Decimal(kept["total"]) == Decimal("50.00")
+    assert _on_hand(db_session, item.id) == Decimal("2")
+    assert _movement_count(db_session, item.id) == before
+    # down to what has sold is within the stock
+    r = client.put(f"/api/bills/{bill['id']}", json={"lines": _bill_lines(item.id, 3)})
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    assert _on_hand(db_session, item.id) == Decimal("0")
+
+
+def test_the_bills_page_shows_the_warnings():
+    src = _source("js/bills.js")
+    assert (
+        "for (const w of (saved && saved.warnings) || []) toast(w, 'warning');" in src
+    )
+    assert (
+        "for (const w of (voided && voided.warnings) || []) toast(w, 'warning');" in src
+    )

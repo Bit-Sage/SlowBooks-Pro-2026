@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Slowbooks Pro 2026</title>
+    <!-- First, before every other script: when the scripts cannot run in
+         this web engine, it puts what to do where a white page would be
+         (boot_check.js; tests/test_boot_check.py keeps it first). -->
+    <script src="/static/js/boot_check.js"></script>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/dark.css">
 </head>
@@ -118,6 +122,8 @@
                         <span class="nav-icon" aria-hidden="true">&#9874;</span> Jobs</a></li>
                     <li><a href="#/invoices" class="nav-link" data-page="invoices">
                         <span class="nav-icon" aria-hidden="true">&#9830;</span> Invoices</a></li>
+                    <li data-write><a href="#/quick-entry" class="nav-link" data-page="quick-entry">
+                        <span class="nav-icon" aria-hidden="true">&#8801;</span> Quick Entry</a></li>
                     <li><a href="#/sales-receipts" class="nav-link" data-page="sales-receipts">
                         <span class="nav-icon" aria-hidden="true">&#9635;</span> Sales Receipts</a></li>
                     <li data-nonprofit data-hidden-kind="1" hidden><a href="#/in-kind-gifts" class="nav-link" data-page="in-kind-gifts">
@@ -128,6 +134,8 @@
                         <span class="nav-icon" aria-hidden="true">&#9733;</span> Payments</a></li>
                     <li><a href="#/recurring" class="nav-link" data-page="recurring">
                         <span class="nav-icon" aria-hidden="true">&#8634;</span> Recurring Invoices</a></li>
+                    <li><a href="#/memorized" class="nav-link" data-page="memorized">
+                        <span class="nav-icon" aria-hidden="true">&#9783;</span> Memorized Transactions</a></li>
                     <li><a href="#/credit-memos" class="nav-link" data-page="credit-memos">
                         <span class="nav-icon" aria-hidden="true">&#8722;</span> Credit Memos</a></li>
                     <!-- data-write: a page that only enters things. A read-only
@@ -304,6 +312,7 @@
     <script src="/static/js/vendor_credits.js"></script>
     <!-- Phase 3: Productivity -->
     <script src="/static/js/recurring.js"></script>
+    <script src="/static/js/memorized.js"></script>
     <script src="/static/js/batch_payments.js"></script>
     <!-- Phase 5: Advanced Integration -->
     <script src="/static/js/tax.js"></script>

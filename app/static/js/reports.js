@@ -2320,7 +2320,7 @@ const ReportsPage = {
         prefill = prefill || {};
         const params = { customer_id: prefill.customer_id || null, class_id: prefill.class_id || null, job_id: prefill.job_id || null };
         let customers = [], classes = [], jobs = [];
-        try { customers = await API.get('/customers?active_only=true'); } catch (e) { customers = []; }
+        try { customers = (await API.get('/customers?active_only=true&tree=1')).map(c => ({ ...c, name: customerLabel(c) })); } catch (e) { customers = []; }
         try { classes = await API.get('/classes?include_archived=true'); } catch (e) { classes = []; }
         try { jobs = await API.get('/jobs?include_inactive=true'); } catch (e) { jobs = []; }
         const toolbar =
@@ -2407,8 +2407,8 @@ const ReportsPage = {
 
     async customerStatementPicker() {
         ReportsPage.setAddress('customer-statement', {});
-        const customers = await API.get("/customers?active_only=true");
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+        const customers = await API.get("/customers?active_only=true&tree=1");
+        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join("");
         openModal(T("Customer Statement"), `
             <form onsubmit="ReportsPage.openStatement(event)" data-readonly-ok>
                 <!-- minmax(0, …) and width:100%: a select sizes itself to its
@@ -2461,7 +2461,11 @@ const ReportsPage = {
             const name = (i) => i.customer_id
                 ? ReportsPage._rowLink(`ReportsPage.openCustomer(${i.customer_id}, this)`, i.customer_name, `customer:${i.customer_id}`)
                 : escapeHtml(i.customer_name);
-            let rows = data.items.map(i => agingRow(i, name(i))).join("");
+            // A sub-customer billed with its parent (#638) is on the
+            // parent's row; what each such sub contributed shows under it,
+            // muted, and is not added again (the parent's row has it).
+            const subRow = (s) => agingRow(s, `<span style="padding-left:18px;">${name(s)}</span>`, 'color:var(--text-muted); font-size:12px;');
+            let rows = data.items.map(i => agingRow(i, name(i)) + (i.subs || []).map(subRow).join("")).join("");
             const t = data.totals;
             rows += agingRow(t, 'TOTAL', 'font-weight:700; background:var(--gray-50);');
             return `${ReportsPage._exportButtons('ar-aging', csvQs, ['csv'])}

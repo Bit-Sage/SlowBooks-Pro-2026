@@ -72,6 +72,7 @@ const App = {
         '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit',  document: true, render: (id) => App.withDocument(() => VendorCreditsPage.render(), () => VendorCreditsPage.view(id)) },
         // Phase 3: Productivity
         '/recurring':     { page: 'recurring',       label: 'Recurring Invoices', render: () => RecurringPage.render() },
+        '/memorized':     { page: 'memorized',       label: 'Memorized Transactions', render: () => MemorizedPage.render() },
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
         // Phase 4: CSV Import/Export
         '/csv':           { page: 'csv',             label: 'CSV Import/Export',  render: () => App.renderCSV() },
@@ -1080,7 +1081,9 @@ const App = {
         'PurchaseOrdersPage.subPayApp', 'PurchaseOrdersPage.releaseRetainage',
         'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
         'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',
-        'RecurringPage.del', 'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
+        'RecurringPage.del', 'MemorizedPage.enter', 'MemorizedPage.doEnter', 'MemorizedPage.pause', 'MemorizedPage.resume',
+        'MemorizedPage.del', 'MemorizedPage.enterAllDue', 'MemorizedPage.memorizeBill', 'MemorizedPage.memorizeJournal',
+        'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
         'TimeEntriesPage.reject', 'PayrollPage.process', 'PTOPage.approveRequest', 'PTOPage.rejectRequest',
         'PTOPage.runAccrual', 'PTOPage.revalue', 'DeductionsPage.endGarnishment', 'BenefitsPage.endEnrollment',
         'BenefitsPage.retireCode', 'BenefitsPage.seedStandard', 'BenefitsPage.setupAccounts', 'BenefitsPage.rebuildYTD',
@@ -2091,12 +2094,12 @@ const App = {
     // Quick Entry mode — batch invoice entry for paper invoice backlog
     async renderQuickEntry() {
         const [customers, items] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
         ]);
         App._qeCustomers = customers;
         App._qeItems = items;
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join('');
         // "+ New Customer", as on the New Invoice form (#484): the customer
         // is added in place and picked, and nothing else typed is lost. A
         // read-only or accountant sign-in is not offered it (the server
@@ -2216,7 +2219,7 @@ const App = {
         (App._qeCustomers = App._qeCustomers || []).push(cust);
         const sel = $('#qe-customer');
         if (sel && !sel.querySelector(`option[value="${cust.id}"]`)) {
-            sel.insertAdjacentHTML('beforeend', `<option value="${cust.id}">${escapeHtml(cust.name)}</option>`);
+            sel.insertAdjacentHTML('beforeend', `<option value="${cust.id}">${escapeHtml(customerLabel(cust))}</option>`);
         }
         if (sel) {
             sel.value = String(cust.id);
@@ -2473,6 +2476,20 @@ const App = {
             if (t) t.textContent = ' ' + T(t.textContent.trim());
         });
         $$('#topbar .tb-btn[data-action]').forEach(b => { b.textContent = T(b.textContent.trim()); });
+        // The bar's buttons that have a shortcut name it, as the pages' own
+        // buttons do: the hover reads "Quick Entry (Alt+Q)", a screen reader
+        // hears the ARIA token (2.31.1 gate W-87: Alt+Q was labelled nowhere).
+        for (const [sel, letter] of [
+            ['[data-nav="#/"]', 'H'],
+            ['[data-action="InvoicesPage.showForm"]', 'N'],
+            ['[data-action="PaymentsPage.showForm"]', 'P'],
+            ['[data-nav="#/quick-entry"]', 'Q'],
+        ]) {
+            const b = document.querySelector('#topbar .tb-btn' + sel);
+            if (!b) continue;
+            b.title = `${b.textContent.trim()} (${App.isMac() ? '⌥' : 'Alt+'}${letter})`;
+            b.setAttribute('aria-keyshortcuts', 'Alt+' + letter);
+        }
         const search = $('#global-search');
         if (search) search.placeholder = Terms.text(search.placeholder);
         const np = Terms.isNonprofit();
@@ -2673,6 +2690,10 @@ const App = {
             App.applyTerminology();
             App.renderOpenTabs();  // the session's open screens (#336)
             App.navigate(location.hash || '#/');
+            // The first page has started (its status bar says Loading):
+            // boot_check.js stops waiting for a first screen. Its data can
+            // take a while on a big company, and that is not a failed start.
+            if (window.SlowBooksBoot) window.SlowBooksBoot.drawn();
         });
     },
 

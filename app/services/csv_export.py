@@ -129,6 +129,12 @@ def export_customers(db: Session) -> str:
     # Customer.balance is never written; the balance is summed from the
     # open documents (services/contact_balances).
     balances = customer_balances(db, [c.id for c in customers])
+    # Name is the customer's full name, "Parent: Sub" for a sub-customer
+    # (#638; 2.31.1 gate, W-61): two properties' Unit 1 rows are told
+    # apart. The parents are read in one query for their names.
+    parent_ids = {c.parent_customer_id for c in customers if c.parent_customer_id}
+    if parent_ids:
+        db.query(Customer).filter(Customer.id.in_(parent_ids)).all()
     output = io.StringIO()
     writer = _SafeWriter(output)
     writer.writerow(
@@ -150,7 +156,7 @@ def export_customers(db: Session) -> str:
         writer.writerow(
             [
                 c.id,
-                c.name,
+                c.full_name,
                 c.company or "",
                 c.email or "",
                 _Identifier(c.phone or ""),

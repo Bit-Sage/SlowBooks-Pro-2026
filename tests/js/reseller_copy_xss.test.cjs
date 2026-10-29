@@ -44,8 +44,9 @@ async function renderVerify(value) {
     const customers = [{ id: 1, name: value, tax_id: value }];
     const context = {
         escapeHtml,
+        customerLabel: (c) => c.full_name || c.name,  // utils.js: "Parent: Sub" for a sub-customer (#638)
         toast: () => {},
-        API: { get: async (url) => (url === '/customers' ? customers : url === '/vendors' ? [] : permit) },
+        API: { get: async (url) => (url.startsWith('/customers') ? customers : url === '/vendors' ? [] : permit) },  // the page asks for the tree (#638)
         openModal: (_title, html) => { shown = html; },
     };
     vm.createContext(context);

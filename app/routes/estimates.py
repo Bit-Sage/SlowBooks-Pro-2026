@@ -31,6 +31,7 @@ from app.services.estimating import (
     fmt_pct,
     is_included_line,
 )
+from app.services.sub_customers import invoice_addresses
 from app.services.terminology import terms_from_db
 from app.models.estimates import Estimate, EstimateLine, EstimateStatus
 from app.models.invoices import Invoice, InvoiceLine
@@ -695,6 +696,8 @@ def convert_to_invoice(
         bool(data and data.allow_over_credit_limit),
         "invoice",
         question=None,
+        # the action at hand: Convert, not Save (2.31.1 gate, a round-3 note)
+        ask="Convert it anyway?",
     )
 
     invoice_number = next_invoice_number(db)
@@ -708,17 +711,15 @@ def convert_to_invoice(
     )
     due_date = _due_date_from_terms(today, terms)
 
-    # The bill-to is the estimate's, else the customer's, and the ship-to
-    # the customer's; the notes are the estimate's, else the company's
-    # default invoice notes. The converted invoice printed with no address
-    # and without the default notes (2.17.3 exploratory F21).
-    address = {f"bill_{k}": getattr(estimate, f"bill_{k}") for k in _ADDRESS_PARTS}
-    if customer and not any(address.values()):
-        address = _customer_bill_to(customer)
-    if customer:
-        address.update(
-            {f"ship_{k}": getattr(customer, f"ship_{k}") for k in _ADDRESS_PARTS}
-        )
+    # The invoice is billed as a new one is, as of now (2.31.1 gate, W-80):
+    # the Bill To whole is the payer's, the street with the name and
+    # country, so a tenant billed with its property gets the property's
+    # street under the property's name and "For: the tenant"; the ship-to
+    # is the customer's. (The estimate keeps its own copy of the customer's
+    # street, as it was saved.) The notes are the estimate's, else the
+    # company's default invoice notes; the converted invoice printed with
+    # no address and without the default notes (2.17.3 exploratory F21).
+    address = invoice_addresses(db, customer) if customer else {}
 
     # The copy carries the customer's jobs only; another customer's job
     # stored on the estimate (books from before the rule) is left off,

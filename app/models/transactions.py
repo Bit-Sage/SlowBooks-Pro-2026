@@ -52,6 +52,13 @@ class Transaction(Base):
     date = Column(Date, nullable=False, index=True)
     reference = Column(String(100), nullable=True)
     description = Column(Text, nullable=True)  # memo line
+    # The memo typed on an expense (#648), kept on its own. Its bank line
+    # holds the memo or, with none typed, the payee (the register shows it),
+    # so a memo that read like the payee was lost and a payee typed beside a
+    # vendor came back as the memo. "" is an expense saved with no memo;
+    # NULL is one saved before the column existed, whose memo is still read
+    # off its bank line. Other documents leave it empty.
+    memo = Column(Text, nullable=True)
     source_type = Column(String(50), nullable=True)
     source_id = Column(Integer, nullable=True)  # FK to the source record
 

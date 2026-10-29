@@ -456,7 +456,16 @@ def import_sales_receipt_report(db: Session, csv_text: str) -> dict:
                 continue
 
             cust_name = (rec["customer"] or "Walk-In Customer")[:200]
-            customer = db.query(Customer).filter(Customer.name == cust_name).first()
+            # a bare name is a top-level customer, never a sub-customer
+            # that shares it (#638)
+            customer = (
+                db.query(Customer)
+                .filter(
+                    Customer.name == cust_name,
+                    Customer.parent_customer_id.is_(None),
+                )
+                .first()
+            )
             if not customer:
                 customer = Customer(name=cust_name, is_active=True)
                 db.add(customer)

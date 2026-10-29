@@ -106,6 +106,12 @@ class InventoryMovementResponse(BaseModel):
     source_id: Optional[int]
     transaction_id: Optional[int]
     memo: Optional[str]
+    # The movement this one reverses or returns against (W-68): a bill's
+    # void or edit names each receipt it takes back out, a sale's void or
+    # quantity-down edit the sale posting, a credit memo's return the sale
+    # posting it comes off. None for a receipt, a sale, an adjustment, and
+    # a reversal from before the link existed.
+    reverses_movement_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

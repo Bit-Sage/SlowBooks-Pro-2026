@@ -62,7 +62,7 @@ from app.routes import purchase_orders, bills, bill_payments, credit_memos
 from app.routes import vendor_credits
 
 # Phase 3: Productivity
-from app.routes import recurring, batch_payments
+from app.routes import recurring, batch_payments, memorized
 
 # Phase 4: Communication & Export
 from app.routes import csv as csv_routes
@@ -568,7 +568,19 @@ async def lifespan(app: FastAPI):
             _db.close()
     except Exception:
         pass  # never block boot on the upgrader
-    yield
+    # #605 (2.31.1 gate W-66): enter what is due when the app opens, and
+    # once a day while it runs. A background task; the first request is
+    # not kept waiting for a backlog, and the Memorized transactions page
+    # says what was entered. Every way the app is served runs this
+    # lifespan: the desktop launcher's --_serve child (desktop_launcher.py
+    # _serve passes app.main.app to uvicorn), Server Edition and Docker.
+    from app.services import scheduler as _scheduler
+
+    _auto_enter = _scheduler.start()
+    try:
+        yield
+    finally:
+        await _scheduler.stop(_auto_enter)
 
 
 # FastAPI 0.121+ serializes return values to JSON bytes directly via Pydantic
@@ -1264,6 +1276,23 @@ async def _require_session(request: Request, call_next):
             )
         request.session["last_activity"] = now
 
+    # A person is signed in to this server's own company: the app's own run
+    # of the schedules, which waits for one when the company has a password,
+    # may go (2.31.1 gate W-70). A sign-in the app remembers counts as much
+    # as one typed; an API token, and a one-time password not yet replaced,
+    # do not.
+    if (
+        token_principal is None
+        and not request.session.get("must_change_password")
+        and _served_company.get() is None
+    ):
+        from app.services import scheduler as _scheduler
+
+        _scheduler.note_sign_in(
+            request.session.get("username") or "operator",
+            request.session.get("role"),
+        )
+
     return await call_next(request)
 
 
@@ -1446,6 +1475,7 @@ app.include_router(credit_memos.router)
 app.include_router(vendor_credits.router)
 # Phase 3: Productivity
 app.include_router(recurring.router)
+app.include_router(memorized.router)
 app.include_router(batch_payments.router)
 # Phase 4: Communication & Export
 app.include_router(csv_routes.router)
