@@ -4,12 +4,18 @@ schedule, entered by the scheduler (auto-enter) or from the due list
 a number of times; pause and resume; the one list of every schedule; the
 page's wiring and the migration."""
 
+import asyncio
 import runpy
+import sqlite3
+import threading
+import types
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
 
 import app.database
 import app.services.recurring_service as recurring_service
@@ -17,6 +23,8 @@ from app.models.bills import Bill
 from app.models.invoices import Invoice
 from app.models.memorized import MemorizedTransaction
 from app.models.transactions import Transaction, TransactionLine
+from app.schemas.memorized import EnterResponse
+from app.services import memorized_service, scheduler
 from app.services.memorized_service import enter_due_memorized
 from app.services.recurring_service import (
     _advance_next_due,
@@ -1044,3 +1052,596 @@ def test_the_page_hides_enter_now_on_a_paused_row_and_keeps_the_bills_tax_rate()
     script = (root / "scripts/run_recurring.py").read_text(encoding="utf-8")
     assert script.startswith("#!/usr/bin/env python3")
     assert "except (OperationalError, ProgrammingError)" in script
+
+
+# ---------------------------------------------------------------------------
+# from the 2.31.1 Windows gate, round 2 (W-57, W-63, W-64, W-65, W-66)
+# ---------------------------------------------------------------------------
+
+WAIT = 10  # seconds a racer waits at a barrier before the test fails
+
+
+@pytest.fixture
+def file_company(tmp_path, monkeypatch):
+    """A company in a file, opened the way the app opens one (WAL, the busy
+    timeout), so two sessions on two threads contend as two requests do; the
+    suite's one shared connection cannot race. An authenticated client on it
+    for the set-up, the session factory for the racers, and the chart's ids
+    in the shape _bill_schedule takes."""
+    import sqlalchemy as sa
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    import app.main as main
+    from app.database import Base, enable_sqlite_tuning, get_db
+    from app.models.accounts import Account, AccountType
+    from app.seed.chart_of_accounts import CHART_OF_ACCOUNTS
+    from tests.conftest import _wire_app
+
+    engine = sa.create_engine(
+        "sqlite:///" + (tmp_path / "race.db").as_posix(),
+        connect_args={"check_same_thread": False},
+    )
+    enable_sqlite_tuning(engine)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine, autoflush=False)
+    with Session() as s:
+        accounts = {}
+        for data in CHART_OF_ACCOUNTS:
+            a = Account(
+                account_number=data["account_number"],
+                name=data["name"],
+                account_type=AccountType(data["account_type"]),
+                bank_kind=data.get("bank_kind"),
+                detail_type=data.get("detail_type"),
+                is_system=True,
+                balance=Decimal("0"),
+            )
+            s.add(a)
+            accounts[a.account_number] = a
+        s.commit()
+        ids = {n: types.SimpleNamespace(id=a.id) for n, a in accounts.items()}
+    monkeypatch.setattr(app.database, "engine", engine)
+    monkeypatch.setattr(app.database, "SessionLocal", Session)
+    _wire_app(Session)
+    client = TestClient(main.app)
+    r = client.post("/api/auth/setup", json={"password": "test-password-123"})
+    assert r.status_code == 200, r.text
+    try:
+        yield client, Session, ids
+    finally:
+        main.app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+def _race(*workers):
+    """Each worker on its own thread, its result or its exception."""
+    out = [None] * len(workers)
+
+    def run(i, fn):
+        try:
+            out[i] = fn()
+        except Exception as exc:  # noqa: BLE001 - a 500 is a finding too
+            out[i] = exc
+
+    threads = [threading.Thread(target=run, args=(i, w)) for i, w in enumerate(workers)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(30)
+    assert not any(th.is_alive() for th in threads), "a racer hung"
+    return out
+
+
+def _claim_after_both_read(monkeypatch):
+    """Both racers have read the schedule (the same next date) before
+    either claims it: the barrier sits in front of the claim, once per
+    thread, so the contest is in the database, not in the test's timing."""
+    both_read = threading.Barrier(2)
+    real = memorized_service.claim_occurrence
+    passed = threading.local()
+
+    def claim(db, mem):
+        if not getattr(passed, "done", False):
+            passed.done = True
+            both_read.wait(WAIT)
+        return real(db, mem)
+
+    monkeypatch.setattr(memorized_service, "claim_occurrence", claim)
+
+
+def _words(doc):
+    """A doc's text with its line wrapping undone, for a sentence check."""
+    return " ".join((ROOT / doc).read_text(encoding="utf-8").split())
+
+
+def _one_bill_entered_once(Session, mem_id, number="20260131-HPL"):
+    with Session() as db:
+        bills = db.query(Bill).order_by(Bill.id).all()
+        assert [b.bill_number for b in bills] == [number]
+        row = db.get(MemorizedTransaction, mem_id)
+        assert row.entered_count == 1
+        assert row.next_date == date(2026, 2, 28)
+        assert row.last_entered_on == date(2026, 1, 31)
+        assert row.last_document_id == bills[0].id
+
+
+def test_two_enter_nows_at_once_post_one_document(file_company, monkeypatch):
+    """W-57: two Enter nows that both read the same next date each posted a
+    bill and wrote next date and count back once (two bills, entered_count
+    1). The schedule is now moved on in one guarded UPDATE before anything
+    posts; the second request matches no row and answers 409, naming the
+    schedule as it now stands, with nothing posted."""
+    from app.routes import memorized as memorized_routes
+
+    client, Session, ids = file_company
+    mem = _bill_schedule(client, _vendor(client), ids, mode="remind")
+    _claim_after_both_read(monkeypatch)
+
+    def enter_now():
+        with Session() as db:
+            return memorized_routes.enter_now(mem["id"], None, db)
+
+    a, b = _race(enter_now, enter_now)
+    outcomes = sorted(
+        (
+            "409"
+            if isinstance(x, HTTPException) and x.status_code == 409
+            else "ok" if isinstance(x, EnterResponse) else repr(x)
+        )
+        for x in (a, b)
+    )
+    assert outcomes == ["409", "ok"], (a, b)
+    refused = a if isinstance(a, HTTPException) else b
+    assert refused.detail.startswith("That occurrence was just entered")
+    assert "has 1 entered and its next date is 2026-02-28" in refused.detail
+    won = b if refused is a else a
+    assert won.next_date == date(2026, 2, 28) and "next on 2026-02-28" in won.message
+    _one_bill_entered_once(Session, mem["id"])
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["entered_count"] == 1 and got["next_date"] == "2026-02-28"
+
+
+def test_enter_all_due_racing_enter_now_posts_one_document(file_company, monkeypatch):
+    """W-57 for the run (and W-66's guard): Enter All Due and an Enter now
+    on the same occurrence at once. Whichever claims first enters it; the
+    run leaves a taken occurrence to the other window without calling it
+    skipped, and the request that lost answers 409."""
+    from app.routes import memorized as memorized_routes
+
+    client, Session, ids = file_company
+    mem = _bill_schedule(client, _vendor(client), ids)  # auto, due 2026-01-31
+    _claim_after_both_read(monkeypatch)
+
+    def run():
+        with Session() as db:
+            return scheduler.run_due_schedules(db, date(2026, 1, 31))
+
+    def enter_now():
+        with Session() as db:
+            return memorized_routes.enter_now(mem["id"], None, db)
+
+    a, b = _race(run, enter_now)
+    assert isinstance(a, dict), a  # the run never raises
+    assert a["skipped"] == [] and a["invoices_created"] == 0
+    if a["entered_count"] == 1:
+        assert isinstance(b, HTTPException) and b.status_code == 409, b
+        assert b.detail.startswith("That occurrence was just entered")
+    else:
+        assert a["entered_count"] == 0 and a["entered"] == []
+        assert isinstance(b, EnterResponse), b
+    _one_bill_entered_once(Session, mem["id"])
+
+
+def test_a_locked_file_is_a_409_and_a_skip_never_a_500(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """W-57: SQLite's "database is locked" from the claim (another entry
+    held the file past the busy timeout) is a clean 409 on Enter now and a
+    skip with the sentence in the run, and nothing is posted."""
+    from sqlalchemy.orm import Query
+
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)
+
+    def locked(self, *args, **kw):
+        raise OperationalError(
+            "UPDATE memorized_transactions ...",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(Query, "update", locked)
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409, r.text
+    assert "still being saved" in r.json()["detail"]
+    assert _bills(db_session) == []
+    skipped: list = []
+    assert (
+        enter_due_memorized(db_session, as_of=date(2026, 1, 31), skipped=skipped) == []
+    )
+    assert len(skipped) == 1 and "still being saved" in skipped[0]["message"]
+    assert _bills(db_session) == []
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["entered_count"] == 0 and got["next_date"] == "2026-01-31"
+
+
+def test_the_page_sends_one_enter_at_a_time():
+    """W-57: the Enter modal's button and Enter All Due are disabled while
+    the request is in flight, and a 409 (entered meanwhile) reloads the
+    list so the schedule shows as it now stands."""
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "if (button && button.disabled) return;" in js
+    assert js.count("if (button) button.disabled = true;") == 2
+    assert (
+        "if (err.status === 409) { closeModal(); App.navigate('#/memorized'); }" in js
+    )
+    assert 'id="mem-enter-all"' in js and "MemorizedPage.enterAllDue(this)" in js
+    # one request for both kinds: the run the app does by itself
+    assert "API.post('/memorized/enter-due')" in js
+    assert "API.post('/recurring/generate')" not in js
+
+
+def test_the_bill_number_rule_is_one_sentence(client, db_session, seed_accounts):
+    """W-63: left blank, each bill is numbered the date and the vendor's
+    initials (unique per day); a number on the template is used as it is
+    on the first bill and -2, -3 after that, since a vendor's bill number
+    cannot repeat (so a template number the vendor already has starts at
+    -2); Memorize from a bill leaves the number blank on purpose. The
+    sentence is under the number box and in the docs."""
+    vendor_id = _vendor(client)
+    r = client.post(
+        "/api/bills",
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": "HPL-1041",
+            "date": "2026-01-05",
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    _bill_schedule(
+        client, vendor_id, seed_accounts, name="Fixed", bill_number="HPL-1041"
+    )
+    _bill_schedule(client, vendor_id, seed_accounts, name="Blank")
+    for as_of in (date(2026, 1, 31), date(2026, 2, 28)):
+        enter_due_memorized(db_session, as_of=as_of)
+    assert [b.bill_number for b in _bills(db_session)] == [
+        "HPL-1041",
+        "HPL-1041-2",
+        "20260131-HPL",
+        "HPL-1041-3",
+        "20260228-HPL",
+    ]
+
+    rule = "Left blank, each bill is numbered the date and the vendor's initials"
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    hint = js[js.index('id="mem-bill-number-hint"') :]
+    hint = hint[: hint.index("</div>")]
+    assert rule in hint
+    assert "-2, -3... after that, since a vendor's bill number cannot repeat" in hint
+    assert "Memorize from a bill leaves it blank on purpose" in hint
+    prefill = js[js.index("async memorizeBill(") : js.index("async showJournalForm(")]
+    assert "bill_number" not in prefill
+    for doc in ("docs/features.md", "CHANGELOG.md"):
+        text = _words(doc)
+        assert (
+            "left blank, each bill is numbered the date and the vendor's initials"
+            in text
+        ), doc
+        assert "since a vendor's bill number cannot repeat" in text, doc
+        assert "leaves the number blank" in text, doc
+
+
+def test_enter_now_on_an_ended_schedule_says_ended_not_paused(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-64: the generator marks a recurring invoice past its end date
+    inactive, so Enter now on it said "paused" and offered a resume that
+    would not help. Ended is checked first, on both kinds."""
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": seed_customer.id,
+            "frequency": "monthly",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "lines": [{"description": "Monthly service", "quantity": 1, "rate": 100}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    rec_id = r.json()["id"]
+    r = client.post("/api/recurring/generate?as_of=2026-03-01")
+    assert r.status_code == 200 and r.json()["invoices_created"] == 1
+    assert client.get(f"/api/recurring/{rec_id}").json()["is_active"] is False
+    r = client.post(f"/api/recurring/{rec_id}/generate")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"].startswith("This schedule has ended")
+    assert "2026-01-31" in r.json()["detail"] and "paused" not in r.json()["detail"]
+    assert client.get("/api/memorized?kind=invoice").json()[0]["status"] == "ended"
+
+    # a memorized schedule paused, then ended by an edit of its end date
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)
+    enter_due_memorized(db_session, as_of=date(2026, 1, 31))
+    assert client.post(f"/api/memorized/{mem['id']}/pause").status_code == 200
+    r = client.put(f"/api/memorized/{mem['id']}", json={"end_date": "2026-02-15"})
+    assert r.status_code == 200 and r.json()["status"] == "ended", r.text
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409, r.text
+    assert "has ended" in r.json()["detail"] and "paused" not in r.json()["detail"]
+    assert len(_bills(db_session)) == 1
+
+
+def test_a_cadence_word_takes_no_interval(client, seed_accounts):
+    """W-65: "every two weeks" with an interval of 2 was stored as every
+    four weeks. A word that carries its own count takes no interval and is
+    refused with one, naming the word, on create and on update alike; a
+    plain word (daily, weekly, monthly, yearly) takes the interval."""
+    vendor_id = _vendor(client)
+    base = {
+        "kind": "bill",
+        "name": "Cadence",
+        "start_date": "2026-01-05",
+        "vendor_id": vendor_id,
+        "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+    }
+    r = client.post(
+        "/api/memorized", json={**base, "frequency": "every two weeks", "interval": 2}
+    )
+    assert r.status_code == 422 and "every two weeks takes no interval" in r.text
+    assert recurring_service.normalize_frequency("every_two_weeks", 1) == ("weekly", 2)
+    with pytest.raises(ValueError, match="every two weeks takes no interval"):
+        recurring_service.normalize_frequency("every_two_weeks", 2)
+
+    mem = _bill_schedule(
+        client, vendor_id, seed_accounts, frequency="biweekly", start_date="2026-01-05"
+    )
+    assert (mem["frequency"], mem["interval"]) == ("weekly", 2)
+    r = client.put(
+        f"/api/memorized/{mem['id']}",
+        json={"frequency": "every two weeks", "interval": 2},
+    )
+    assert r.status_code == 422 and "every two weeks takes no interval" in r.text
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert (got["frequency"], got["interval"]) == ("weekly", 2)
+    for word in ("twice a year", "quarterly", "semimonthly", "bimonthly", "annually"):
+        r = client.put(
+            f"/api/memorized/{mem['id']}", json={"frequency": word, "interval": 2}
+        )
+        assert r.status_code == 422 and f"{word} takes no interval" in r.text, word
+    # the word with no interval, or 1, is the count it carries
+    r = client.put(
+        f"/api/memorized/{mem['id']}", json={"frequency": "twice a year", "interval": 1}
+    )
+    assert r.status_code == 200 and (r.json()["frequency"], r.json()["interval"]) == (
+        "monthly",
+        6,
+    )
+    assert r.json()["frequency_label"] == "Twice a year"
+    # a plain word takes the interval
+    r = client.put(
+        f"/api/memorized/{mem['id']}", json={"frequency": "monthly", "interval": 2}
+    )
+    assert r.status_code == 200 and r.json()["frequency_label"] == "Every two months"
+    r = client.post(
+        "/api/memorized", json={**base, "frequency": "daily", "interval": 10}
+    )
+    assert r.status_code == 201 and r.json()["frequency_label"] == "Every 10 days"
+
+
+def test_one_run_enters_every_missed_occurrence_in_order(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-66: a run (Enter All Due, the startup run, the daily run) used to
+    enter one occurrence per schedule per press. Now it enters every
+    missed occurrence up to today, the earliest date first across every
+    schedule, recurring invoices included, each committed as it is made."""
+    _bill_schedule(client, _vendor(client), seed_accounts)  # monthly from Jan 31
+    _journal_schedule(client, seed_accounts, start_date="2026-02-10")
+    inv_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+
+    r = client.post("/api/memorized/enter-due?as_of=2026-03-15")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert [(e["name"], e["date"]) for e in out["entered"]] == [
+        ("Electric bill", "2026-01-31"),
+        ("Monthly depreciation", "2026-02-10"),
+        ("Electric bill", "2026-02-28"),
+        ("Monthly depreciation", "2026-03-10"),
+    ]
+    assert out["entered_count"] == 4 and out["skipped"] == []
+    assert out["invoices_created"] == 3 and len(out["invoice_ids"]) == 3
+    assert [b.date for b in _bills(db_session)] == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+    ]
+    assert [b.bill_number for b in _bills(db_session)] == [
+        "20260131-HPL",
+        "20260228-HPL",
+    ]
+    invoices = db_session.query(Invoice).order_by(Invoice.id).all()
+    assert [i.date for i in invoices] == [
+        date(2026, 1, 1),
+        date(2026, 2, 1),
+        date(2026, 3, 1),
+    ]
+    rows = {(r["kind"], r["id"]): r for r in client.get("/api/memorized").json()}
+    assert rows[("invoice", inv_id)]["next_date"] == "2026-04-01"
+    assert rows[("invoice", inv_id)]["entered_count"] == 3
+    bill_row = next(r for r in rows.values() if r["kind"] == "bill")
+    assert bill_row["entered_count"] == 2 and bill_row["next_date"] == "2026-03-31"
+    # nothing left for a second run
+    again = client.post("/api/memorized/enter-due?as_of=2026-03-15").json()
+    assert again["entered"] == [] and again["invoices_created"] == 0
+
+
+def test_the_task_runs_at_startup_and_again_when_the_day_changes(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """W-66: the task the lifespan starts runs once at startup and again
+    each time the calendar day changes (looked at every poll), with a fake
+    clock and a fake sleep; the run goes through the task's own session."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    _bill_schedule(client, _vendor(client), seed_accounts, start_date="2026-03-15")
+    clock = {"today": date(2026, 3, 15)}
+    naps: list = []
+
+    class Done(Exception):
+        pass
+
+    async def nap(seconds):
+        naps.append(seconds)
+        if len(naps) == 1:
+            clock["today"] = date(2026, 3, 16)  # a new day, nothing due
+        elif len(naps) == 2:
+            clock["today"] = date(2026, 4, 16)  # asleep a month: April 15 is due
+        else:
+            raise Done
+
+    async def inline(fn, *args):  # the test's own connection, not a thread
+        return fn(*args)
+
+    with pytest.raises(Done):
+        asyncio.run(
+            scheduler.keep_entering(
+                today=lambda: clock["today"], sleep=nap, to_thread=inline
+            )
+        )
+    assert naps == [scheduler.POLL_SECONDS] * 3
+    assert [b.date for b in _bills(db_session)] == [
+        date(2026, 3, 15),
+        date(2026, 4, 15),
+    ]
+    last = scheduler.last_run()
+    assert last["origin"] == "daily" and last["as_of"] == "2026-04-16"
+    assert last["entered_count"] == 1 and last["entered"][0]["date"] == "2026-04-15"
+    assert last["ran_at"]
+
+
+def test_the_setting_off_enters_nothing_by_itself(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """W-66: auto_enter_on_open (on by default) off means the startup and
+    daily runs enter nothing; Enter All Due and Enter now still do."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    assert client.get("/api/settings").json()["auto_enter_on_open"] == "true"
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)
+    assert (
+        client.put("/api/settings", json={"auto_enter_on_open": "maybe"}).status_code
+        == 422
+    )
+    r = client.put("/api/settings", json={"auto_enter_on_open": "false"})
+    assert r.status_code == 200 and r.json()["auto_enter_on_open"] == "false", r.text
+    assert (
+        scheduler.run_in_this_process("startup", today=lambda: date(2026, 3, 15))
+        is None
+    )
+    assert _bills(db_session) == []
+    assert scheduler.last_run() is None
+    assert client.get("/api/memorized/entered-recently").json() == {}
+    r = client.post("/api/memorized/enter-due?as_of=2026-03-15")
+    assert r.status_code == 200 and r.json()["entered_count"] == 2
+    r = client.put("/api/settings", json={"auto_enter_on_open": "true"})
+    assert r.status_code == 200
+    _bill_schedule(
+        client, _vendor(client, name="Water Works"), seed_accounts, name="Water"
+    )
+    out = scheduler.run_in_this_process("startup", today=lambda: date(2026, 1, 31))
+    assert out["entered_count"] == 1 and out["entered"][0]["name"] == "Water"
+    assert len(_bills(db_session)) == 3
+    assert client.get(f"/api/memorized/{mem['id']}").json()["entered_count"] == 2
+
+
+def test_the_page_is_told_what_was_entered_while_away(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """W-66: the run's note for the page ("Entered 3 scheduled documents
+    while you were away"): what the app's last run entered, read off
+    /api/memorized/entered-recently, shown once by the page."""
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    assert client.get("/api/memorized/entered-recently").json() == {}
+    mem = _bill_schedule(client, _vendor(client), seed_accounts)
+    out = scheduler.run_in_this_process("startup", today=lambda: date(2026, 2, 10))
+    assert out["entered_count"] == 1
+    got = client.get("/api/memorized/entered-recently").json()
+    assert got["origin"] == "startup" and got["ran_at"] and got["as_of"] == "2026-02-10"
+    assert got["entered_count"] == 1 and got["invoices_created"] == 0
+    assert got["entered"][0]["name"] == "Electric bill"
+    assert got["entered"][0]["date"] == "2026-01-31"
+    assert got["entered"][0]["memorized_id"] == mem["id"]
+    assert got["skipped"] == []
+
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "API.get('/memorized/entered-recently')" in js
+    assert "scheduled document${n === 1 ? '' : 's'} while you were away" in js
+    assert "_shownRun" in js and "whileAwayHtml(" in js
+
+
+def test_the_app_starts_the_scheduler_when_it_boots(monkeypatch, lifespan_client):
+    """W-66: the lifespan starts the task (the desktop launcher serves
+    app.main.app through uvicorn, so it gets it too); the suite keeps it
+    off with SLOWBOOKS_AUTO_ENTER=0, and start() answers None then."""
+    import app.main as main
+
+    calls: list = []
+    ran = threading.Event()
+
+    def record(origin="startup", today=date.today):
+        calls.append((origin, today))
+        ran.set()
+        return None
+
+    monkeypatch.setattr(scheduler, "run_in_this_process", record)
+    monkeypatch.setenv("SLOWBOOKS_AUTO_ENTER", "1")
+    with lifespan_client as c:
+        assert c.get("/api/accounts").status_code == 200
+        assert ran.wait(WAIT), "the startup run never came"
+    assert [origin for origin, _ in calls] == ["startup"]
+    assert calls[0][1]() == date.today()
+    assert "_scheduler.start()" in Path(main.__file__).read_text(encoding="utf-8")
+
+    monkeypatch.setenv("SLOWBOOKS_AUTO_ENTER", "0")
+
+    async def off():
+        return scheduler.start()
+
+    assert asyncio.run(off()) is None
+
+
+def test_the_page_offers_the_setting_and_the_docs_say_so():
+    """W-66: the box on the page, the hint, the mode's words, the docs and
+    the changelog say the app enters due schedules when it opens and once a
+    day, recurring invoices the same way, and that the cron script stays."""
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    assert "Enter due schedules when the app opens and once a day" in js
+    assert (
+        'name="auto_enter_on_open"' in js and "MemorizedPage.setAutoEnter(this)" in js
+    )
+    assert (
+        "API.put('/settings', { auto_enter_on_open: box.checked ? 'true' : 'false' })"
+        in js
+    )
+    assert (
+        "when it opens and once a day while it runs, every missed date in order" in js
+    )
+    assert "A server install can run scripts/run_recurring.py from cron instead." in js
+    assert "Auto-enter: posted on its date (when the app opens, or its daily run)" in js
+    from app.models.settings import DEFAULT_SETTINGS
+
+    assert DEFAULT_SETTINGS["auto_enter_on_open"] == "true"
+    for doc in ("docs/features.md", "CHANGELOG.md"):
+        text = _words(doc)
+        assert "when it opens and once a day while it runs" in text, doc
+        assert "recurring invoices included" in text, doc
+        assert "`scripts/run_recurring.py` from cron instead" in text, doc
+        assert "takes no interval" in text, doc
+        assert "has ended" in text, doc
+    features = _words("docs/features.md")
+    assert "`/api/memorized/entered-recently` | GET" in features
+    assert "`auto_enter_on_open`" in features
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    section = changelog[changelog.index("### v2.31.1") : changelog.index("### v2.31.0")]
+    paragraph = section[section.index("**Memorized bills and journal entries") :]
+    paragraph = paragraph[: paragraph.index("\n\n")]
+    assert "\u2014" not in paragraph  # no em-dashes
+    assert "was entered while you were away" in " ".join(paragraph.split())
+    assert "`auto_enter_on_open`" in paragraph

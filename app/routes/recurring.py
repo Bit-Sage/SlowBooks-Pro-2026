@@ -224,6 +224,18 @@ def generate_one(
     rec = db.query(RecurringInvoice).filter(RecurringInvoice.id == rec_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
+    # Ended before paused (2.31.1 gate W-64): the generator marks a schedule
+    # past its end date inactive, so the paused sentence fired for one that
+    # had ended, and resuming it would not have helped.
+    if rec.end_date and rec.next_due > rec.end_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This schedule has ended: its end date was "
+                f"{rec.end_date.isoformat()}, so nothing was created. Move or "
+                "clear the end date to bill it again."
+            ),
+        )
     if not rec.is_active:
         raise HTTPException(
             status_code=409,

@@ -52,11 +52,23 @@ FREQUENCY_ALIASES = {
 _MONTHS_PER = {"monthly": 1, "quarterly": 3, "yearly": 12}
 
 
+_UNIT_WORDS = {
+    "daily": "days",
+    "weekly": "weeks",
+    "monthly": "months",
+    "yearly": "years",
+}
+
+
 def normalize_frequency(frequency: str, interval=None) -> tuple[str, int]:
     """The stored (frequency, interval) for what a request said, or
-    ValueError naming the problem. "Every two weeks" is weekly with an
-    interval of 2; twice a month and quarterly take no interval (every
-    N months is monthly with an interval)."""
+    ValueError naming the problem. A word that carries its own count
+    ("every two weeks", "twice a month", "quarterly", "twice a year") takes
+    no interval: sent with one other than 1 it is refused, naming the word,
+    rather than multiplied (2.31.1 gate W-65: "every two weeks" with an
+    interval of 2 was stored as every four weeks). A plain word (daily,
+    weekly, monthly, yearly) takes the interval: every N days, weeks,
+    months or years."""
     word = (frequency or "").strip().lower().replace(" ", "_").replace("-", "_")
     try:
         count = int(interval) if interval is not None else 1
@@ -66,7 +78,12 @@ def normalize_frequency(frequency: str, interval=None) -> tuple[str, int]:
         raise ValueError("interval must be a whole number of 1 or more")
     if word in FREQUENCY_ALIASES:
         unit, base = FREQUENCY_ALIASES[word]
-        return unit, base * count
+        if count != 1:
+            raise ValueError(
+                f"{word.replace('_', ' ')} takes no interval; for every N "
+                f"{_UNIT_WORDS[unit]} use {unit} with an interval"
+            )
+        return unit, base
     if word not in FREQUENCIES:
         raise ValueError(
             "frequency must be one of "

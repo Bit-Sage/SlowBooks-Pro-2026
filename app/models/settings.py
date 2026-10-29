@@ -233,6 +233,12 @@ DEFAULT_SETTINGS = {
     "payroll_futa_account_id": "",
     "payroll_suta_account_id": "",
     "payroll_other_deductions_account_id": "",
+    # Memorized transactions and recurring invoices (#605): "true" (the
+    # default) enters every due auto-enter schedule when the app opens and
+    # once a day while it runs, every missed occurrence in order
+    # (services/scheduler.py). "false" leaves them to Enter All Due, Enter
+    # now, or a server's cron run of scripts/run_recurring.py.
+    "auto_enter_on_open": "true",
     # Phase 10: Late Fee Automation
     "late_fee_enabled": "false",
     "late_fee_rate": "1.5",

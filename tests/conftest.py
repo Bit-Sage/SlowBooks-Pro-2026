@@ -51,6 +51,10 @@ os.environ["SESSION_IDLE_TIMEOUT_SECONDS"] = "0"  # Disable idle expiry in tests
 os.environ.setdefault("SLOWBOOKS_OCR_ENGINE", "tesseract")
 # Point the app at an in-memory DB by default; fixtures override per-test.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# The in-app scheduler (#605) is a background task the lifespan starts; it
+# would run against a lifespan test's single shared connection from its own
+# thread. Off for the suite; the tests of the task call it directly.
+os.environ["SLOWBOOKS_AUTO_ENTER"] = "0"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
