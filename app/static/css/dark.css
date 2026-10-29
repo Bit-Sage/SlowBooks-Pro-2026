@@ -548,6 +548,7 @@
 [data-theme="dark"] .toast-success { background: #257321; }   /* the leaf green, white on it 5.91 (2.23.1) */
 [data-theme="dark"] .toast-error   { background: #cc3333; }
 [data-theme="dark"] .toast-info    { background: #336699; }
+[data-theme="dark"] .toast-warning { background: #8a4b1d; }   /* white on it 6.8:1 */
 
 /* The tinted notes (style.css .note--*): a dark tint of each, under this
    theme's text. As inline pale boxes they took the light text on a pale

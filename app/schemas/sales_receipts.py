@@ -45,3 +45,6 @@ class SalesReceiptCreate(StrictModel):
 class SalesReceiptResponse(BaseModel):
     invoice: InvoiceResponse
     payment: PaymentResponse
+    # The invoice step's warnings (#642): a sentence for each stock item
+    # the sale took past what was on hand. Empty when nothing was short.
+    warnings: list[str] = []

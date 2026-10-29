@@ -11,6 +11,16 @@ const ItemsPage = {
     // The search box (#445): name or code, over the list already loaded.
     _query: '',
 
+    // A count below zero (#642): the sale posted before the receiving bill
+    // was entered. The list says it in a title; the item's own form, Adjust
+    // and History say it in words.
+    belowZeroTitle: 'Below zero: more has been sold than received. Enter the receiving bill, or adjust the count.',
+    belowZeroHtml(item) {
+        if (!item || !item.track_inventory || !(Number(item.quantity_on_hand || 0) < 0)) return '';
+        const count = Number(item.quantity_on_hand || 0).toLocaleString();
+        return `<div class="qty-below-zero-note" style="font-size:11px; color:var(--text-warning); margin-top:4px;">${count} on hand: more of this item has been sold than received. Enter the receiving bill, or adjust the count.</div>`;
+    },
+
     _matches(item, query) {
         const q = (query || '').trim().toLowerCase();
         return !q || `${item.name || ''} ${item.code || ''}`.toLowerCase().includes(q);
@@ -66,8 +76,11 @@ const ItemsPage = {
                 </tr></thead><tbody>`;
             for (const item of items) {
                 const short = lowById[item.id];
+                // A count below zero (#642): more sold than received, in the
+                // warning colour, with the title saying so.
+                const belowZero = item.track_inventory && Number(item.quantity_on_hand || 0) < 0;
                 const qtyCell = item.track_inventory
-                    ? `<strong>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>${short && !reorderOnly ? ' <span style="color:var(--text-danger); font-weight:700;" title="At or under the reorder point">↓</span>' : ''}`
+                    ? `<strong${belowZero ? ` class="qty-below-zero" style="color:var(--text-warning);" title="${escapeHtml(ItemsPage.belowZeroTitle)}"` : ''}>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>${short && !reorderOnly ? ' <span style="color:var(--text-danger); font-weight:700;" title="At or under the reorder point">↓</span>' : ''}`
                     : `<span style="color:var(--text-muted)">—</span>`;
                 const reorderCells = reorderOnly
                     ? `<td class="amount">${Number(short.reorder_point || 0).toLocaleString()}</td><td class="amount" style="color:var(--text-danger); font-weight:700;">${Number(short.shortage || 0).toLocaleString()}</td>`
@@ -177,7 +190,7 @@ const ItemsPage = {
                         </label>
                             <input name="quantity_on_hand" type="number" step="1" min="0"
                                    value="${item.quantity_on_hand || 0}"
-                                   data-original="${item.quantity_on_hand || 0}"></div>
+                                   data-original="${item.quantity_on_hand || 0}">${ItemsPage.belowZeroHtml(item)}</div>
                         ${id ? '' : `<div class="form-group"><label>Opening as of
                             <span style="font-size:10px;color:var(--text-muted)">(blank = today)</span></label>
                             <input name="opening_as_of" type="date"></div>
@@ -326,6 +339,7 @@ const ItemsPage = {
             <div style="margin-bottom:10px;font-size:12px;color:var(--text-muted);">
                 On hand: <strong>${Number(item.quantity_on_hand || 0).toLocaleString()}</strong>
                 &nbsp;·&nbsp; Weighted avg cost: <strong>${formatCurrency(item.avg_cost || 0)}</strong>
+                ${ItemsPage.belowZeroHtml(item)}
             </div>
             <div class="table-container" style="max-height:60vh;overflow:auto;"><table>
                 <thead><tr>
@@ -355,6 +369,7 @@ const ItemsPage = {
                             <strong>${currentQty.toLocaleString()}</strong> on hand
                             &middot; avg cost <strong>${formatCurrency(currentAvg)}</strong>
                         </div>
+                        ${ItemsPage.belowZeroHtml(item)}
                     </div>
                     <div class="form-group">
                         <label>Mode *</label>

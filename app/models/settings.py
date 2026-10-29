@@ -197,6 +197,11 @@ DEFAULT_SETTINGS = {
     "warn_date_future_days": "30",
     "warn_duplicate_check_number": "false",
     "warn_edit_transaction": "false",
+    # A sale of more of a stock item than is on hand (#642): "false" posts
+    # it, as always, and the response says so (a `warnings` list the forms
+    # show; the count goes below zero until the receiving bill is entered).
+    # "true" refuses it with a 422 naming the item and how many short.
+    "inventory_refuse_oversell": "false",
     # Sidebar items a company doesn't use, hidden from the menu (#334): a
     # JSON list of nav-link pages ("payroll", "hr-onboarding", …) and nav
     # sections ("section:Payroll & HR"). The pages stay reachable by

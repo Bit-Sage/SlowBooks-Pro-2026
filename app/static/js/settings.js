@@ -436,6 +436,13 @@ const SettingsPage = {
                             </select>
                             <div id="new-lines-taxable-help" style="font-size:10px; color:var(--text-muted); margin-top:4px;">For a company that charges no sales tax. A line still takes its item's own setting, you can tick Tax on any line, and a tax-exempt ${T('customer')} is never charged.</div>
                         </div>
+                        <div class="form-group full-width">
+                            <label for="inventory-refuse-oversell" style="font-weight:normal;">
+                                <input type="checkbox" id="inventory-refuse-oversell" name="inventory_refuse_oversell" value="true" data-bool style="width:auto; vertical-align:middle; margin-right:6px;" ${s.inventory_refuse_oversell === 'true' ? 'checked' : ''}>
+                                Refuse a sale of more than is on hand
+                            </label>
+                            <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Off, an ${T('invoice')} or sales receipt that sells more of a stock item than is on hand is saved and the form says so; the count goes below zero until the receiving bill is entered. On, the sale is refused, naming the item and how many short.</div>
+                        </div>
                         <div class="form-group"><label>${`${T('Invoice')} Prefix`}</label>
                             <input name="invoice_prefix" value="${escapeHtml(s.invoice_prefix || '')}" placeholder="e.g. INV-"></div>
                         <div class="form-group"><label>${`Next ${T('Invoice')} #`}</label>
