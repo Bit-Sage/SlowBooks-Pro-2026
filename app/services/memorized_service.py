@@ -61,6 +61,19 @@ def has_ended(mem: MemorizedTransaction) -> bool:
     return False
 
 
+def _all_entered(limit: int, entered: int) -> str:
+    """The number of times reached, in words that read for any count: "the
+    1 occurrence is entered", "both occurrences are entered", "all 5
+    occurrences are entered" (2.31.1 Mac gate: "all 1 occurrences")."""
+    if entered > limit:
+        return f"its number of times ({limit}) is reached, with {entered} entered."
+    if limit == 1:
+        return "the 1 occurrence is entered."
+    if limit == 2:
+        return "both occurrences are entered."
+    return f"all {limit} occurrences are entered."
+
+
 def ended_sentence(mem: MemorizedTransaction) -> str:
     """Why an ended schedule enters nothing, and what to do."""
     return (
@@ -68,7 +81,7 @@ def ended_sentence(mem: MemorizedTransaction) -> str:
         + (
             f"its end date was {mem.end_date.isoformat()}."
             if mem.end_date and mem.next_date > mem.end_date
-            else f"all {mem.occurrences_limit} occurrences are entered."
+            else _all_entered(mem.occurrences_limit, mem.entered_count or 0)
         )
         + " Edit it and move the end to enter it again."
     )

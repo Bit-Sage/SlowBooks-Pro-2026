@@ -472,7 +472,7 @@ def test_a_number_of_times_stops_it(client, db_session, seed_accounts):
     got = client.get(f"/api/memorized/{mem['id']}").json()
     assert got["status"] == "ended" and got["entered_count"] == 2
     r = client.post(f"/api/memorized/{mem['id']}/enter")
-    assert r.status_code == 409 and "all 2 occurrences" in r.json()["detail"]
+    assert r.status_code == 409 and "both occurrences are entered" in r.json()["detail"]
     rows = client.get("/api/memorized?as_of=2026-12-31").json()
     assert rows[0]["status"] == "ended" and rows[0]["entered_count"] == 2
 
@@ -2295,3 +2295,32 @@ def test_ticking_active_on_an_ended_schedule_says_it_has_ended(
     assert "has ended: its end date was 2026-01-31" in r.json()["detail"]
     got = client.get(f"/api/memorized/{mem['id']}").json()
     assert got["is_active"] is False and got["next_date"] == "2026-02-28"
+
+
+@pytest.mark.parametrize(
+    "times, entered, words",
+    [
+        (1, 1, "the 1 occurrence is entered."),
+        (2, 2, "both occurrences are entered."),
+        (3, 3, "all 3 occurrences are entered."),
+        (12, 12, "all 12 occurrences are entered."),
+        (2, 3, "its number of times (2) is reached, with 3 entered."),
+    ],
+)
+def test_the_ended_sentence_reads_for_any_number_of_times(
+    client, db_session, seed_accounts, times, entered, words
+):
+    """Mac gate nit: a schedule set to enter once ended with "all 1
+    occurrences are entered". The sentence reads for one, two and more,
+    and for a number of times lowered below what was already entered."""
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, occurrences=times)
+    row = db_session.get(MemorizedTransaction, mem["id"])
+    row.entered_count = entered
+    db_session.commit()
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == (
+        f"'Electric bill' has ended: {words} Edit it and move the end to enter "
+        "it again."
+    )
+    assert "1 occurrences" not in r.json()["detail"]
