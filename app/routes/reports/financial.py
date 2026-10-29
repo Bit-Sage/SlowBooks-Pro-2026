@@ -172,6 +172,25 @@ def _flag(value) -> bool:
     return value is True
 
 
+# Hide zero balances (#625, from Discussion #354): an account that had
+# activity but nets to nothing for the period, or a balance-sheet account
+# that ends at zero, is left off the report; the totals are the same.
+_HIDE_ZERO = Query(
+    default=False,
+    description="Leave out an account whose figures for the period are zero "
+    "(#625); the totals are unchanged",
+)
+
+
+def _with_figures(lines: list, keys=("amount",)) -> list:
+    """The lines with a figure in any of `keys` (Hide zero balances, #625):
+    one that rounds to nothing in every column goes. Run on a section's
+    flat lines after its totals are added up and before the layout, so a
+    parent whose every sub-account is zero loses its heading too and the
+    totals are the same either way."""
+    return [i for i in lines if any(abs(i.get(k) or 0) >= 0.005 for k in keys)]
+
+
 def _totals_by_account(
     db,
     acct_type,
@@ -262,9 +281,11 @@ def profit_loss(
         ),
     ] = None,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     _check_compare(compare)
     basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
+    hide_zero = _flag(hide_zero)
     columns = columns if isinstance(columns, str) and columns else None
     if columns not in (None, "month", "quarter"):
         raise HTTPException(
@@ -286,7 +307,16 @@ def profit_loss(
 
     def period(start, end):
         return _pl_period(
-            db, start, end, cls, in_class, sort, exclude_adjusting, chart, basis
+            db,
+            start,
+            end,
+            cls,
+            in_class,
+            sort,
+            exclude_adjusting,
+            chart,
+            basis,
+            hide_zero,
         )
 
     if columns:
@@ -447,6 +477,7 @@ def _pl_columns(db, start_date, end_date, columns, period, sort, chart) -> dict:
         "exclude_adjusting": whole["exclude_adjusting"],
         "basis": whole["basis"],
         "basis_note": whole["basis_note"],
+        "hide_zero": whole["hide_zero"],
         "columns_by": columns,
         "columns": out_cols,
         "accounts": accounts,
@@ -510,8 +541,11 @@ def _pl_period(
     exclude_adjusting,
     chart,
     basis="accrual",
+    hide_zero=False,
 ):
-    """One period's P&L figures, before the layout."""
+    """One period's P&L figures, before the layout. `hide_zero` (#625)
+    leaves out an account that nets to nothing for the period, after the
+    totals are added up, so they are the same either way."""
 
     def totals(acct_type):
         return _totals_by_account(
@@ -534,7 +568,7 @@ def _pl_period(
         totals(AccountType.EXPENSE), DetailType.OTHER_EXPENSE
     )
 
-    return {
+    out = {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "class_id": cls.id if cls else None,
@@ -543,6 +577,7 @@ def _pl_period(
         "exclude_adjusting": bool(exclude_adjusting),
         "basis": basis,
         "basis_note": cash_basis.receivable_note(db, end_date, basis),
+        "hide_zero": bool(hide_zero),
         "income": income,
         "cogs": cogs,
         "expenses": expenses,
@@ -550,6 +585,10 @@ def _pl_period(
         "other_expense": other_expense,
         **pl_totals(income, cogs, expenses, other_income, other_expense),
     }
+    if hide_zero:
+        for key in _PL_SECTIONS:
+            out[key] = _with_figures(out[key])
+    return out
 
 
 def pl_totals(income, cogs, expenses, other_income, other_expense) -> dict:
@@ -800,31 +839,43 @@ def balance_sheet(
         Query(description="prior_year adds the same date one year earlier"),
     ] = None,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     _check_compare(compare)
     basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
+    hide_zero = _flag(hide_zero)
     sort = sort if isinstance(sort, str) else "number"
     t = terms_from_db(db)
     if not as_of_date:
         as_of_date = date.today()
     chart = _chart_index(db)
+
+    def period(as_of):
+        return _bs_period(db, as_of, sort, t, chart, basis, hide_zero)
+
     if compare == "prior_year":
         return _bs_layout(
             db,
             _bs_with_prior(
                 db,
-                _bs_period(db, as_of_date, sort, t, chart, basis),
-                _bs_period(db, _year_earlier(as_of_date), sort, t, chart, basis),
+                period(as_of_date),
+                period(_year_earlier(as_of_date)),
                 sort,
                 chart,
             ),
             chart,
         )
-    return _bs_layout(db, _bs_period(db, as_of_date, sort, t, chart, basis), chart)
+    return _bs_layout(db, period(as_of_date), chart)
 
 
-def _bs_period(db, as_of_date, sort, t, chart, basis="accrual") -> dict:
-    """One date's Balance Sheet figures, before the layout."""
+def _bs_period(
+    db, as_of_date, sort, t, chart, basis="accrual", hide_zero=False
+) -> dict:
+    """One date's Balance Sheet figures, before the layout. `hide_zero`
+    (#625) leaves out an account that stands at zero on the date, after
+    the totals (the groups' too) are added up, so they are the same either
+    way; a group whose every account is zero then prints no heading, as
+    one with no account never did."""
 
     def totals(acct_type, order="number"):
         return _totals_by_account(
@@ -875,19 +926,28 @@ def _bs_period(db, as_of_date, sort, t, chart, basis="accrual") -> dict:
         ]
         total_equity = round(total_equity + net_income, 2)
 
+    group_totals = {
+        **bs_group_totals(assets, "assets"),
+        **bs_group_totals(liabilities, "liabilities"),
+    }
+    if hide_zero:
+        assets = _with_figures(assets)
+        liabilities = _with_figures(liabilities)
+        equity = _with_figures(equity)
+
     return {
         "as_of_date": as_of_date.isoformat(),
         "sort": sort,
         "basis": basis,
         "basis_note": cash_basis.receivable_note(db, as_of_date, basis),
+        "hide_zero": bool(hide_zero),
         "assets": assets,
         "liabilities": liabilities,
         "equity": equity,
         "total_assets": total_assets,
         "total_liabilities": total_liabilities,
         "total_equity": total_equity,
-        **bs_group_totals(assets, "assets"),
-        **bs_group_totals(liabilities, "liabilities"),
+        **group_totals,
     }
 
 
@@ -1295,15 +1355,21 @@ def trial_balance(
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     """Trial Balance as QuickBooks reads it: asset, liability and equity
     accounts at their balance as of the end date (one debit or credit
     figure), income, cost and expense accounts at their activity from the
     start date. The two readings differ by the net income of the periods
     before the start, so that sits in one derived equity row and the report
-    still foots. `basis` (#483): accrual or cash, else the company's default."""
+    still foots. `basis` (#483): accrual or cash, else the company's default.
+    `hide_zero` (#625) leaves out a row with nothing in either column (a
+    balance-sheet account that stands at zero); a P&L account whose debits
+    and credits offset keeps both figures, so each column still adds up to
+    its total."""
     basis = cash_basis.resolve_basis(db, basis if isinstance(basis, str) else None)
     exclude_adjusting = _flag(exclude_adjusting)
+    hide_zero = _flag(hide_zero)
     if not end_date:
         end_date = date.today()
     if not start_date:
@@ -1418,12 +1484,16 @@ def trial_balance(
             }
         )
 
+    if hide_zero:
+        items = _with_figures(items, ("total_debit", "total_credit"))
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "exclude_adjusting": bool(exclude_adjusting),
         "basis": basis,
         "basis_note": cash_basis.receivable_note(db, end_date, basis),
+        "hide_zero": bool(hide_zero),
         "items": items,
         "total_debit": float(total_debit),
         "total_credit": float(total_credit),
@@ -2022,6 +2092,8 @@ def _period_words(data: dict) -> str:
         period += " (adjusting entries left out)"
     if data.get("basis") == "cash":
         period += " (cash basis)"
+    if data.get("hide_zero"):
+        period += " (zero balances hidden)"
     return period
 
 
@@ -2386,6 +2458,8 @@ def _bs_section(data: dict, t=None, show_changes: bool = True) -> dict:
         period += f" · compared with {prior['as_of_date']}"
     if data.get("basis") == "cash":
         period += " (cash basis)"
+    if data.get("hide_zero"):
+        period += " (zero balances hidden)"
     return {
         "title": t("Balance Sheet"),
         "period": period,
@@ -2532,6 +2606,7 @@ def profit_loss_pdf(
     hide_changes: bool = Query(default=False),
     columns: Optional[str] = Query(default=None),
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     # class_id is a keyword: profit_loss takes db before it
     data = profit_loss(
@@ -2544,6 +2619,7 @@ def profit_loss_pdf(
         compare=compare,
         columns=columns,
         basis=basis,
+        hide_zero=hide_zero,
     )
     t = terms_from_db(db)
     if data.get("columns_by"):
@@ -2635,9 +2711,15 @@ def trial_balance_pdf(
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     data = trial_balance(
-        start_date, end_date, db, exclude_adjusting=exclude_adjusting, basis=basis
+        start_date,
+        end_date,
+        db,
+        exclude_adjusting=exclude_adjusting,
+        basis=basis,
+        hide_zero=hide_zero,
     )
     return _pdf_response(
         [_tb_section(data)],
@@ -2654,11 +2736,17 @@ def trial_balance_csv_route(
     db: Session = Depends(get_db),
     exclude_adjusting: bool = _EXCLUDE_ADJUSTING,
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     from app.services.ledger_exports import trial_balance_csv
 
     data = trial_balance(
-        start_date, end_date, db, exclude_adjusting=exclude_adjusting, basis=basis
+        start_date,
+        end_date,
+        db,
+        exclude_adjusting=exclude_adjusting,
+        basis=basis,
+        hide_zero=hide_zero,
     )
     return _csv_download(
         trial_balance_csv(data, _company_name(db)),
@@ -2949,6 +3037,7 @@ def profit_loss_csv_route(
         description="with columns: wide, the grid; long, one row per account and column",
     ),
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     from app.services.ledger_exports import profit_loss_by_class_csv, profit_loss_csv
 
@@ -2962,6 +3051,7 @@ def profit_loss_csv_route(
         compare=compare,
         columns=columns,
         basis=basis,
+        hide_zero=hide_zero,
     )
     t = terms_from_db(db)
     if data.get("columns_by"):
@@ -2991,10 +3081,13 @@ def balance_sheet_csv_route(
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
     from app.services.ledger_exports import balance_sheet_csv
 
-    data = balance_sheet(as_of_date, db, sort=sort, compare=compare, basis=basis)
+    data = balance_sheet(
+        as_of_date, db, sort=sort, compare=compare, basis=basis, hide_zero=hide_zero
+    )
     t = terms_from_db(db)
     return _csv_download(
         balance_sheet_csv(data, _company_name(db), t, show_changes=not hide_changes),
@@ -3011,8 +3104,11 @@ def balance_sheet_pdf(
     compare: Optional[str] = Query(default=None),
     hide_changes: bool = Query(default=False),
     basis: str = _BASIS_QUERY,
+    hide_zero: bool = _HIDE_ZERO,
 ):
-    data = balance_sheet(as_of_date, db, sort=sort, compare=compare, basis=basis)
+    data = balance_sheet(
+        as_of_date, db, sort=sort, compare=compare, basis=basis, hide_zero=hide_zero
+    )
     t = terms_from_db(db)
     return _pdf_response(
         [_bs_section(data, t, show_changes=not hide_changes)],

@@ -1580,7 +1580,7 @@ const ReportsPage = {
             const total = (label, key, style) => `<tr style="${style}"><td>${totalLabel(label, key)}</td>${figures(data[key], prior ? prior[key] : 0)}</tr>`;
             const sub = 'font-weight:600; background:var(--gray-50);';
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.start_date)} &mdash; ${formatDate(prior.end_date)}` : ''}${ReportsPage._basisWords(data)}${ReportsPage._hideZeroWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
@@ -1627,7 +1627,7 @@ const ReportsPage = {
         const set = (section, c) => `ReportsPage.openSetDrillDown(${args({ section }, null, c.start_date, c.end_date, null, null, 'profit-loss', scope)})`;
         return `${ReportsPage._exportButtons('profit-loss', qs)}
             <div style="font-size:11px; color:var(--gray-500); margin-bottom:8px;">
-                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}${data.basis === 'cash' ? ', cash basis' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
+                ${escapeHtml(data.start_date)} — ${escapeHtml(data.end_date)}, a column per ${noun}${params.exclude_adjusting ? ', adjusting entries left out' : ''}${data.basis === 'cash' ? ', cash basis' : ''}${data.hide_zero ? ', zero balances hidden' : ''}. Click an amount for the transactions behind it; the Total column is the ${escapeHtml(T('Profit & Loss'))} for the whole period.
             </div>
             ${ReportsPage._basisNote(data)}
             ${ReportsPage._pivotGrid({
@@ -1733,6 +1733,7 @@ const ReportsPage = {
             data.class_name ? `${T('Class')}: <strong>${escapeHtml(data.class_name)}</strong> only` : '',
             data.job_name ? `${T('Job')}: <strong>${escapeHtml(data.job_name)}</strong> only` : '',
             data.exclude_adjusting ? 'adjusting entries left out' : '',
+            data.hide_zero ? 'zero balances hidden' : '',
         ].filter(Boolean).join(' &middot; ');
         return `${ReportsPage._exportButtons('profit-loss-detail', qs)}
             <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${scope ? ` &middot; ${scope}` : ''}${ReportsPage._basisWords(data)} &middot; ${data.line_count} ${data.line_count === 1 ? 'line' : 'lines'}. A line's type opens its document.</p>${ReportsPage._basisNote(data)}
@@ -1806,7 +1807,7 @@ const ReportsPage = {
         return { params, toolbar };
     },
     _sortQs(params) {
-        return (params && params.sort === 'name' ? '&sort=name' : '') + ReportsPage._adjQs(params) + ReportsPage._basisQs(params);
+        return (params && params.sort === 'name' ? '&sort=name' : '') + ReportsPage._adjQs(params) + ReportsPage._basisQs(params) + ReportsPage._hideZeroQs(params);
     },
     // The statement's basis (#483): accrual, cash, or the company default
     // when nothing is chosen. A report param like Sort by, so it rides on
@@ -1868,19 +1869,44 @@ const ReportsPage = {
                 </div>`;
         return { params, toolbar };
     },
-    // the two statements' toolbar: the sort choice and the adjusting box
+    // Hide zero balances (#625): an account that had activity but nets to
+    // nothing for the period, or a Balance Sheet account that ends at zero,
+    // is left off; the totals are the same. A report param like Basis, so
+    // it rides on the address (hide_zero=1), the saved report and the PDF /
+    // CSV links.
+    _hideZeroQs(params) {
+        return params && params.hide_zero ? '&hide_zero=1' : '';
+    },
+    _hideZeroOpts(prefill) {
+        const on = !!(prefill && (prefill.hide_zero === '1' || prefill.hide_zero === 'true' || prefill.hide_zero === true));
+        const params = on ? { hide_zero: '1' } : {};
+        const toolbar = `<div class="form-group">
+                    <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+                        <input type="checkbox" id="report-hide-zero" ${on ? 'checked' : ''} onchange="ReportsPage.setParam('hide_zero', this.checked ? '1' : '')">
+                        Hide zero balances
+                    </label>
+                </div>`;
+        return { params, toolbar };
+    },
+    _hideZeroWords(data) {
+        return data && data.hide_zero ? ' &middot; zero balances hidden' : '';
+    },
+    // the two statements' toolbar: the sort choice, the basis, the
+    // adjusting box and the zero-balances box
     _statementOpts(prefill) {
         const sort = ReportsPage._sortOpts(prefill);
         const basis = ReportsPage._basisOpts(prefill);
         const adj = ReportsPage._adjOpts(prefill);
-        return { params: { ...sort.params, ...basis.params, ...adj.params }, toolbar: sort.toolbar + basis.toolbar + adj.toolbar };
+        const zero = ReportsPage._hideZeroOpts(prefill);
+        return { params: { ...sort.params, ...basis.params, ...adj.params, ...zero.params }, toolbar: sort.toolbar + basis.toolbar + adj.toolbar + zero.toolbar };
     },
 
     async balanceSheet(prefill) {
         // Compare to the same date a year earlier, as the P&L does.
         const sortOpts = ReportsPage._sortOpts(prefill);
         const basisOpts = ReportsPage._basisOpts(prefill);
-        const opts = { params: { ...sortOpts.params, ...basisOpts.params }, toolbar: sortOpts.toolbar + basisOpts.toolbar };
+        const zeroOpts = ReportsPage._hideZeroOpts(prefill);
+        const opts = { params: { ...sortOpts.params, ...basisOpts.params, ...zeroOpts.params }, toolbar: sortOpts.toolbar + basisOpts.toolbar + zeroOpts.toolbar };
         const bsParams = { ...opts.params, ...ReportsPage._compareParams(prefill) };
         await ReportsPage.openPeriodModal(T("Balance Sheet"), ReportsPage.defaultPeriod(), async (_period, params, live) => {
             const cmp = live.compare === 'prior_year';
@@ -1927,7 +1953,7 @@ const ReportsPage = {
                 ).join('');
             };
             return `${pdfBtn}
-                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">As of ${formatDate(data.as_of_date)}${prior ? ` &nbsp;vs&nbsp; ${formatDate(prior.as_of_date)}` : ''}${ReportsPage._basisWords(data)}${ReportsPage._hideZeroWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr><th scope="col">Account</th>${ReportsPage._cmpHead(prior, show)}</tr></thead>
                     <tbody>
@@ -2502,14 +2528,17 @@ const ReportsPage = {
     },
 
     async trialBalance(prefill) {
-        // the adjusting box, with the Basis select ahead of it
+        // the adjusting box, with the Basis select ahead of it and the
+        // zero-balances box after (#625)
         const tbOpts = { ...ReportsPage._adjOpts(prefill) };
         const tbBasis = ReportsPage._basisOpts(prefill);
-        tbOpts.params = { ...tbBasis.params, ...tbOpts.params };
-        tbOpts.toolbar = tbBasis.toolbar + tbOpts.toolbar;
+        const tbZero = ReportsPage._hideZeroOpts(prefill);
+        tbOpts.params = { ...tbBasis.params, ...tbOpts.params, ...tbZero.params };
+        tbOpts.toolbar = tbBasis.toolbar + tbOpts.toolbar + tbZero.toolbar;
         await ReportsPage.openPeriodModal("Trial Balance", ReportsPage.defaultPeriod(), async (_period, range, live) => {
-            ReportsPage._viewReturn['trial-balance'] = ReportsPage._basisKeep(live);
-            const data = await API.get(`/reports/trial-balance?start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}`);
+            ReportsPage._viewReturn['trial-balance'] = { ...ReportsPage._basisKeep(live), ...(live.hide_zero ? { hide_zero: '1' } : {}) };
+            const tbQs = `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}${ReportsPage._hideZeroQs(live)}`;
+            const data = await API.get(`/reports/trial-balance?${tbQs}`);
             // An account's name opens its register for the report's dates
             // (R9), with "Back to Trial Balance"
             const drill = (i) => i.account_id
@@ -2534,8 +2563,8 @@ const ReportsPage = {
                 <td class="amount">${formatCurrency(data.total_credit)}</td>
                 <td class="amount" style="color:${diffColor}">${formatCurrency(data.difference)}</td>
             </tr>`;
-            return `${ReportsPage._exportButtons('trial-balance', `start_date=${range.start}&end_date=${range.end}${ReportsPage._adjQs(live)}${ReportsPage._basisQs(live)}`)}
-                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}${ReportsPage._basisWords(data)}</p>${ReportsPage._basisNote(data)}
+            return `${ReportsPage._exportButtons('trial-balance', tbQs)}
+                <p style="margin-bottom:12px; color:var(--gray-500);">${formatDate(data.start_date)} &mdash; ${formatDate(data.end_date)}${data.exclude_adjusting ? ' · without adjusting entries' : ''}${ReportsPage._basisWords(data)}${ReportsPage._hideZeroWords(data)}</p>${ReportsPage._basisNote(data)}
                 <div class="table-container"><table>
                     <thead><tr>${numbers ? '<th scope="col">Number</th>' : ''}<th scope="col">Account</th><th scope="col">Type</th><th scope="col" class="amount">Debit</th><th scope="col" class="amount">Credit</th><th scope="col" class="amount">Net</th></tr></thead>
                     <tbody>${rows}</tbody>
@@ -4238,7 +4267,7 @@ ReportsPage._compareParams = function (prefill) {
 // (sort, adjusting entries, comparison), not the drill-down's dates.
 ReportsPage._cmpKeep = function (params) {
     const keep = {};
-    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes', 'columns', 'basis']) {
+    for (const k of ['sort', 'exclude_adjusting', 'compare', 'hide_changes', 'columns', 'basis', 'hide_zero']) {
         if (params && params[k]) keep[k] = params[k];
     }
     return keep;
