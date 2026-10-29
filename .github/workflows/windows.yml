@@ -192,7 +192,7 @@ jobs:
         shell: pwsh
         run: |
           # Microsoft's permalink for the ~2MB Evergreen bootstrapper; the
-          # installer runs it only on machines missing the runtime.
+          # installer runs it only where the runtime is missing or older than the window needs (MIN_WEBVIEW2).
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile packaging\windows\MicrosoftEdgeWebView2Setup.exe
           if ((Get-Item packaging\windows\MicrosoftEdgeWebView2Setup.exe).Length -lt 500KB) { Write-Error "bootstrapper download looks wrong"; exit 1 }
 
