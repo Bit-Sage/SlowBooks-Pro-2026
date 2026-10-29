@@ -706,7 +706,7 @@ def test_enter_due_endpoint_and_the_scheduler_script(
     monkeypatch.setattr(
         recurring_service,
         "generate_due_invoices",
-        lambda db, as_of=None, skipped=None: [],
+        lambda db, as_of=None, skipped=None, taken=None: [],
     )
     from app.services import memorized_service
 
@@ -2159,7 +2159,7 @@ def test_a_recurring_backlog_past_a_thousand_is_caught_up_in_one_run(
     reaching it is logged."""
     due = {"left": 1500}
 
-    def one_more(db, as_of=None, skipped=None):
+    def one_more(db, as_of=None, skipped=None, taken=None):
         if not due["left"]:
             return []
         due["left"] -= 1
@@ -2176,7 +2176,9 @@ def test_a_recurring_backlog_past_a_thousand_is_caught_up_in_one_run(
 
     monkeypatch.setattr(scheduler, "PASS_SAFETY_CAP", 5)
     monkeypatch.setattr(
-        recurring_service, "generate_due_invoices", lambda db, as_of, skipped: [7]
+        recurring_service,
+        "generate_due_invoices",
+        lambda db, as_of, skipped, taken=None: [7],
     )
     with caplog.at_level("WARNING", logger="app.services.scheduler"):
         ids, _ = scheduler.catch_up_recurring(None, date(2026, 3, 1))
@@ -2599,3 +2601,128 @@ def test_the_page_and_the_docs_say_the_runs_wait_for_a_sign_in():
         assert "those runs wait until someone has signed in since the app" in text
         assert "nothing is entered behind the sign-in screen" in text, doc
         assert "scheduled run" in text, doc
+
+
+# ---------------------------------------------------------------------------
+# from the 2.31.1 Windows gate's round 3 findings (W-84, W-86 and the wording
+# notes); W-85's generator tests are in tests/test_recurring_service.py
+# ---------------------------------------------------------------------------
+
+
+def _another_window_generates_first(monkeypatch, Session, rec_id, occurrence):
+    """Another window's Enter now on `occurrence` lands between a run's read
+    of the schedule and its claim, once: it sits in front of the closing
+    date check, the run's last read before it claims (where
+    _installment_claimed_after_both_read puts its barrier), on a session of
+    its own, so it commits as another request does."""
+    import app.services.closing_date as closing_date
+    from app.routes import recurring as recurring_routes
+
+    real = closing_date.check_closing_date
+    state = {"done": False}
+
+    def checked(db, txn_date, *args, **kw):
+        if not state["done"]:
+            state["done"] = True
+            with Session() as other:
+                won = recurring_routes.generate_one(
+                    rec_id, dated=None, occurrence=occurrence, db=other
+                )
+            assert won["invoices_created"] == 1, won
+        return real(db, txn_date, *args, **kw)
+
+    monkeypatch.setattr(closing_date, "check_closing_date", checked)
+
+
+def _made_for(Session, rec_id):
+    from app.models.recurring import RecurringInvoice
+
+    with Session() as db:
+        made = (
+            db.query(Invoice)
+            .filter(Invoice.recurring_invoice_id == rec_id)
+            .order_by(Invoice.date, Invoice.id)
+            .all()
+        )
+        rec = db.get(RecurringInvoice, rec_id)
+        return [(i.id, i.date) for i in made], rec.next_due, rec.invoices_created
+
+
+def test_enter_all_due_keeps_going_after_another_window_takes_an_installment(
+    file_company, monkeypatch
+):
+    """W-84: when another window's Enter now (or a Generate) won the claim
+    on the only due schedule's first installment, Enter All Due's first pass
+    made nothing and the catch-up stopped there, answering 200 with 0 made
+    while two more installments were due. A lost claim means the schedule
+    has moved on, so the run keeps going and makes the rest."""
+    client, Session, ids = file_company
+    r = client.post("/api/customers", json={"name": "Riverbend Dental"})
+    assert r.status_code == 201, r.text
+    rec_id = _recurring_invoice(client, r.json()["id"], start="2026-01-01")
+    _another_window_generates_first(monkeypatch, Session, rec_id, date(2026, 1, 1))
+
+    r = client.post("/api/memorized/enter-due?as_of=2026-03-15")
+    assert r.status_code == 200, r.text
+    assert r.json()["invoices_created"] == 2 and r.json()["skipped"] == []
+    made, next_due, count = _made_for(Session, rec_id)
+    assert [when for _, when in made] == [
+        date(2026, 1, 1),
+        date(2026, 2, 1),
+        date(2026, 3, 1),
+    ]
+    assert r.json()["invoice_ids"] == [made[1][0], made[2][0]]
+    assert next_due == date(2026, 4, 1) and count == 3
+
+
+def test_a_generation_that_loses_a_claim_names_the_schedule(file_company, monkeypatch):
+    """W-84: generate_due_invoices reports, in `taken`, each schedule whose
+    installment another window generated first: not skipped and not an
+    error, and named so the catch-up knows the schedule moved on."""
+    client, Session, ids = file_company
+    r = client.post("/api/customers", json={"name": "Riverbend Dental"})
+    rec_id = _recurring_invoice(client, r.json()["id"], start="2026-01-01")
+    _another_window_generates_first(monkeypatch, Session, rec_id, date(2026, 1, 1))
+    skipped: list = []
+    taken: list = []
+    with Session() as db:
+        made = recurring_service.generate_due_invoices(
+            db, date(2026, 3, 15), skipped=skipped, taken=taken
+        )
+    assert made == [] and skipped == [] and taken == [rec_id]
+    rows, next_due, count = _made_for(Session, rec_id)
+    assert [when for _, when in rows] == [date(2026, 1, 1)]
+    assert next_due == date(2026, 2, 1) and count == 1
+
+
+def test_a_lost_claim_is_not_the_end_of_the_backlog(monkeypatch, caplog):
+    """W-84: the catch-up makes passes while a pass makes an invoice or
+    loses a claim, so Enter All Due and the cron script agree on a backlog
+    however the windows race; a claim lost on every pass still stops at the
+    safety cap, logged."""
+    passes = iter([([], [7]), ([101], []), ([102], [7]), ([], [])])
+    asked = []
+
+    def generate(db, as_of=None, skipped=None, taken=None):
+        made, lost = next(passes)
+        asked.append(as_of)
+        taken.extend(lost)
+        return made
+
+    monkeypatch.setattr(recurring_service, "generate_due_invoices", generate)
+    assert scheduler.catch_up_recurring(None, date(2026, 3, 1)) == ([101, 102], [])
+    assert asked == [date(2026, 3, 1)] * 4
+
+    monkeypatch.setattr(scheduler, "PASS_SAFETY_CAP", 5)
+    calls = []
+
+    def always_lost(db, as_of=None, skipped=None, taken=None):
+        calls.append(as_of)
+        taken.append(7)
+        return []
+
+    monkeypatch.setattr(recurring_service, "generate_due_invoices", always_lost)
+    with caplog.at_level("WARNING", logger="app.services.scheduler"):
+        assert scheduler.catch_up_recurring(None, date(2026, 3, 1)) == ([], [])
+    assert len(calls) == 5
+    assert "stopped after 5 passes" in caplog.text

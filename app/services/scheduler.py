@@ -49,10 +49,13 @@ _RUN_LOCK = threading.RLock()
 _last_run: dict | None = None
 
 # A recurring invoice schedule is generated one installment per pass; a run
-# makes passes until a pass generates nothing (2.31.1 gate W-81: a fixed
-# 1,000 passes left a longer backlog for a second run). The cap is a safety
-# net no real backlog meets (a daily schedule some 270 years behind);
-# reached, it is logged and what is still due waits for the next run.
+# makes passes until a pass generates nothing and loses no claim (2.31.1
+# gate W-81: a fixed 1,000 passes left a longer backlog for a second run;
+# W-84: a pass whose only due installment another window generated first
+# made nothing, so the run stopped with later installments still due). The
+# cap is a safety net no real backlog meets (a daily schedule some 270
+# years behind); reached, it is logged and what is still due waits for the
+# next run.
 PASS_SAFETY_CAP = 100_000
 # How often the task looks at the calendar. A change of day runs the
 # schedules, so a machine asleep over midnight catches up on waking.
@@ -125,9 +128,12 @@ def catch_up_recurring(
 ) -> tuple[list[int], list[dict]]:
     """Every due recurring invoice, every missed installment up to as_of
     (today), each dated its scheduled date: one installment per schedule
-    per pass, passes until one generates nothing. What Enter All Due does
-    and what the cron script does, so the two agree (W-81). Returns the
-    invoices made and the schedules skipped, each named once."""
+    per pass, passes while one generates something or loses a claim. What
+    Enter All Due does and what the cron script does, so the two agree
+    (W-81). A claim lost to another window or run means that schedule has
+    moved on, and its next installment may be due too, so a pass that made
+    nothing for that reason is not the end of the backlog (W-84). Returns
+    the invoices made and the schedules skipped, each named once."""
     if as_of is None:
         as_of = date.today()
     invoice_ids: list[int] = []
@@ -136,7 +142,10 @@ def catch_up_recurring(
     passes = 0
     while True:
         this_pass: list[dict] = []
-        ids = recurring_service.generate_due_invoices(db, as_of, skipped=this_pass)
+        lost: list[int] = []
+        ids = recurring_service.generate_due_invoices(
+            db, as_of, skipped=this_pass, taken=lost
+        )
         # a schedule skipped for a closed period keeps its date and is
         # skipped on every pass: reported once
         for item in this_pass:
@@ -144,7 +153,7 @@ def catch_up_recurring(
             if key not in seen:
                 seen.add(key)
                 skipped.append(item)
-        if not ids:
+        if not ids and not lost:
             break
         invoice_ids.extend(ids)
         passes += 1

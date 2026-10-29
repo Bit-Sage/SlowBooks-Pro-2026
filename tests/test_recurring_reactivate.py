@@ -127,7 +127,7 @@ def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
 
     monkeypatch.setattr(app.database, "SessionLocal", lambda: _DummySession())
 
-    def fake_generate(db, as_of=None, skipped=None):
+    def fake_generate(db, as_of=None, skipped=None, taken=None):
         if skipped is not None:
             skipped.append(
                 {
