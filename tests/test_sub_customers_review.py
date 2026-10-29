@@ -16,6 +16,12 @@ the Bill To it was made with (W-59); a property's billed balance is what
 its aging row shows and the CSV names a tenant in full (W-61); the credit
 limit checked is the payer's (W-62); every tenant under its property
 shows its own name and Unit 2 beside Unit 1 is not a duplicate (W-69).
+
+Round 3: an invoice moved to another customer by an edit (W-72), a
+duplicate (W-73), a converted estimate (W-80) and an invoice carried over
+from QuickBooks Online take the payer's whole Bill To as of then, the
+street with the name and country; an edit can correct the addresses; and
+a duplicate is checked against the credit limit (W-79).
 """
 
 import csv
