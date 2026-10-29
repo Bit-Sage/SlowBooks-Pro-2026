@@ -1288,7 +1288,10 @@ async def _require_session(request: Request, call_next):
     ):
         from app.services import scheduler as _scheduler
 
-        _scheduler.note_sign_in(request.session.get("username") or "operator")
+        _scheduler.note_sign_in(
+            request.session.get("username") or "operator",
+            request.session.get("role"),
+        )
 
     return await call_next(request)
 

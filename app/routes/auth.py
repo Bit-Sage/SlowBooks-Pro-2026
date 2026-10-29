@@ -550,7 +550,8 @@ def _note_sign_in(session, company_file, user) -> None:
     if session.get("must_change_password"):
         return
     scheduler.note_sign_in(
-        getattr(user, "username", None) or session.get("username") or "operator"
+        getattr(user, "username", None) or session.get("username") or "operator",
+        getattr(user, "role", None) or session.get("role"),
     )
 
 

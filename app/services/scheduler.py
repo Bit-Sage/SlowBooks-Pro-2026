@@ -20,7 +20,10 @@
 # reaching the server), then runs; the daily run, likewise, only once
 # someone has. A company with no password yet runs at open, as before. The
 # documents a run enters carry, in the audit log, the username of the person
-# signed in (the latest sign-in), or "scheduled run" when nobody signs in.
+# signed in (the latest sign-in of an administrator or bookkeeper, the roles
+# that may post a bill and a journal entry), or "scheduled run" when nobody
+# signs in or only a sign-in that may not post them has (read-only, an
+# accountant's).
 # ============================================================================
 
 import asyncio
@@ -64,23 +67,36 @@ SCHEDULED_RUN = "scheduled run"
 # nobody has signed in since the process started: the task tries again.
 WAITING_FOR_SIGN_IN = "waiting for a sign-in"
 
-# The latest person signed in to the company this server was started for,
-# since the process started (note_sign_in); None until somebody has.
+# Who the audit log names for what a run enters: the latest administrator or
+# bookkeeper signed in to the company this server was started for since the
+# process started, or SCHEDULED_RUN when only a sign-in that may not post
+# what a run enters has (note_sign_in); None until somebody has signed in.
 _signed_in_as: str | None = None
+# The roles whose sign-in a run's entries are credited to: those that may
+# post a bill and a journal entry. A sign-in with no role (a company with
+# one password and no user list) is the operator's.
+CREDITED_ROLES = ("admin", "bookkeeper")
 # The task's wake-up: a sign-in sets it, so the waiting run goes at once.
 _wake: asyncio.Event | None = None
 _wake_loop: asyncio.AbstractEventLoop | None = None
 
 
-def note_sign_in(username: str | None) -> None:
+def note_sign_in(username: str | None, role: str | None = None) -> None:
     """A person is signed in to the company this server was started for:
     called by the sign-in, first-run setup and company switch routes, and
     by the gate for each request of a signed-in session it lets through
     (a sign-in the app remembers, ask_password_on_start off). The first one
-    wakes the task, whose startup run was waiting for it."""
+    wakes the task, whose startup run was waiting for it. Any role's
+    sign-in lets the run go; what it enters is credited to the latest
+    administrator or bookkeeper signed in, never to a read-only or an
+    accountant's sign-in, which may not post a bill (SCHEDULED_RUN until
+    one who may has signed in)."""
     global _signed_in_as
     first = _signed_in_as is None
-    _signed_in_as = username or "operator"
+    if role is None or role in CREDITED_ROLES:
+        _signed_in_as = username or "operator"
+    elif first:
+        _signed_in_as = SCHEDULED_RUN
     if first:
         _wake_the_task()
 

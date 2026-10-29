@@ -2385,6 +2385,35 @@ def test_with_a_password_the_startup_run_waits_for_a_sign_in(
     assert daily["entered_count"] == 1
 
 
+def test_a_read_only_sign_in_lets_the_run_go_and_is_never_credited(
+    client, db_session, seed_accounts, monkeypatch
+):
+    """Any sign-in lets the waiting run go, but what it enters is credited
+    to a person who may post it: after a read-only sign-in the audit log
+    names the scheduled run, and once a bookkeeper has signed in, the
+    bookkeeper."""
+    from tests.test_rbac_users import _login_as, _mk_user
+
+    monkeypatch.setattr(scheduler, "_last_run", None)
+    _bill_schedule(client, _vendor(client), seed_accounts)  # auto, due Jan 31
+    _mk_user(db_session, "viewer", "a-test-password-123", "readonly")
+    _mk_user(db_session, "keeper", "a-test-password-123", "bookkeeper")
+    db_session.commit()
+    assert client.post("/api/auth/logout").status_code == 200
+    monkeypatch.setattr(scheduler, "_signed_in_as", None)  # the server starts
+    _login_as(client, "viewer", "a-test-password-123")
+    out = scheduler.run_in_this_process("startup", today=lambda: date(2026, 2, 10))
+    assert out["entered_count"] == 1
+    (january,) = _bills(db_session)
+    assert _who_entered(db_session, january) == [scheduler.SCHEDULED_RUN]
+
+    _login_as(client, "keeper", "a-test-password-123")
+    daily = scheduler.run_in_this_process("daily", today=lambda: date(2026, 2, 28))
+    assert daily["entered_count"] == 1
+    (february,) = [b for b in _bills(db_session) if b.id != january.id]
+    assert _who_entered(db_session, february) == ["keeper"]
+
+
 def test_the_task_runs_as_soon_as_someone_signs_in(
     client, db_session, seed_accounts, monkeypatch
 ):

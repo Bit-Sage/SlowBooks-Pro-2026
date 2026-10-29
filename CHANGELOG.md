@@ -43,6 +43,14 @@ it, and again to reverse; numbers sort as numbers. A sortable heading on any
 list is now a button the keyboard reaches, and it tells a screen reader how
 the column is sorted. The order chosen is kept when you come back to the list.
 
+**The wide dialogs use the window's width, and the splash scrolls on a
+short window.** A dialog with a wide line table (Enter Bill, an estimate, a
+job cost entry) took 90% of the window, so since 2.31.0's move column the
+bill's lines scrolled sideways at a 1264px window with Amount out of view;
+such a dialog now takes the window's width, up to 1280px. With the terms and
+What's New showing on a window 700px tall, the splash ran past the bottom of
+the screen with its button out of reach; it scrolls now.
+
 **An expense keeps the memo it was given** (#648, from the 2.31.0 gate). An
 expense's memo was read back off its bank line, which holds the memo or,
 when none was typed, the payee. So a memo typed the same as the payee came
@@ -171,9 +179,11 @@ bill and journal entry when it opens and once a day while it runs, every
 missed date in order. When the company has a password, those runs wait until
 someone has signed in since the app started (a sign-in the app remembers
 counts, an API token does not), so nothing is entered behind the sign-in
-screen; the audit log names the person signed in for what a run enters, or
-"scheduled run" when nobody signs in (a company with no password yet, the
-cron script). The Memorized Transactions page says what was entered while
+screen; the audit log names the person signed in for what a run enters (an
+administrator or bookkeeper), or "scheduled run" when nobody signs in (a
+company with no password yet, the cron script) or only a read-only or an
+accountant's sign-in has. The Memorized Transactions page says what was
+entered while
 you were away (or, when a run entered nothing and had to skip something,
 what could not be entered and why), and a box under its list (on by default)
 turns the automatic runs off, for a server that runs
