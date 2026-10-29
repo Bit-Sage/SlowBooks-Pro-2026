@@ -356,6 +356,7 @@ const BillsPage = {
     // supplier's bill fell due two weeks late — F11) and its default
     // expense account, which fills every line not already pointed somewhere.
     vendorSelected(vendorId) {
+        BillsPage.showVendorSummary(vendorId);
         if (!vendorId || vendorId === VendorQuickAdd.NEW) return;
         const vendor = BillsPage._vendors.find(v => v.id == vendorId);
         BillsPage._defaultExpenseAccountId = (vendor && vendor.default_expense_account_id) || null;
@@ -372,6 +373,37 @@ const BillsPage = {
             });
         }
     },
+
+    // The panel beside the form (#601): what the vendor is owed, its last
+    // bills and payments, and its notes. Loaded in the background, so the
+    // form is never held up; a late answer for a vendor no longer picked is
+    // dropped, and a failure just leaves the panel empty.
+    async showVendorSummary(vendorId) {
+        const box = document.getElementById('bill-vendor-summary');
+        if (!box) return;
+        const id = vendorId && vendorId !== VendorQuickAdd.NEW ? vendorId : null;
+        BillsPage._summaryFor = id;
+        box.hidden = true;
+        box.innerHTML = '';
+        if (!id) return;
+        let s;
+        try { s = await API.get(`/vendors/${id}/summary`); } catch (e) { return; }
+        if (BillsPage._summaryFor !== id || !box.isConnected) return;
+        const rows = (list, cells) => list.length
+            ? `<table class="bill-vendor-summary__table">${list.map(r => `<tr>${cells(r)}</tr>`).join('')}</table>`
+            : '<p class="bill-vendor-summary__none">None yet.</p>';
+        box.innerHTML = `
+            <h3>${escapeHtml(s.name)}</h3>
+            <p class="bill-vendor-summary__owed">Owed: <strong>${formatCurrency(s.balance)}</strong>${s.is_1099_vendor ? ' <span class="badge">1099</span>' : ''}</p>
+            <h4>Recent bills</h4>
+            ${rows(s.bills, b => `<td>${escapeHtml(b.date)}</td><td>${escapeHtml(b.bill_number || '')}</td><td class="amount">${formatCurrency(b.total)}</td><td>${escapeHtml(b.status || '')}${Number(b.balance_due) > 0 && b.status !== 'draft' ? ` (${formatCurrency(b.balance_due)} open)` : ''}</td>`)}
+            <h4>Recent payments</h4>
+            ${rows(s.payments, p => `<td>${escapeHtml(p.date)}</td><td class="amount">${formatCurrency(p.amount)}</td><td>${escapeHtml([p.method, p.check_number ? '#' + p.check_number : ''].filter(Boolean).join(' '))}</td>`)}
+            ${s.notes ? `<h4>Notes</h4><p class="bill-vendor-summary__notes">${escapeHtml(s.notes)}</p>` : ''}
+            <p><a href="#/vendors/${s.vendor_id}" target="_blank" rel="noopener">Open ${escapeHtml(s.name)}'s page</a></p>`;
+        box.hidden = false;
+    },
+    _summaryFor: null,
 
     // Enter Bill, or with an id the same form filled from the bill, to
     // edit it (#225): a posted bill can be changed the way an invoice can,
@@ -413,6 +445,7 @@ const BillsPage = {
         if (!termChoices.includes(terms)) termChoices.push(terms);
 
         openModal(bill ? `Edit Bill ${bill.bill_number}` : 'Enter Bill', `
+            <div class="bill-with-summary"><div class="bill-with-summary__form">
             <form id="bill-form" aria-labelledby="modal-title" data-skip-to="#bill-lines" data-skip-text="Skip to the line items" onsubmit="BillsPage.save(event, ${bill ? bill.id : 'null'})">
                 ${bill ? '' : ScanHelper.scanRowHtml()}
                 <div class="form-grid">
@@ -447,10 +480,13 @@ const BillsPage = {
                     <button type="button" class="btn btn-secondary" onclick="ScanHelper.discard(); closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">${bill ? 'Save Changes' : 'Save Bill'}</button>
                 </div>
-            </form>`, { wide: true });
+            </form></div>
+            <aside id="bill-vendor-summary" class="bill-vendor-summary" aria-label="Vendor summary" aria-live="polite" hidden></aside></div>`, { wide: true });
+        BillsPage._summaryFor = null;
         if (bill) {
             const vendorSel = document.getElementById('bill-vendor');
             if (vendorSel) vendorSel.value = bill.vendor_id;
+            BillsPage.showVendorSummary(bill.vendor_id);
             BillsPage.lineCount = 0;
             bill.lines.forEach(l => BillsPage.addLine(l));
             BillsPage.recalc();

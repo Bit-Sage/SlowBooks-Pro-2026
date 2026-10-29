@@ -3079,3 +3079,20 @@ tbody tr.row--dim > td.amount { color: var(--text-muted); }
         outline: 2px solid Highlight;
     }
 }
+
+/* Enter Bill: the vendor's summary beside the form (#601); below the form
+   on a narrow window. */
+.bill-with-summary { display: flex; gap: 16px; align-items: flex-start; }
+.bill-with-summary__form { flex: 1 1 auto; min-width: 0; }
+.bill-vendor-summary { flex: 0 0 260px; font-size: 12px; border-left: 1px solid var(--border, #ccc); padding-left: 12px; }
+.bill-vendor-summary[hidden] { display: none; }
+.bill-vendor-summary h3 { margin: 0 0 6px; font-size: 14px; }
+.bill-vendor-summary h4 { margin: 10px 0 4px; font-size: 12px; }
+.bill-vendor-summary__table { width: 100%; border-collapse: collapse; }
+.bill-vendor-summary__table td { padding: 2px 4px 2px 0; }
+.bill-vendor-summary__none { margin: 0; color: var(--text-muted); }
+.bill-vendor-summary__notes { white-space: pre-wrap; margin: 0; }
+@media (max-width: 900px) {
+    .bill-with-summary { flex-direction: column; }
+    .bill-vendor-summary { flex-basis: auto; width: 100%; border-left: 0; border-top: 1px solid var(--border, #ccc); padding: 8px 0 0; }
+}
