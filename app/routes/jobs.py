@@ -912,6 +912,9 @@ def delete_job(job_id: int, db: Session = Depends(get_db)):
             status_code=400,
             detail="Job has posted activity — mark it inactive instead",
         )
+    from app.services.memorized_service import refuse_if_memorized
+
+    refuse_if_memorized(db, "Job", "job_id", job_id)
     db.delete(job)
     db.commit()
     return {"message": "Job deleted"}

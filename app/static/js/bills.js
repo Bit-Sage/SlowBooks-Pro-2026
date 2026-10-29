@@ -98,6 +98,7 @@ const BillsPage = {
             </div>
             <div class="form-actions">
                 ${bill.status !== 'void' ? `<button class="btn btn-primary" data-write onclick="BillsPage.showForm(${bill.id})">Edit</button>` : ''}
+                ${bill.status !== 'void' ? `<button class="btn btn-secondary" data-write title="Keep this bill as a memorized transaction, to enter again on a schedule" onclick="MemorizedPage.memorizeBill(${bill.id})">Memorize</button>` : ''}
                 <button class="btn btn-secondary" onclick="window.open('/api/bills/${bill.id}/pdf','_blank')">Save PDF</button>
                 <button class="btn btn-secondary" onclick="window.open('/api/bills/${bill.id}/print-preview','_blank')">Print</button>
                 <button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -360,7 +361,8 @@ const BillsPage = {
         if (!vendorId || vendorId === VendorQuickAdd.NEW) return;
         const vendor = BillsPage._vendors.find(v => v.id == vendorId);
         BillsPage._defaultExpenseAccountId = (vendor && vendor.default_expense_account_id) || null;
-        const terms = document.querySelector('#bill-form [name="terms"]');
+        // the open form's Terms box: Enter Bill's, or a memorized bill's (#605)
+        const terms = document.querySelector('#modal-body form [name="terms"]');
         if (vendor && vendor.terms && terms) {
             if (![...terms.options].some(o => o.value === vendor.terms)) {
                 terms.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(vendor.terms)}">${escapeHtml(vendor.terms)}</option>`);
@@ -779,9 +781,10 @@ const BillsPage = {
         $('#bill-lines').insertAdjacentHTML('beforeend', BillsPage.lineHtml(idx, line));
     },
 
-    async save(e, id = null) {
-        e.preventDefault();
-        const form = e.target;
+    // The grid's lines as the API takes them, and the first line with an
+    // amount but no account (`missing`), for Save Bill and for a memorized
+    // bill's form (#605), which draws the same grid.
+    collectLines() {
         // an amount still being typed has had no change event yet: settle it
         // as leaving the box would, so its quantity is not dropped
         const active = document.activeElement;
@@ -816,6 +819,13 @@ const BillsPage = {
                 line_order: i,
             });
         });
+        return { lines, missing };
+    },
+
+    async save(e, id = null) {
+        e.preventDefault();
+        const form = e.target;
+        const { lines, missing } = BillsPage.collectLines();
         // A bill for $0.00 is refused (item picks used to leave the rate at
         // 0 and save one silently — W-M1).
         if (BillsPage.recalc() <= 0) {

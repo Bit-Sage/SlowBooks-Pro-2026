@@ -56,6 +56,10 @@ from app.models.vendor_credits import (
 
 # Phase 3: Productivity
 from app.models.recurring import RecurringInvoice, RecurringInvoiceLine
+from app.models.memorized import (  # noqa: F401 — registers the tables
+    MemorizedTransaction,
+    MemorizedTransactionLine,
+)
 
 # Phase 4: Communication & Export
 from app.models.email_log import EmailLog
@@ -153,6 +157,8 @@ __all__ = [
     # Phase 3
     "RecurringInvoice",
     "RecurringInvoiceLine",
+    "MemorizedTransaction",
+    "MemorizedTransactionLine",
     # Phase 4
     "EmailLog",
     # Phase 5

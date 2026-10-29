@@ -1,0 +1,954 @@
+"""Memorized transactions (#605): memorized bills and journal entries on a
+schedule, entered by the scheduler (auto-enter) or from the due list
+(remind); every frequency across month ends and February; end dates and
+a number of times; pause and resume; the one list of every schedule; the
+page's wiring and the migration."""
+
+import runpy
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+import app.database
+import app.services.recurring_service as recurring_service
+from app.models.bills import Bill
+from app.models.invoices import Invoice
+from app.models.memorized import MemorizedTransaction
+from app.models.transactions import Transaction, TransactionLine
+from app.services.memorized_service import enter_due_memorized
+from app.services.recurring_service import (
+    _advance_next_due,
+    advance_date,
+    frequency_label,
+    normalize_frequency,
+    roll_next_due_forward,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+RUN_RECURRING = ROOT / "scripts" / "run_recurring.py"
+REVISION = "c9e5a7b3d1f2"
+BEFORE = "b8d4f2a6c1e3"
+
+
+def _vendor(client, name="Harbor Power & Light", **more):
+    r = client.post("/api/vendors", json={"name": name, **more})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _bill_schedule(client, vendor_id, accounts, **over):
+    body = {
+        "kind": "bill",
+        "name": "Electric bill",
+        "mode": "auto",
+        "frequency": "monthly",
+        "start_date": "2026-01-31",
+        "vendor_id": vendor_id,
+        "terms": "Net 15",
+        "lines": [
+            {
+                "account_id": accounts["6500"].id,
+                "description": "Sanctuary",
+                "amount": 400,
+            },
+            {
+                "account_id": accounts["6100"].id,
+                "description": "Parsonage",
+                "quantity": 2,
+                "rate": 50,
+            },
+        ],
+    }
+    body.update(over)
+    r = client.post("/api/memorized", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _journal_schedule(client, accounts, **over):
+    body = {
+        "kind": "journal",
+        "name": "Monthly depreciation",
+        "mode": "auto",
+        "frequency": "monthly",
+        "start_date": "2026-01-31",
+        "description": "Depreciation for the month",
+        "reference": "DEP",
+        "lines": [
+            {"account_id": accounts["6000"].id, "debit": 250, "description": "Van"},
+            {"account_id": accounts["1000"].id, "credit": 250, "description": "Van"},
+        ],
+    }
+    body.update(over)
+    r = client.post("/api/memorized", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _recurring_invoice(client, customer_id, start="2026-01-01"):
+    r = client.post(
+        "/api/recurring",
+        json={
+            "customer_id": customer_id,
+            "frequency": "monthly",
+            "start_date": start,
+            "lines": [{"description": "Monthly service", "quantity": 1, "rate": 100}],
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _bills(db_session):
+    return db_session.query(Bill).order_by(Bill.id).all()
+
+
+def _journal_sides(db_session, txn_id):
+    rows = db_session.query(TransactionLine).filter_by(transaction_id=txn_id).all()
+    dr = sum((Decimal(str(r.debit)) for r in rows), Decimal("0"))
+    cr = sum((Decimal(str(r.credit)) for r in rows), Decimal("0"))
+    return dr, cr, rows
+
+
+# ---------------------------------------------------------------- auto-enter
+
+
+def test_auto_enter_bill_is_posted_by_the_scheduler_on_its_date_and_advances(
+    client, db_session, seed_accounts
+):
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(client, vendor_id, seed_accounts)
+    assert mem["mode"] == "auto" and mem["next_date"] == "2026-01-31"
+    assert mem["frequency_label"] == "Monthly" and mem["status"] == "active"
+    assert Decimal(str(mem["amount"])) == Decimal("500.00")
+
+    # not due the day before
+    assert enter_due_memorized(db_session, as_of=date(2026, 1, 30)) == []
+    assert _bills(db_session) == []
+
+    entered = enter_due_memorized(db_session, as_of=date(2026, 1, 31))
+    assert len(entered) == 1 and entered[0]["kind"] == "bill"
+    (bill,) = _bills(db_session)
+    assert entered[0]["document_id"] == bill.id
+    assert bill.vendor_id == vendor_id
+    assert bill.date == date(2026, 1, 31)
+    assert bill.terms == "Net 15" and bill.due_date == date(2026, 2, 15)
+    assert bill.bill_number == "20260131-HPL"
+    assert bill.total == Decimal("500.00") == bill.balance_due
+    # the lines as memorized: account, memo, quantity and rate, amount
+    lines = sorted(bill.lines, key=lambda ln: ln.line_order)
+    assert [(ln.account_id, ln.description) for ln in lines] == [
+        (seed_accounts["6500"].id, "Sanctuary"),
+        (seed_accounts["6100"].id, "Parsonage"),
+    ]
+    assert [Decimal(str(ln.amount)) for ln in lines] == [
+        Decimal("400.00"),
+        Decimal("100.00"),
+    ]
+    assert [Decimal(str(ln.quantity)) for ln in lines] == [Decimal("1"), Decimal("2")]
+    # posted as Enter Bill posts: each line's account debited, A/P credited
+    dr, cr, rows = _journal_sides(db_session, bill.transaction_id)
+    assert dr == cr == Decimal("500.00")
+    ap = [r for r in rows if r.account_id == seed_accounts["2000"].id]
+    assert len(ap) == 1 and Decimal(str(ap[0].credit)) == Decimal("500.00")
+    assert bill.transaction.source_type == "bill"
+
+    # the schedule moved on, holding to the 31st
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-02-28"
+    assert got["entered_count"] == 1
+    assert got["last_entered_on"] == "2026-01-31"
+    assert got["last_document_id"] == bill.id
+
+    assert enter_due_memorized(db_session, as_of=date(2026, 2, 27)) == []
+    entered = enter_due_memorized(db_session, as_of=date(2026, 2, 28))
+    assert len(entered) == 1
+    second = _bills(db_session)[1]
+    assert second.date == date(2026, 2, 28)
+    assert second.bill_number == "20260228-HPL"
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-03-31"
+    assert got["entered_count"] == 2
+
+
+def test_a_fixed_bill_number_is_suffixed_when_the_vendor_already_has_it(
+    client, db_session, seed_accounts
+):
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, bill_number="RENT")
+    enter_due_memorized(db_session, as_of=date(2026, 1, 31))
+    enter_due_memorized(db_session, as_of=date(2026, 2, 28))
+    assert [b.bill_number for b in _bills(db_session)] == ["RENT", "RENT-2"]
+    assert client.get(f"/api/memorized/{mem['id']}").json()["bill_number"] == "RENT"
+
+
+def test_a_closed_period_skips_one_schedule_and_the_rest_go_through(
+    client, db_session, seed_accounts
+):
+    vendor_id = _vendor(client)
+    _bill_schedule(
+        client, vendor_id, seed_accounts, name="Old", start_date="2026-01-05"
+    )
+    _bill_schedule(
+        client, vendor_id, seed_accounts, name="New", start_date="2026-02-05"
+    )
+    r = client.put("/api/settings", json={"closing_date": "2026-01-31"})
+    assert r.status_code == 200, r.text
+    skipped: list = []
+    entered = enter_due_memorized(db_session, as_of=date(2026, 2, 5), skipped=skipped)
+    assert [e["name"] for e in entered] == ["New"]
+    assert len(skipped) == 1 and skipped[0]["name"] == "Old"
+    assert "closing date" in skipped[0]["message"]
+    assert len(_bills(db_session)) == 1
+
+
+# ---------------------------------------------------------------- remind
+
+
+def test_remind_mode_posts_nothing_until_enter_now(client, db_session, seed_accounts):
+    mem = _bill_schedule(
+        client, _vendor(client), seed_accounts, mode="remind", start_date="2026-01-15"
+    )
+    assert enter_due_memorized(db_session, as_of=date(2026, 3, 1)) == []
+    assert _bills(db_session) == []
+
+    due = client.get("/api/memorized/due?as_of=2026-03-01").json()
+    assert [(d["kind"], d["id"], d["is_due"]) for d in due] == [
+        ("bill", mem["id"], True)
+    ]
+    assert due[0]["mode"] == "remind"
+
+    # Enter now: dated the scheduled date
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "bill" and r.json()["date"] == "2026-01-15"
+    assert r.json()["next_date"] == "2026-02-15"
+    assert "next on 2026-02-15" in r.json()["message"]
+    (bill,) = _bills(db_session)
+    assert bill.date == date(2026, 1, 15) and r.json()["document_id"] == bill.id
+
+    # or dated today; the schedule still moves on from the scheduled date
+    r = client.post(f"/api/memorized/{mem['id']}/enter", json={"date": "2026-03-01"})
+    assert r.status_code == 200, r.text
+    assert r.json()["date"] == "2026-03-01" and r.json()["next_date"] == "2026-03-15"
+    assert _bills(db_session)[1].date == date(2026, 3, 1)
+
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["entered_count"] == 2 and got["last_entered_on"] == "2026-03-01"
+    # entered, so no longer due on that day
+    assert client.get("/api/memorized/due?as_of=2026-03-01").json() == []
+
+
+# ---------------------------------------------------------------- frequencies
+
+
+@pytest.mark.parametrize(
+    "start, frequency, interval, anchor, expected",
+    [
+        # monthly on the 31st: the last day of a shorter month, the 31st again
+        (
+            date(2026, 1, 31),
+            "monthly",
+            1,
+            31,
+            [
+                date(2026, 2, 28),
+                date(2026, 3, 31),
+                date(2026, 4, 30),
+                date(2026, 5, 31),
+            ],
+        ),
+        # a leap year's February
+        (date(2028, 1, 31), "monthly", 1, 31, [date(2028, 2, 29), date(2028, 3, 31)]),
+        # every two months on the 30th
+        (
+            date(2025, 12, 30),
+            "monthly",
+            2,
+            30,
+            [date(2026, 2, 28), date(2026, 4, 30), date(2026, 6, 30)],
+        ),
+        # quarterly on the 30th
+        (
+            date(2025, 11, 30),
+            "quarterly",
+            1,
+            30,
+            [
+                date(2026, 2, 28),
+                date(2026, 5, 30),
+                date(2026, 8, 30),
+                date(2026, 11, 30),
+            ],
+        ),
+        # yearly on the 29th of February
+        (
+            date(2028, 2, 29),
+            "yearly",
+            1,
+            29,
+            [
+                date(2029, 2, 28),
+                date(2030, 2, 28),
+                date(2031, 2, 28),
+                date(2032, 2, 29),
+            ],
+        ),
+        # weekly and every two weeks across the end of February
+        (date(2026, 2, 24), "weekly", 1, 24, [date(2026, 3, 3), date(2026, 3, 10)]),
+        (date(2026, 2, 24), "weekly", 2, 24, [date(2026, 3, 10), date(2026, 3, 24)]),
+        # every three days, and daily into a leap day
+        (date(2026, 2, 27), "daily", 3, 27, [date(2026, 3, 2), date(2026, 3, 5)]),
+        (date(2028, 2, 28), "daily", 1, 28, [date(2028, 2, 29), date(2028, 3, 1)]),
+        # twice a month: the day and fifteen days later, cut back to the month's end
+        (
+            date(2026, 1, 1),
+            "semimonthly",
+            1,
+            1,
+            [date(2026, 1, 16), date(2026, 2, 1), date(2026, 2, 16), date(2026, 3, 1)],
+        ),
+        (
+            date(2026, 1, 15),
+            "semimonthly",
+            1,
+            15,
+            [
+                date(2026, 1, 30),
+                date(2026, 2, 15),
+                date(2026, 2, 28),
+                date(2026, 3, 15),
+                date(2026, 3, 30),
+            ],
+        ),
+        (
+            date(2026, 1, 16),
+            "semimonthly",
+            1,
+            31,
+            [
+                date(2026, 1, 31),
+                date(2026, 2, 16),
+                date(2026, 2, 28),
+                date(2026, 3, 16),
+                date(2026, 3, 31),
+            ],
+        ),
+    ],
+)
+def test_each_frequency_advances_across_month_ends_and_february(
+    start, frequency, interval, anchor, expected
+):
+    got = []
+    d = start
+    for _ in expected:
+        d = advance_date(d, frequency, interval, anchor)
+        got.append(d)
+    assert got == expected
+
+
+def test_recurring_invoices_step_as_they_always_have():
+    # no anchor day: the clamped date is what the next step starts from
+    assert _advance_next_due(date(2026, 1, 31), "monthly") == date(2026, 2, 28)
+    assert _advance_next_due(date(2026, 2, 28), "monthly") == date(2026, 3, 28)
+    assert _advance_next_due(date(2026, 1, 1), "weekly") == date(2026, 1, 8)
+    assert _advance_next_due(date(2026, 1, 1), "quarterly") == date(2026, 4, 1)
+    assert _advance_next_due(date(2028, 2, 29), "yearly") == date(2029, 2, 28)
+    assert _advance_next_due(date(2026, 1, 1), "whatever") == date(2026, 2, 1)
+    assert roll_next_due_forward(
+        date(2026, 1, 1), "monthly", date(2026, 7, 15)
+    ) == date(2026, 8, 1)
+    # with an anchor day, the roll forward holds to it too
+    assert roll_next_due_forward(
+        date(2026, 1, 31), "monthly", date(2026, 4, 15), 1, 31
+    ) == date(2026, 4, 30)
+
+
+def test_frequency_words_and_labels():
+    assert normalize_frequency("biweekly", None) == ("weekly", 2)
+    assert normalize_frequency("Every two months", 1) == ("monthly", 2)
+    assert normalize_frequency("twice a year", 1) == ("monthly", 6)
+    assert normalize_frequency("monthly", 4) == ("monthly", 4)
+    with pytest.raises(ValueError):
+        normalize_frequency("semimonthly", 2)
+    with pytest.raises(ValueError):
+        normalize_frequency("fortnightly", 1)
+    with pytest.raises(ValueError):
+        normalize_frequency("monthly", 0)
+    assert frequency_label("weekly", 2) == "Every two weeks"
+    assert frequency_label("monthly", 6) == "Twice a year"
+    assert frequency_label("monthly", 5) == "Every 5 months"
+    assert frequency_label("daily", 5) == "Every 5 days"
+    assert frequency_label("semimonthly", 1) == "Twice a month"
+    assert frequency_label("quarterly", 1) == "Quarterly"
+    assert frequency_label("yearly", 1) == "Yearly"
+
+
+def test_the_api_takes_every_frequency(client, db_session, seed_accounts):
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(
+        client, vendor_id, seed_accounts, frequency="biweekly", start_date="2026-02-24"
+    )
+    assert (mem["frequency"], mem["interval"]) == ("weekly", 2)
+    assert mem["frequency_label"] == "Every two weeks"
+    enter_due_memorized(db_session, as_of=date(2026, 2, 24))
+    assert client.get(f"/api/memorized/{mem['id']}").json()["next_date"] == "2026-03-10"
+
+    custom = _bill_schedule(
+        client,
+        vendor_id,
+        seed_accounts,
+        name="Every 10 days",
+        frequency="daily",
+        interval=10,
+        start_date="2026-02-20",
+    )
+    assert custom["frequency_label"] == "Every 10 days"
+    enter_due_memorized(db_session, as_of=date(2026, 2, 20))
+    assert (
+        client.get(f"/api/memorized/{custom['id']}").json()["next_date"] == "2026-03-02"
+    )
+
+    for bad in (
+        {"frequency": "semimonthly", "interval": 2},
+        {"frequency": "fortnightly"},
+        {"frequency": "monthly", "interval": 0},
+    ):
+        body = {
+            "kind": "bill",
+            "name": "Bad",
+            "start_date": "2026-01-01",
+            "vendor_id": vendor_id,
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": 10}],
+            **bad,
+        }
+        assert client.post("/api/memorized", json=body).status_code == 422, bad
+
+
+# ---------------------------------------------------------------- ends
+
+
+def test_an_end_date_stops_it(client, db_session, seed_accounts):
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, end_date="2026-02-28")
+    for _ in range(3):
+        enter_due_memorized(db_session, as_of=date(2026, 12, 31))
+    assert [b.date for b in _bills(db_session)] == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+    ]
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["status"] == "ended" and got["next_date"] == "2026-03-31"
+    assert got["is_due"] is False
+    assert client.get("/api/memorized/due?as_of=2026-12-31").json() == []
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409 and "ended" in r.json()["detail"]
+    # a later end date brings it back
+    r = client.put(f"/api/memorized/{mem['id']}", json={"end_date": "2026-03-31"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"
+    # an end before the first date is refused, as on a recurring invoice
+    r = client.put(f"/api/memorized/{mem['id']}", json={"end_date": "2026-01-01"})
+    assert r.status_code == 422
+
+
+def test_a_number_of_times_stops_it(client, db_session, seed_accounts):
+    mem = _bill_schedule(client, _vendor(client), seed_accounts, occurrences=2)
+    assert mem["occurrences"] == 2
+    for _ in range(3):
+        enter_due_memorized(db_session, as_of=date(2026, 12, 31))
+    assert len(_bills(db_session)) == 2
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["status"] == "ended" and got["entered_count"] == 2
+    r = client.post(f"/api/memorized/{mem['id']}/enter")
+    assert r.status_code == 409 and "all 2 occurrences" in r.json()["detail"]
+    rows = client.get("/api/memorized?as_of=2026-12-31").json()
+    assert rows[0]["status"] == "ended" and rows[0]["entered_count"] == 2
+
+
+# ---------------------------------------------------------------- journal entries
+
+
+def test_a_memorized_journal_entry_posts_balanced(client, db_session, seed_accounts):
+    mem = _journal_schedule(client, seed_accounts)
+    assert Decimal(str(mem["amount"])) == Decimal("250.00")
+    entered = enter_due_memorized(db_session, as_of=date(2026, 1, 31))
+    assert len(entered) == 1 and entered[0]["kind"] == "journal"
+    txn = db_session.get(Transaction, entered[0]["document_id"])
+    assert txn.source_type == "manual"
+    assert txn.date == date(2026, 1, 31)
+    assert txn.description == "Depreciation for the month"
+    assert txn.reference == "DEP"
+    dr, cr, rows = _journal_sides(db_session, txn.id)
+    assert dr == cr == Decimal("250.00")
+    assert {
+        (r.account_id, Decimal(str(r.debit)), Decimal(str(r.credit))) for r in rows
+    } == {
+        (seed_accounts["6000"].id, Decimal("250.00"), Decimal("0.00")),
+        (seed_accounts["1000"].id, Decimal("0.00"), Decimal("250.00")),
+    }
+    assert all(r.description == "Van" for r in rows)
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["next_date"] == "2026-02-28" and got["last_document_id"] == txn.id
+    # it reads as any hand-typed entry does
+    page = client.get(f"/api/journal/{txn.id}").json()
+    assert page["total_debit"] == 250 and page["total_credit"] == 250
+
+
+def test_an_unbalanced_or_one_line_journal_is_refused(client, seed_accounts):
+    base = {
+        "kind": "journal",
+        "name": "Bad",
+        "frequency": "monthly",
+        "start_date": "2026-01-01",
+        "description": "Bad",
+    }
+    r = client.post(
+        "/api/memorized",
+        json={
+            **base,
+            "lines": [
+                {"account_id": seed_accounts["6000"].id, "debit": 250},
+                {"account_id": seed_accounts["1000"].id, "credit": 200},
+            ],
+        },
+    )
+    assert r.status_code == 422 and "out of balance by $50.00" in r.text
+    r = client.post(
+        "/api/memorized",
+        json={
+            **base,
+            "lines": [{"account_id": seed_accounts["6000"].id, "debit": 250}],
+        },
+    )
+    assert r.status_code == 422 and "two lines" in r.text
+    r = client.post(
+        "/api/memorized",
+        json={
+            **base,
+            "lines": [
+                {"account_id": 999999, "debit": 5},
+                {"account_id": seed_accounts["1000"].id, "credit": 5},
+            ],
+        },
+    )
+    assert r.status_code == 404
+
+
+# ---------------------------------------------------------------- pause and resume
+
+
+def test_pause_stops_posting_and_resume_skips_the_missed_dates(
+    client, db_session, seed_accounts
+):
+    mem = _bill_schedule(
+        client, _vendor(client), seed_accounts, start_date="2020-01-15"
+    )
+    r = client.post(f"/api/memorized/{mem['id']}/pause")
+    assert r.status_code == 200 and r.json()["status"] == "paused"
+    assert r.json()["is_active"] is False
+    assert enter_due_memorized(db_session, as_of=date(2026, 1, 1)) == []
+    assert _bills(db_session) == []
+    assert client.get("/api/memorized/due").json() == []
+    rows = client.get("/api/memorized").json()
+    assert rows[0]["status"] == "paused" and rows[0]["is_due"] is False
+
+    r = client.post(f"/api/memorized/{mem['id']}/resume")
+    assert r.status_code == 200 and r.json()["status"] == "active"
+    nxt = date.fromisoformat(r.json()["next_date"])
+    today = date.today()
+    assert nxt >= today and nxt.day == 15
+    assert (nxt.year, nxt.month) in {
+        (today.year, today.month),
+        (
+            (
+                today
+                + __import__(
+                    "dateutil.relativedelta", fromlist=["relativedelta"]
+                ).relativedelta(months=1)
+            ).year,
+            (
+                today
+                + __import__(
+                    "dateutil.relativedelta", fromlist=["relativedelta"]
+                ).relativedelta(months=1)
+            ).month,
+        ),
+    }
+    assert _bills(db_session) == []
+
+
+# ---------------------------------------------------------------- the one list
+
+
+def test_the_due_list_has_every_kind(client, db_session, seed_accounts, seed_customer):
+    inv_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    vendor_id = _vendor(client)
+    bill = _bill_schedule(
+        client, vendor_id, seed_accounts, mode="remind", start_date="2026-01-05"
+    )
+    je = _journal_schedule(client, seed_accounts, start_date="2026-01-10")
+    later = _bill_schedule(
+        client, vendor_id, seed_accounts, name="Later", start_date="2099-01-01"
+    )
+
+    due = client.get("/api/memorized/due?as_of=2026-01-10").json()
+    assert [(d["kind"], d["id"]) for d in due] == [
+        ("invoice", inv_id),
+        ("bill", bill["id"]),
+        ("journal", je["id"]),
+    ]
+    assert all(d["is_due"] for d in due)
+    inv_row = due[0]
+    assert inv_row["name"] == "Recurring invoice: Test Customer"
+    assert inv_row["party"] == "Test Customer"
+    assert inv_row["mode"] == "auto" and inv_row["frequency_label"] == "Monthly"
+    assert inv_row["entered_count"] == 0 and inv_row["last_entered_on"] is None
+    assert Decimal(str(inv_row["amount"])) == Decimal("100.00")
+    assert due[1]["mode"] == "remind" and due[1]["party"] == "Harbor Power & Light"
+
+    rows = client.get("/api/memorized?as_of=2026-01-10").json()
+    assert [(r["kind"], r["id"], r["is_due"]) for r in rows] == [
+        ("invoice", inv_id, True),
+        ("bill", bill["id"], True),
+        ("journal", je["id"], True),
+        ("bill", later["id"], False),
+    ]
+    assert [
+        r["kind"]
+        for r in client.get("/api/memorized?kind=bill&as_of=2026-01-10").json()
+    ] == ["bill", "bill"]
+    assert [
+        r["id"]
+        for r in client.get("/api/memorized?kind=bill&due=true&as_of=2026-01-10").json()
+    ] == [bill["id"]]
+    assert client.get("/api/memorized?kind=pledge").status_code == 422
+
+    # the recurring invoice's last entry is read off the invoices it made
+    r = client.post("/api/recurring/generate?as_of=2026-01-01")
+    assert r.status_code == 200 and r.json()["invoices_created"] == 1
+    inv_row = client.get("/api/memorized?kind=invoice").json()[0]
+    assert inv_row["last_entered_on"] == "2026-01-01"
+    assert inv_row["last_document_id"] == r.json()["invoice_ids"][0]
+    assert inv_row["entered_count"] == 1 and inv_row["next_date"] == "2026-02-01"
+
+
+def test_a_recurring_invoice_can_be_entered_one_at_a_time(
+    client, db_session, seed_accounts, seed_customer
+):
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2099-01-01")
+    # the daily run leaves a future schedule alone, as it always has
+    assert client.post("/api/recurring/generate").json()["invoices_created"] == 0
+    r = client.post(f"/api/recurring/{rec_id}/generate")
+    assert r.status_code == 200, r.text
+    assert r.json()["invoices_created"] == 1 and r.json()["next_due"] == "2099-02-01"
+    inv = db_session.get(Invoice, r.json()["invoice_ids"][0])
+    assert inv.date == date(2099, 1, 1) and inv.recurring_invoice_id == rec_id
+    # dated today instead; the schedule still moves on from the scheduled date
+    r = client.post(f"/api/recurring/{rec_id}/generate?dated=2026-03-01")
+    assert r.status_code == 200, r.text
+    inv = db_session.get(Invoice, r.json()["invoice_ids"][0])
+    assert inv.date == date(2026, 3, 1) and inv.due_date == date(2026, 3, 31)
+    assert inv.transaction.date == date(2026, 3, 1)
+    assert r.json()["next_due"] == "2099-03-01"
+    assert client.post("/api/recurring/999999/generate").status_code == 404
+
+
+def test_enter_due_endpoint_and_the_scheduler_script(
+    client, db_session, seed_accounts, monkeypatch, capsys
+):
+    _bill_schedule(client, _vendor(client), seed_accounts, start_date="2026-01-31")
+    _journal_schedule(client, seed_accounts, mode="remind", start_date="2026-01-31")
+    r = client.post("/api/memorized/enter-due?as_of=2026-01-31")
+    assert r.status_code == 200, r.text
+    assert r.json()["entered_count"] == 1 and r.json()["skipped"] == []
+    assert r.json()["entered"][0]["kind"] == "bill"
+    assert len(_bills(db_session)) == 1
+    assert (
+        client.get("/api/memorized/due?as_of=2026-01-31").json()[0]["kind"] == "journal"
+    )
+
+    # the cron script runs both generators and prints what each did
+    class _DummySession:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(app.database, "SessionLocal", lambda: _DummySession())
+    monkeypatch.setattr(
+        recurring_service,
+        "generate_due_invoices",
+        lambda db, as_of=None, skipped=None: [],
+    )
+    from app.services import memorized_service
+
+    def fake_enter(db, as_of=None, skipped=None):
+        skipped.append({"message": "Old (due 2026-01-05) was not entered: closed"})
+        return [
+            {
+                "name": "Electric bill",
+                "kind": "bill",
+                "date": "2026-01-31",
+                "next_date": "2026-02-28",
+            }
+        ]
+
+    monkeypatch.setattr(memorized_service, "enter_due_memorized", fake_enter)
+    runpy.run_path(str(RUN_RECURRING), run_name="__main__")
+    out = capsys.readouterr().out
+    assert "No recurring invoices due." in out
+    assert "Entered 1 memorized transaction(s):" in out
+    assert "Electric bill (bill dated 2026-01-31, next 2026-02-28)" in out
+    assert "Skipped 1 memorized transaction(s):" in out
+    assert "Old (due 2026-01-05) was not entered: closed" in out
+
+
+# ---------------------------------------------------------------- CRUD
+
+
+def test_create_read_update_delete(client, db_session, seed_accounts):
+    vendor_id = _vendor(client)
+    base = {
+        "kind": "bill",
+        "name": "X",
+        "frequency": "monthly",
+        "start_date": "2026-01-01",
+    }
+    lines = [{"account_id": seed_accounts["6500"].id, "amount": 10}]
+    r = client.post("/api/memorized", json={**base, "lines": lines})
+    assert r.status_code == 422 and "needs a vendor" in r.text
+    r = client.post(
+        "/api/memorized", json={**base, "vendor_id": 999999, "lines": lines}
+    )
+    assert r.status_code == 404
+    r = client.post(
+        "/api/memorized",
+        json={**base, "kind": "invoice", "vendor_id": vendor_id, "lines": lines},
+    )
+    assert r.status_code == 422
+    r = client.post(
+        "/api/memorized",
+        json={**base, "mode": "later", "vendor_id": vendor_id, "lines": lines},
+    )
+    assert r.status_code == 422
+    r = client.post(
+        "/api/memorized",
+        json={
+            **base,
+            "vendor_id": vendor_id,
+            "lines": [
+                {"account_id": seed_accounts["6500"].id, "description": "nothing"}
+            ],
+        },
+    )
+    assert r.status_code == 400 and "more than zero" in r.text
+
+    mem = _bill_schedule(client, vendor_id, seed_accounts, mode="remind")
+    got = client.get(f"/api/memorized/{mem['id']}").json()
+    assert got["vendor_name"] == "Harbor Power & Light"
+    assert got["anchor_day"] == 31 and got["start_date"] == "2026-01-31"
+    assert [(ln["description"], ln["amount"]) for ln in got["lines"]] == [
+        ("Sanctuary", "400.00"),
+        ("Parsonage", "100.00"),
+    ]
+    assert got["lines"][1]["quantity"] == "2.00" and got["lines"][1]["rate"] == "50.00"
+
+    r = client.put(
+        f"/api/memorized/{mem['id']}",
+        json={
+            "mode": "auto",
+            "name": "Electric",
+            "next_date": "2026-03-05",
+            "frequency": "quarterly",
+            "lines": [
+                {
+                    "account_id": seed_accounts["6500"].id,
+                    "description": "All",
+                    "amount": 90,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["mode"] == "auto" and got["name"] == "Electric"
+    assert got["next_date"] == "2026-03-05" and got["anchor_day"] == 5
+    assert got["frequency"] == "quarterly" and got["frequency_label"] == "Quarterly"
+    assert [ln["description"] for ln in got["lines"]] == ["All"]
+    assert Decimal(str(got["amount"])) == Decimal("90.00")
+    # the edit meets the create rules
+    r = client.put(
+        f"/api/memorized/{mem['id']}", json={"frequency": "quarterly", "interval": 2}
+    )
+    assert r.status_code == 422
+    r = client.put(f"/api/memorized/{mem['id']}", json={"name": None})
+    assert r.status_code == 422
+    r = client.put(f"/api/memorized/{mem['id']}", json={"vendor_id": 999999})
+    assert r.status_code == 404
+
+    enter_due_memorized(db_session, as_of=date(2026, 3, 5))
+    assert len(_bills(db_session)) == 1
+    r = client.delete(f"/api/memorized/{mem['id']}")
+    assert r.status_code == 200
+    assert client.get(f"/api/memorized/{mem['id']}").status_code == 404
+    # what it entered stays
+    assert len(_bills(db_session)) == 1
+    assert db_session.query(MemorizedTransaction).count() == 0
+
+
+def test_a_class_or_job_a_memorized_transaction_uses_is_not_deleted(
+    client, db_session, seed_accounts
+):
+    r = client.post("/api/classes", json={"name": "Building"})
+    assert r.status_code == 201, r.text
+    class_id = r.json()["id"]
+    vendor_id = _vendor(client)
+    mem = _bill_schedule(client, vendor_id, seed_accounts, class_id=class_id)
+    r = client.delete(f"/api/classes/{class_id}")
+    assert r.status_code == 400 and "Electric bill" in r.json()["detail"]
+    # an account a memorized line uses is named by the account delete's own
+    # reference walk
+    r = client.delete(f"/api/accounts/{seed_accounts['6100'].id}")
+    assert r.status_code == 409 and "memorized transaction lines" in r.text
+    client.delete(f"/api/memorized/{mem['id']}")
+    assert client.delete(f"/api/classes/{class_id}").status_code == 200
+
+
+# ---------------------------------------------------------------- the page
+
+
+def test_the_page_is_wired():
+    html = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert 'href="#/memorized"' in html and 'data-page="memorized"' in html
+    assert "Memorized Transactions" in html
+    assert '<script src="/static/js/memorized.js"></script>' in html
+    app_js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+    assert "'/memorized':" in app_js and "MemorizedPage.render()" in app_js
+    for action in (
+        "MemorizedPage.enter",
+        "MemorizedPage.pause",
+        "MemorizedPage.resume",
+        "MemorizedPage.del",
+    ):
+        assert f"'{action}'" in app_js
+
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    # the API it drives
+    for call in (
+        "API.get('/memorized')",
+        "/memorized/${id}/enter`",
+        "/memorized/${id}/pause`",
+        "/memorized/${id}/resume`",
+        "API.post('/memorized/enter-due')",
+        "/recurring/${id}/generate",
+        "API.put(`/recurring/${id}`, { is_active: false })",
+    ):
+        assert call in js, call
+    # the list: type, next date, how often, mode, last entered, actions, a Due filter
+    for words in (
+        "Next date",
+        "How often",
+        "Mode",
+        "Last entered",
+        "Enter now",
+        "Pause",
+        "Resume",
+        "Edit",
+        "Delete",
+        "Due now",
+    ):
+        assert words in js, words
+    assert "RecurringPage.showForm(id)" in js
+    # the forms draw the bill form's grid and the journal form's
+    assert "BillsPage.addLine(l)" in js and "BillsPage.collectLines()" in js
+    assert 'id="bill-lines"' in js and "BillsPage.recalc()" in js
+    assert "JournalPage.addLine()" in js and "JournalPage.fillLine(" in js
+    assert "JournalPage.collectLines()" in js and 'id="je-lines"' in js
+    # every frequency QuickBooks offers, and a custom one
+    for words in (
+        "Every two weeks",
+        "Twice a month",
+        "Every two months",
+        "Quarterly",
+        "Twice a year",
+        "Yearly",
+        "'custom'",
+    ):
+        assert words in js, words
+    assert "memorizeBill(" in js and "memorizeJournal(" in js
+
+    bills_js = (ROOT / "app/static/js/bills.js").read_text(encoding="utf-8")
+    assert "collectLines() {" in bills_js
+    assert "const { lines, missing } = BillsPage.collectLines();" in bills_js
+    assert (
+        "MemorizedPage.memorizeBill(${bill.id})" in bills_js
+        and ">Memorize<" in bills_js
+    )
+    journal_js = (ROOT / "app/static/js/journal.js").read_text(encoding="utf-8")
+    assert "collectLines() {" in journal_js and "fillLine(row, l) {" in journal_js
+    assert "const lines = JournalPage.collectLines();" in journal_js
+    assert "MemorizedPage.memorizeJournal(${entry.id})" in journal_js
+    recurring_js = (ROOT / "app/static/js/recurring.js").read_text(encoding="utf-8")
+    assert "App.navigate(RecurringPage.backTo())" in recurring_js
+
+
+# ---------------------------------------------------------------- the migration
+
+
+def test_the_migration_creates_the_tables_and_walks_back(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, inspect
+
+    db = tmp_path / "memorized.db"
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.attributes["database_url"] = "sqlite:///" + db.as_posix()
+    script = ScriptDirectory.from_config(cfg)
+    assert len(script.get_heads()) == 1
+    assert script.get_revision(REVISION).down_revision == BEFORE
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db}")
+    names = set(inspect(engine).get_table_names())
+    assert {"memorized_transactions", "memorized_transaction_lines"} <= names
+    cols = {c["name"] for c in inspect(engine).get_columns("memorized_transactions")}
+    for name in (
+        "kind",
+        "mode",
+        "frequency",
+        "interval",
+        "next_date",
+        "anchor_day",
+        "end_date",
+        "occurrences_limit",
+        "entered_count",
+        "is_active",
+        "vendor_id",
+        "basis",
+    ):
+        assert name in cols, name
+    line_cols = {
+        c["name"] for c in inspect(engine).get_columns("memorized_transaction_lines")
+    }
+    for name in (
+        "account_id",
+        "item_id",
+        "quantity",
+        "rate",
+        "debit",
+        "credit",
+        "job_id",
+        "class_id",
+        "cost_code_id",
+        "cost_type",
+        "function",
+        "is_billable",
+    ):
+        assert name in line_cols, name
+    engine.dispose()
+    command.downgrade(cfg, BEFORE)
+    engine = create_engine(f"sqlite:///{db}")
+    names = set(inspect(engine).get_table_names())
+    assert "memorized_transactions" not in names
+    assert "memorized_transaction_lines" not in names
+    engine.dispose()

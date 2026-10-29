@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
 """
-Standalone cron script to generate due recurring invoices.
+Standalone cron script to generate due recurring invoices and to enter the
+memorized bills and journal entries set to auto-enter (#605); a remind
+schedule is left on the Memorized transactions page's due list.
 Add to crontab: 0 6 * * * cd /path/to/bookkeeper && python3 scripts/run_recurring.py
 """
 
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import SessionLocal
 from app.services.recurring_service import generate_due_invoices
+from app.services import memorized_service
 
 if __name__ == "__main__":
     db = SessionLocal()
@@ -27,6 +29,22 @@ if __name__ == "__main__":
         if skipped:
             print(f"Skipped {len(skipped)} schedule(s):")
             for item in skipped:
+                print(f"  - {item['message']}")
+
+        held: list = []
+        entered = memorized_service.enter_due_memorized(db, skipped=held)
+        if entered:
+            print(f"Entered {len(entered)} memorized transaction(s):")
+            for item in entered:
+                print(
+                    f"  - {item['name']} ({item['kind']} dated {item['date']}, "
+                    f"next {item['next_date']})"
+                )
+        else:
+            print("No memorized transactions due to auto-enter.")
+        if held:
+            print(f"Skipped {len(held)} memorized transaction(s):")
+            for item in held:
                 print(f"  - {item['message']}")
     finally:
         db.close()

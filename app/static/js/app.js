@@ -72,6 +72,7 @@ const App = {
         '/vendor-credits/:id': { page: 'vendor-credits', label: 'Vendor Credit',  document: true, render: (id) => App.withDocument(() => VendorCreditsPage.render(), () => VendorCreditsPage.view(id)) },
         // Phase 3: Productivity
         '/recurring':     { page: 'recurring',       label: 'Recurring Invoices', render: () => RecurringPage.render() },
+        '/memorized':     { page: 'memorized',       label: 'Memorized Transactions', render: () => MemorizedPage.render() },
         '/batch-payments': { page: 'batch-payments', label: 'Batch Payments',     render: () => BatchPaymentsPage.render() },
         // Phase 4: CSV Import/Export
         '/csv':           { page: 'csv',             label: 'CSV Import/Export',  render: () => App.renderCSV() },
@@ -1080,7 +1081,9 @@ const App = {
         'PurchaseOrdersPage.subPayApp', 'PurchaseOrdersPage.releaseRetainage',
         'InKindPage.voidEntry', 'ReleasesPage.voidEntry',
         'AllocationsPage.voidEntry', 'AllocationsPage.deleteRule', 'AllocationsPage.showRun', 'RecurringPage.generateNow',
-        'RecurringPage.del', 'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
+        'RecurringPage.del', 'MemorizedPage.enter', 'MemorizedPage.doEnter', 'MemorizedPage.pause', 'MemorizedPage.resume',
+        'MemorizedPage.del', 'MemorizedPage.enterAllDue', 'MemorizedPage.memorizeBill', 'MemorizedPage.memorizeJournal',
+        'ResellerPermitsPage.del', 'ResellerPermitsPage.verifyWorkflow', 'TimeEntriesPage.approve',
         'TimeEntriesPage.reject', 'PayrollPage.process', 'PTOPage.approveRequest', 'PTOPage.rejectRequest',
         'PTOPage.runAccrual', 'PTOPage.revalue', 'DeductionsPage.endGarnishment', 'BenefitsPage.endEnrollment',
         'BenefitsPage.retireCode', 'BenefitsPage.seedStandard', 'BenefitsPage.setupAccounts', 'BenefitsPage.rebuildYTD',

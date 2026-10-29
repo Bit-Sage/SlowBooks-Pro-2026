@@ -141,6 +141,15 @@ def test_run_recurring_script_prints_the_skipped_list(monkeypatch, capsys):
         return []
 
     monkeypatch.setattr(recurring_service, "generate_due_invoices", fake_generate)
+    # the script's second step (memorized transactions, #605) has its own
+    # test; here it has nothing to enter
+    from app.services import memorized_service
+
+    monkeypatch.setattr(
+        memorized_service,
+        "enter_due_memorized",
+        lambda db, as_of=None, skipped=None: [],
+    )
 
     runpy.run_path(str(RUN_RECURRING), run_name="__main__")
 

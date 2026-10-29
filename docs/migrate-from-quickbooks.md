@@ -244,10 +244,27 @@ issue with it.
 
 Individual pay stubs and payroll liabilities as documents (year-to-date
 totals do, above), estimates and purchase orders as documents, inventory on
-hand, memorized transactions and attachments.
+hand and attachments.
 Each importer here was built around a real export someone sent; if one of
 these is in your way, open an issue with a sample export (change the names)
 and it gets built in.
+
+### Memorized transactions
+
+An IIF file does not carry QuickBooks' memorized transaction list, and no
+Desktop report prints it with its schedule, so there is nothing to import:
+rebuild them under **Memorized Transactions** in the sidebar (#605). A
+memorized bill or journal entry takes the same how-often choices QuickBooks
+offers (weekly, every two weeks, twice a month, monthly, every N months,
+quarterly, yearly, or every N days, weeks or months), a next date, an end
+date or a number of times, and is either entered automatically on its date
+or listed as due until you enter it, as QuickBooks' Automate Transaction
+Entry and Remind Me do. The quickest way to rebuild one is from the last
+document it entered, once that is imported: open the bill on its page and
+press **Memorize**, and the same on a journal entry's page; the form opens
+filled from the document, and only the schedule is left to set. Recurring
+invoices are their own page (Recurring Invoices) and are listed on the
+Memorized Transactions page too.
 
 ### Other transaction reports
 

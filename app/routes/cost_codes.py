@@ -217,6 +217,9 @@ def delete_cost_code(code_id: int, db: Session = Depends(get_db)):
             status_code=400,
             detail="Cost code is used by posted lines — mark it inactive instead",
         )
+    from app.services.memorized_service import refuse_if_memorized
+
+    refuse_if_memorized(db, "Cost code", "cost_code_id", code_id)
     db.delete(row)
     db.commit()
     return {"message": "Cost code deleted"}
