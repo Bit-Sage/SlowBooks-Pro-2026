@@ -7,6 +7,13 @@ on what the software does, not on what sprint shipped what.
 
 ### v2.31.1 — Sub-customers, memorized transactions, and stock that comes back out at its own cost
 
+**Each sign-in is offered only what it may do.** The Memorized Transactions
+page's box for entering due schedules when the app opens is a company setting,
+so only an administrator can change it; a bill payment's Print Check no longer
+saves the check memo first for a read-only sign-in (it prints the check as it
+stands); and a bookkeeper sees Settings' payroll posting accounts locked, as the
+rest of the administrator's settings are.
+
 **A bank feed imports into any bank account in the chart** (from a support
 email). The "Imports into" list beside a SimpleFIN or Mercury feed offered only
 the bank accounts added with + New Bank Account, so a company whose bank

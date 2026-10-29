@@ -160,7 +160,9 @@ const SettingsPage = {
             const defaultLabel = p.default ? 'Default (' + p.default.label + ')' : 'Default (not in the chart)';
             h += '<div class="form-group"><label>' + escapeHtml(p.label);
             if (p.hint) h += ' <span class="form-hint">' + escapeHtml(p.hint) + '</span>';
-            h += '</label><select name="' + p.key + '">';
+            // data-admin on the picker itself: its type-ahead box takes the
+            // mark (combobox.js _takeName), so a bookkeeper sees it locked
+            h += '</label><select name="' + p.key + '" data-admin>';
             h += '<option value=""' + (sel ? '' : ' selected') + '>' + escapeHtml(defaultLabel) + '</option>';
             let matched = false;
             const seen = new Set();

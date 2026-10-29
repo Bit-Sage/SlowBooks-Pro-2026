@@ -184,7 +184,7 @@ const BillsPage = {
         if (p.is_voided || !byCheck) return '';
         return `<div class="form-group" style="margin-bottom:12px;">
                 <label for="bill-payment-memo">Check memo</label>
-                <input id="bill-payment-memo" value="${escapeHtml(p.notes || '')}">
+                <input id="bill-payment-memo" value="${escapeHtml(p.notes || '')}" ${typeof App !== 'undefined' && App.isLocked && App.isLocked() ? 'disabled' : ''}>
             </div>`;
     },
 
@@ -208,7 +208,10 @@ const BillsPage = {
         const byCheck = !p.method || p.method === 'check' || !!p.check_number;
         if (p.is_voided || !byCheck) return '';
         const url = `/api/checks/print?bill_payment_id=${p.id}`;
-        const open = withMemo ? `BillsPage.printPaymentCheck(${p.id}, '${url}')` : `window.open('${url}','_blank')`;
+        // a sign-in that cannot save the memo prints the check as it stands
+        // (the read-only role: the memo field is locked for it below)
+        const saves = withMemo && !(typeof App !== 'undefined' && App.isLocked && App.isLocked());
+        const open = saves ? `BillsPage.printPaymentCheck(${p.id}, '${url}')` : `window.open('${url}','_blank')`;
         return `<button class="btn btn-sm btn-secondary" onclick="${open}">Print Check</button> `;
     },
 
