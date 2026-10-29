@@ -42,6 +42,15 @@ heading (number, customer, date, due date, status, total, balance) to sort by
 it, and again to reverse; numbers sort as numbers. A sortable heading on any
 list is now a button the keyboard reaches, and it tells a screen reader how
 the column is sorted. The order chosen is kept when you come back to the list.
+Dates sort by the day: the Invoices list's Date and Due Date, and the date
+columns of Bills and Fixed Assets, which share the list helper, had sorted by
+the year alone.
+
+**The server's cron script runs again.** Since 2.30.0, `scripts/run_recurring.py`
+stopped at the first due recurring invoice with "could not find table
+'pay_applications'": that table was known only to the web app, so a server's
+cron entered nothing, recurring or memorized. Every table is registered with
+the rest of the models now, and the script runs in a process of its own.
 
 **The wide dialogs use the window's width, and the splash scrolls on a
 short window.** A dialog with a wide line table (Enter Bill, an estimate, a
