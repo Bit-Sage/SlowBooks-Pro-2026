@@ -56,6 +56,10 @@ IIF_TO_ITEM_TYPE = {
     "OTHC": ItemType.LABOR,
     "INVENTORY": ItemType.PRODUCT,
     "NON-INVENTORY": ItemType.MATERIAL,
+    # QuickBooks' discount item: a service item here, marked as a discount
+    # so a line on it may carry a negative price (#639). The export writes
+    # it back as SERV: an item's own type is what it carries.
+    "DISC": ItemType.SERVICE,
 }
 
 

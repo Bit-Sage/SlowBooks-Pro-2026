@@ -7,6 +7,20 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**An item of your own can be a discount** (#639, from Discussion #633). A
+negative line on an invoice or sales receipt was allowed only on the item a
+QuickBooks Online discount came in on; a discount item made here was refused
+with "rate must be non-negative; use a credit memo for refunds". The item
+form (product and service items) now has "Discount or concession: may carry
+a negative price". A line on such an item takes a negative price, and the
+amount comes off the item's income account on the accrual and the cash basis
+both. Every other item, and a line with no item, is refused as before, in the
+same words. The item a QuickBooks Online discount came in on is marked the
+same way by the migration, so one rule covers both; the items CSV export and
+import carry a Negative Price column, and an IIF item of type DISC imports
+marked. API: `allows_negative_price` on the item create, update and response,
+with `is_discount` saying whether a line on the item may go negative.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry

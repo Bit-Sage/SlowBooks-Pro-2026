@@ -69,6 +69,12 @@ class Item(Base):
     expense_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     is_taxable = Column(Boolean, default=True)
     is_active = Column(Boolean, default=True)
+    # A discount or concession item (#639): a line on it may carry a
+    # negative price, which comes off the item's income account. The item a
+    # QuickBooks Online discount came in on was marked the same way by the
+    # migration that added the column (d2f7a9c4e6b1), so one rule covers
+    # both: services/discount_items.py.
+    allows_negative_price = Column(Boolean, default=False, nullable=False)
 
     # ---- Phase 11: inventory tracking ----
     # Only items with track_inventory=True hit the inventory ledger; the rest
