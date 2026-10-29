@@ -7,6 +7,24 @@ on what the software does, not on what sprint shipped what.
 
 ### Unreleased
 
+**Sub-customers with parent billing** (#638, from Discussion #633). A customer
+can now sit under another, one level deep, the way QuickBooks spells
+"Parent:Sub": a property manager keeps each property as a customer and each
+tenant as a sub-customer under it. A tenant is made inactive on move-out
+without touching the property (making a parent inactive asks about its active
+sub-customers first, and can take them along), and everything rolls up to the
+property: its page lists its sub-customers with their balances and the total.
+Every customer picker shows a sub-customer as "Parent: Sub" under its parent,
+and searching the property's name finds its tenants. Bill with parent, on the
+sub-customer, puts its invoices on the parent's A/R: the printed invoice bills
+the parent and names the sub-customer under the address, the parent's
+statement and A/R Aging row carry the sub-customer's open items, overdue
+statements and collection letters go to the parent, and the parent's payments
+apply to the sub-customer's invoices. Without it a sub-customer is billed and
+aged on its own. The IIF import asks whether a file's Customer:Job names are
+sub-customers or jobs (jobs, as before, unless told), and the QuickBooks
+Online export's "Parent:Sub" customers come in as parent and sub-customer.
+
 **Cc and Bcc addresses are read the way a mail program reads them** (#611,
 @ContractorKeith). A pasted `"Smith, Bob" <bob@x.com>` is one address and its
 display name is dropped, so the Cc header carries bare addresses; an entry
