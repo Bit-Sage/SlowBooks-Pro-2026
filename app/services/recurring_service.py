@@ -167,10 +167,12 @@ def advance_date(
     current: date, frequency: str, interval: int = 1, anchor_day=None
 ) -> date:
     """The occurrence after `current`. With an anchor day (a memorized
-    transaction's), a monthly, quarterly or yearly step holds to that day
-    of the month: begun on the 31st it lands on the 28th of February and
-    the 31st of March. Without one (a recurring invoice), a step from the
-    28th of February stays on the 28th, as it always has."""
+    transaction's anchor_day, a recurring invoice's start day: anchor_day_of),
+    a monthly, quarterly or yearly step, or every N months, holds to that
+    day of the month: begun on the 31st it lands on the 28th of February and
+    the 31st of March, and twice a month keeps that day and fifteen days
+    after it. Without one, a step from the 28th of February stays on the
+    28th. Daily and weekly steps take no anchor."""
     n = max(1, int(interval or 1))
     if frequency == "daily":
         return current + timedelta(days=n)
@@ -181,8 +183,24 @@ def advance_date(
     return _add_months(current, _MONTHS_PER.get(frequency, 1) * n, anchor_day)
 
 
-def _advance_next_due(current: date, frequency: str) -> date:
-    return advance_date(current, frequency)
+def anchor_day_of(rec: RecurringInvoice) -> int | None:
+    """The day of the month a recurring invoice holds to: its start date's.
+    The next due date used to be stepped from the date before it with no
+    anchor, so a schedule begun on the 31st went 01-31, 02-28 and then the
+    28th of every month for good, and a catch-up made one installment too
+    many in the month it ran (2.31.1 gate W-85). Held to the start day, it
+    lands on the last day of a shorter month and on its own day again
+    after it, as a memorized transaction does with its anchor_day; one that
+    already slipped returns to its day at its next step. The start date is
+    set when the schedule is made and no edit changes it, so the day needs
+    no column of its own."""
+    return rec.start_date.day if rec.start_date else None
+
+
+def _advance_next_due(current: date, frequency: str, anchor_day=None) -> date:
+    """A recurring invoice's next due date after `current` (it has no
+    interval); pass anchor_day_of(rec) so it holds to its start day."""
+    return advance_date(current, frequency, 1, anchor_day)
 
 
 def roll_next_due_forward(
@@ -216,41 +234,57 @@ def _locked(exc: OperationalError) -> bool:
 
 
 class InstallmentTaken(HTTPException):
-    """The installment asked for is no longer the schedule's next one: it
-    was generated between the read and the claim (another window's Enter
+    """The installment asked for is not the schedule's next one. Most often
+    it was generated between the read and the claim (another window's Enter
     now, Generate, Enter All Due or the cron script), or the page that asked
     was showing a date the schedule has since moved on from. 409, nothing
     created; the sentence names the installment and the schedule as it now
-    stands (2.31.1 gate W-71)."""
+    stands (2.31.1 gate W-71). A date after the schedule's next one (an API
+    call that names a later installment) was never generated, so that
+    sentence says it is not the next one, naming both dates, rather than
+    "just generated" (2.31.1 gate, round 3 wording note)."""
 
     def __init__(self, rec: RecurringInvoice, occurrence: date):
         ended = bool(rec.end_date and rec.next_due > rec.end_date)
-        now = (
-            "it has ended"
-            if ended
-            else f"its next due date is now {rec.next_due.isoformat()}"
-        )
-        super().__init__(
-            status_code=409,
-            detail=(
+        if occurrence > rec.next_due:
+            now = (
+                "it has ended"
+                if ended
+                else f"its next due date is {rec.next_due.isoformat()}"
+            )
+            detail = (
+                f"The {occurrence.isoformat()} installment is not the next one "
+                f"of the schedule for {_who(rec)}, so nothing was created: "
+                f"{now}."
+            )
+        else:
+            now = (
+                "it has ended"
+                if ended
+                else f"its next due date is now {rec.next_due.isoformat()}"
+            )
+            detail = (
                 "That installment was just generated (by another window, "
                 "Generate or Enter All Due) or the schedule was changed, so "
                 f"nothing was created: the schedule for {_who(rec)} was due "
                 f"{occurrence.isoformat()} and {now}."
-            ),
-        )
+            )
+        super().__init__(status_code=409, detail=detail)
 
 
 class InstallmentBusy(HTTPException):
     """SQLite's "database is locked" while claiming an installment: a clean
-    409 that says to try again, never a 500."""
+    409 that says to try again, never a 500. Whatever holds the lock (any
+    save in another window, not only another installment of this schedule,
+    which the sentence used to say) is named only as another change (2.31.1
+    gate, round 3 wording note)."""
 
     def __init__(self, rec: RecurringInvoice):
         super().__init__(
             status_code=409,
             detail=(
-                f"Another installment of the schedule for {_who(rec)} is still "
-                "being saved. Wait a moment and try again."
+                "The company file is busy saving another change, so nothing "
+                "was created. Wait a moment and try again."
             ),
         )
 
@@ -266,8 +300,11 @@ def claim_installment(db: Session, rec: RecurringInvoice, expected: date) -> dat
     when the row had already moved on and InstallmentBusy when SQLite would
     not give the write lock in time. It has to be the first statement of its
     transaction (or SAVEPOINT): after a read there, SQLite cannot wait for
-    the lock and answers "database is locked" at once."""
-    following = _advance_next_due(expected, rec.frequency)
+    the lock and answers "database is locked" at once. The date it moves
+    to holds to the schedule's start day (anchor_day_of, W-85); the start
+    date was loaded with the row before the SAVEPOINT, so reading it here
+    sends nothing to the database."""
+    following = _advance_next_due(expected, rec.frequency, anchor_day_of(rec))
     try:
         moved = (
             db.query(RecurringInvoice)
@@ -303,17 +340,21 @@ def generate_due_invoices(
     only_id: int | None = None,
     dated: date | None = None,
     occurrence: date | None = None,
+    taken: list | None = None,
 ) -> list[int]:
     """Generate the next installment of every schedule due on or before
     as_of: one installment per schedule per call (a run that catches up
-    calls again until nothing is generated, scheduler.catch_up_recurring).
-    Returns the ids of the invoices created.
+    calls again while a call generates something or loses a claim,
+    scheduler.catch_up_recurring). Returns the ids of the invoices created.
 
     Each installment is claimed before anything is posted (claim_installment)
     and committed as it is made, so two generations at once never invoice the
     same period twice: the second finds the schedule moved on and leaves it,
     and a locked file skips the schedule with a sentence rather than failing
-    the run (2.31.1 gate W-71).
+    the run (2.31.1 gate W-71). Pass a list as `taken` to hear which
+    schedules (their ids) had their installment generated by someone else
+    meanwhile: each has moved on, so a later installment of it may be due
+    as well (W-84).
 
     A template whose lines add up to $0.00 (one saved before the routes
     refused them) generates nothing and keeps its date, so it catches up
@@ -453,7 +494,10 @@ def generate_due_invoices(
             db.commit()
             if only_id is not None:
                 raise
-            # generated by another window or run meanwhile: left to it
+            # generated by another window or run meanwhile: left to it, and
+            # named, since the schedule has moved on and may still be due
+            if taken is not None:
+                taken.append(rec.id)
             continue
         except (InstallmentBusy, OperationalError) as e:
             nested.rollback()
@@ -468,8 +512,8 @@ def generate_due_invoices(
                     "customer_name": rec.customer.name if rec.customer else None,
                     "message": (
                         f"The schedule for {_who(rec)} (due {on}) was not "
-                        "generated this time: another installment of it was "
-                        "still being saved. Run it again in a moment."
+                        "generated this time: the company file was busy "
+                        "saving another change. Run it again in a moment."
                     ),
                 }
             )

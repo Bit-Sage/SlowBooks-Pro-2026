@@ -185,7 +185,13 @@ month, monthly, every two months, quarterly, twice a year, yearly, or every
 N days, weeks or months), a next date, and an end date or a number of times;
 a monthly schedule begun on the 31st lands on the last day of a shorter
 month and on the 31st again after it, and twice a month is the next date's
-day and fifteen days later. A frequency that carries its own count (every
+day and fifteen days later. A recurring invoice now keeps the day of its
+start date the same way: one begun on the 29th, 30th or 31st used to slip
+to an earlier day for good after the first shorter month (the 28th, after
+February), and a catch-up could make one invoice too many in the month it
+ran. One that has already slipped goes back to its day at its next
+installment, and a re-activated one resumes on that day. A frequency that
+carries its own count (every
 two weeks, twice a month, quarterly, twice a year) takes no interval: sent
 with none, or 1, it is that count, and with another it is refused, naming
 the word; daily, weekly, monthly and yearly take one. In auto-enter mode the
@@ -207,24 +213,35 @@ kinds the way Enter All Due does, every missed installment and occurrence,
 where it used to make one installment of each recurring invoice per run.
 Recurring invoices are not entered on their own: as before, they wait for
 Generate, Enter All Due or the server's cron, so a company upgrading with an
-overdue schedule finds no invoices it did not ask for. Enter All Due,
-pressed by you, enters every due schedule of both kinds, every missed date
-in order however far behind. In remind mode it waits on the due list until
+overdue schedule finds no invoices it did not ask for, and the Memorized
+Transactions page lists their mode as Generated, with a note naming those
+three. Enter All Due, pressed by you, enters every due schedule of both
+kinds, every missed date in order however far behind; when another window
+generates one of those installments first, it keeps going, as the cron
+script does, so the installments after it are still made in the same run.
+In remind mode it waits on the due list until
 Enter now posts it, dated the scheduled date or today, and moves the
 schedule on. Enter now names the occurrence the page showed: two windows
 pressing it for the same occurrence post one document, and a page left open
 after that occurrence was entered elsewhere (another window, Enter All Due
 or the app's own run) is told so, with the schedule's next date, and posts
 nothing, rather than entering the next one early; dated today, it still
-enters that occurrence. The schedule is moved on in one guarded statement
+enters that occurrence. Asked for an occurrence later than the schedule's
+next one, Enter now says that occurrence is not the next one, naming both
+dates, and posts nothing. The schedule is moved on in one guarded statement
 before anything posts, and a recurring invoice's installment is claimed the
 same way, so two generations at once (two windows, Generate, Enter All Due
 or the cron script) invoice a period once: Enter now on an installment just
-generated says so and makes nothing, and a run leaves it to the other. Enter
-now on an ended schedule says it has ended, paused or not, and so do Resume
-on one and ticking Active again on a recurring invoice past its end date
-("move or clear the end date first"); an edit that moves the end date past
-the next date, or clears it, in the same request goes through. A memorized
+generated says so and makes nothing, and a run leaves it to the other. When
+the company file is busy saving another change, Enter now says so and asks
+you to try again in a moment, and a run names what it could not enter.
+Enter now on an ended schedule says it has ended, paused or not, and so do
+Resume on one and ticking Active again on a recurring invoice past its end
+date ("move or clear the end date first"), which names the end date the
+schedule has, and an end date sent with it that is still too early; an
+edit that moves the end date past the next date, or clears it, in the same
+request goes through. A schedule that ended by its number of times says to
+raise the number of times instead. A memorized
 bill's number follows one rule: left blank, each bill is numbered the date
 and the vendor's initials, as Enter Bill numbers one; a number on the
 template is used as it is on the first bill and -2, -3 after that, since a
@@ -235,7 +252,8 @@ the sidebar, lists every schedule in one place, recurring invoices included,
 with type, next date, how often, mode, last entered, status and amount, a
 Due filter, and Enter now, Pause, Edit and Delete on each; Memorize on a
 bill's page or a journal entry's page starts a memorized one from it. API:
-`/api/memorized` (GET, POST, PUT, DELETE), `/api/memorized/due`,
+`/api/memorized` (GET, POST, PUT, DELETE; a recurring invoice's row has
+the mode `generate`), `/api/memorized/due`,
 `/api/memorized/{id}/enter`, `/pause`, `/resume`,
 `/api/memorized/enter-due`, `/api/memorized/entered-recently`, and
 `/api/recurring/{id}/generate` to enter one recurring invoice now (both
