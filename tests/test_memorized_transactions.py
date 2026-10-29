@@ -628,7 +628,7 @@ def test_the_due_list_has_every_kind(client, db_session, seed_accounts, seed_cus
     inv_row = due[0]
     assert inv_row["name"] == "Recurring invoice: Test Customer"
     assert inv_row["party"] == "Test Customer"
-    assert inv_row["mode"] == "auto" and inv_row["frequency_label"] == "Monthly"
+    assert inv_row["mode"] == "generate" and inv_row["frequency_label"] == "Monthly"
     assert inv_row["entered_count"] == 0 and inv_row["last_entered_on"] is None
     assert Decimal(str(inv_row["amount"])) == Decimal("100.00")
     assert due[1]["mode"] == "remind" and due[1]["party"] == "Harbor Power & Light"
@@ -2726,3 +2726,43 @@ def test_a_lost_claim_is_not_the_end_of_the_backlog(monkeypatch, caplog):
         assert scheduler.catch_up_recurring(None, date(2026, 3, 1)) == ([], [])
     assert len(calls) == 5
     assert "stopped after 5 passes" in caplog.text
+
+
+def test_a_recurring_invoice_is_listed_as_generated_not_auto_enter(
+    client, db_session, seed_accounts, seed_customer
+):
+    """W-86: the app's own runs no longer make recurring invoices (W-70),
+    yet the page listed them as Mode Auto-enter. Their rows' mode is
+    "generate", which the page shows as Generated, with a title naming what
+    does make one; a memorized bill or journal entry cannot take it."""
+    rec_id = _recurring_invoice(client, seed_customer.id, start="2026-01-01")
+    vendor_id = _vendor(client)
+    _bill_schedule(client, vendor_id, seed_accounts)
+    rows = {r["kind"]: r for r in client.get("/api/memorized").json()}
+    assert rows["invoice"]["id"] == rec_id and rows["invoice"]["mode"] == "generate"
+    assert rows["bill"]["mode"] == "auto"
+    assert memorized_service.MODE_GENERATE == "generate"
+    r = client.post(
+        "/api/memorized",
+        json={
+            "kind": "bill",
+            "name": "Not a recurring invoice",
+            "mode": "generate",
+            "frequency": "monthly",
+            "start_date": "2026-01-31",
+            "vendor_id": vendor_id,
+            "lines": [{"account_id": seed_accounts["6500"].id, "amount": 40}],
+        },
+    )
+    assert r.status_code == 422, r.text
+
+    js = (ROOT / "app/static/js/memorized.js").read_text(encoding="utf-8")
+    mode = js[js.index("    modeHtml(r) {") : js.index("    statusHtml(r) {")]
+    assert "if (r.mode === 'generate') {" in mode and ">Generated</span>" in mode
+    title = mode[mode.index('title="') + len('title="') :]
+    title = title[: title.index('"')]
+    for words in ("Generate", "Enter All Due", "the server's cron", "on its own"):
+        assert words in title, words
+    assert "return r.mode === 'auto' ? 'Auto-enter' : 'Remind';" in mode
+    assert "<td>${MemorizedPage.modeHtml(r)}</td>" in js
+    assert "<td>${r.mode === 'auto' ? 'Auto-enter' : 'Remind'}</td>" not in js

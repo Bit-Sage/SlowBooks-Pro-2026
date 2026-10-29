@@ -46,6 +46,13 @@ STATUS_ACTIVE = "active"
 STATUS_PAUSED = "paused"
 STATUS_ENDED = "ended"
 
+# The mode of a recurring invoice's row in the one list: it is made only
+# when a person presses Generate or Enter All Due (or Enter now on its row),
+# or by the server's cron script. The app's own runs, when it opens and once
+# a day, never make one (2.31.1 gate W-70), so the row's mode is no longer
+# "auto", which the page showed as Auto-enter (W-86).
+MODE_GENERATE = "generate"
+
 
 # ---------------------------------------------------------------------------
 # The schedule
@@ -571,9 +578,10 @@ def row_of(mem: MemorizedTransaction, as_of: date) -> dict:
 
 
 def _invoice_rows(db: Session, as_of: date) -> list[dict]:
-    """Recurring invoices as rows of the same shape: always auto-enter
-    (the generator posts them), the frequency words their own, the last
-    entry read off the invoices they made."""
+    """Recurring invoices as rows of the same shape: mode MODE_GENERATE
+    (made by Generate, Enter All Due, Enter now or the server's cron, never
+    by the app's own runs), the frequency words their own, the last entry
+    read off the invoices they made."""
     from app.services.settings_service import is_nonprofit
 
     recs = db.query(RecurringInvoice).order_by(RecurringInvoice.next_due).all()
@@ -616,7 +624,7 @@ def _invoice_rows(db: Session, as_of: date) -> list[dict]:
                     else f"Recurring {kind_word} #{rec.id}"
                 ),
                 "party": rec.customer.name if rec.customer else None,
-                "mode": MODE_AUTO,
+                "mode": MODE_GENERATE,
                 "frequency": rec.frequency,
                 "interval": 1,
                 "frequency_label": frequency_label(rec.frequency, 1),

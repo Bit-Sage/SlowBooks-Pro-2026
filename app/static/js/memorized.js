@@ -126,6 +126,17 @@ const MemorizedPage = {
         return r.kind === 'bill' ? 'Memorized bill' : 'Memorized journal entry';
     },
 
+    // The Mode column. A recurring invoice's row (mode 'generate') is made
+    // only when someone asks for it, or by a server's cron: the app's own
+    // runs, when it opens and once a day, never make one (2.31.1 gate W-86:
+    // the column said Auto-enter).
+    modeHtml(r) {
+        if (r.mode === 'generate') {
+            return `<span title="Made when you press Generate or Enter All Due (or Enter now here), or by the server's cron. The app does not make recurring ${T('invoices')} on its own.">Generated</span>`;
+        }
+        return r.mode === 'auto' ? 'Auto-enter' : 'Remind';
+    },
+
     statusHtml(r) {
         if (r.status === 'ended') return '<span class="badge badge-draft">Ended</span>';
         if (r.status === 'paused') return '<span class="badge badge-draft">Paused</span>';
@@ -151,7 +162,7 @@ const MemorizedPage = {
             <td>${MemorizedPage.kindWord(r)}</td>
             <td>${formatDate(r.next_date)}${r.end_date ? `<div style="font-size:11px; color:var(--text-muted);">until ${formatDate(r.end_date)}</div>` : ''}${r.occurrences ? `<div style="font-size:11px; color:var(--text-muted);">${r.entered_count} of ${r.occurrences} entered</div>` : ''}</td>
             <td>${escapeHtml(r.frequency_label)}</td>
-            <td>${r.mode === 'auto' ? 'Auto-enter' : 'Remind'}</td>
+            <td>${MemorizedPage.modeHtml(r)}</td>
             <td>${MemorizedPage.lastEnteredHtml(r)}</td>
             <td>${MemorizedPage.statusHtml(r)}</td>
             <td class="amount" style="font-family:var(--font-mono);">${formatCurrency(r.amount)}</td>
