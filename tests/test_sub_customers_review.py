@@ -9,15 +9,27 @@ is flattened out loud; a second property's Unit 1 is not a duplicate; a
 credit memo is routed the way a payment is; an invoice's customer_name is
 the same name everywhere; and the printed invoice prints the billed
 customer's country.
+
+The 2.31.1 gate's round (the last section): a tenant moves once settled
+and every statement keeps its history (W-58); the printed invoice keeps
+the Bill To it was made with (W-59); a property's billed balance is what
+its aging row shows and the CSV names a tenant in full (W-61); the credit
+limit checked is the payer's (W-62); every tenant under its property
+shows its own name and Unit 2 beside Unit 1 is not a duplicate (W-69).
 """
 
+import csv
+import io
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 from app.models.contacts import Customer
 from app.models.invoices import Invoice
 from app.models.jobs import Job
 from app.models.payments import Payment
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _customer(client, name, **extra):
@@ -260,9 +272,10 @@ def test_the_iif_shape_a_parent_payment_on_a_sub_billed_on_its_own(
 ):
     """The IIF import allocates a parent's payment by invoice number while
     an imported sub-customer is billed on its own: the sub's statement
-    shows the invoice and the payment that paid it, the parent's statement
-    neither (the payment relieved nothing on it), and both read what the
-    customers owe."""
+    shows the invoice and the payment that paid it; the parent's statement
+    shows what it paid as a pair, its payment and the invoice it paid
+    named for the sub (2.31.1 gate, W-58; it showed nothing before), and
+    both read what the customers owe."""
     text = (
         "!CUST\tNAME\tCOMPANYNAME\tPHONE1\n"
         "CUST\tMaple St\tMaple St LLC\t\n"
@@ -292,7 +305,12 @@ def test_the_iif_shape_a_parent_payment_on_a_sub_billed_on_its_own(
     assert act["lines"][1]["description"].startswith("from Maple St")
     assert act["balance_due"] == 0
     act = _statement(db_session, maple.id)
-    assert act["lines"] == [] and act["balance_due"] == 0
+    assert [(ln["type"], ln["description"], ln["amount"]) for ln in act["lines"]] == [
+        ("Invoice", "for Unit 4B: #2001", Decimal("1200.00")),
+        ("Payment", "applied to #2001", Decimal("-1200.00")),
+    ]
+    assert act["balance_due"] == 0 and act["total_payments"] == Decimal("1200.00")
+    assert act["total_invoiced"] == Decimal("1200.00")
     assert client.get("/api/reports/ar-aging").json()["totals"]["total"] == 0.0
 
 
@@ -811,3 +829,526 @@ def test_the_printed_invoice_prints_the_billed_customers_country(
     html = render_invoice_html(inv, settings)
     block = html[html.index("Bill To") : html.index('<table class="line-items">')]
     assert "Germany" in block and "Canada" not in block and "For:" not in block
+
+
+# ── the 2.31.1 gate: W-58, W-59, W-61, W-62, W-69 ───────────────────────
+
+
+def _js(name: str) -> str:
+    return (ROOT / "app" / "static" / "js" / name).read_text(encoding="utf-8")
+
+
+def _lines(act):
+    return [
+        (ln["type"], ln["description"], ln["amount"], ln["balance"])
+        for ln in act["lines"]
+    ]
+
+
+def test_a_tenant_moves_once_settled_and_the_former_parents_statement_keeps_what_it_paid(
+    client, db_session, seed_accounts
+):
+    """W-58: while the property's money sits on the tenant's open invoice
+    the flag stays on and the tenant stays put (409, as before); once the
+    invoice is settled the tenant may be billed on its own or moved, and
+    the property's statement keeps the invoice it paid and the payment as
+    a pair, so it still shows what it paid and its balance is unchanged.
+    The new property's statement carries neither."""
+    maple, unit = _property_and_tenant(client)
+    rent = _invoice(client, unit["id"], 1000, 2)
+    n = rent["invoice_number"]
+    r = _payment(client, maple["id"], 1000, 5, [(rent["id"], 1000)])
+    assert r.status_code == 201, r.text
+    r = client.put(f"/api/customers/{unit['id']}", json={"bill_with_parent": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["bill_with_parent"] is False
+
+    act = _statement(db_session, maple["id"])
+    assert _lines(act) == [
+        ("Invoice", f"for Unit 4B: #{n}", Decimal("1000.00"), Decimal("1000.00")),
+        ("Payment", f"Check · applied to #{n}", Decimal("-1000.00"), Decimal("0.00")),
+    ]
+    assert act["total_invoiced"] == Decimal("1000.00")
+    assert act["total_payments"] == Decimal("1000.00")
+    assert act["balance_due"] == 0 == _balance(client, maple["id"])
+    # the tenant's own statement is its own: the invoice, and who paid it
+    act = _statement(db_session, unit["id"])
+    assert [(ln["type"], ln["amount"]) for ln in act["lines"]] == [
+        ("Invoice", Decimal("1000.00")),
+        ("Payment", Decimal("-1000.00")),
+    ]
+    assert act["lines"][1]["description"].startswith("from Maple St")
+
+    # moved to another property and billed with it: that property's
+    # statement does not carry the old property's payment, nor the
+    # invoice it relieved
+    elm = _customer(client, "Elm St")
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"parent_customer_id": elm["id"], "bill_with_parent": True},
+    )
+    assert r.status_code == 200, r.text
+    act = _statement(db_session, elm["id"])
+    assert act["lines"] == [] and act["balance_due"] == 0
+    assert act["total_invoiced"] == 0 and act["total_payments"] == 0
+    # the former parent's statement is as it was
+    assert [ln["amount"] for ln in _statement(db_session, maple["id"])["lines"]] == [
+        Decimal("1000.00"),
+        Decimal("-1000.00"),
+    ]
+    # a new invoice to the tenant is the new property's business
+    second = _invoice(client, unit["id"], 700, 8)
+    act = _statement(db_session, elm["id"])
+    assert [(ln["number"], ln["amount"]) for ln in act["lines"]] == [
+        (second["invoice_number"], Decimal("700.00"))
+    ]
+    assert act["lines"][0]["description"].startswith("Unit 4B · Due ")
+    assert act["balance_due"] == Decimal("700.00")
+    rows = {
+        i["customer_name"]: i["total"]
+        for i in client.get("/api/reports/ar-aging").json()["items"]
+    }
+    assert rows == {"Elm St": 700.0}
+    # the sub's statement is the whole story
+    act = _statement(db_session, unit["id"])
+    assert [ln["amount"] for ln in act["lines"]] == [
+        Decimal("1000.00"),
+        Decimal("-1000.00"),
+        Decimal("700.00"),
+    ]
+    assert act["balance_due"] == Decimal("700.00") == _balance(client, unit["id"])
+
+
+def test_a_new_parents_statement_carries_only_what_is_still_its_business(
+    client, db_session, seed_accounts
+):
+    """W-58, the invoice two customers relieved: the old property's
+    payment and credit are paired on its own statement at what they
+    relieved; the new property's statement carries the invoice net of
+    that money, with the tenant's own payment that covered the rest."""
+    maple, unit = _property_and_tenant(client)
+    rent = _invoice(client, unit["id"], 1000, 2)
+    n = rent["invoice_number"]
+    assert _payment(client, maple["id"], 500, 3, [(rent["id"], 500)]).status_code == 201
+    cm = _credit_memo(client, maple["id"], 100, 4)
+    assert cm.status_code == 201, cm.text
+    r = client.post(
+        f"/api/credit-memos/{cm.json()['id']}/apply",
+        json={"invoice_id": rent["id"], "amount": 100},
+    )
+    assert r.status_code == 200, r.text
+    # still open with the property's money on it: no move
+    r = client.put(f"/api/customers/{unit['id']}", json={"bill_with_parent": False})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "parent_money_on_open_invoices"
+    assert _payment(client, unit["id"], 400, 6, [(rent["id"], 400)]).status_code == 201
+    elm = _customer(client, "Elm St")
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"parent_customer_id": elm["id"], "bill_with_parent": True},
+    )
+    assert r.status_code == 200, r.text
+
+    act = _statement(db_session, maple["id"])
+    assert _lines(act) == [
+        ("Invoice", f"for Unit 4B: #{n}", Decimal("600.00"), Decimal("600.00")),
+        ("Payment", f"Check · applied to #{n}", Decimal("-500.00"), Decimal("100.00")),
+        ("Credit Memo", f"applied to #{n}", Decimal("-100.00"), Decimal("0.00")),
+    ]
+    assert act["total_invoiced"] == Decimal("600.00")
+    assert act["total_payments"] == Decimal("500.00")
+    assert act["total_credits"] == Decimal("100.00")
+    assert act["balance_due"] == 0 == _balance(client, maple["id"])
+    act = _statement(db_session, elm["id"])
+    assert [(ln["type"], ln["amount"], ln["balance"]) for ln in act["lines"]] == [
+        ("Invoice", Decimal("400.00"), Decimal("400.00")),
+        ("Payment", Decimal("-400.00"), Decimal("0.00")),
+    ]
+    assert act["lines"][0]["description"].startswith("Unit 4B · Due ")
+    assert act["lines"][1]["description"] == f"Unit 4B · Check · applied to #{n}"
+    assert act["balance_due"] == 0 == _balance(client, elm["id"])
+    act = _statement(db_session, unit["id"])
+    assert [(ln["type"], ln["amount"]) for ln in act["lines"]] == [
+        ("Invoice", Decimal("1000.00")),
+        ("Payment", Decimal("-500.00")),
+        ("Credit Memo", Decimal("-100.00")),
+        ("Payment", Decimal("-400.00")),
+    ]
+    assert act["lines"][1]["description"].startswith("from Maple St")
+    assert act["balance_due"] == 0
+
+
+def test_the_printed_invoice_keeps_the_bill_to_it_was_made_with(
+    client, db_session, seed_accounts
+):
+    """W-59: the Bill To block comes from the invoice alone. The name and
+    country are frozen with the street when the invoice is made, so a
+    tenant moved to another property, or billed on its own, afterwards
+    prints the same invoice it was sent."""
+    from app.services.donor_documents import invoice_pdf_context
+    from app.services.pdf_service import render_invoice_html
+    from app.services.settings_service import get_all_settings
+
+    settings = get_all_settings(db_session)
+
+    def block(inv_id):
+        db_session.expire_all()
+        html = render_invoice_html(db_session.get(Invoice, inv_id), settings)
+        return html[html.index("Bill To") : html.index('<table class="line-items">')]
+
+    maple, unit = _property_and_tenant(client, bill_country="CA")
+    rent = _invoice(client, unit["id"], 1000, 2)
+    assert (
+        rent["bill_to_customer_id"],
+        rent["bill_to_name"],
+        rent["bill_to_country"],
+    ) == (
+        maple["id"],
+        "Maple St",
+        "CA",
+    )
+    assert (
+        _payment(client, maple["id"], 1000, 5, [(rent["id"], 1000)]).status_code == 201
+    )
+    elm = _customer(
+        client,
+        "Elm St",
+        bill_address1="3 Elm St",
+        bill_city="Berlin",
+        bill_country="DE",
+    )
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"parent_customer_id": elm["id"], "bill_with_parent": True},
+    )
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    ctx = invoice_pdf_context(db_session.get(Invoice, rent["id"]), settings)
+    assert (ctx["bill_to_name"], ctx["bill_to_for"], ctx["bill_to_country"]) == (
+        "Maple St",
+        "Unit 4B",
+        "CA",
+    )
+    first = block(rent["id"])
+    assert "<strong>Maple St</strong>" in first
+    assert "12 Maple St" in first and "Canada" in first and "For: Unit 4B" in first
+    assert "Elm St" not in first and "Germany" not in first
+
+    # an invoice made under the new property is billed to it; the flag
+    # turned off afterwards (and the tenant's own country changed) alters
+    # nothing on it
+    second = _invoice(client, unit["id"], 50, 8)
+    assert (second["bill_to_name"], second["bill_to_country"]) == ("Elm St", "DE")
+    assert second["bill_address1"] == "3 Elm St"
+    r = client.put(
+        f"/api/customers/{unit['id']}",
+        json={"bill_with_parent": False, "bill_country": "MX"},
+    )
+    assert r.status_code == 200, r.text
+    printed = block(second["id"])
+    assert "<strong>Elm St</strong>" in printed and "3 Elm St" in printed
+    assert "Germany" in printed and "For: Unit 4B" in printed
+    assert "Mexico" not in printed
+    # the tenant billed on its own: its own name and country, no For: line
+    third = _invoice(client, unit["id"], 20, 9)
+    assert (
+        third["bill_to_customer_id"],
+        third["bill_to_name"],
+        third["bill_to_country"],
+    ) == (
+        unit["id"],
+        "Unit 4B",
+        "MX",
+    )
+    own = block(third["id"])
+    assert "<strong>Unit 4B</strong>" in own and "Mexico" in own and "For:" not in own
+    # a duplicate carries its original's block whole
+    r = client.post(f"/api/invoices/{rent['id']}/duplicate")
+    assert r.status_code == 201, r.text
+    assert (r.json()["bill_to_name"], r.json()["bill_to_country"]) == ("Maple St", "CA")
+    assert "For: Unit 4B" in block(r.json()["id"])
+
+
+def test_the_bill_to_migration_backfills_from_the_customer_billed_to(tmp_path):
+    """Books from before the columns: every invoice takes the name and
+    country of the customer it is billed to at the upgrade, the parent's
+    for a sub-customer billed with it."""
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, inspect, text
+
+    db = tmp_path / "billto.db"
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.attributes["database_url"] = "sqlite:///" + db.as_posix()
+    script = ScriptDirectory.from_config(cfg)
+    assert len(script.get_heads()) == 1
+    assert script.get_revision("b4d8e2a6c7f1").down_revision == "f3a9c7e1b5d4"
+
+    command.upgrade(cfg, "f3a9c7e1b5d4")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        assert "bill_to_name" not in {
+            c["name"] for c in inspect(conn).get_columns("invoices")
+        }
+        conn.execute(
+            text(
+                "INSERT INTO customers (id, name, bill_country, parent_customer_id, "
+                "bill_with_parent, is_active) VALUES "
+                "(1, 'Maple St', 'CA', NULL, 0, 1), "
+                "(2, 'Unit 4B', 'US', 1, 1, 1), "
+                "(3, 'Attic', 'MX', 1, 0, 1), "
+                "(4, 'Oak Ave', 'DE', NULL, 0, 1)"
+            )
+        )
+        for inv_id, cid in ((10, 2), (11, 3), (12, 4), (13, 1)):
+            conn.execute(
+                text(
+                    "INSERT INTO invoices (id, invoice_number, customer_id, date, "
+                    "status, retainage_held, retainage_released, is_sales_receipt, "
+                    "is_pledge) VALUES (:id, :num, :cid, '2026-09-01', 'SENT', 0, 0, "
+                    "0, 0)"
+                ),
+                {"id": inv_id, "num": str(inv_id), "cid": cid},
+            )
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, bill_to_customer_id, bill_to_name, bill_to_country "
+                "FROM invoices ORDER BY id"
+            )
+        ).all()
+    assert [tuple(r) for r in rows] == [
+        (10, 1, "Maple St", "CA"),  # billed with the parent: the parent's
+        (11, 3, "Attic", "MX"),  # a sub billed on its own: its own
+        (12, 4, "Oak Ave", "DE"),
+        (13, 1, "Maple St", "CA"),
+    ]
+    engine.dispose()
+
+    command.downgrade(cfg, "f3a9c7e1b5d4")
+    engine = create_engine(f"sqlite:///{db}")
+    names = {c["name"] for c in inspect(engine).get_columns("invoices")}
+    assert not names & {"bill_to_customer_id", "bill_to_name", "bill_to_country"}
+    assert "bill_address1" in names
+    engine.dispose()
+
+
+def test_a_propertys_billed_balance_is_what_its_aging_row_shows(client, seed_accounts):
+    """W-61: balance is the customer's own open documents, billed_balance
+    what sits on its A/R (its own plus the sub-customers billed with it,
+    the aging row), rollup_balance everything under it; and the customer
+    CSV names a sub-customer in full."""
+    maple, unit = _property_and_tenant(client)
+    attic = _customer(client, "Attic", parent_customer_id=maple["id"])
+    rent = _invoice(client, unit["id"], 1000, 2)
+    _invoice(client, attic["id"], 700, 3)
+
+    got = client.get(f"/api/customers/{maple['id']}").json()
+    assert Decimal(got["balance"]) == 0
+    assert Decimal(got["billed_balance"]) == Decimal("1000.00")
+    assert Decimal(got["rollup_balance"]) == Decimal("1700.00")
+    rows = {
+        i["customer_name"]: i["total"]
+        for i in client.get("/api/reports/ar-aging").json()["items"]
+    }
+    assert rows == {"Maple St": 1000.0, "Maple St: Attic": 700.0}
+    # a customer with nothing billed with it: the two are the same
+    for cid, owed in ((unit["id"], "1000.00"), (attic["id"], "700.00")):
+        got = client.get(f"/api/customers/{cid}").json()
+        assert (
+            Decimal(got["balance"]) == Decimal(got["billed_balance"]) == Decimal(owed)
+        )
+        assert got["rollup_balance"] is None
+    # the list and the page carry the same figures
+    listed = {c["id"]: c for c in client.get("/api/customers?tree=1").json()}
+    assert Decimal(listed[maple["id"]]["billed_balance"]) == Decimal("1000.00")
+    assert Decimal(listed[maple["id"]]["balance"]) == 0
+    page = client.get(f"/api/customers/{maple['id']}/subs").json()
+    assert (page["own_balance"], page["billed_balance"], page["rollup_balance"]) == (
+        0.0,
+        1000.0,
+        1700.0,
+    )
+    # the property's own invoice and the tenant's payment move it
+    _invoice(client, maple["id"], 300, 4)
+    assert (
+        _payment(client, maple["id"], 1000, 5, [(rent["id"], 1000)]).status_code == 201
+    )
+    got = client.get(f"/api/customers/{maple['id']}").json()
+    assert (Decimal(got["balance"]), Decimal(got["billed_balance"])) == (
+        Decimal("300.00"),
+        Decimal("300.00"),
+    )
+    assert Decimal(got["rollup_balance"]) == Decimal("1000.00")
+
+    body = client.get("/api/csv/export/customers").text.lstrip("\ufeff")
+    rows = list(csv.reader(io.StringIO(body)))
+    assert rows[0][1] == "Name"
+    assert [r[1] for r in rows[1:]] == [
+        "Maple St",
+        "Maple St: Unit 4B",
+        "Maple St: Attic",
+    ]
+
+
+def test_the_customer_center_shows_the_billed_balance_and_names_every_tenant():
+    """W-61 and W-69 on the page: the figure shown is billed_balance, and
+    each sub-customer right under its parent shows its own name (the
+    last top-level row is what a sub is matched against, not the row
+    above it)."""
+    js = _js("customers.js")
+    page = js[js.index("async render()") : js.index("filter(query)")]
+    assert "CustomersPage._balanceCell(c)" in page
+    assert "c.billed_balance" in js and "CustomersPage._owed(customer)" in js
+    assert "if (!sub) parentAbove = c.id;" in page
+    assert "prevId" not in js
+
+
+def test_the_credit_limit_checked_is_the_payers(client, seed_accounts):
+    """W-62: an invoice to a tenant billed with its property lands on the
+    property's A/R, so the property's limit is checked against what sits
+    there, its own open invoices and its billed tenants', and the 409
+    names the property. Billed on its own, the tenant's own limit."""
+
+    def post(cid, rate, **extra):
+        return client.post(
+            "/api/invoices",
+            json={
+                "customer_id": cid,
+                "date": "2026-09-02",
+                "tax_rate": 0,
+                "lines": [{"description": "Rent", "quantity": 1, "rate": rate}],
+                **extra,
+            },
+        )
+
+    maple = _customer(client, "Maple St", credit_limit="500")
+    unit = _customer(
+        client,
+        "Unit 4B",
+        parent_customer_id=maple["id"],
+        bill_with_parent=True,
+        credit_limit="9000",
+    )
+    # control: the property's own $600 invoice
+    r = post(maple["id"], 600)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "credit_limit"
+    # the same invoice to the billed tenant: the property pays
+    r = post(unit["id"], 600)
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert d["code"] == "credit_limit"
+    assert d["message"] == (
+        "Maple St's credit limit is $500.00. With this invoice they would owe $600.00."
+    )
+    assert (d["limit"], d["would_owe"]) == ("500.00", "600.00")
+    # what the property owes counts its billed tenants, from either side
+    first = post(unit["id"], 300)
+    assert first.status_code == 201, first.text
+    r = post(maple["id"], 300)
+    assert r.status_code == 409 and r.json()["detail"]["would_owe"] == "600.00"
+    r = post(unit["id"], 150)
+    assert r.status_code == 201, r.text
+    r = post(unit["id"], 100)
+    assert r.status_code == 409 and r.json()["detail"]["would_owe"] == "550.00"
+    r = post(unit["id"], 100, allow_over_credit_limit=True)
+    assert r.status_code == 201, r.text
+    # an edit that raises the tenant's invoice asks the same way
+    r = client.put(
+        f"/api/invoices/{first.json()['id']}",
+        json={"lines": [{"description": "Rent", "quantity": 1, "rate": 400}]},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["message"].startswith("Maple St's credit limit")
+    # billed on its own, the tenant's own limit is the one checked
+    r = client.put(f"/api/customers/{unit['id']}", json={"bill_with_parent": False})
+    assert r.status_code == 200, r.text
+    assert post(unit["id"], 600).status_code == 201
+    r = post(unit["id"], 9000)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["message"].startswith("Unit 4B's credit limit")
+
+
+def test_unit_102_beside_unit_101_is_not_a_duplicate_but_the_same_name_is(client):
+    """W-69: among the sub-customers under one parent only the same name
+    (in any case) is a duplicate; the likely-match rule stays for the
+    top-level names, which a sub-customer's name is checked against too.
+    "Unit 101" and "Unit 102" are 0.875 alike, over the 0.85 threshold
+    that refused the second unit of a property before."""
+    from app.services.duplicate_detection import similarity
+
+    assert similarity("Unit 101", "Unit 102") >= 0.85
+    maple = _customer(client, "Maple St")
+    first = _customer(client, "Unit 101", parent_customer_id=maple["id"])
+    r = client.post(
+        "/api/customers", json={"name": "Unit 102", "parent_customer_id": maple["id"]}
+    )
+    assert r.status_code == 201, r.text
+    r = client.post(
+        "/api/customers", json={"name": "unit 101", "parent_customer_id": maple["id"]}
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "possible_duplicate"
+    assert r.json()["detail"]["duplicates"] == [
+        {"id": first["id"], "name": "Unit 101", "similarity": 1.0}
+    ]
+    # a sub-customer named like a top-level customer is still caught
+    r = client.post(
+        "/api/customers", json={"name": "Maple St.", "parent_customer_id": maple["id"]}
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["duplicates"][0]["name"] == "Maple St"
+    # the standalone check says the same
+    found = lambda qs: [  # noqa: E731
+        d["name"]
+        for d in client.get(f"/api/customers/check-duplicate?{qs}").json()["duplicates"]
+    ]
+    assert found(f"name=Unit%20103&parent_customer_id={maple['id']}") == []
+    assert found(f"name=UNIT%20101&parent_customer_id={maple['id']}") == ["Unit 101"]
+    # a top-level name is matched the likely way, as before, against the
+    # top-level names only
+    assert client.post("/api/customers", json={"name": "Unit 101"}).status_code == 201
+    r = client.post("/api/customers", json={"name": "Unit 102"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["duplicates"][0]["name"] == "Unit 101"
+    assert found("name=Unit%20102") == ["Unit 101"]
+
+
+def test_an_edit_to_another_customer_takes_its_bill_to_and_a_rename_keeps_the_old(
+    client, db_session, seed_accounts
+):
+    """W-59, the edit side: an invoice moved to another customer prints the
+    new customer's Bill To; a customer renamed afterwards leaves the
+    invoice printing the name it was sent with, as its street always did."""
+    from app.services.donor_documents import invoice_pdf_context
+    from app.services.settings_service import get_all_settings
+
+    settings = get_all_settings(db_session)
+    first = _customer(client, "First Co", bill_country="US")
+    second = _customer(client, "Second Co", bill_country="CA")
+    inv = _invoice(client, first["id"], 250, 1)
+    assert inv["bill_to_name"] == "First Co"
+
+    r = client.put(f"/api/invoices/{inv['id']}", json={"customer_id": second["id"]})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    ctx = invoice_pdf_context(db_session.get(Invoice, inv["id"]), settings)
+    assert (ctx["bill_to_name"], ctx["bill_to_country"]) == ("Second Co", "CA")
+
+    r = client.put(f"/api/customers/{second['id']}", json={"name": "Second Company"})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    ctx = invoice_pdf_context(db_session.get(Invoice, inv["id"]), settings)
+    assert ctx["bill_to_name"] == "Second Co"
+    # a header-only edit keeps it
+    r = client.put(f"/api/invoices/{inv['id']}", json={"notes": "thanks"})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert db_session.get(Invoice, inv["id"]).bill_to_name == "Second Co"

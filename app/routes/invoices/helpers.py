@@ -131,16 +131,25 @@ def confirm_credit_limit(
     home dollars, net of the credits and unapplied payments they hold (as
     A/R Aging and the customer page count it), less the invoice being
     edited (whose new amount is `owed`). Nothing is written by the refused
-    request. A customer with no limit is never asked."""
+    request. A customer with no limit is never asked.
+
+    The limit checked is the payer's (2.31.1 gate, W-62): an invoice to a
+    sub-customer billed with its parent lands on the parent's A/R, so the
+    parent's limit is checked against what sits on that A/R, the parent's
+    own open documents and those of every sub-customer billed with it
+    (billed_balance, the A/R Aging row), and the 409 names the parent. A
+    customer billed on its own is its own payer, as before."""
     from app.models.invoices import Invoice
-    from app.services.contact_balances import customer_balance, home_amount
+    from app.services.contact_balances import home_amount
+    from app.services.sub_customers import billed_balance, payer_for
 
     if allowed or customer is None:
         return
-    limit = Decimal(str(getattr(customer, "credit_limit", None) or 0))
+    payer = payer_for(db, customer)
+    limit = Decimal(str(getattr(payer, "credit_limit", None) or 0))
     if limit <= 0:
         return
-    open_balance = customer_balance(db, customer.id)
+    open_balance = billed_balance(db, payer.id)
     if exclude_invoice_id is not None:
         current = db.get(Invoice, exclude_invoice_id)
         if current is not None and current.status != InvoiceStatus.VOID:
@@ -149,7 +158,7 @@ def confirm_credit_limit(
     if after <= limit:
         return
     sentence = (
-        f"{customer.name}'s credit limit is ${limit:,.2f}. "
+        f"{payer.name}'s credit limit is ${limit:,.2f}. "
         f"With this {noun} they would owe ${after:,.2f}."
     )
     raise HTTPException(

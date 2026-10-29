@@ -38,23 +38,25 @@ const CustomersPage = {
                     <th scope="col" class="amount">Balance</th><th scope="col">Actions</th>
                 </tr></thead>
                 <tbody id="customer-tbody">`;
-            let prevId = null;
+            // The id of the last top-level row: a sub-customer right under
+            // its parent (the API's tree order) shows its own name, every
+            // one of them, not only the first (2.31.1 gate, W-69); when the
+            // parent's row is not above (filtered out), its full name says
+            // whose it is.
+            let parentAbove = null;
             for (const c of customers) {
                 // in the All view an inactive customer is dimmed and marked,
                 // as on the other lists (text-muted keeps AA contrast)
                 const inactive = c.is_active === false;
-                // A sub-customer sits indented under its parent (the API's
-                // tree order); when its parent's row is not right above
-                // (filtered out), its full name says whose it is.
                 const sub = !!c.parent_customer_id;
-                const label = sub && prevId !== c.parent_customer_id ? customerLabel(c) : c.name;
-                prevId = c.id;
+                const label = sub && parentAbove !== c.parent_customer_id ? customerLabel(c) : c.name;
+                if (!sub) parentAbove = c.id;
                 html += `<tr class="clickable customer-row${inactive ? ' row--dim' : ''}" data-name="${escapeHtml(customerLabel(c)).toLowerCase()}" onclick="CustomersPage.showDetails(${c.id})">
                     <td${sub ? ' style="padding-left:28px"' : ''}>${sub ? '<span aria-hidden="true" style="color:var(--text-muted)">&#8627; </span>' : ''}<strong>${escapeHtml(label)}</strong>${inactive ? ' <span class="badge badge-draft">inactive</span>' : ''}${sub && c.bill_with_parent ? ` <span class="badge badge-draft" title="${Terms.text('Invoices to this sub-customer are billed to its parent')}">billed with parent</span>` : ''}</td>
                     <td>${escapeHtml(c.company) || ''}</td>
                     <td>${escapeHtml(c.phone) || ''}</td>
                     <td>${escapeHtml(c.email) || ''}</td>
-                    <td class="amount">${formatCurrency(c.balance)}${c.sub_count ? `<div style="font-size:11px;color:var(--text-muted)">${formatCurrency(c.rollup_balance)} with sub-customers</div>` : ''}</td>
+                    <td class="amount">${CustomersPage._balanceCell(c)}</td>
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); CustomersPage.showForm(${c.id})">Edit</button>
                         ${ActiveLists.buttonHtml('customers', c)}
@@ -64,6 +66,23 @@ const CustomersPage = {
             html += `</tbody></table></div>`;
         }
         return html;
+    },
+
+    // What the customer owes, as the list and the page show it: the
+    // balance on its A/R (billed_balance: its own open documents plus
+    // those of the sub-customers billed with it, the A/R Aging row's
+    // figure; 2.31.1 gate, W-61), with its own figure under it when the
+    // two differ, and the roll-up under a parent (own plus every
+    // sub-customer's, billed with it or not).
+    _owed(c) {
+        return parseFloat(c.billed_balance != null ? c.billed_balance : c.balance) || 0;
+    },
+    _balanceCell(c) {
+        const owed = CustomersPage._owed(c);
+        const own = parseFloat(c.balance) || 0;
+        return formatCurrency(owed)
+            + (Math.abs(owed - own) >= 0.005 ? `<div style="font-size:11px;color:var(--text-muted)">own ${formatCurrency(own)}</div>` : '')
+            + (c.sub_count ? `<div style="font-size:11px;color:var(--text-muted)">${formatCurrency(c.rollup_balance)} with sub-customers</div>` : '');
     },
 
     filter(query) {
@@ -179,7 +198,11 @@ const CustomersPage = {
                     <button class="btn btn-sm btn-secondary" style="margin-left:6px" onclick="PaymentsPage.showApplyCredit('${c.kind}', ${c.id}, ${id})">Apply</button>
                 </li>`).join('')}</ul>
             </div>`;
-        const balance = parseFloat(customer.balance) || 0;
+        // the figure on the page is what sits on the customer's A/R
+        // (billed_balance, W-61): a property's own invoices and its
+        // tenants' billed with it
+        const balance = CustomersPage._owed(customer);
+        const ownBalance = parseFloat(customer.balance) || 0;
 
         const html = `
             <!-- header: name + balance + quick actions -->
@@ -201,6 +224,7 @@ const CustomersPage = {
                     <div style="font-size:22px;font-weight:700;color:${balance > 0 ? 'var(--text-danger)' : (balance < 0 ? 'var(--text-success)' : 'var(--text-primary)')}">
                         ${formatCurrency(Math.abs(balance))}
                     </div>
+                    ${Math.abs(balance - ownBalance) >= 0.005 ? `<div style="font-size:12px;color:var(--text-muted)">own ${formatCurrency(ownBalance)}</div>` : ''}
                     ${subList.length ? `<div style="font-size:12px;color:var(--text-muted)">${formatCurrency(subs.rollup_balance)} with sub-customers</div>` : ''}
                     <div style="margin-top:8px">
                         <button class="btn btn-sm btn-primary" data-write onclick="closeModal({ keepAddress: true });InvoicesPage.showForm(null,${id})">${T('New Invoice')}</button>

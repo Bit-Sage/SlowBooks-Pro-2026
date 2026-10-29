@@ -12,6 +12,10 @@ two together lives here:
   parent's page rolls it up.
 * ``billed_to`` answers, for any set of customers, whose A/R each one's
   documents sit on, in one query, so a report never asks per row.
+* ``billed_balances`` is what sits on a customer's A/R: its own open
+  documents plus those of the subs billed with it, the figure its A/R
+  Aging row shows; ``payer_for`` is the customer whose limit and balance
+  a new invoice is checked against.
 """
 
 from __future__ import annotations
@@ -97,6 +101,45 @@ def bill_to_parent(db: Session, customer: Customer) -> Optional[Customer]:
     return db.get(Customer, customer.parent_customer_id)
 
 
+def payer_for(db: Session, customer: Customer) -> Customer:
+    """The customer whose A/R an invoice to ``customer`` lands on: the
+    parent of a sub billed with it, else the customer itself (2.31.1
+    gate, W-62: the credit limit is the payer's)."""
+    return bill_to_parent(db, customer) or customer
+
+
+def billed_balances(db: Session, customer_ids: Iterable[int]) -> dict[int, Decimal]:
+    """Customer id -> what sits on its A/R in home currency: what its own
+    open documents leave plus what the open documents of the sub-customers
+    billed with it leave, the figure its A/R Aging row shows (2.31.1 gate,
+    W-61). A customer with no subs billed with it answers its own balance;
+    a sub billed with its parent answers its own balance too (its money
+    sits on the parent's row, but the sub's own figure is still its own).
+    Every id asked for answers (zero with nothing open)."""
+    from app.services.contact_balances import ZERO, customer_balances
+
+    ids = list(dict.fromkeys(customer_ids))
+    if not ids:
+        return {}
+    billed: dict[int, list[int]] = {}
+    for sid, pid in db.query(Customer.id, Customer.parent_customer_id).filter(
+        Customer.parent_customer_id.in_(ids), Customer.bill_with_parent.is_(True)
+    ):
+        billed.setdefault(pid, []).append(sid)
+    balances = customer_balances(
+        db, ids + [sid for subs in billed.values() for sid in subs]
+    )
+    return {
+        cid: balances.get(cid, ZERO)
+        + sum((balances.get(sid, ZERO) for sid in billed.get(cid, ())), ZERO)
+        for cid in ids
+    }
+
+
+def billed_balance(db: Session, customer_id: int) -> Decimal:
+    return billed_balances(db, [customer_id])[customer_id]
+
+
 def check_parent(
     db: Session, customer: Optional[Customer], parent_id: Optional[int]
 ) -> Optional[Customer]:
@@ -167,8 +210,12 @@ def parent_money_on_open_invoices(db: Session, sub: Customer) -> list[dict]:
     """The sub-customer's open invoices that a payment or credit memo of its
     parent is applied to, each with the invoice number and how much of the
     parent's money is on it (#638 review). While there are any, the sub
-    stays billed with its parent: taken off it, the parent's statement
-    would no longer list the invoices its money relieved."""
+    stays billed with its parent: the parent's money would otherwise sit
+    on an invoice billed to someone else. Once every such invoice is
+    settled the sub may be moved, or billed on its own (tenants do move),
+    and the statements keep the history: the former parent's lists each
+    payment and credit with the invoice it paid, as a pair (2.31.1 gate,
+    W-58; routes/reports/receivables.statement_activity)."""
     if not sub.parent_customer_id:
         return []
     open_invoices = {
@@ -358,18 +405,27 @@ def refuse_inactivating_a_parent(
     return subs
 
 
-def duplicate_candidates(db: Session, parent_id: Optional[int]) -> list[Customer]:
-    """The active customers a new name is checked against for a likely
-    duplicate (#638 review): the top-level ones and, for a sub-customer,
-    its siblings under the same parent. "Unit 1" under a second property is
-    not a duplicate of the first property's Unit 1; a bare name is a
-    top-level customer, so a top-level name is checked against those."""
+def likely_duplicates(db: Session, name: str, parent_id: Optional[int]) -> list[dict]:
+    """The active customers a new name likely duplicates (#638 review;
+    2.31.1 gate, W-69), each as ``{id, name, similarity}``, the closest
+    first. A top-level name, and a sub-customer's, is matched the fuzzy
+    way against the top-level names (a bare name is a top-level customer,
+    so "Maple St" under Oak St is caught). Among the siblings under the
+    same parent only the same name, in any case, is a duplicate: "Unit 2"
+    beside "Unit 1" is the next unit, not a likely typo of it, and every
+    property has a Unit 1 of its own."""
+    from app.services.duplicate_detection import find_duplicates
+
     q = db.query(Customer).filter(Customer.is_active.is_(True))
+    found = find_duplicates(name, q.filter(Customer.parent_customer_id.is_(None)).all())
     if parent_id is None:
-        return q.filter(Customer.parent_customer_id.is_(None)).all()
-    return q.filter(
-        or_(
-            Customer.parent_customer_id.is_(None),
-            Customer.parent_customer_id == parent_id,
+        return found
+    wanted = (name or "").strip().casefold()
+    same = [
+        {"id": s.id, "name": s.name, "similarity": 1.0}
+        for s in q.filter(Customer.parent_customer_id == parent_id).order_by(
+            Customer.name
         )
-    ).all()
+        if (s.name or "").strip().casefold() == wanted
+    ]
+    return same + [d for d in found if d["id"] not in {m["id"] for m in same}]

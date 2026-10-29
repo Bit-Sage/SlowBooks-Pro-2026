@@ -20,8 +20,10 @@ from sqlalchemy import (
     Text,
     Enum,
     ForeignKey,
+    event,
     false,
     func,
+    select,
 )
 from sqlalchemy.orm import relationship
 
@@ -56,6 +58,18 @@ class Invoice(Base):
     bill_city = Column(String(100), nullable=True)
     bill_state = Column(String(50), nullable=True)
     bill_zip = Column(String(20), nullable=True)
+    # Whom the invoice was billed to, frozen with the street above when
+    # the invoice is made (#638; 2.31.1 gate, W-59): the parent of a
+    # sub-customer billed with it, else the customer itself. The printed
+    # Bill To block comes from these alone (name, street, country, and
+    # "For: <sub-customer>" when bill_to_customer_id is not the customer),
+    # so a move or a flag change afterwards does not alter a printed
+    # invoice. Filled on insert from the customer when left empty, on
+    # every creation path (_freeze_bill_to below); rows from before are
+    # backfilled from the customer they were billed to at the upgrade.
+    bill_to_customer_id = Column(Integer, nullable=True)
+    bill_to_name = Column(String(200), nullable=True)
+    bill_to_country = Column(String(100), nullable=True)
 
     ship_address1 = Column(String(200), nullable=True)
     ship_address2 = Column(String(200), nullable=True)
@@ -139,6 +153,56 @@ class Invoice(Base):
         order_by="InvoiceLine.line_order",
     )
     transaction = relationship("Transaction", foreign_keys=[transaction_id])
+
+
+@event.listens_for(Invoice, "before_insert")
+def _freeze_bill_to(_mapper, connection, target):
+    """Freeze whom a new invoice is billed to (W-59) unless the maker set
+    it (a duplicate carries its original's). One query on the customer and
+    its parent, so every path that makes an invoice (the form, convert,
+    duplicate, the scheduler, progress billing, the importers) freezes the
+    same thing without each saying so."""
+    if target.bill_to_name is not None or target.customer_id is None:
+        return
+    freeze_bill_to(connection, target)
+
+
+def freeze_bill_to(connection, target) -> None:
+    """Set the invoice's frozen Bill To from its customer as it is now: the
+    parent of a sub-customer billed with it, else the customer. Called on
+    insert, and by an edit that moves the invoice to another customer (the
+    Bill To is the new customer's; an edit that keeps the customer keeps
+    the Bill To the invoice was made with)."""
+    if target.customer_id is None:
+        return
+    from app.models.contacts import Customer
+
+    c = Customer.__table__
+    parent = c.alias("parent")
+    row = connection.execute(
+        select(
+            c.c.id,
+            c.c.name,
+            c.c.bill_country,
+            c.c.bill_with_parent,
+            parent.c.id,
+            parent.c.name,
+            parent.c.bill_country,
+        )
+        .select_from(c.outerjoin(parent, parent.c.id == c.c.parent_customer_id))
+        .where(c.c.id == target.customer_id)
+    ).first()
+    if row is None:
+        return
+    cid, name, country, billed_with_parent, pid, pname, pcountry = row
+    if billed_with_parent and pid is not None:
+        target.bill_to_customer_id = pid
+        target.bill_to_name = pname
+        target.bill_to_country = pcountry
+    else:
+        target.bill_to_customer_id = cid
+        target.bill_to_name = name
+        target.bill_to_country = country
 
 
 class InvoiceLine(Base):

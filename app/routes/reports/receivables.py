@@ -328,8 +328,9 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     def who(doc) -> list[str]:
         """The sub's name opens the line's description on the parent's
         statement; a line of the customer's own says nothing; a payment
-        or credit of someone else that relieved an invoice here (the
-        parent's, on a sub-customer's own statement) says whose it is."""
+        or credit of someone else that relieved an invoice of the
+        customer's own (the parent's, on a sub-customer's own statement)
+        says whose it is."""
         name = subs.get(doc.customer_id)
         if name:
             return [name]
@@ -356,14 +357,29 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     # statement's invoices (#638 review): the allocations and credit
     # applications on the invoices of the customers on the statement,
     # whoever paid (a parent's payment, on a sub-customer's own statement),
-    # plus the unapplied part of the statement customers' own payments and
-    # credit memos. A payment or credit that relieved nothing here (the
-    # parent's, applied to a sub-customer billed on its own, which the IIF
-    # import makes when a payment is allocated by invoice number) is not a
-    # line, so the balance follows what relieved these invoices, as the
-    # customer's balance and A/R Aging do. For a customer with no
-    # sub-customers every allocation of its payments is on its own
+    # plus the statement customers' own payments and credit memos, applied
+    # elsewhere or not at all. The balance follows what relieved these
+    # invoices, as the customer's balance and A/R Aging do. For a customer
+    # with no sub-customers every allocation of its payments is on its own
     # invoices, and the statement reads as it always did.
+    #
+    # Two rules keep the history where it belongs once a tenant has moved
+    # (2.31.1 gate, W-58; a sub-customer is moved, or billed on its own,
+    # only when none of its parent's money sits on an open invoice):
+    #
+    # * The customer's own payment or credit memo applied to an invoice
+    #   not on this statement (a former tenant's, or a tenant billed on
+    #   its own, the shape the IIF import makes when it allocates a
+    #   payment by invoice number) is listed as a pair: the payment, and
+    #   the invoice it paid, named "for Unit 1: #1001", at what this
+    #   customer's money relieved on it. The former parent's statement
+    #   keeps what it paid, and its balance is unchanged.
+    # * A billed sub-customer's invoice is carried net of what a customer
+    #   off the statement (its former parent) relieved on it, and not at
+    #   all once that money covered it; that customer's payments and
+    #   credits are not lines. The new parent's statement does not carry
+    #   the old parent's payments or the invoices they relieved. The
+    #   customer's own invoices show every payer, as they always did.
     paid_here = (
         db.query(PaymentAllocation.payment_id)
         .join(Invoice, Invoice.id == PaymentAllocation.invoice_id)
@@ -403,18 +419,56 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     def numbers(docs):
         return ", ".join(f"#{d.invoice_number}" for d in docs if d is not None)
 
-    def on_this_statement(applications):
-        """The allocations (or credit applications) on invoices of the
-        customers on the statement."""
+    def relief(application) -> Decimal:
+        """What the allocation (or credit application) took off A/R, in
+        home currency: at the invoice's rate, as its journal did."""
+        return home_amount(application.amount, application.invoice.exchange_rate)
+
+    def listed(doc, applications) -> list:
+        """The allocations (or credit applications) of ``doc`` this
+        statement lists: every one of the statement customers' own
+        (those on invoices not here are paired with the invoice), and of
+        anyone else's only those on the customer's own invoices."""
+        if doc.customer_id in ours:
+            return [a for a in applications if a.invoice is not None]
         return [
             a
             for a in applications
-            if a.invoice is not None and a.invoice.customer_id in ours
+            if a.invoice is not None and a.invoice.customer_id == customer.id
         ]
+
+    # what a customer off the statement relieved on a billed sub's invoice
+    outside_relief: dict[int, Decimal] = {}
+    for doc, applications in [(p, p.allocations) for p in payments] + [
+        (cm, cm.applications) for cm in memos
+    ]:
+        if doc.customer_id in ours:
+            continue
+        for a in applications:
+            if a.invoice is not None and a.invoice.customer_id in subs:
+                outside_relief[a.invoice.id] = outside_relief.get(
+                    a.invoice.id, Decimal(0)
+                ) + relief(a)
+    # the invoices not on the statement that the statement customers' own
+    # money relieved, with how much of it: the pairs
+    paired: dict[int, tuple] = {}
+
+    def pair(application) -> None:
+        inv = application.invoice
+        if inv.customer_id in ours or inv.status == InvoiceStatus.VOID:
+            return
+        _, so_far = paired.get(inv.id, (inv, Decimal(0)))
+        paired[inv.id] = (inv, so_far + relief(application))
 
     events = []
     invoiced = Decimal(0)
     for inv in invoices:
+        amount = home_amount(inv.total, inv.exchange_rate)
+        outside = outside_relief.get(inv.id, Decimal(0))
+        if outside:
+            amount -= outside
+            if amount <= 0:
+                continue  # covered by money off this statement: not its business
         code = foreign(inv)
         parts = who(inv)
         if code:
@@ -423,7 +477,6 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
             parts.append(f"PO {inv.po_number}")
         if inv.due_date:
             parts.append(f"Due {inv.due_date.strftime('%b %d, %Y')}")
-        amount = home_amount(inv.total, inv.exchange_rate)
         invoiced += amount
         events.append(
             (
@@ -444,7 +497,7 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
     for p in payments:
         code = foreign(p)
         own = p.customer_id in ours
-        here = on_this_statement(p.allocations)
+        here = listed(p, p.allocations)
         applied = sum((Decimal(str(a.amount)) for a in p.allocations), Decimal(0))
         left = Decimal(str(p.amount)) - applied if own else Decimal(0)
         if not here and left <= 0:
@@ -452,15 +505,14 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
             continue
         # What the payment took off this statement's A/R, in home
         # currency, as its journal entry and any later apply did: each
-        # part applied to an invoice here at that invoice's rate, the
+        # part applied to an invoice at that invoice's rate, the
         # customer's own unapplied remainder at the payment's rate.
-        relieved = sum(
-            (home_amount(a.amount, a.invoice.exchange_rate) for a in here),
-            Decimal(0),
-        )
+        relieved = sum((relief(a) for a in here), Decimal(0))
         if left > 0:
             relieved += home_amount(left, p.exchange_rate)
         received += relieved
+        for a in here:
+            pair(a)
         parts = who(p)
         if code:
             parts.append(f"{code} {Decimal(str(p.amount)):,.2f}")
@@ -493,23 +545,18 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
         )
     credited = Decimal(0)
     for cm in memos:
-        here = on_this_statement(cm.applications)
+        here = listed(cm, cm.applications)
         if cm.customer_id in ours:
-            # the customer's own credit: what is still unapplied plus what
-            # it took off invoices here, which is its total unless part of
-            # it went to an invoice not on this statement
-            elsewhere = sum(
-                (Decimal(str(a.amount)) for a in cm.applications if a not in here),
-                Decimal(0),
-            )
-            amount = Decimal(str(cm.total or 0)) - elsewhere
-            if amount == 0 and elsewhere:
-                continue
+            # the customer's own credit, whole: what it took off invoices,
+            # here or paired, plus what is still unapplied
+            amount = Decimal(str(cm.total or 0))
         else:
             amount = sum((Decimal(str(a.amount)) for a in here), Decimal(0))
-            if amount == 0:
-                continue
+        if amount == 0:
+            continue
         credited += amount
+        for a in here:
+            pair(a)
         applied_to = numbers(a.invoice for a in here)
         events.append(
             (
@@ -526,6 +573,30 @@ def statement_activity(db: Session, customer: Customer, as_of_date: date) -> dic
                     ),
                     "amount": -amount,
                     "currency": None,
+                },
+            )
+        )
+    for inv, amount in paired.values():
+        # the other half of the pair: the invoice this statement's money
+        # paid, at what it paid, named for whose it is
+        code = foreign(inv)
+        payee = inv.customer
+        invoiced += amount
+        events.append(
+            (
+                inv.date,
+                0,
+                inv.id,
+                {
+                    "date": inv.date,
+                    "type": document_label(inv, words),
+                    "number": inv.invoice_number,
+                    "description": (
+                        f"for {payee.name if payee is not None else 'another customer'}: "
+                        f"#{inv.invoice_number}"
+                    ),
+                    "amount": amount,
+                    "currency": code or None,
                 },
             )
         )

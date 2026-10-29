@@ -98,6 +98,22 @@ class CustomerUpdate(StrictModel):
 
 
 class CustomerResponse(BaseModel):
+    """A customer as every customer endpoint answers it. Three balances,
+    each in home dollars, summed from the open documents (the stored
+    Customer.balance column is never written; services/contact_balances):
+
+    * ``balance`` is what the customer's own open documents leave: its
+      invoices, net of the credit memos and unapplied payments it holds.
+    * ``billed_balance`` is what sits on the customer's A/R: its own
+      balance plus that of the sub-customers billed with it, the figure
+      its A/R Aging row shows and what a property owes for its tenants.
+      The same as ``balance`` for a customer with no sub-customer billed
+      with it (2.31.1 gate, W-61).
+    * ``rollup_balance`` is set on a parent only: its own balance plus
+      every sub-customer's, billed with it or not, what the property has
+      open altogether (its page's roll-up). None otherwise.
+    """
+
     id: int
     name: str
     company: Optional[str]
@@ -134,15 +150,14 @@ class CustomerResponse(BaseModel):
 
     # Sub-customers (#638). full_name is "Parent: Sub" for a sub-customer
     # (the pickers' spelling) and the name itself otherwise; parent_name
-    # is set on a sub; sub_count on a parent, with rollup_balance = its own
-    # balance plus every sub's (billed with it or not), what the property
-    # has open altogether. balance stays what is open on the customer's
-    # own documents.
+    # is set on a sub; sub_count on a parent. The three balances are
+    # told apart in the class docstring.
     parent_customer_id: Optional[int] = None
     parent_name: Optional[str] = None
     bill_with_parent: bool = False
     full_name: str = ""
     sub_count: int = 0
+    billed_balance: Decimal = Decimal("0")
     rollup_balance: Optional[Decimal] = None
 
     model_config = {"from_attributes": True}
