@@ -147,9 +147,13 @@ def email_invoice(
             status_code=400,
             detail="Not an email address: " + ", ".join(rejected[:5]) + ".",
         )
+    # The caps count the always-copy settings too: forty-nine typed plus two
+    # in Settings is fifty-one, refused here in the limit's own words rather
+    # than as a failed send blamed on the SMTP settings (W-52).
+    from app.services.email_service import _get_smtp_settings, copy_lists
+
     try:
-        clean_addresses(data.cc, "Cc")
-        clean_addresses(data.bcc, "Bcc")
+        copy_lists(_get_smtp_settings(db), data.cc, data.bcc)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     company = get_settings(db)

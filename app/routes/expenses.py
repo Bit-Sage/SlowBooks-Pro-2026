@@ -90,7 +90,14 @@ def _serialize(
         ),
         amount=float(sum((ln.debit for ln in debit_lines), Decimal("0"))),
         reference=txn.reference or "",
-        memo=(debit_line.description or "") if debit_line else "",
+        # the memo typed on the expense: the bank line carries it (a split's
+        # debit lines carry their own, #599); with none typed the bank line
+        # holds the payee, which is not a memo (W-51, 2.31.0 gate)
+        memo=(
+            credit_line.description or ""
+            if credit_line and (credit_line.description or "") != payee
+            else ""
+        ),
         status="void" if voided else "recorded",
         printable=(
             not voided
