@@ -11,7 +11,8 @@ construction mode only, and the pins still work.
 import json
 import shutil
 import subprocess
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from app.models.bills import (
 from app.models.change_orders import ChangeOrder, ChangeOrderLine
 from app.models.contacts import Customer, Vendor
 from app.models.cost_codes import CostCode
-from app.models.job_costing import JobBudget
+from app.models.job_costing import JobBudget, JobCostToComplete
 from app.models.jobs import Job, SovLine
 from app.models.pay_applications import PayApplication, PayApplicationLine
 from app.models.purchase_orders import POStatus, PurchaseOrder, PurchaseOrderLine
@@ -1640,3 +1641,162 @@ def test_commitment_closed_by_hand_shows_nothing_remaining(db_session, seed_acco
             0
         ]
         assert row["billed"] == 4000.0 and row["remaining"] == 0.0
+
+
+# ── 7. Timestamps read on the local day (#644) ───────────────────────────
+
+# 23:30 Central on 2026-10-28 is 04:30 UTC on 10-29: the stamp a US evening's
+# work carries in the file.
+_LATE_EVENING = datetime(2026, 10, 29, 4, 30, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def central_time(monkeypatch):
+    """Pin the local calendar to Central time for one test. TZ plus tzset
+    moves the C library's zone where it has one (Linux, macOS); Windows has
+    no tzset, so there the report's own zone hook is set instead."""
+    if hasattr(time, "tzset"):
+        monkeypatch.setenv("TZ", "America/Chicago")
+        time.tzset()
+    else:
+        monkeypatch.setattr(job_reports, "_LOCAL_TZ", timezone(timedelta(hours=-5)))
+    yield
+    monkeypatch.undo()
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+def test_local_date_reads_a_utc_stamp_on_the_local_calendar(central_time):
+    naive_utc = _LATE_EVENING.replace(tzinfo=None)  # as SQLite hands it back
+    assert job_reports._local_date(naive_utc) == date(2026, 10, 28)
+    assert job_reports._local_date(_LATE_EVENING) == date(2026, 10, 28)
+    # noon is the same day on both calendars
+    assert job_reports._local_date(datetime(2026, 10, 28, 17, 0)) == date(2026, 10, 28)
+
+
+def test_wip_forecast_warning_reads_the_local_day(
+    central_time, client, db_session, seed_accounts
+):
+    """A forecast typed at 23:30 on 10-28 must not make the schedule as of
+    10-28 say it was entered the next day; as of 10-27 it still does."""
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Evening forecast", 100000, 90000, 60000)
+    job_reports.set_ctc_entries(
+        db_session, job, [{"cost_code_id": None, "cost_type": "", "amount": 60000}]
+    )
+    db_session.query(JobCostToComplete).filter(
+        JobCostToComplete.job_id == job.id
+    ).update({"created_at": _LATE_EVENING, "updated_at": _LATE_EVENING})
+    db_session.commit()
+
+    same_day = job_reports.wip_schedule(db_session, as_of=date(2026, 10, 28))
+    assert same_day["warnings"] == []
+    csv = client.get("/api/reports/wip-schedule/csv?as_of=2026-10-28").text
+    assert "after 2026-10-28" not in csv
+    day_before = job_reports.wip_schedule(db_session, as_of=date(2026, 10, 27))
+    assert len(day_before["warnings"]) == 1
+    assert "entered 2026-10-28, after 2026-10-27" in day_before["warnings"][0]
+
+
+def test_commitment_status_reads_a_sub_co_approval_on_the_local_day(
+    central_time, db_session, seed_accounts
+):
+    """A sub change order approved at 23:30 on 10-28 adds its lines to the
+    commitment as of 10-28, not only from 10-29."""
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Evening CO", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="Night Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-EV", 10000)
+    co = ChangeOrder(
+        job_id=job.id,
+        number="CO-SUB-EV",
+        kind="sub",
+        status="approved",
+        commitment_id=po.id,
+        approved_at=_LATE_EVENING,
+    )
+    db_session.add(co)
+    db_session.flush()
+    db_session.add_all(
+        [
+            PurchaseOrderLine(
+                purchase_order_id=po.id, amount=Decimal("8000"), line_order=0
+            ),
+            PurchaseOrderLine(
+                purchase_order_id=po.id,
+                amount=Decimal("2000"),
+                change_order_id=co.id,
+                line_order=1,
+            ),
+        ]
+    )
+    db_session.commit()
+    same_day = job_reports.commitment_status(db_session, as_of=date(2026, 10, 28))
+    row = same_day["jobs"][0]["rows"][0]
+    assert row["committed"] == 10000.0 and row["remaining"] == 10000.0
+    day_before = job_reports.commitment_status(db_session, as_of=date(2026, 10, 27))
+    row = day_before["jobs"][0]["rows"][0]
+    assert row["committed"] == 8000.0 and row["remaining"] == 8000.0
+
+
+def test_owner_co_approved_in_the_evening_counts_on_that_day(
+    central_time, db_session, seed_accounts
+):
+    """The change order log's running total and the WIP revised contract read
+    an owner change order approved at 23:30 on 10-28 as approved that day."""
+    customer = _customer(db_session)
+    job = _contract_job(db_session, customer, "Evening owner CO", 100000, 80000, 40000)
+    job.contract_amount = Decimal("110000")  # the approve already grew it
+    _co(
+        db_session,
+        job,
+        "CO-EV",
+        "owner",
+        "approved",
+        "contract",
+        [("8000", "10000", "material")],
+        approved_at=_LATE_EVENING,
+    )
+    db_session.commit()
+    log = job_reports.change_order_log(db_session, as_of=date(2026, 10, 28))
+    assert log["jobs"][0]["rows"][0]["running_approved"] == 10000.0
+    assert log["jobs"][0]["contract"]["revised"] == 110000.0
+    earlier = job_reports.change_order_log(db_session, as_of=date(2026, 10, 27))
+    assert earlier["jobs"][0]["rows"][0]["running_approved"] == 0.0
+    assert earlier["jobs"][0]["contract"]["revised"] == 100000.0
+    wip = job_reports.wip_schedule(db_session, as_of=date(2026, 10, 28))["rows"][0]
+    assert wip["approved_change_orders"] == 10000.0
+    assert wip["revised_contract"] == 110000.0
+    wip = job_reports.wip_schedule(db_session, as_of=date(2026, 10, 27))["rows"][0]
+    assert wip["approved_change_orders"] == 0.0
+    assert wip["revised_contract"] == 100000.0
+
+
+def test_commitment_billed_in_part_reads_sent_before_its_first_bill(
+    db_session, seed_accounts
+):
+    """A 6,000 subcontract billed 2,500 on 4-1 is partial today; as of a day
+    before that bill nothing had been billed, so it reads sent with the whole
+    amount remaining, the way one closed by a later bill reads open (#644)."""
+    customer = _customer(db_session)
+    job = Job(customer_id=customer.id, name="Partly billed", status="in_progress")
+    db_session.add(job)
+    db_session.flush()
+    v = Vendor(name="Part Sub")
+    db_session.add(v)
+    db_session.flush()
+    po = _commitment(db_session, job, v, "SC-PB", 6000, status=POStatus.PARTIAL)
+    _po_bill(db_session, po, "PB-1", 2500, held="250", when=date(2026, 4, 1))
+    db_session.commit()
+    before = job_reports.commitment_status(db_session, as_of=date(2026, 3, 1))
+    row = before["jobs"][0]["rows"][0]
+    assert row["status"] == "sent"
+    assert row["billed"] == 0.0 and row["remaining"] == 6000.0
+    on = job_reports.commitment_status(db_session, as_of=date(2026, 4, 1))
+    row = on["jobs"][0]["rows"][0]
+    assert row["status"] == "partial"
+    assert row["billed"] == 2500.0 and row["remaining"] == 3500.0

@@ -11,7 +11,7 @@
 # Money is Decimal, quantized to cents half-up through accounting._q.
 # ============================================================================
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -33,6 +33,21 @@ _ONE = Decimal("1")
 # a closed job is off the board unless include_closed (or an explicit status).
 _NEVER_DEFAULT = ("not_awarded",)
 _CLOSED = ("closed",)
+
+# Timestamps are stored in UTC (SQLite hands them back naive, with no zone);
+# the "as of" day a report is run for is a day on the user's own calendar.
+# None means the machine's local zone, which is what a desktop install calls
+# local (#644). Tests set it to pin the zone on platforms without tzset.
+_LOCAL_TZ = None
+
+
+def _local_date(ts: datetime) -> date:
+    """The local calendar date a stored timestamp falls on, so a forecast typed
+    or a change order approved at 23:30 belongs to that evening and not to the
+    next UTC day (#644). A naive timestamp is UTC in this codebase."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(_LOCAL_TZ).date()
 
 
 def select_jobs(
@@ -213,7 +228,7 @@ def _contract_changes_after(db: Session, job: Job, as_of: date) -> Decimal:
         .all()
     )
     for co in cos:
-        approved = co.approved_at.date() if co.approved_at else None
+        approved = _local_date(co.approved_at) if co.approved_at else None
         if approved is not None and approved > as_of:
             total += co_totals(co, job)["sell_total"]
     return _q(total)
@@ -329,7 +344,7 @@ def wip_row(db: Session, job: Job, as_of: date) -> dict:
 
 def _forecast_dating_warnings(db: Session, jobs: list, rows: list, as_of: date):
     """A typed cost-to-complete has no date: say so when the schedule is run as
-    of a day before the amount was last entered."""
+    of a day before the amount was last entered (on the local calendar)."""
     has_contract = {r["job_id"] for r in rows if r.get("has_contract")}
     out = []
     for job in jobs:
@@ -340,10 +355,11 @@ def _forecast_dating_warnings(db: Session, jobs: list, rows: list, as_of: date):
             .filter(JobCostToComplete.job_id == job.id)
             .scalar()
         )
-        if latest is not None and latest.date() > as_of:
+        entered = _local_date(latest) if latest is not None else None
+        if entered is not None and entered > as_of:
             out.append(
                 f"{job.name}: the cost-to-complete forecast was entered "
-                f"{latest.date().isoformat()}, after {as_of.isoformat()}; it has "
+                f"{entered.isoformat()}, after {as_of.isoformat()}; it has "
                 "no date, so today's figure is used and percent complete may "
                 "read high."
             )
@@ -962,7 +978,7 @@ def _co_job(db: Session, job: Job, as_of: date) -> dict:
         cost = figs["cost_total"]
         sell = figs["sell_total"]
         markup = figs["markup_total"]
-        approved_on = co.approved_at.date() if co.approved_at else None
+        approved_on = _local_date(co.approved_at) if co.approved_at else None
         approved_by_as_of = (
             co.status == "approved" and approved_on is not None and approved_on <= as_of
         )
@@ -1375,7 +1391,7 @@ def _commitment_row(
     later = _ZERO
     for ln in po.lines:
         co = ln.change_order_id and co_by_id.get(ln.change_order_id)
-        if co is not None and co.approved_at and co.approved_at.date() > as_of:
+        if co is not None and co.approved_at and _local_date(co.approved_at) > as_of:
             later += Decimal(str(ln.amount or 0))
     committed = _q(Decimal(str(po.subtotal or 0)) - later)
     # A closed commitment counts closed on every date, unless a bill against it
@@ -1385,9 +1401,10 @@ def _commitment_row(
     )
     remaining = _q(committed - billed) if is_open else _ZERO
     status = po.status.value if hasattr(po.status, "value") else po.status
-    # A commitment the later bill closed was still open on this date: its
-    # status then is what the bills by then had made it (2.30.0 gate).
-    if po.status == POStatus.CLOSED and billed_later:
+    # A commitment the later bill closed was still open on this date, and one
+    # billed in part had no bill yet before its first: on either, the status
+    # on the date is what the bills by then had made it (2.30.0 gate, #644).
+    if po.status == POStatus.PARTIAL or (po.status == POStatus.CLOSED and billed_later):
         status = (POStatus.PARTIAL if billed > _ZERO else POStatus.SENT).value
     return {
         "id": po.id,
