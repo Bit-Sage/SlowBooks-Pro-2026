@@ -62,11 +62,12 @@ internet for that step).
 When you open SlowBooks on a computer whose runtime is missing or older (the
 portable .zip never sets it up, and an offline computer, or one whose updates
 are held back, can stay on an old one), the app does not open a blank
-window. It says which version it found and which it needs, gives Microsoft's
-download page, <https://developer.microsoft.com/microsoft-edge/webview2/>,
-and offers to open SlowBooks in your web browser meanwhile. Install or update
-the runtime from that page (the Evergreen Bootstrapper), or run the
-SlowBooks installer again, then open SlowBooks. `launcher.log` records the
+window. It says the runtime is missing, or which version it found and which
+it needs; gives Microsoft's download page,
+<https://developer.microsoft.com/microsoft-edge/webview2/>; and offers to
+open SlowBooks in your web browser meanwhile. Install or update the runtime
+from that page (the Evergreen Bootstrapper), or run the SlowBooks installer,
+which does it for you, then open SlowBooks. `launcher.log` records the
 version found at every start. And if the window does open but the app
 cannot start in it, the page says so in place of a white screen, with the
 error to send to support.
