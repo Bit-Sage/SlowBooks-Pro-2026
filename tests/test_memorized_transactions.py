@@ -2963,3 +2963,27 @@ def test_a_later_occurrence_is_not_the_next_one(
             "2026-01-01."
         )
     assert db_session.query(Invoice).filter_by(recurring_invoice_id=rec_id).count() == 0
+
+
+def test_the_docs_say_what_the_schedules_and_the_page_do_now():
+    """W-84 to W-86 and the wording notes, in the changelog and the
+    features doc: a recurring invoice keeps its start day and is listed as
+    Generated, Enter All Due keeps going past an installment another window
+    made, and the sentences for a later occurrence, a busy file, the end
+    date and a count reached."""
+    for doc in ("docs/features.md", "CHANGELOG.md"):
+        text = _words(doc)
+        for words in (
+            "keeps the day of its start date",
+            "the mode `generate`",
+            "Generated",
+            "when another window generates one of those installments first, it "
+            "keeps going",
+            "is not the next one",
+            "busy saving another change",
+            "the end date the schedule has",
+            "says to raise the number of times",
+        ):
+            assert words in text, (doc, words)
+    features = _words("docs/features.md")
+    assert "the app generates what is due when it opens" not in features
