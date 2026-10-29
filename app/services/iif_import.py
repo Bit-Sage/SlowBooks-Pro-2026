@@ -39,6 +39,7 @@ from app.services.iif_common import (
 from app.services.jobs_service import (
     find_customer,
     find_job,
+    find_sub_customer,
     resolve_customer_and_job,
     split_customer_job,
 )
@@ -792,8 +793,39 @@ def _create_opening_balance_entry(db: Session, balances: list) -> dict:
         }
 
 
-def import_customers(db: Session, rows: list) -> dict:
-    """Import customer rows from IIF."""
+def _customer_fields(row: dict) -> dict:
+    """A CUST row's contact fields, as Customer takes them."""
+    # Parse ADDR4 "City, State ZIP" pattern
+    addr4 = row.get("ADDR4", "").strip()
+    city, state, zipcode = "", "", ""
+    if addr4:
+        city, state, zipcode = _parse_city_state_zip(addr4)
+    return dict(
+        company=row.get("COMPANYNAME", "").strip() or None,
+        email=row.get("EMAIL", "").strip() or None,
+        phone=row.get("PHONE1", "").strip() or None,
+        mobile=row.get("PHONE2", "").strip() or None,
+        bill_address1=row.get("ADDR2", "").strip() or None,
+        bill_address2=row.get("ADDR3", "").strip() or None,
+        bill_city=city or None,
+        bill_state=state or None,
+        bill_zip=zipcode or None,
+        terms=row.get("TERMS", "").strip() or "Net 30",
+        tax_id=row.get("TAXID", "").strip() or None,
+        credit_limit=_parse_decimal(row.get("LIMIT", "")) or None,
+        is_active=True,
+    )
+
+
+def import_customers(db: Session, rows: list, sub_customers: bool = False) -> dict:
+    """Import customer rows from IIF.
+
+    ``sub_customers`` (#638): the file's "Customer:Job" rows are
+    sub-customers (a tenant under a property), each with the contact
+    details its row carries, not jobs. QuickBooks Desktop spells a job and
+    a sub-customer the same way, so the person importing says which the
+    file holds; off, a child row is a job, as it always was.
+    """
     imported = 0
     errors = []
 
@@ -813,41 +845,37 @@ def import_customers(db: Session, rows: list) -> dict:
 
             # A "Customer:Job" list row is a job, not a customer: create the
             # parent if the list didn't (QuickBooks exports parents first,
-            # but a partial export may not) and the job under it.
+            # but a partial export may not) and the job under it. Or, when
+            # the person importing said so, a sub-customer under it.
             parent_name, job_name = split_customer_job(name)
             if job_name:
                 parent = find_customer(db, parent_name)
-                if parent and find_job(db, parent.id, job_name):
+                if parent and (
+                    find_job(db, parent.id, job_name)
+                    or find_sub_customer(db, parent.id, job_name)
+                ):
                     # already here: a re-import counted it as imported again
                     sp.rollback()
                     continue
-                _customer, _job = resolve_customer_and_job(db, name)
+                if sub_customers:
+                    if not parent:
+                        parent = Customer(name=parent_name[:200], is_active=True)
+                        db.add(parent)
+                        db.flush()
+                    sub = Customer(
+                        name=job_name[:200],
+                        parent_customer_id=parent.id,
+                        **_customer_fields(row),
+                    )
+                    db.add(sub)
+                    db.flush()
+                else:
+                    _customer, _job = resolve_customer_and_job(db, name)
                 sp.commit()
                 imported += 1
                 continue
 
-            # Parse ADDR4 "City, State ZIP" pattern
-            addr4 = row.get("ADDR4", "").strip()
-            city, state, zipcode = "", "", ""
-            if addr4:
-                city, state, zipcode = _parse_city_state_zip(addr4)
-
-            cust = Customer(
-                name=name,
-                company=row.get("COMPANYNAME", "").strip() or None,
-                email=row.get("EMAIL", "").strip() or None,
-                phone=row.get("PHONE1", "").strip() or None,
-                mobile=row.get("PHONE2", "").strip() or None,
-                bill_address1=row.get("ADDR2", "").strip() or None,
-                bill_address2=row.get("ADDR3", "").strip() or None,
-                bill_city=city or None,
-                bill_state=state or None,
-                bill_zip=zipcode or None,
-                terms=row.get("TERMS", "").strip() or "Net 30",
-                tax_id=row.get("TAXID", "").strip() or None,
-                credit_limit=_parse_decimal(row.get("LIMIT", "")) or None,
-                is_active=True,
-            )
+            cust = Customer(name=name, **_customer_fields(row))
             db.add(cust)
             db.flush()
             sp.commit()
@@ -1058,7 +1086,11 @@ def _unsupported_warnings(unsupported: list) -> list:
 
 
 def import_transactions(
-    db: Session, blocks: list, adjusting: bool = False, posted_by: str = None
+    db: Session,
+    blocks: list,
+    adjusting: bool = False,
+    posted_by: str = None,
+    sub_customers: bool = False,
 ) -> dict:
     """Import transaction blocks (TRNS/SPL/ENDTRNS) from IIF.
 
@@ -1095,7 +1127,7 @@ def import_transactions(
             trns_type = trns.get("TRNSTYPE", "").strip().upper()
 
             if trns_type == "INVOICE":
-                result = _import_invoice(db, trns, spls, warnings)
+                result = _import_invoice(db, trns, spls, warnings, sub_customers)
                 if result:
                     counts["invoices"] += 1
                     if not result.transaction_id:
@@ -1109,7 +1141,7 @@ def import_transactions(
                     # re-import reported "Duplicates skipped 1" for three.
                     counts["duplicates_skipped"] += 1
             elif trns_type == "PAYMENT":
-                result = _import_payment(db, trns, spls)
+                result = _import_payment(db, trns, spls, sub_customers)
                 if result:
                     counts["payments"] += 1
                     if not result.transaction_id:
@@ -1124,7 +1156,7 @@ def import_transactions(
                         f"Sales receipt block {i + 1}: no customer name; "
                         f"assigned to '{WALK_IN_CUSTOMER_NAME}'"
                     )
-                result = _import_cash_sale(db, trns, spls, warnings)
+                result = _import_cash_sale(db, trns, spls, warnings, sub_customers)
                 if result:
                     counts["sales_receipts"] += 1
                     if not result.transaction_id:
@@ -1135,7 +1167,7 @@ def import_transactions(
                 else:
                     counts["duplicates_skipped"] += 1
             elif trns_type == "ESTIMATE":
-                result = _import_estimate(db, trns, spls, warnings)
+                result = _import_estimate(db, trns, spls, warnings, sub_customers)
                 if result:
                     counts["estimates"] += 1
                 else:
@@ -1636,7 +1668,9 @@ def _import_deposit(
     return txn
 
 
-def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoice:
+def _import_invoice(
+    db: Session, trns: dict, spls: list, warnings=None, sub_customers: bool = False
+) -> Invoice:
     """Create an Invoice from IIF TRNS/SPL data.
 
     Convention assumed: TRNS.AMOUNT is positive (AR debit = invoice total), each
@@ -1669,8 +1703,9 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
         )
     # QuickBooks' NAME is the "Customer:Job" path — the job part becomes a
     # Job under the customer (created on first sight), and the invoice is
-    # tagged to it so job costing survives the migration.
-    customer, job = resolve_customer_and_job(db, cust_name)
+    # tagged to it so job costing survives the migration; or a sub-customer
+    # (#638) when the list made one, or the import was told to.
+    customer, job = resolve_customer_and_job(db, cust_name, sub_customers=sub_customers)
 
     inv_date = _parse_iif_date(trns.get("DATE", ""))
     due_date = _parse_iif_date(trns.get("DUEDATE", ""))
@@ -1840,7 +1875,9 @@ def _import_invoice(db: Session, trns: dict, spls: list, warnings=None) -> Invoi
     return invoice
 
 
-def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
+def _import_payment(
+    db: Session, trns: dict, spls: list, sub_customers: bool = False
+) -> Payment:
     """Create a Payment from IIF TRNS/SPL data."""
     ref = trns.get("DOCNUM", "").strip()
 
@@ -1869,7 +1906,9 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
 
     # Resolve customer ("Customer:Job" resolves to the customer; a payment
     # is not job-costed — the invoice it pays already is)
-    customer, _job = resolve_customer_and_job(db, cust_name, create=False)
+    customer, _job = resolve_customer_and_job(
+        db, cust_name, create=False, sub_customers=sub_customers
+    )
     if not customer:
         # Said, not dropped (2.18.1 gate): the payment used to vanish with
         # nothing in the result. None means "already imported" to the caller.
@@ -1970,7 +2009,9 @@ def _import_payment(db: Session, trns: dict, spls: list) -> Payment:
 WALK_IN_CUSTOMER_NAME = "Walk-In Customer"
 
 
-def _import_cash_sale(db: Session, trns: dict, spls: list, warnings=None) -> Invoice:
+def _import_cash_sale(
+    db: Session, trns: dict, spls: list, warnings=None, sub_customers: bool = False
+) -> Invoice:
     """Create a paid invoice + payment from an IIF CASH SALE block.
 
     QB writes sales receipts as TRNSTYPE "CASH SALE": the TRNS line debits
@@ -2013,7 +2054,7 @@ def _import_cash_sale(db: Session, trns: dict, spls: list, warnings=None) -> Inv
 
         trns["DOCNUM"] = next_invoice_number(db)
 
-    invoice = _import_invoice(db, trns, spls, warnings)
+    invoice = _import_invoice(db, trns, spls, warnings, sub_customers)
     if invoice is None:
         return None
     invoice.is_sales_receipt = True
@@ -2079,7 +2120,9 @@ def _import_cash_sale(db: Session, trns: dict, spls: list, warnings=None) -> Inv
     return invoice
 
 
-def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Estimate:
+def _import_estimate(
+    db: Session, trns: dict, spls: list, warnings=None, sub_customers: bool = False
+) -> Estimate:
     """Create an Estimate from IIF TRNS/SPL data."""
     doc_num = trns.get("DOCNUM", "").strip()
 
@@ -2097,7 +2140,7 @@ def _import_estimate(db: Session, trns: dict, spls: list, warnings=None) -> Esti
         raise DataProblem(
             f"ESTIMATE {doc_num or '(no number)'}: missing customer NAME on TRNS line"
         )
-    customer, job = resolve_customer_and_job(db, cust_name)
+    customer, job = resolve_customer_and_job(db, cust_name, sub_customers=sub_customers)
 
     est_date = _parse_iif_date(trns.get("DATE", ""))
     total = abs(_parse_decimal(trns.get("AMOUNT", "")))
@@ -2220,6 +2263,7 @@ def validate_iif(content: str) -> dict:
         "caps_name_examples": [],
         "unsupported": [],
         "unsupported_counts": {},
+        "customer_job_names": 0,
     }
 
     try:
@@ -2286,6 +2330,10 @@ def validate_iif(content: str) -> dict:
         if not row.get("NAME", "").strip():
             report["errors"].append(f"Customer row {i + 1}: missing NAME")
             report["valid"] = False
+        elif split_customer_job(row["NAME"])[1]:
+            # "Customer:Job" rows: jobs, or sub-customers if the person
+            # importing says so (#638)
+            report["customer_job_names"] += 1
 
     # Validate vendors
     for i, row in enumerate(parsed.get("VEND", [])):
@@ -2365,6 +2413,7 @@ def import_all(
     retitle_names: bool = False,
     adjusting: bool = False,
     posted_by: str = None,
+    sub_customers: bool = False,
 ) -> dict:
     """Import an entire IIF file into Slowbooks.
 
@@ -2374,6 +2423,8 @@ def import_all(
 
     ``retitle_names``: the person importing asked for ALL-CAPS customer,
     vendor and account names in normal capitalization (retitle_all_caps).
+    ``sub_customers``: the file's "Customer:Job" names are sub-customers,
+    not jobs (#638; see import_customers).
     """
     result = {
         "classes": 0,
@@ -2422,7 +2473,7 @@ def import_all(
             result["opening_balance_lines"] = ob.get("line_count", 0)
 
     if parsed["CUST"]:
-        r = import_customers(db, parsed["CUST"])
+        r = import_customers(db, parsed["CUST"], sub_customers=sub_customers)
         result["customers"] = r["imported"]
         result["errors"].extend(r["errors"])
 
@@ -2438,7 +2489,9 @@ def import_all(
 
     # Import transactions
     if parsed["TRNS"]:
-        r = import_transactions(db, parsed["TRNS"], adjusting, posted_by)
+        r = import_transactions(
+            db, parsed["TRNS"], adjusting, posted_by, sub_customers=sub_customers
+        )
         counts = r["imported"]
         result["invoices"] = counts.get("invoices", 0)
         result["payments"] = counts.get("payments", 0)

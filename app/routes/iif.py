@@ -215,6 +215,7 @@ async def import_iif(
     file: UploadFile = File(...),
     retitle_names: bool = Form(False),
     adjusting: bool = Form(False),
+    sub_customers: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     """Upload and import an IIF file into Slowbooks.
@@ -222,7 +223,9 @@ async def import_iif(
     Processes accounts, customers, vendors, items, and transactions.
     Skips duplicates and collects per-row errors. ``retitle_names``: import
     ALL-CAPS customer, vendor and account names in normal capitalization
-    (item names are kept as typed).
+    (item names are kept as typed). ``sub_customers``: the file's
+    "Customer:Job" names are sub-customers under their parents, not jobs
+    (#638).
     """
     if not file.filename.lower().endswith(".iif"):
         raise HTTPException(400, "File must have .iif extension")
@@ -243,6 +246,7 @@ async def import_iif(
             retitle_names=retitle_names,
             adjusting=adjusting,
             posted_by=db.info.get("acting_username"),
+            sub_customers=sub_customers,
         )
     except Exception:
         db.rollback()

@@ -661,7 +661,7 @@ const BankingPage = {
             API.get('/classes?include_archived=true').catch(() => []),
             API.get('/accounts?active_only=true').catch(() => []),
             API.get('/vendors?active_only=true').catch(() => null),
-            API.get('/customers?active_only=true').catch(() => null),
+            API.get('/customers?active_only=true&tree=1').catch(() => null),
         ]);
         BankingPage._accounts = chart;
         BankingPage._setVendors(vendors);
@@ -1204,7 +1204,7 @@ const BankingPage = {
         }
         // the names a deposit line can carry (#606): every open of the form
         // reads the list afresh, so a donor added elsewhere is there
-        const customers = await API.get('/customers?active_only=true').catch(() => null);
+        const customers = await API.get('/customers?active_only=true&tree=1').catch(() => null);
         if (customers) {
             BankingPage._customers = customers;
             BankingPage._customerNames = new Set(customers.map(c => c.name.toLowerCase()));
@@ -1446,7 +1446,7 @@ const BankingPage = {
         const list = BankingPage._customers || [];
         return `<option value="">—</option>`
             + (App.isLocked() ? '' : `<option value="__new__">+ ${T('New Customer')}</option>`)
-            + list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+            + list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${escapeHtml(customerLabel(c))}</option>`).join('');
     },
     nameSelectHtml(id, name, selected, label) {
         return `<select${id ? ` id="${id}"` : ''}${name ? ` name="${name}"` : ''} aria-label="${escapeHtml(label)}" onchange="BankingPage.nameChosen(this)">${BankingPage._nameOptions(selected)}</select>`;

@@ -43,7 +43,7 @@ const RecurringPage = {
 
     async showForm(id = null) {
         const [customers, items, settings] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
         ]);
@@ -66,7 +66,7 @@ const RecurringPage = {
         if (rec.lines.length === 0) rec.lines = [{ item_id: '', description: '', quantity: 1, rate: 0 }];
         RecurringPage.lineCount = rec.lines.length;
 
-        const custOpts = customers.map(c => `<option value="${c.id}" ${rec.customer_id==c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}" ${rec.customer_id==c.id?'selected':''}>${escapeHtml(customerLabel(c))}</option>`).join('');
         // A saved schedule keeps its customer and start date (the API edits
         // neither); sending them made every Update a 422.
         const locked = id ? 'disabled title="A saved schedule keeps its customer and start date"' : '';

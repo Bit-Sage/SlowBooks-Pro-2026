@@ -92,7 +92,7 @@ const CreditMemosPage = {
 
     async showForm() {
         const [customers, items, settings] = await Promise.all([
-            API.get('/customers?active_only=true'),
+            API.get('/customers?active_only=true&tree=1'),
             API.get('/items?active_only=true'),
             API.get('/settings'),
         ]);
@@ -109,7 +109,7 @@ const CreditMemosPage = {
         // A rate keeps four places of a percent (8.875).
         const defaultPct = +(parseFloat(settings.default_tax_rate || '0') || 0).toFixed(4);
 
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join('');
 
         openModal('New Credit Memo', `
             <form id="cm-form" onsubmit="CreditMemosPage.save(event)">

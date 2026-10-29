@@ -89,15 +89,17 @@
         <div class="address-block">
             <div class="address-label">{% if nonprofit %}Donor{% elif inv.is_sales_receipt %}Sold To{% else %}Bill To{% endif %}</div>
             <div class="address-text">
-                {# customer_name is only stamped on by some callers; fall back
-                   to the relationship so the name always prints. #}
-                <strong>{{ inv.customer_name or (inv.customer.name if inv.customer else '') }}</strong><br>
+                {# bill_to_name (invoice_pdf_context) is the customer's name,
+                   or the parent's when the customer is a sub-customer billed
+                   with its parent (#638), which the For: line then names. #}
+                <strong>{{ bill_to_name or inv.customer_name or (inv.customer.name if inv.customer else '') }}</strong><br>
                 {% if inv.bill_address1 %}{{ inv.bill_address1 }}<br>{% endif %}
                 {% if inv.bill_address2 %}{{ inv.bill_address2 }}<br>{% endif %}
                 {% set bill_city = city_line(inv.bill_city, inv.bill_state, inv.bill_zip) %}
                 {% if bill_city %}{{ bill_city }}<br>{% endif %}
                 {# The invoice keeps no country of its own; a customer abroad prints theirs. #}
-                {% if inv.bill_address1 or bill_city %}{% set bill_country = country_line(inv.customer.bill_country if inv.customer else None) %}{% if bill_country %}{{ bill_country }}{% endif %}{% endif %}
+                {% if inv.bill_address1 or bill_city %}{% set bill_country = country_line(inv.customer.bill_country if inv.customer else None) %}{% if bill_country %}{{ bill_country }}<br>{% endif %}{% endif %}
+                {% if bill_to_for %}For: {{ bill_to_for }}{% endif %}
             </div>
         </div>
         {% if inv.ship_address1 and not nonprofit %}

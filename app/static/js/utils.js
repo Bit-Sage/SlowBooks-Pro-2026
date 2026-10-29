@@ -1262,6 +1262,13 @@ const COUNTRIES = [
     { code: 'VN', name: 'Vietnam' },
 ];
 
+// A customer's name in a picker and a list: "Parent: Sub" for a
+// sub-customer (#638), the name itself otherwise. The API's full_name;
+// a row made on the page (a quick add) has only its name.
+function customerLabel(c) {
+    return (c && (c.full_name || c.name)) || '';
+}
+
 function countryOptions(selected) {
     return COUNTRIES.map(c =>
         `<option value="${c.code}"${c.disabled ? ' disabled' : ''}${c.code === selected ? ' selected' : ''}>${c.name}</option>`

@@ -37,12 +37,12 @@ const InKindPage = {
     },
 
     async showForm() {
-        const [customers, accounts] = await Promise.all([API.get('/customers?active_only=true'), API.get('/accounts')]);
+        const [customers, accounts] = await Promise.all([API.get('/customers?active_only=true&tree=1'), API.get('/accounts')]);
         InKindPage._customers = customers;
         InKindPage._accounts = accounts;
         const classGroup = await classFormGroupHtml();
         const jobGroup = await jobFormGroupHtml(null, 'ik-customer');
-        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        const custOpts = customers.map(c => `<option value="${c.id}">${escapeHtml(customerLabel(c))}</option>`).join('');
         InKindPage._lineCount = 0;
         openModal('In-Kind Gift', `
             <form onsubmit="InKindPage.save(event)">

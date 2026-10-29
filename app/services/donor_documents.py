@@ -98,7 +98,10 @@ def document_label(inv, t: Terms) -> str:
 
 def invoice_pdf_context(inv, company: dict) -> dict:
     """Extra template context for invoice_pdf.html: the document kind and,
-    on a nonprofit donation receipt, the IRS acknowledgment block."""
+    on a nonprofit donation receipt, the IRS acknowledgment block; and the
+    Bill To name, with the sub-customer named under it when the invoice's
+    customer is a sub billed with its parent (#638): the parent's name
+    heads the block, "For: <sub>" closes it."""
     t = terms_for(company)
     kind = invoice_doc_kind(inv, t)
     irs = None
@@ -109,7 +112,26 @@ def invoice_pdf_context(inv, company: dict) -> dict:
             getattr(inv, "fair_value_amount", None),
             getattr(inv, "fair_value_description", None),
         )
-    return {"doc_kind": kind, "irs": irs}
+    customer = getattr(inv, "customer", None)
+    bill_to_name = getattr(inv, "customer_name", None) or (
+        customer.name if customer is not None else ""
+    )
+    bill_to_for = None
+    parent = (
+        customer.parent
+        if customer is not None
+        and getattr(customer, "parent_customer_id", None)
+        and getattr(customer, "bill_with_parent", False)
+        else None
+    )
+    if parent is not None:
+        bill_to_name, bill_to_for = parent.name, customer.name
+    return {
+        "doc_kind": kind,
+        "irs": irs,
+        "bill_to_name": bill_to_name,
+        "bill_to_for": bill_to_for,
+    }
 
 
 # ── gifts: one shape for a receipt, a payment, or property ───────────────

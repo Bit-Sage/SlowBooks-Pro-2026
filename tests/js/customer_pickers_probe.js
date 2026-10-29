@@ -14,14 +14,15 @@ const answers = {
   ],
   '/jobs/budget-vs-actual?include_inactive=true': [],
   '/jobs/1': { id: 1, customer_id: 5, customer_name: 'Old Diner', name: 'Patio', status: 'in_progress', is_active: true },
-  '/customers?active_only=true': [{ id: 6, name: 'Acme' }, { id: 7, name: 'Bravo Bakery' }],
+  // the pickers ask for subs under their parents (#638)
+  '/customers?active_only=true&tree=1': [{ id: 6, name: 'Acme' }, { id: 7, name: 'Bravo Bakery' }],
   '/vendors?active_only=true': [{ id: 9, name: 'Paper Co' }],
   '/customers/5': { id: 5, name: 'Old Diner', is_active: false },
   '/vendors/10': { id: 10, name: 'Gone Supply', is_active: false },
   '/reseller-permits/3': { id: 3, entity_type: 'customer', entity_id: 5, jurisdiction: 'WA', permit_number: 'R-1', is_active: true },
   '/reseller-permits/4': { id: 4, entity_type: 'vendor', entity_id: 10, jurisdiction: 'WA', permit_number: 'R-2', is_active: true },
   // what the pickers must no longer ask for: every customer, inactive ones too
-  '/customers': [{ id: 5, name: 'Old Diner' }, { id: 6, name: 'Acme' }, { id: 7, name: 'Bravo Bakery' }],
+  '/customers?tree=1': [{ id: 5, name: 'Old Diner' }, { id: 6, name: 'Acme' }, { id: 7, name: 'Bravo Bakery' }],
   '/vendors': [{ id: 9, name: 'Paper Co' }, { id: 10, name: 'Gone Supply' }],
 };
 
@@ -34,6 +35,8 @@ const ctx = {
   $: () => null,
   $$: () => [],
   escapeHtml: (s) => String(s ?? ''),
+  // utils.js's customerLabel (#638): "Parent: Sub" for a sub-customer
+  customerLabel: (c) => (c && (c.full_name || c.name)) || '',
   formatCurrency: (n) => '$' + Number(n || 0).toFixed(2),
   formatDate: (s) => s || '',
   T: (s) => s,
